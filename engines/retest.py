@@ -1,28 +1,28 @@
 import pandas as pd
 
 def detect_retest(
-    df: pd.DataFrame,
+    df:  pd.DataFrame,
     d4h: dict,
     sweep: dict,
-    displacement: dict
+    displacement: dict,
+    d1h: dict = None,
+    d1d: dict = None
 ) -> dict:
 
-    price = float(df["close"].iloc[-1])
-    atr   = d4h.get("atr") or price * 0.015
-    fvgs  = d4h.get("fvgs", [])
-    ema20 = d4h.get("ema20")
-    ema50 = d4h.get("ema50")
+    price  = float(df["close"].iloc[-1])
+    atr    = d4h.get("atr") or price * 0.015
+    ema20  = d4h.get("ema20")
+    ema50  = d4h.get("ema50")
     vol_ma = float(
-        pd.Series([c["vol"] for c in d4h.get("last5", [])]).mean()
+        pd.Series(
+            [c["vol"] for c in d4h.get("last5", [])]
+        ).mean()
     ) or 1
 
     # ── DETERMINE TRADE DIRECTION ──
-    # Must match sweep + displacement
-    # Both must agree — if conflict use sweep
     sweep_type = sweep.get("type", "")
     disp_type  = displacement.get("type", "")
 
-    # Determine dominant direction
     if sweep_type == "bull" and disp_type == "bull":
         trade_dir = "bull"
     elif sweep_type == "bear" and disp_type == "bear":
@@ -32,19 +32,80 @@ def detect_retest(
     elif sweep_type == "bear" and disp_type != "bull":
         trade_dir = "bear"
     elif sweep_type:
-        # fallback to sweep direction
         trade_dir = sweep_type
     else:
         trade_dir = disp_type or "bull"
 
-    # ── FIND MATCHING FVG FOR DIRECTION ──
-    # Only use FVG that matches trade direction
-    # Bull trade = look for bullish FVG to retest
-    # Bear trade = look for bearish FVG to retest
-    matching_fvg = next(
-        (f for f in fvgs if f["type"] == trade_dir),
-        None
-    )
+    # ══════════════════════════════════════════
+    # FIX 1 — Collect FVGs from multiple TFs
+    # ══════════════════════════════════════════
+    MIN_WIDTH_PCT = 0.003  # 0.3% minimum width
+
+    all_fvgs = []
+
+    # 4H FVGs — primary
+    for fvg in d4h.get("fvgs", []):
+        all_fvgs.append({
+            **fvg,
+            "timeframe": "4h",
+            "priority":  1
+        })
+
+    # 1H FVGs — secondary
+    if d1h:
+        for fvg in d1h.get("fvgs", []):
+            all_fvgs.append({
+                **fvg,
+                "timeframe": "1h",
+                "priority":  2
+            })
+
+    # Daily FVGs — tertiary
+    if d1d:
+        for fvg in d1d.get("fvgs", []):
+            all_fvgs.append({
+                **fvg,
+                "timeframe": "1d",
+                "priority":  3
+            })
+
+    # ══════════════════════════════════════════
+    # FIX 2 — Find BEST matching FVG
+    # Must match direction
+    # Must be minimum width
+    # Must be on correct side of price
+    # Nearest to price wins
+    # ══════════════════════════════════════════
+    valid_fvgs = []
+    for fvg in all_fvgs:
+        if fvg["type"] != trade_dir:
+            continue
+
+        width = (fvg["top"] - fvg["bottom"]) / price
+        if width < MIN_WIDTH_PCT:
+            continue  # FIX 1 — too narrow skip
+
+        # For SHORT — zone should be ABOVE price
+        # For LONG  — zone should be BELOW price
+        if trade_dir == "bear":
+            # Zone must be above or at price
+            if fvg["bottom"] < price * 0.97:
+                continue
+        if trade_dir == "bull":
+            # Zone must be below or at price
+            if fvg["top"] > price * 1.03:
+                continue
+
+        dist = abs(price - fvg["mid"]) / price
+        valid_fvgs.append({
+            **fvg,
+            "width": width,
+            "dist":  dist
+        })
+
+    # Sort by distance — nearest first
+    valid_fvgs.sort(key=lambda x: x["dist"])
+    matching_fvg = valid_fvgs[0] if valid_fvgs else None
 
     # ── BUILD RETEST ZONE ──
     zone      = None
@@ -56,23 +117,28 @@ def detect_retest(
             "bottom": matching_fvg["bottom"],
             "mid":    matching_fvg["mid"]
         }
+        tf        = matching_fvg.get("timeframe", "4h").upper()
         zone_type = (
-            "Bullish FVG" if trade_dir == "bull"
-            else "Bearish FVG"
+            f"{tf} Bullish FVG"
+            if trade_dir == "bull"
+            else f"{tf} Bearish FVG"
         )
 
-    elif ema20 and abs(price - ema20) / price < 0.025:
+    # ══════════════════════════════════════════
+    # FIX 3 — Wider EMA fallback zones
+    # ══════════════════════════════════════════
+    elif ema20 and abs(price - ema20) / price < 0.04:
         zone = {
-            "top":    ema20 * 1.005,
-            "bottom": ema20 * 0.995,
+            "top":    ema20 * 1.01,   # was 1.005
+            "bottom": ema20 * 0.99,   # was 0.995
             "mid":    ema20
         }
         zone_type = "EMA20 Zone"
 
-    elif ema50 and abs(price - ema50) / price < 0.03:
+    elif ema50 and abs(price - ema50) / price < 0.05:
         zone = {
-            "top":    ema50 * 1.005,
-            "bottom": ema50 * 0.995,
+            "top":    ema50 * 1.01,   # was 1.005
+            "bottom": ema50 * 0.99,   # was 0.995
             "mid":    ema50
         }
         zone_type = "EMA50 Zone"
@@ -81,7 +147,7 @@ def detect_retest(
         return {
             "status":    "none",
             "label":     "No retest zone",
-            "desc":      "Wait for price to return to FVG or EMA",
+            "desc":      "No valid FVG or EMA zone found",
             "score":     0,
             "confirmed": False,
             "failed":    False,
@@ -97,10 +163,6 @@ def detect_retest(
     recent = df.tail(6)
 
     # ── FAILED RETEST CHECK ──
-    # Direction aware — bull trade failing means
-    # price closed below bull FVG bottom
-    # bear trade failing means price closed
-    # above bear FVG top
     def failed_retest():
         if trade_dir == "bull":
             entered = any(
@@ -116,7 +178,7 @@ def detect_retest(
         else:
             entered = any(
                 c["high"] >= zone["bottom"] and
-                c["low"] <= zone["top"]
+                c["low"]  <= zone["top"]
                 for _, c in recent.iterrows()
             )
             closed_above = any(
@@ -139,7 +201,6 @@ def detect_retest(
         }
 
     # ── REJECTION CANDLE CHECK ──
-    # Direction aware
     def rejection_candle():
         for _, c in recent.tail(3).iterrows():
             body = abs(c["close"] - c["open"])
@@ -149,8 +210,6 @@ def detect_retest(
             br = body / rng
 
             if trade_dir == "bull":
-                # Looking for bullish rejection
-                # hammer, pin bar, bullish engulf
                 lw = min(
                     c["open"], c["close"]
                 ) - c["low"]
@@ -175,8 +234,6 @@ def detect_retest(
                         "desc":     "Bullish engulfing"
                     }
             else:
-                # Looking for bearish rejection
-                # shooting star, bearish engulf
                 uw = c["high"] - max(
                     c["open"], c["close"]
                 )
@@ -249,7 +306,7 @@ def detect_retest(
             "trade_dir": trade_dir
         }
 
-    # ── IN ZONE — WAITING ──
+    # ── IN ZONE WAITING ──
     if in_zone:
         return {
             "status":    "pending",
@@ -266,13 +323,17 @@ def detect_retest(
             "trade_dir": trade_dir
         }
 
+    # ══════════════════════════════════════════
+    # FIX 4 — Missed = 0 not 2
+    # ══════════════════════════════════════════
+
     # ── ABOVE ZONE — BULL MISSED ──
     if trade_dir == "bull" and above_zone:
         return {
             "status":    "missed",
             "label":     "Above Zone — Entry Missed",
             "desc":      f"Price above {zone_type}",
-            "score":     2,
+            "score":     0,           # was 2
             "confirmed": False,
             "failed":    False,
             "zone_type": zone_type,
@@ -286,7 +347,7 @@ def detect_retest(
             "status":    "missed",
             "label":     "Below Zone — Entry Missed",
             "desc":      f"Price below {zone_type}",
-            "score":     2,
+            "score":     0,           # was 2
             "confirmed": False,
             "failed":    False,
             "zone_type": zone_type,
@@ -300,7 +361,7 @@ def detect_retest(
         "label":     "Approaching Zone",
         "desc": (
             f"Price approaching {zone_type} "
-            f"at {zone['mid']:.2f}"
+            f"at {zone['mid']:.4f}"
         ),
         "score":     3,
         "confirmed": False,
