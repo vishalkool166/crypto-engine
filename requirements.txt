@@ -1,0 +1,13 @@
+fastapi==0.111.0
+uvicorn==0.29.0
+ccxt==4.3.11
+pandas==2.2.2
+ta==0.11.0
+TA-Lib==0.4.28
+sqlalchemy==2.0.30
+python-telegram-bot==21.3
+apscheduler==3.10.4
+python-dotenv==1.0.1
+httpx==0.27.0
+numpy==1.26.4
+requests==2.31.0

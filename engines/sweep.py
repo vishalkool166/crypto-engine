@@ -1,0 +1,139 @@
+import pandas as pd
+from config import cfg
+
+def detect_sweep(
+    df: pd.DataFrame,
+    key_levels: dict,
+    atr: float,
+    swings: dict
+) -> dict:
+
+    price  = float(df["close"].iloc[-1])
+    vol_ma = float(df["volume"].rolling(10).mean().iloc[-1]) or 1
+    results = []
+
+    def relevance(candles_ago: int) -> dict:
+        if candles_ago <= 5:
+            return {"label": "HIGH",   "pts": 12, "mult": 1.0}
+        if candles_ago <= 12:
+            return {"label": "MEDIUM", "pts": 8,  "mult": 0.67}
+        if candles_ago <= 20:
+            return {"label": "LOW",    "pts": 4,  "mult": 0.33}
+        return {"label": "EXPIRED",    "pts": 0,  "mult": 0.0}
+
+    def check_below(level, label, base_strength, lookback=20):
+        if not level or level <= 0:
+            return None
+        sl = df.tail(lookback)
+        for i in range(len(sl) - 1):
+            c = sl.iloc[i]
+            if c["low"] < level and c["close"] > level:
+                candles_ago = len(sl) - 1 - i
+                rel  = relevance(candles_ago)
+                if rel["mult"] == 0:
+                    continue
+                mag  = (level - c["low"]) / atr
+                vs   = c["volume"] / vol_ma
+                body_below = min(c["open"], c["close"]) < level
+                intensity  = min(10,
+                    (3 if mag > 0.5 else 1) +
+                    (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
+                    2 + (2 if not body_below else 0)
+                )
+                confirmed  = price > level
+                adj_score  = round(rel["pts"] * (intensity / 10))
+                return {
+                    "type":        "bull",
+                    "label":       label,
+                    "level":       float(level),
+                    "sweep_low":   float(c["low"]),
+                    "magnitude":   round(mag, 2),
+                    "vol_spike":   round(vs, 2),
+                    "intensity":   intensity,
+                    "confirmed":   confirmed,
+                    "candles_ago": candles_ago,
+                    "relevance":   rel,
+                    "score": adj_score if confirmed else round(adj_score * 0.5)
+                }
+        return None
+
+    def check_above(level, label, base_strength, lookback=20):
+        if not level or level <= 0:
+            return None
+        sl = df.tail(lookback)
+        for i in range(len(sl) - 1):
+            c = sl.iloc[i]
+            if c["high"] > level and c["close"] < level:
+                candles_ago = len(sl) - 1 - i
+                rel  = relevance(candles_ago)
+                if rel["mult"] == 0:
+                    continue
+                mag  = (c["high"] - level) / atr
+                vs   = c["volume"] / vol_ma
+                body_above = max(c["open"], c["close"]) > level
+                intensity  = min(10,
+                    (3 if mag > 0.5 else 1) +
+                    (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
+                    2 + (2 if not body_above else 0)
+                )
+                confirmed  = price < level
+                adj_score  = round(rel["pts"] * (intensity / 10))
+                return {
+                    "type":        "bear",
+                    "label":       label,
+                    "level":       float(level),
+                    "sweep_high":  float(c["high"]),
+                    "magnitude":   round(mag, 2),
+                    "vol_spike":   round(vs, 2),
+                    "intensity":   intensity,
+                    "confirmed":   confirmed,
+                    "candles_ago": candles_ago,
+                    "relevance":   rel,
+                    "score": adj_score if confirmed else round(adj_score * 0.5)
+                }
+        return None
+
+    # All level checks
+    checks = [
+        (check_below, key_levels.get("pdl"),              "PDL Sweep",         8),
+        (check_above, key_levels.get("pdh"),              "PDH Sweep",         8),
+        (check_below, swings["last_low"]["price"]  if swings["last_low"]  else None, "Swing Low Sweep",  7),
+        (check_above, swings["last_high"]["price"] if swings["last_high"] else None, "Swing High Sweep", 7),
+        (check_below, key_levels.get("pwl"),              "Weekly Low Sweep",  10),
+        (check_above, key_levels.get("pwh"),              "Weekly High Sweep", 10),
+    ]
+
+    for fn, level, label, strength in checks:
+        res = fn(level, label, strength)
+        if res and res["intensity"] >= 2:
+            results.append(res)
+
+    if not results:
+        return {
+            "detected":  False,
+            "confirmed": False,
+            "score":     0,
+            "items":     [],
+            "label":     "No sweep detected",
+            "desc":      "No confirmed liquidity grab on key levels"
+        }
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    best      = results[0]
+    confirmed = any(r["confirmed"] for r in results)
+
+    return {
+        "detected":    True,
+        "confirmed":   confirmed,
+        "type":        best["type"],
+        "label":       best["label"],
+        "level":       best["level"],
+        "intensity":   best["intensity"],
+        "magnitude":   best["magnitude"],
+        "vol_spike":   best["vol_spike"],
+        "candles_ago": best["candles_ago"],
+        "relevance":   best["relevance"],
+        "score":       best["score"],
+        "items":       results,
+        "desc":        f"Level: {best['level']:.2f}"
+    }

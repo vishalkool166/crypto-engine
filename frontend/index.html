@@ -1,0 +1,2645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal Engine v5</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        apple: {
+          bg:       '#f5f5f7',
+          card:     'rgba(255,255,255,0.72)',
+          text:     '#1d1d1f',
+          secondary:'#6e6e73',
+          border:   'rgba(0,0,0,0.08)',
+          blue:     '#0071e3',
+          green:    '#34c759',
+          red:      '#ff3b30',
+          orange:   '#ff9500',
+          purple:   '#af52de',
+          yellow:   '#ffcc00',
+          teal:     '#5ac8fa',
+        }
+      },
+      fontFamily: {
+        sans: [
+          '-apple-system','BlinkMacSystemFont',
+          'SF Pro Display','SF Pro Text',
+          'Inter','system-ui','sans-serif'
+        ],
+        mono: [
+          'SF Mono','JetBrains Mono',
+          'Fira Code','monospace'
+        ]
+      },
+      borderRadius: {
+        apple: '18px',
+        'apple-sm': '12px',
+        'apple-xs': '8px'
+      },
+      boxShadow: {
+        apple:    '0 2px 20px rgba(0,0,0,0.08)',
+        'apple-md':'0 8px 32px rgba(0,0,0,0.12)',
+        'apple-lg':'0 20px 60px rgba(0,0,0,0.15)',
+      }
+    }
+  }
+}
+</script>
+<style>
+  /* ── BASE ── */
+  * { -webkit-font-smoothing: antialiased; }
+
+  body {
+    background: #f5f5f7;
+    background-image:
+      radial-gradient(ellipse at 20% 20%,
+        rgba(0,113,227,0.06) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 80%,
+        rgba(52,199,89,0.05) 0%, transparent 60%);
+    min-height: 100vh;
+  }
+
+  /* ── GLASS CARD ── */
+  .glass {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.5);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.08);
+  }
+
+  .glass-strong {
+    background: rgba(255,255,255,0.88);
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    border: 1px solid rgba(255,255,255,0.6);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.10);
+  }
+
+  .glass-dark {
+    background: rgba(29,29,31,0.75);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.20);
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(0,0,0,0.15);
+    border-radius: 2px;
+  }
+
+  /* ── ANIMATIONS ── */
+  @keyframes pulse-ring {
+    0%   { transform: scale(1);   opacity: 1; }
+    100% { transform: scale(2.2); opacity: 0; }
+  }
+  @keyframes slide-up {
+    from { transform: translateY(12px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+  }
+  @keyframes slide-in-right {
+    from { transform: translateX(110%); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
+  }
+  @keyframes fade-out-down {
+    from { opacity: 1; transform: translateY(0); }
+    to   { opacity: 0; transform: translateY(8px); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% 0; }
+    100% { background-position:  200% 0; }
+  }
+
+  .animate-slide-up   { animation: slide-up 0.4s ease; }
+  .animate-slide-in   { animation: slide-in-right 0.35s cubic-bezier(0.34,1.56,0.64,1); }
+  .animate-fade-out   { animation: fade-out-down 0.3s ease forwards; }
+
+  /* ── PULSE DOT ── */
+  .pulse-dot {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .pulse-dot::before {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: inherit;
+    animation: pulse-ring 1.8s ease-out infinite;
+  }
+
+  /* ── BAR TRANSITION ── */
+  .bar { transition: width 0.7s cubic-bezier(0.4,0,0.2,1); }
+
+  /* ── CARD HOVER ── */
+  .card-hover {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  }
+
+  /* ── RADAR CARD ── */
+  .radar-card {
+    transition: transform 0.18s ease,
+                box-shadow 0.18s ease,
+                border-color 0.18s ease;
+    cursor: pointer;
+  }
+  .radar-card:hover {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.14);
+  }
+
+  /* ── SHIMMER LOADING ── */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(0,0,0,0.04) 25%,
+      rgba(0,0,0,0.08) 50%,
+      rgba(0,0,0,0.04) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+    border-radius: 6px;
+  }
+
+  /* ── NUMBER FONT ── */
+  .num {
+    font-family: 'SF Mono','JetBrains Mono',monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── PROGRESS TRACK ── */
+  .progress-track {
+    background: rgba(0,0,0,0.06);
+    border-radius: 100px;
+    overflow: hidden;
+  }
+
+  /* ── LADDER ROW ── */
+  .ladder-now {
+    background: rgba(0,113,227,0.08);
+    border: 1.5px solid rgba(0,113,227,0.3);
+    border-radius: 10px;
+  }
+
+  /* ── MODAL ── */
+  .modal-overlay {
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  /* ── BUTTON ── */
+  .btn-apple {
+    background: #0071e3;
+    color: #fff;
+    border-radius: 980px;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 7px 16px;
+    transition: background 0.2s, transform 0.1s;
+    border: none;
+    cursor: pointer;
+  }
+  .btn-apple:hover   { background: #0077ed; }
+  .btn-apple:active  { transform: scale(0.97); }
+  .btn-apple:disabled {
+    background: rgba(0,0,0,0.12);
+    color: rgba(0,0,0,0.3);
+    cursor: not-allowed;
+  }
+
+  .btn-ghost {
+    background: rgba(0,0,0,0.05);
+    color: #1d1d1f;
+    border-radius: 980px;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 7px 16px;
+    transition: background 0.2s;
+    border: none;
+    cursor: pointer;
+  }
+  .btn-ghost:hover { background: rgba(0,0,0,0.09); }
+
+  .btn-danger {
+    background: rgba(255,59,48,0.1);
+    color: #ff3b30;
+    border: 1px solid rgba(255,59,48,0.25);
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 12px 20px;
+    width: 100%;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+  .btn-danger:hover { background: rgba(255,59,48,0.16); }
+
+  /* ── SECTION HEADER ── */
+  .section-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #6e6e73;
+  }
+
+  /* ── DIVIDER ── */
+  .divider { border-color: rgba(0,0,0,0.06); }
+
+  /* ── CHART CANVAS ── */
+  canvas { border-radius: 8px; }
+</style>
+</head>
+<body class="text-apple-text text-sm font-sans">
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- TOAST CONTAINER -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="toasts"
+     class="fixed bottom-6 right-6 z-50
+            flex flex-col gap-2
+            pointer-events-none">
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- COIN DETAIL MODAL -->
+<!-- ═══════════════════════════════════════════ -->
+<div id="modal-overlay"
+     class="modal-overlay fixed inset-0 z-40
+            hidden items-center justify-center p-4"
+     onclick="closeModal()">
+  <div id="modal-box"
+       class="glass-strong rounded-apple w-full
+              max-w-2xl max-h-[88vh]
+              overflow-y-auto animate-slide-up"
+       onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between
+                px-6 py-4 border-b divider
+                sticky top-0 glass-strong z-10
+                rounded-t-apple">
+      <h3 id="modal-title"
+          class="font-semibold text-base
+                 text-apple-text">
+      </h3>
+      <button onclick="closeModal()"
+              class="w-7 h-7 rounded-full
+                     bg-black/5 hover:bg-black/10
+                     flex items-center justify-center
+                     text-apple-secondary
+                     transition-colors text-sm">
+        ✕
+      </button>
+    </div>
+    <div id="modal-body" class="p-6"></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- APP -->
+<!-- ═══════════════════════════════════════════ -->
+<div class="max-w-[1360px] mx-auto px-4 py-4 space-y-3">
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- HEADER -->
+  <!-- ══════════════════════════════════════ -->
+  <header class="glass rounded-apple px-5 py-3
+                 flex items-center justify-between
+                 gap-4 flex-wrap">
+
+    <!-- Brand -->
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-apple-sm
+                  bg-gradient-to-br
+                  from-apple-blue to-blue-600
+                  flex items-center justify-center
+                  text-white text-base shadow-apple">
+        ⚡
+      </div>
+      <div>
+        <div class="font-semibold text-[15px]
+                    text-apple-text leading-tight">
+          Signal Engine
+        </div>
+        <div class="text-apple-secondary text-[11px]">
+          v5 · Automated Crypto
+        </div>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="flex items-center gap-5 flex-wrap">
+      <div class="text-center">
+        <div class="section-label mb-0.5">Capital</div>
+        <div id="h-capital"
+             class="num font-semibold text-sm
+                    text-apple-text">
+          $10
+        </div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">Leverage</div>
+        <div class="num font-semibold text-sm
+                    text-apple-text">
+          10x
+        </div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">Today PnL</div>
+        <div id="h-today-pnl"
+             class="num font-semibold text-sm">
+          --
+        </div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">
+          Trades Left
+        </div>
+        <div id="h-trades-left"
+             class="num font-semibold text-sm
+                    text-apple-text">
+          3
+        </div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">Win Rate</div>
+        <div id="h-winrate"
+             class="num font-semibold text-sm">
+          --%
+        </div>
+      </div>
+    </div>
+
+    <!-- Right -->
+    <div class="flex items-center gap-3">
+      <span id="mode-badge"
+            class="px-3 py-1 rounded-full text-xs
+                   font-semibold
+                   bg-apple-blue/10 text-apple-blue
+                   border border-apple-blue/20">
+        PAPER
+      </span>
+      <div class="text-right">
+        <div id="live-clock"
+             class="num text-xs text-apple-secondary">
+          --:-- IST
+        </div>
+        <div class="text-[10px] text-apple-secondary/70">
+          Next:
+          <span id="countdown-val"
+                class="text-apple-blue font-semibold">
+            --:--
+          </span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- STATUS BAR -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="glass rounded-apple px-5 py-2.5
+              flex items-center justify-between
+              gap-3 flex-wrap">
+    <div class="flex items-center gap-3">
+      <!-- Pulse dot -->
+      <div class="relative flex items-center
+                  justify-center w-3 h-3">
+        <div id="status-dot"
+             class="w-2.5 h-2.5 rounded-full
+                    bg-apple-secondary">
+        </div>
+        <div id="status-ring"
+             class="absolute w-2.5 h-2.5
+                    rounded-full bg-apple-secondary
+                    opacity-0">
+        </div>
+      </div>
+      <div>
+        <div id="status-text"
+             class="font-semibold text-sm
+                    text-apple-text">
+          Initializing...
+        </div>
+        <div id="status-sub"
+             class="text-apple-secondary text-xs">
+          Loading dashboard
+        </div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-apple-secondary">
+        Last scan:
+        <span id="last-scan-time"
+              class="text-apple-text font-medium">
+          --
+        </span>
+      </span>
+      <button id="scan-btn"
+              onclick="triggerScan()"
+              class="btn-apple">
+        🔍 Scan Now
+      </button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════ -->
+  <!-- MAIN GRID -->
+  <!-- ══════════════════════════════════════ -->
+  <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px]
+              gap-3">
+
+    <!-- LEFT -->
+    <div class="space-y-3">
+
+      <!-- ── ACTIVE TRADE ── -->
+      <section id="trade-section">
+
+        <!-- IDLE -->
+        <div id="trade-idle"
+             class="glass rounded-apple p-5
+                    flex items-center gap-4">
+          <div class="w-12 h-12 rounded-apple-sm
+                      bg-black/5
+                      flex items-center
+                      justify-center text-2xl">
+            ⚪
+          </div>
+          <div>
+            <div class="font-semibold text-base
+                        text-apple-secondary">
+              No Active Trade
+            </div>
+            <div class="text-apple-secondary
+                        text-xs mt-0.5">
+              Scanning every 15 min ·
+              A/A+ signals auto-execute
+            </div>
+          </div>
+          <div class="ml-auto text-right
+                      hidden sm:block">
+            <div class="section-label mb-0.5">
+              Last Scan
+            </div>
+            <div id="idle-last-scan"
+                 class="text-xs text-apple-text
+                        num font-medium">
+              --
+            </div>
+          </div>
+        </div>
+
+        <!-- ACTIVE -->
+        <div id="trade-active"
+             class="hidden glass-strong
+                    rounded-apple overflow-hidden">
+
+          <!-- Trade header -->
+          <div id="trade-header"
+               class="px-5 py-4 flex items-start
+                      justify-between gap-4
+                      flex-wrap">
+            <div>
+              <div class="flex items-center
+                          gap-2 flex-wrap">
+                <h2 id="trade-coin"
+                    class="text-2xl font-bold
+                           tracking-tight">
+                  --
+                </h2>
+                <span id="trade-dir-badge"
+                      class="px-3 py-1 rounded-full
+                             text-sm font-semibold
+                             border">
+                  --
+                </span>
+                <span id="trade-grade-badge"
+                      class="px-2.5 py-1 rounded-full
+                             text-xs font-semibold
+                             border">
+                  --
+                </span>
+                <span id="trade-phase-badge"
+                      class="px-2.5 py-1 rounded-full
+                             text-xs font-semibold
+                             border">
+                  --
+                </span>
+                <span id="trade-duration-badge"
+                      class="px-2.5 py-1 rounded-full
+                             text-xs font-medium
+                             bg-black/5
+                             text-apple-secondary">
+                  --
+                </span>
+              </div>
+              <div id="trade-state-label"
+                   class="text-xs text-apple-secondary
+                          mt-1.5">
+                --
+              </div>
+            </div>
+            <div class="text-right">
+              <div id="trade-pnl"
+                   class="text-3xl font-bold
+                          tracking-tight num">
+                --
+              </div>
+              <div class="text-xs text-apple-secondary
+                          mt-0.5">
+                unrealized PnL
+              </div>
+              <div id="trade-pnl-pct"
+                   class="text-xs mt-0.5 num
+                          text-apple-secondary">
+                --
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress -->
+          <div class="px-5 pb-4
+                      border-t divider pt-4">
+            <div class="flex justify-between
+                        text-[10px]
+                        text-apple-secondary
+                        num mb-2">
+              <span id="prog-sl-label">SL</span>
+              <span id="prog-mid-label">Entry</span>
+              <span id="prog-tp1-label">TP1</span>
+            </div>
+            <div class="progress-track h-2">
+              <div id="prog-fill"
+                   class="h-full rounded-full bar"
+                   style="width:0%;
+                          background:#0071e3">
+              </div>
+            </div>
+            <div class="flex items-center
+                        justify-between mt-2">
+              <div id="prog-status"
+                   class="text-xs font-semibold num">
+                --
+              </div>
+              <div id="prog-phase"
+                   class="text-[10px]
+                          text-apple-secondary">
+                Phase 1
+              </div>
+            </div>
+          </div>
+
+          <!-- Stats grid -->
+          <div class="grid grid-cols-4
+                      border-t divider
+                      divide-x divide-black/6">
+            <div class="p-3">
+              <div class="section-label mb-1">
+                Current
+              </div>
+              <div id="ts-current"
+                   class="font-semibold num text-sm">
+                --
+              </div>
+              <div id="ts-move"
+                   class="text-[10px] mt-0.5
+                          text-apple-secondary num">
+                --
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                Entry
+              </div>
+              <div id="ts-entry"
+                   class="font-semibold num text-sm
+                          text-apple-text">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                filled at
+              </div>
+            </div>
+            <div class="p-3">
+              <div id="ts-sl-label"
+                   class="section-label mb-1">
+                To SL
+              </div>
+              <div id="ts-to-sl"
+                   class="font-semibold num text-sm
+                          text-apple-red">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                distance
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                To TP1
+              </div>
+              <div id="ts-to-tp1"
+                   class="font-semibold num text-sm
+                          text-apple-green">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                distance
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                Risk
+              </div>
+              <div id="ts-risk"
+                   class="font-semibold num text-sm
+                          text-apple-red">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                max loss
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                TP1 Reward
+              </div>
+              <div id="ts-tp1-rew"
+                   class="font-semibold num text-sm
+                          text-apple-green">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                if TP1 hit
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                Position
+              </div>
+              <div id="ts-pos"
+                   class="font-semibold num text-sm
+                          text-apple-text">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                notional
+              </div>
+            </div>
+            <div class="p-3">
+              <div class="section-label mb-1">
+                R:R
+              </div>
+              <div id="ts-rr"
+                   class="font-semibold num text-sm
+                          text-apple-text">
+                --
+              </div>
+              <div class="text-[10px] mt-0.5
+                          text-apple-secondary">
+                risk reward
+              </div>
+            </div>
+          </div>
+
+          <!-- Ladder -->
+          <div class="px-5 py-4 border-t divider">
+            <div class="section-label mb-3">
+              Price Ladder
+            </div>
+            <div id="ladder-rows"
+                 class="space-y-1.5">
+            </div>
+          </div>
+
+          <!-- Close button -->
+          <div class="px-5 pb-5 pt-2">
+            <button onclick="confirmClose()"
+                    id="close-trade-btn"
+                    class="btn-danger">
+              🔴 Close Trade at Market
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ── MARKET RADAR ── -->
+      <section class="glass rounded-apple
+                      overflow-hidden">
+        <div class="flex items-center
+                    justify-between
+                    px-5 py-3 border-b divider">
+          <h2 class="section-label">
+            📡 Market Radar
+          </h2>
+          <span id="radar-updated"
+                class="text-[10px]
+                       text-apple-secondary">
+            --
+          </span>
+        </div>
+        <div class="p-3">
+          <div id="radar-grid"
+               class="grid grid-cols-3
+                      sm:grid-cols-4
+                      lg:grid-cols-6
+                      xl:grid-cols-4
+                      2xl:grid-cols-6
+                      gap-2">
+            <!-- shimmer placeholders -->
+            <div class="shimmer h-24 rounded-apple-sm">
+            </div>
+            <div class="shimmer h-24 rounded-apple-sm">
+            </div>
+            <div class="shimmer h-24 rounded-apple-sm">
+            </div>
+            <div class="shimmer h-24 rounded-apple-sm">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── PERFORMANCE STRIP ── -->
+      <section class="glass rounded-apple
+                      overflow-hidden">
+        <div class="grid grid-cols-5
+                    divide-x divide-black/6">
+          <div class="p-4">
+            <div class="section-label mb-1.5">
+              Win Rate
+            </div>
+            <div id="perf-wr"
+                 class="num font-bold text-xl
+                        text-apple-text">
+              --%
+            </div>
+            <div id="perf-wr-sub"
+                 class="text-[10px] mt-0.5
+                        text-apple-secondary">
+              -- trades
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="section-label mb-1.5">
+              Total PnL
+            </div>
+            <div id="perf-pnl"
+                 class="num font-bold text-xl">
+              $--
+            </div>
+            <div id="perf-pnl-sub"
+                 class="text-[10px] mt-0.5
+                        text-apple-secondary">
+              all time
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="section-label mb-1.5">
+              Profit Factor
+            </div>
+            <div id="perf-pf"
+                 class="num font-bold text-xl
+                        text-apple-text">
+              --
+            </div>
+            <div id="perf-pf-sub"
+                 class="text-[10px] mt-0.5
+                        text-apple-secondary">
+              gross P/L
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="section-label mb-1.5">
+              Best Trade
+            </div>
+            <div id="perf-best"
+                 class="num font-bold text-xl
+                        text-apple-green">
+              $--
+            </div>
+            <div id="perf-best-sub"
+                 class="text-[10px] mt-0.5
+                        text-apple-secondary">
+              --
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="section-label mb-1.5">
+              Max Drawdown
+            </div>
+            <div id="perf-dd"
+                 class="num font-bold text-xl">
+              --%
+            </div>
+            <div id="perf-dd-sub"
+                 class="text-[10px] mt-0.5
+                        text-apple-secondary">
+              peak to trough
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── BOTTOM GRID ── -->
+      <div class="grid grid-cols-1 md:grid-cols-2
+                  gap-3">
+
+        <!-- Equity Curve -->
+        <section class="glass rounded-apple
+                        overflow-hidden">
+          <div class="flex items-center
+                      justify-between
+                      px-5 py-3 border-b divider">
+            <h2 class="section-label">
+              📈 Equity Curve
+            </h2>
+            <span class="text-[10px]
+                         text-apple-secondary">
+              cumulative PnL
+            </span>
+          </div>
+          <div class="p-4">
+            <div class="relative h-44">
+              <canvas id="chart-equity"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Recent Trades -->
+        <section class="glass rounded-apple
+                        overflow-hidden">
+          <div class="flex items-center
+                      justify-between
+                      px-5 py-3 border-b divider">
+            <h2 class="section-label">
+              💼 Recent Trades
+            </h2>
+            <span class="text-[10px]
+                         text-apple-secondary">
+              last 10
+            </span>
+          </div>
+          <div class="p-3 max-h-48
+                      overflow-y-auto space-y-1.5"
+               id="history-list">
+            <div class="text-center py-8
+                        text-apple-secondary
+                        text-xs">
+              No closed trades yet
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+    </div>
+    <!-- END LEFT -->
+
+    <!-- RIGHT -->
+    <div class="space-y-3">
+
+      <!-- ── SIGNAL QUEUE ── -->
+      <section class="glass rounded-apple
+                      overflow-hidden">
+        <div class="flex items-center
+                    justify-between
+                    px-5 py-3 border-b divider">
+          <h2 class="section-label">
+            🎯 Signal Queue
+          </h2>
+          <span class="text-[10px]
+                       text-apple-secondary">
+            A/A+ only
+          </span>
+        </div>
+        <div class="p-3 space-y-2"
+             id="signal-queue">
+          <div class="text-center py-8
+                      text-apple-secondary text-xs">
+            No A/A+ signals yet.<br>
+            Waiting for next scan.
+          </div>
+        </div>
+      </section>
+
+      <!-- ── DAILY RISK ── -->
+      <section class="glass rounded-apple
+                      overflow-hidden">
+        <div class="flex items-center
+                    justify-between
+                    px-5 py-3 border-b divider">
+          <h2 class="section-label">
+            🛡️ Daily Risk
+          </h2>
+          <span id="risk-cap-status"
+                class="text-xs font-semibold
+                       text-apple-green">
+            ✅ Active
+          </span>
+        </div>
+        <div class="p-4 space-y-3">
+
+          <div class="flex items-center gap-3">
+            <span class="text-xs
+                         text-apple-secondary
+                         w-24 shrink-0">
+              Trades Today
+            </span>
+            <div class="flex-1 progress-track h-1.5">
+              <div id="risk-trades-bar"
+                   class="h-full rounded-full bar
+                          bg-apple-blue"
+                   style="width:0%">
+              </div>
+            </div>
+            <span id="risk-trades-val"
+                  class="num text-xs font-semibold
+                         w-8 text-right
+                         text-apple-text">
+              0/3
+            </span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <span class="text-xs
+                         text-apple-secondary
+                         w-24 shrink-0">
+              Daily Loss
+            </span>
+            <div class="flex-1 progress-track h-1.5">
+              <div id="risk-loss-bar"
+                   class="h-full rounded-full bar
+                          bg-apple-green"
+                   style="width:0%">
+              </div>
+            </div>
+            <span id="risk-loss-val"
+                  class="num text-xs font-semibold
+                         w-14 text-right
+                         text-apple-text">
+              $0.00
+            </span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <span class="text-xs
+                         text-apple-secondary
+                         w-24 shrink-0">
+              Today PnL
+            </span>
+            <div class="flex-1 progress-track h-1.5">
+              <div id="risk-pnl-bar"
+                   class="h-full rounded-full bar
+                          bg-apple-green"
+                   style="width:0%">
+              </div>
+            </div>
+            <span id="risk-pnl-val"
+                  class="num text-xs font-semibold
+                         w-14 text-right">
+              $0.00
+            </span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 pt-1">
+            <div class="bg-black/4 rounded-apple-sm
+                        p-3">
+              <div class="section-label mb-1">
+                Trades Left
+              </div>
+              <div id="risk-remaining-trades"
+                   class="num font-bold text-2xl
+                          text-apple-text">
+                3
+              </div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm
+                        p-3">
+              <div class="section-label mb-1">
+                Loss Cap Left
+              </div>
+                            <div id="risk-remaining-loss"
+                   class="num font-bold text-2xl
+                          text-apple-text">
+                $2.00
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ── GRADE BREAKDOWN ── -->
+      <section class="glass rounded-apple overflow-hidden">
+        <div class="flex items-center justify-between
+                    px-5 py-3 border-b divider">
+          <h2 class="section-label">🏆 Grade Breakdown</h2>
+        </div>
+        <div class="p-4 space-y-4">
+
+          <!-- A+ -->
+          <div>
+            <div class="flex justify-between
+                        items-center mb-2">
+              <span class="text-xs font-semibold
+                           text-apple-green">
+                Grade A+
+              </span>
+              <span id="aplus-wr"
+                    class="num text-xs font-semibold
+                           text-apple-text">
+                --%
+              </span>
+            </div>
+            <div class="progress-track h-1.5 mb-1.5">
+              <div id="aplus-bar"
+                   class="h-full rounded-full bar
+                          bg-apple-green"
+                   style="width:0%">
+              </div>
+            </div>
+            <div id="aplus-detail"
+                 class="text-[10px]
+                        text-apple-secondary">
+              0W · 0L · 0 trades
+            </div>
+          </div>
+
+          <!-- A -->
+          <div>
+            <div class="flex justify-between
+                        items-center mb-2">
+              <span class="text-xs font-semibold
+                           text-apple-blue">
+                Grade A
+              </span>
+              <span id="a-wr"
+                    class="num text-xs font-semibold
+                           text-apple-text">
+                --%
+              </span>
+            </div>
+            <div class="progress-track h-1.5 mb-1.5">
+              <div id="a-bar"
+                   class="h-full rounded-full bar
+                          bg-apple-blue"
+                   style="width:0%">
+              </div>
+            </div>
+            <div id="a-detail"
+                 class="text-[10px]
+                        text-apple-secondary">
+              0W · 0L · 0 trades
+            </div>
+          </div>
+
+          <!-- Daily PnL mini chart -->
+          <div class="relative h-28 mt-1">
+            <canvas id="chart-daily"></canvas>
+          </div>
+
+        </div>
+      </section>
+
+    </div>
+    <!-- END RIGHT -->
+
+  </div>
+  <!-- END MAIN GRID -->
+
+</div>
+<!-- END APP -->
+
+
+<!-- ═══════════════════════════════════════════ -->
+<!-- JAVASCRIPT -->
+<!-- ═══════════════════════════════════════════ -->
+<script>
+'use strict'
+
+const API = window.location.origin + '/api'
+
+// ── STATE ──
+const S = {
+  data:        null,
+  scanning:    false,
+  nextScanAt:  null,
+  prevGrades:  {}
+}
+
+let chartEquity = null
+let chartDaily  = null
+
+// ── CHART DEFAULTS ──
+Chart.defaults.font.family =
+  '-apple-system, BlinkMacSystemFont, Inter, sans-serif'
+Chart.defaults.font.size   = 10
+Chart.defaults.color       = '#6e6e73'
+Chart.defaults.borderColor = 'rgba(0,0,0,0.06)'
+
+
+// ═══════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════
+function startClock() {
+  const tick = () => {
+    const el = document.getElementById('live-clock')
+    if (!el) return
+    el.textContent = new Date().toLocaleTimeString(
+      'en-IN', {
+        hour:     '2-digit',
+        minute:   '2-digit',
+        second:   '2-digit',
+        hour12:   true,
+        timeZone: 'Asia/Kolkata'
+      }
+    ) + ' IST'
+  }
+  tick()
+  setInterval(tick, 1000)
+}
+
+
+// ═══════════════════════════════════════════════
+// COUNTDOWN
+// ═══════════════════════════════════════════════
+function startCountdown() {
+  if (!S.nextScanAt)
+    S.nextScanAt = Date.now() + 15 * 60 * 1000
+
+  const tick = () => {
+    const rem = S.nextScanAt - Date.now()
+    const el  = document.getElementById('countdown-val')
+    if (!el) return
+    if (rem <= 0) { el.textContent = '00:00'; return }
+    const m = Math.floor(rem / 60000)
+    const s = Math.floor((rem % 60000) / 1000)
+    el.textContent =
+      String(m).padStart(2, '0') + ':' +
+      String(s).padStart(2, '0')
+  }
+  tick()
+  setInterval(tick, 1000)
+}
+
+function resetCountdown() {
+  S.nextScanAt = Date.now() + 15 * 60 * 1000
+}
+
+
+// ═══════════════════════════════════════════════
+// TOAST
+// ═══════════════════════════════════════════════
+function toast(title, body = '', type = 'info', dur = 5000) {
+  const accent = {
+    info:    '#0071e3',
+    success: '#34c759',
+    warning: '#ff9500',
+    error:   '#ff3b30'
+  }
+  const icons = {
+    info: '💬', success: '✅',
+    warning: '⚠️', error: '❌'
+  }
+
+  const el = document.createElement('div')
+  el.className = `
+    animate-slide-in pointer-events-auto
+    glass-strong rounded-apple-sm
+    p-3.5 max-w-xs shadow-apple-md
+    border-l-4
+  `
+  el.style.borderLeftColor = accent[type] || accent.info
+  el.innerHTML = `
+    <div class="flex items-start gap-2.5">
+      <span class="text-base mt-0.5 shrink-0">
+        ${icons[type]}
+      </span>
+      <div>
+        <div class="font-semibold text-xs
+                    text-apple-text leading-snug">
+          ${title}
+        </div>
+        ${body
+          ? `<div class="text-[11px] mt-0.5
+                        text-apple-secondary
+                        leading-snug">
+               ${body}
+             </div>`
+          : ''
+        }
+      </div>
+    </div>
+  `
+
+  const container = document.getElementById('toasts')
+  container.appendChild(el)
+
+  setTimeout(() => {
+    el.classList.remove('animate-slide-in')
+    el.classList.add('animate-fade-out')
+    setTimeout(() => el.remove(), 300)
+  }, dur)
+}
+
+
+// ═══════════════════════════════════════════════
+// FETCH DASHBOARD
+// ═══════════════════════════════════════════════
+async function fetchDashboard() {
+  try {
+    const res = await fetch(`${API}/dashboard`)
+    if (!res.ok) return
+    S.data = await res.json()
+    renderAll()
+  } catch(e) {
+    console.error('Dashboard fetch error:', e)
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER ALL
+// ═══════════════════════════════════════════════
+function renderAll() {
+  const d = S.data
+  if (!d) return
+
+  renderHeader(d.header)
+  renderStatusBar(d)
+  renderTrade(d.trade, d.state)
+  renderRadar(d.radar)
+  renderSignalQueue(d.queue)
+  renderRisk(d.risk)
+  renderPerformance(d.performance)
+  renderHistory(d.history)
+  renderCharts(d.history)
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER HEADER
+// ═══════════════════════════════════════════════
+function renderHeader(h) {
+  if (!h) return
+
+  setText('h-capital', h.capital)
+
+  const pnlEl = document.getElementById('h-today-pnl')
+  if (pnlEl) {
+    pnlEl.textContent = h.today_pnl
+    pnlEl.style.color = h.today_pnl_color
+  }
+
+  const tlEl = document.getElementById('h-trades-left')
+  if (tlEl) {
+    tlEl.textContent = h.trades_left
+    tlEl.style.color = h.trades_left_color
+  }
+
+  const wrEl = document.getElementById('h-winrate')
+  if (wrEl) {
+    wrEl.textContent = h.win_rate
+    wrEl.style.color = h.win_rate_color
+  }
+
+  const badge = document.getElementById('mode-badge')
+  if (badge) {
+    badge.textContent = h.mode
+    if (h.mode === 'LIVE') {
+      badge.className = `
+        px-3 py-1 rounded-full text-xs font-semibold
+        bg-apple-red/10 text-apple-red
+        border border-apple-red/20
+      `
+    }
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER STATUS BAR
+// ═══════════════════════════════════════════════
+function renderStatusBar(d) {
+  const dot  = document.getElementById('status-dot')
+  const ring = document.getElementById('status-ring')
+  const text = document.getElementById('status-text')
+  const sub  = document.getElementById('status-sub')
+  const lst  = document.getElementById('last-scan-time')
+  const ilst = document.getElementById('idle-last-scan')
+
+  if (S.scanning) {
+    setDotColor(dot, ring, '#0071e3')
+    text.textContent = '🔍 Scanning all coins...'
+    sub.textContent  = 'Analyzing — takes 1-2 min'
+    return
+  }
+
+  if (d.state === 'idle') {
+    setDotColor(dot, ring, '#6e6e73')
+    text.textContent = 'IDLE — Watching markets'
+    sub.textContent  = 'Auto-executes A/A+ signals'
+  } else {
+    const t = d.trade
+    setDotColor(dot, ring, '#34c759')
+    text.textContent = t
+      ? `IN TRADE — ${t.coin} ${t.direction}`
+      : 'IN TRADE'
+    sub.textContent = t
+      ? `Entry: ${t.entry_price} · SL: ${t.sl_price} · Grade ${t.grade}`
+      : '--'
+  }
+
+  if (d.last_scan && d.last_scan !== '--') {
+    if (lst)  lst.textContent  = d.last_scan
+    if (ilst) ilst.textContent = d.last_scan
+  }
+}
+
+function setDotColor(dot, ring, color) {
+  if (dot)  dot.style.background  = color
+  if (ring) {
+    ring.style.background = color
+    ring.style.opacity    = '1'
+    ring.style.animation  = 'pulse-ring 1.8s ease-out infinite'
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER TRADE
+// ═══════════════════════════════════════════════
+function renderTrade(t, state) {
+  const idleEl   = document.getElementById('trade-idle')
+  const activeEl = document.getElementById('trade-active')
+
+  if (state === 'idle' || !t) {
+    idleEl.classList.remove('hidden')
+    activeEl.classList.add('hidden')
+    return
+  }
+
+  idleEl.classList.add('hidden')
+  activeEl.classList.remove('hidden')
+
+  // Header gradient
+  const header = document.getElementById('trade-header')
+  if (header) header.style.background = t.header_bg
+
+  // Coin
+  const coinEl = document.getElementById('trade-coin')
+  if (coinEl) {
+    coinEl.textContent = t.coin
+    coinEl.style.color = t.dir_color
+  }
+
+  // Direction badge
+  setBadge(
+    'trade-dir-badge',
+    `${t.dir_emoji} ${t.direction}`,
+    t.dir_color,
+    t.dir_border
+  )
+
+  // Grade badge
+  setBadge(
+    'trade-grade-badge',
+    `Grade ${t.grade}`,
+    t.grade_color,
+    t.grade_color
+  )
+
+  // Phase badge
+  setBadge(
+    'trade-phase-badge',
+    t.phase_badge,
+    t.phase_color,
+    t.phase_color
+  )
+
+  setText('trade-duration-badge', `${t.duration} open`)
+  setText(
+    'trade-state-label',
+    `State: ${t.state} · Opened: ${t.opened_at || '--'}`
+  )
+
+  // PnL
+  setStyled('trade-pnl',     t.pnl,     t.pnl_color)
+  setStyled('trade-pnl-pct', t.pnl_pct, t.pnl_color)
+
+  // Progress
+  const prog = t.progress
+  if (prog) {
+    const fill = document.getElementById('prog-fill')
+    if (fill) {
+      fill.style.width      = prog.pct + '%'
+      fill.style.background = prog.color
+    }
+    setText('prog-sl-label',  prog.left_label)
+    setText('prog-mid-label', prog.mid_label)
+    setText('prog-tp1-label', prog.right_label)
+
+    const statusEl = document.getElementById('prog-status')
+    if (statusEl) {
+      statusEl.textContent = prog.label
+      statusEl.style.color = prog.color
+    }
+    setText('prog-phase', prog.phase_label)
+  }
+
+  // Stats
+  setStyled('ts-current', t.current_price, t.current_color)
+  setStyled('ts-move',    t.move_pct,      t.move_color)
+  setText('ts-entry', t.entry_price)
+
+  // SL label changes to BE after TP1
+  const slLabelEl = document.getElementById('ts-sl-label')
+  if (slLabelEl) {
+    slLabelEl.textContent = `To ${t.sl_label}`
+    slLabelEl.style.color = t.sl_color
+  }
+  setStyled('ts-to-sl',   t.dist_to_sl,  t.sl_color)
+  setStyled('ts-to-tp1',  t.dist_to_tp1, '#34c759')
+  setStyled('ts-risk',    t.risk_amt,    '#ff3b30')
+  setStyled('ts-tp1-rew', t.tp1_reward,  '#34c759')
+  setText('ts-pos', t.position_size)
+  setText('ts-rr',  t.rr_ratio)
+
+  // Ladder
+  renderLadder(t.ladder)
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER LADDER
+// ═══════════════════════════════════════════════
+function renderLadder(ladder) {
+  const wrap = document.getElementById('ladder-rows')
+  if (!wrap || !ladder) return
+
+  wrap.innerHTML = ladder.map(row => {
+    if (!row) return ''
+
+    if (row.is_current) {
+      return `
+        <div class="ladder-now flex items-center
+                    gap-3 px-3 py-2.5">
+          <span class="text-[10px] font-bold
+                       w-10 shrink-0
+                       text-apple-blue">
+            NOW
+          </span>
+          <span class="flex-1 num font-bold
+                       text-sm text-apple-blue">
+            ${row.price}
+          </span>
+          <span class="num text-[10px] w-14
+                       text-right">
+          </span>
+          <span class="text-[10px] font-semibold
+                       px-2 py-0.5 rounded-full"
+                style="${row.badge_style}">
+            ${row.badge}
+          </span>
+        </div>`
+    }
+
+    if (row.is_hit) {
+      return `
+        <div class="flex items-center gap-3
+                    px-3 py-2 rounded-apple-xs
+                    opacity-40"
+             style="background:${row.color}08">
+          <span class="text-[10px] font-semibold
+                       w-10 shrink-0"
+                style="color:${row.color}">
+            ${row.label}
+          </span>
+          <span class="flex-1 num font-semibold
+                       text-sm line-through"
+                style="color:${row.color}">
+            ${row.price}
+          </span>
+          <span class="num text-[10px] w-14
+                       text-right"
+                style="color:${row.color}60">
+            ${row.dist}
+          </span>
+          <span class="text-[10px] font-semibold
+                       px-2 py-0.5 rounded-full"
+                style="${row.badge_style}">
+            ✅ HIT
+          </span>
+        </div>`
+    }
+
+    return `
+      <div class="flex items-center gap-3
+                  px-3 py-2 rounded-apple-xs"
+           style="background:${row.color}08;
+                  border:1px solid ${row.color}18">
+        <span class="text-[10px] font-semibold
+                     w-10 shrink-0"
+              style="color:${row.color}">
+          ${row.label}
+        </span>
+        <span class="flex-1 num font-semibold
+                     text-sm"
+              style="color:${row.color}">
+          ${row.price}
+        </span>
+        <span class="num text-[10px] w-14
+                     text-right font-medium"
+              style="color:${row.color}80">
+          ${row.dist}
+        </span>
+        <span class="text-[10px] font-semibold
+                     px-2 py-0.5 rounded-full"
+              style="${row.badge_style}">
+          ${row.badge}
+        </span>
+      </div>`
+
+  }).join('')
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER RADAR
+// ═══════════════════════════════════════════════
+function renderRadar(radar) {
+  const grid = document.getElementById('radar-grid')
+  if (!grid) return
+
+  if (!radar || !radar.length) {
+    grid.innerHTML = `
+      <div class="col-span-full text-center
+                  py-10 text-apple-secondary text-xs">
+        No scan data yet.<br>
+        <button onclick="triggerScan()"
+                class="mt-2 text-apple-blue
+                       hover:underline font-medium">
+          Click Scan Now
+        </button>
+      </div>`
+    return
+  }
+
+  // Toast on new A/A+ signals
+  radar.forEach(r => {
+    const prev = S.prevGrades[r.coin]
+    if (prev && prev !== r.grade && r.tradeable) {
+      toast(
+        `🎯 Grade ${r.grade} Signal`,
+        `${r.coin} ${r.direction} — Score ${r.score}`,
+        r.grade === 'A+' ? 'success' : 'info'
+      )
+    }
+    S.prevGrades[r.coin] = r.grade
+  })
+
+  grid.innerHTML = radar.map(r => `
+    <div class="radar-card glass rounded-apple-sm
+                p-3 relative overflow-hidden"
+         style="border-top: 3px solid ${r.grade_color}"
+         onclick="showCoinDetail('${r.coin}')"
+         title="${r.coin} — ${r.grade} — ${r.direction}">
+
+      <div class="font-semibold text-xs
+                  text-apple-text mb-1">
+        ${r.coin}
+      </div>
+
+      <div class="text-[11px] font-semibold mb-2"
+           style="color:${r.dir_color}">
+        ${r.dir_emoji} ${r.direction}
+      </div>
+
+      <!-- Score bar -->
+      <div class="progress-track h-1 mb-2">
+        <div class="h-full rounded-full bar"
+             style="width:${r.score_pct}%;
+                    background:${r.grade_color}">
+        </div>
+      </div>
+
+      <div class="flex items-center
+                  justify-between">
+        <span class="text-[10px] font-bold"
+              style="color:${r.grade_color}">
+          ${r.grade} · ${r.score}
+        </span>
+        <span class="text-[10px]
+                     text-apple-secondary num"
+              style="color:${r.change_color}">
+          ${r.change}
+        </span>
+      </div>
+
+      <div class="text-[10px] text-apple-secondary
+                  num mt-0.5">
+        ${r.price}
+      </div>
+    </div>
+  `).join('')
+
+  const upd = document.getElementById('radar-updated')
+  if (upd) {
+    upd.textContent = 'Updated ' +
+      new Date().toLocaleTimeString('en-IN', {
+        hour:     '2-digit',
+        minute:   '2-digit',
+        timeZone: 'Asia/Kolkata'
+      })
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER SIGNAL QUEUE
+// ═══════════════════════════════════════════════
+function renderSignalQueue(queue) {
+  const wrap = document.getElementById('signal-queue')
+  if (!wrap) return
+
+  if (!queue || !queue.length) {
+    wrap.innerHTML = `
+      <div class="text-center py-8
+                  text-apple-secondary text-xs">
+        No A/A+ signals in last scan.<br>
+        <span class="text-[10px]">
+          Next scan in
+          <span class="text-apple-blue font-semibold">
+            <span id="queue-cd">--</span>
+          </span>
+        </span>
+      </div>`
+    return
+  }
+
+  wrap.innerHTML = queue.map(q => `
+    <div class="glass rounded-apple-sm p-3
+                cursor-pointer card-hover
+                border-l-4"
+         style="border-left-color:${q.dir_color}"
+         onclick="showCoinDetail('${q.coin}')">
+
+      <div class="flex items-center
+                  justify-between mb-2">
+        <div class="flex items-center gap-2">
+          <span class="font-semibold text-sm
+                       text-apple-text">
+            ${q.coin}USDT
+          </span>
+          <span class="text-xs font-semibold"
+                style="color:${q.dir_color}">
+            ${q.dir_emoji} ${q.direction}
+          </span>
+        </div>
+        <span class="text-xs font-bold
+                     px-2 py-0.5 rounded-full"
+              style="color:${q.grade_color};
+                     background:${q.grade_color}15">
+          ${q.grade} · ${q.score}
+        </span>
+      </div>
+
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <div class="section-label mb-0.5">Entry</div>
+          <div class="num text-xs font-semibold
+                      text-apple-blue">
+            ${q.entry}
+          </div>
+        </div>
+        <div>
+          <div class="section-label mb-0.5">Stop</div>
+          <div class="num text-xs font-semibold
+                      text-apple-red">
+            ${q.sl}
+          </div>
+        </div>
+        <div>
+          <div class="section-label mb-0.5">TP1</div>
+          <div class="num text-xs font-semibold
+                      text-apple-green">
+            ${q.tp1}
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center
+                  justify-between mt-2 pt-2
+                  border-t divider">
+        <span class="text-[10px]
+                     text-apple-secondary">
+          ${q.regime} · ${q.session}
+        </span>
+        <span class="text-[10px] text-apple-red
+                     num font-medium">
+          Risk: ${q.risk_amt}
+        </span>
+      </div>
+    </div>
+  `).join('')
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER RISK
+// ═══════════════════════════════════════════════
+function renderRisk(r) {
+  if (!r) return
+
+  setBar('risk-trades-bar', r.trades_bar_pct,
+         r.trades_bar_color)
+  setText('risk-trades-val', r.trades_label)
+
+  setBar('risk-loss-bar', r.loss_bar_pct,
+         r.loss_bar_color)
+  setText('risk-loss-val', r.loss_label)
+
+  setBar('risk-pnl-bar', r.pnl_bar_pct,
+    r.pnl_color === '#34c759' ? '#34c759' : '#ff3b30'
+  )
+  setStyled('risk-pnl-val', r.pnl_label, r.pnl_color)
+
+  setText('risk-remaining-trades', r.remaining_trades)
+  setText('risk-remaining-loss',   r.remaining_loss)
+
+  const capEl = document.getElementById('risk-cap-status')
+  if (capEl) {
+    capEl.textContent  = r.cap_status
+    capEl.style.color  = r.cap_color
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER PERFORMANCE
+// ═══════════════════════════════════════════════
+function renderPerformance(p) {
+  if (!p) return
+
+  setStyled('perf-wr',    p.win_rate,     p.win_rate_color)
+  setText('perf-wr-sub',  p.win_rate_sub)
+  setStyled('perf-pnl',   p.total_pnl,   p.pnl_color)
+  setText('perf-pnl-sub', p.pnl_sub)
+  setText('perf-pf',      p.profit_factor)
+  setText('perf-pf-sub',  p.pf_sub)
+  setText('perf-best',    p.best_trade)
+  setText('perf-best-sub',p.best_sub)
+  setStyled('perf-dd',    p.max_drawdown, p.dd_color)
+  setText('perf-dd-sub',  p.dd_sub)
+
+  setText('aplus-wr',     p.aplus_wr)
+  setBar('aplus-bar',     p.aplus_bar, '#34c759')
+  setText('aplus-detail', p.aplus_detail)
+
+  setText('a-wr',         p.a_wr)
+  setBar('a-bar',         p.a_bar, '#0071e3')
+  setText('a-detail',     p.a_detail)
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER HISTORY
+// ═══════════════════════════════════════════════
+function renderHistory(history) {
+  const list = document.getElementById('history-list')
+  if (!list) return
+
+  if (!history || !history.length) {
+    list.innerHTML = `
+      <div class="text-center py-8
+                  text-apple-secondary text-xs">
+        No closed trades yet
+      </div>`
+    return
+  }
+
+  list.innerHTML = history.map(h => `
+    <div class="flex items-center gap-2
+                px-3 py-2 rounded-apple-xs
+                bg-black/3 border-l-2"
+         style="border-left-color:${h.border_color}">
+      <span class="font-semibold text-xs
+                   text-apple-text w-12 shrink-0">
+        ${h.coin}
+      </span>
+      <span class="text-xs font-semibold
+                   w-10 shrink-0"
+            style="color:${h.dir_color}">
+        ${h.dir_emoji} ${h.direction}
+      </span>
+      <span class="flex-1 text-[10px]
+                   text-apple-secondary truncate">
+        ${h.close_reason || '--'} · Grade ${h.grade}
+      </span>
+      <span class="num text-xs font-semibold shrink-0"
+            style="color:${h.pnl_color}">
+        ${h.pnl}
+      </span>
+      <span class="text-xs shrink-0">
+        ${h.outcome_emoji}
+      </span>
+    </div>
+  `).join('')
+}
+
+
+// ═══════════════════════════════════════════════
+// RENDER CHARTS
+// Uses pnl_raw — no string parsing needed
+// ═══════════════════════════════════════════════
+function renderCharts(history) {
+  if (!history) return
+
+  const closed = history.filter(
+    h => h.outcome !== 'pending'
+  )
+
+  renderEquityChart(closed)
+  renderDailyChart(closed)
+}
+
+function renderEquityChart(closed) {
+  const ctx = document.getElementById('chart-equity')
+  if (!ctx) return
+
+  if (!closed.length) {
+    ctx.parentElement.innerHTML = `
+      <div class="flex items-center justify-center
+                  h-full text-apple-secondary text-xs">
+        No closed trades yet
+      </div>`
+    return
+  }
+
+  // Use pnl_raw — guaranteed number
+  let equity = 0
+  const labels   = []
+  const values   = []
+  const ptColors = []
+
+  // Reverse — oldest first
+  const sorted = [...closed].reverse()
+
+  sorted.forEach((t, i) => {
+    const pnl = typeof t.pnl_raw === 'number'
+      ? t.pnl_raw
+      : 0
+    equity += pnl
+    labels.push(t.coin || `#${i + 1}`)
+    values.push(parseFloat(equity.toFixed(4)))
+    ptColors.push(equity >= 0 ? '#34c759' : '#ff3b30')
+  })
+
+  if (chartEquity) chartEquity.destroy()
+
+  chartEquity = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data:            values,
+        borderColor:     '#0071e3',
+        backgroundColor: 'rgba(0,113,227,0.08)',
+        borderWidth:     2,
+        fill:            true,
+        tension:         0.4,
+        pointRadius:     3,
+        pointHoverRadius:5,
+        pointBackgroundColor: ptColors,
+        pointBorderWidth:     0
+      }]
+    },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      interaction: {
+        intersect: false,
+        mode:      'index'
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(255,255,255,0.95)',
+          titleColor:      '#1d1d1f',
+          bodyColor:       '#6e6e73',
+          borderColor:     'rgba(0,0,0,0.08)',
+          borderWidth:     1,
+          padding:         10,
+          cornerRadius:    10,
+          callbacks: {
+            label: ctx =>
+              ' Equity: $' +
+              ctx.parsed.y.toFixed(4)
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            maxTicksLimit: 6,
+            color:         '#6e6e73',
+            font:          { size: 9 }
+          },
+          grid: { color: 'rgba(0,0,0,0.04)' }
+        },
+        y: {
+          ticks: {
+            color: '#6e6e73',
+            font:  { size: 9 },
+            callback: v => '$' + v.toFixed(2)
+          },
+          grid: { color: 'rgba(0,0,0,0.04)' }
+        }
+      }
+    }
+  })
+}
+
+function renderDailyChart(closed) {
+  const ctx = document.getElementById('chart-daily')
+  if (!ctx) return
+
+  if (!closed.length) {
+    ctx.parentElement.innerHTML = `
+      <div class="flex items-center justify-center
+                  h-full text-apple-secondary text-xs">
+        No data yet
+      </div>`
+    return
+  }
+
+  // Use pnl_raw — guaranteed number
+  const recent = [...closed].reverse().slice(-12)
+  const labels = recent.map(t => t.coin || '--')
+  const values = recent.map(t =>
+    typeof t.pnl_raw === 'number'
+      ? parseFloat(t.pnl_raw.toFixed(4))
+      : 0
+  )
+  const colors = values.map(v =>
+    v >= 0
+      ? 'rgba(52,199,89,0.8)'
+      : 'rgba(255,59,48,0.8)'
+  )
+  const borders = values.map(v =>
+    v >= 0 ? '#34c759' : '#ff3b30'
+  )
+
+  if (chartDaily) chartDaily.destroy()
+
+  chartDaily = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        data:            values,
+        backgroundColor: colors,
+        borderColor:     borders,
+        borderWidth:     1,
+        borderRadius:    4,
+        borderSkipped:   false
+      }]
+    },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(255,255,255,0.95)',
+          titleColor:      '#1d1d1f',
+          bodyColor:       '#6e6e73',
+          borderColor:     'rgba(0,0,0,0.08)',
+          borderWidth:     1,
+          padding:         10,
+          cornerRadius:    10,
+          callbacks: {
+            label: ctx =>
+              ' PnL: $' + ctx.parsed.y.toFixed(4)
+          }
+        }
+      },
+      scales: {
+        x: {
+          ticks: {
+            maxTicksLimit: 8,
+            color:         '#6e6e73',
+            font:          { size: 9 }
+          },
+          grid: { display: false }
+        },
+        y: {
+          ticks: {
+            color: '#6e6e73',
+            font:  { size: 9 },
+            callback: v => '$' + v.toFixed(2)
+          },
+          grid: { color: 'rgba(0,0,0,0.04)' }
+        }
+      }
+    }
+  })
+}
+
+
+// ═══════════════════════════════════════════════
+// COIN DETAIL MODAL
+// ═══════════════════════════════════════════════
+async function showCoinDetail(coin) {
+  const overlay = document.getElementById('modal-overlay')
+  const title   = document.getElementById('modal-title')
+  const body    = document.getElementById('modal-body')
+
+  title.textContent = `${coin}USDT — Loading...`
+  body.innerHTML = `
+    <div class="flex items-center justify-center
+                gap-3 py-16 text-apple-secondary
+                text-xs">
+      <div class="w-5 h-5 border-2
+                  border-black/10
+                  border-t-apple-blue
+                  rounded-full animate-spin">
+      </div>
+      Fetching analysis...
+    </div>`
+
+  overlay.classList.remove('hidden')
+  overlay.classList.add('flex')
+
+  try {
+    const res = await fetch(`${API}/analyze/${coin}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+
+    const grade   = data.grade  || 'F'
+    const dir     = data.direction || '--'
+    const score   = data.score  || 0
+    const sig     = data.signal || {}
+    const wconf   = data.wconf  || {}
+    const factors = wconf.factors || []
+    const noTrade = data.no_trade || {}
+    const hards   = noTrade.hard_blocks || []
+    const softs   = noTrade.soft_blocks || []
+    const sweep   = data.sweep  || {}
+    const disp    = data.displacement || {}
+    const retest  = data.retest || {}
+    const market  = data.market || {}
+
+    const gradeColors = {
+      'A+': '#34c759', 'A': '#0071e3',
+      'B':  '#ff9500', 'C': '#ffcc00',
+      'F':  '#6e6e73'
+    }
+    const gc = gradeColors[grade] || '#6e6e73'
+
+    title.textContent =
+      `${coin}USDT — Grade ${grade} ` +
+      `${dir} — Score ${score}/100`
+
+    body.innerHTML = `
+
+      <!-- Market + Engines row -->
+      <div class="grid grid-cols-2 gap-3 mb-4">
+
+        <div class="bg-black/4 rounded-apple-sm p-3">
+                    <div class="section-label mb-2">Market</div>
+          <div class="num font-bold text-base
+                      text-apple-text">
+            ${market.price
+              ? '$' + Number(market.price).toLocaleString()
+              : '--'}
+            <span class="text-xs font-semibold ml-1"
+                  style="color:${
+                    (market.change24 || 0) >= 0
+                    ? '#34c759' : '#ff3b30'
+                  }">
+              ${(market.change24 || 0) >= 0 ? '+' : ''}${
+                Number(market.change24 || 0).toFixed(2)
+              }%
+            </span>
+          </div>
+          <div class="text-[10px] text-apple-secondary mt-1">
+            ${data.regime || '--'} · ${data.session || '--'}
+          </div>
+          <div class="text-[10px] text-apple-secondary mt-0.5">
+            Funding: ${
+              (Number(market.funding || 0) * 100).toFixed(4)
+            }% ·
+            OI Δ: ${
+              Number(market.oi_change || 0).toFixed(2)
+            }%
+          </div>
+        </div>
+
+        <div class="bg-black/4 rounded-apple-sm p-3">
+          <div class="section-label mb-2">Engines</div>
+          <div class="space-y-2">
+            <div class="flex items-center
+                        justify-between">
+              <span class="text-xs
+                           text-apple-secondary">
+                Sweep
+              </span>
+              <span class="num text-xs font-semibold"
+                    style="color:${
+                      sweep.confirmed
+                      ? '#34c759' : '#6e6e73'
+                    }">
+                ${sweep.confirmed ? '✅' : '❌'}
+                ${sweep.score || 0}/12
+              </span>
+            </div>
+            <div class="flex items-center
+                        justify-between">
+              <span class="text-xs
+                           text-apple-secondary">
+                Displacement
+              </span>
+              <span class="num text-xs font-semibold"
+                    style="color:${
+                      disp.confirmed
+                      ? '#34c759' : '#6e6e73'
+                    }">
+                ${disp.confirmed ? '✅' : '❌'}
+                ${disp.score || 0}/11
+              </span>
+            </div>
+            <div class="flex items-center
+                        justify-between">
+              <span class="text-xs
+                           text-apple-secondary">
+                Retest
+              </span>
+              <span class="num text-xs font-semibold"
+                    style="color:${
+                      retest.confirmed ? '#34c759'
+                      : retest.failed  ? '#ff3b30'
+                      : '#6e6e73'
+                    }">
+                ${retest.confirmed ? '✅'
+                  : retest.failed  ? '❌' : '⏳'}
+                ${retest.score || 0}/12
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Signal levels — A/A+ only -->
+      ${grade === 'A+' || grade === 'A' ? `
+        <div class="rounded-apple-sm p-3 mb-4"
+             style="background:${gc}10;
+                    border:1px solid ${gc}25">
+          <div class="section-label mb-2">
+            Signal Levels
+          </div>
+          <div class="grid grid-cols-4 gap-3">
+            <div>
+              <div class="section-label mb-1">
+                Entry
+              </div>
+              <div class="num font-semibold text-sm
+                          text-apple-blue">
+                ${sig.entry
+                  ? '$' + Number(sig.entry).toFixed(4)
+                  : '--'}
+              </div>
+            </div>
+            <div>
+              <div class="section-label mb-1">
+                Stop
+              </div>
+              <div class="num font-semibold text-sm
+                          text-apple-red">
+                ${sig.sl
+                  ? '$' + Number(sig.sl).toFixed(4)
+                  : '--'}
+              </div>
+            </div>
+            <div>
+              <div class="section-label mb-1">
+                TP1
+              </div>
+              <div class="num font-semibold text-sm
+                          text-apple-green">
+                ${sig.tp1
+                  ? '$' + Number(sig.tp1).toFixed(4)
+                  : '--'}
+              </div>
+            </div>
+            <div>
+              <div class="section-label mb-1">
+                TP2
+              </div>
+              <div class="num font-semibold text-sm
+                          text-apple-green">
+                ${sig.tp2
+                  ? '$' + Number(sig.tp2).toFixed(4)
+                  : '--'}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-4 mt-2
+                      pt-2 border-t divider
+                      text-[10px] text-apple-secondary">
+            <span>
+              SL: ${sig.sl_pct
+                ? Number(sig.sl_pct).toFixed(2) + '%'
+                : '--'}
+            </span>
+            <span>
+              Risk: $${sig.risk_amt
+                ? Number(sig.risk_amt).toFixed(2)
+                : '--'}
+            </span>
+            <span>
+              Size: $${sig.pos_size
+                ? Number(sig.pos_size).toFixed(2)
+                : '--'}
+            </span>
+            <span>
+              Lev: ${sig.eff_lev || '--'}x
+            </span>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Hard blocks -->
+      ${hards.length ? `
+        <div class="rounded-apple-sm p-3 mb-3"
+             style="background:rgba(255,59,48,0.06);
+                    border:1px solid
+                    rgba(255,59,48,0.2)">
+          <div class="space-y-1.5">
+            ${hards.map(b => `
+              <div class="flex items-start gap-2
+                          text-xs">
+                <span class="shrink-0">🚫</span>
+                <div>
+                  <span class="font-semibold
+                               text-apple-red">
+                    ${b.reason}
+                  </span>
+                  <span class="text-apple-secondary
+                               ml-1">
+                    — ${b.detail}
+                  </span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Soft blocks -->
+      ${softs.length ? `
+        <div class="rounded-apple-sm p-3 mb-3"
+             style="background:rgba(255,149,0,0.06);
+                    border:1px solid
+                    rgba(255,149,0,0.2)">
+          <div class="space-y-1.5">
+            ${softs.map(s => `
+              <div class="flex items-start gap-2
+                          text-xs">
+                <span class="shrink-0">⚠️</span>
+                <div>
+                  <span class="text-apple-text">
+                    ${s.reason}
+                  </span>
+                  <span class="text-apple-red
+                               num ml-1">
+                    (-${s.penalty}pts)
+                  </span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Confluence factors -->
+      <div class="flex items-center
+                  justify-between mb-3">
+        <div class="section-label">
+          Confluence Factors
+        </div>
+        <div class="text-[10px]
+                    text-apple-secondary num">
+          ${wconf.total_earned || 0} /
+          ${wconf.max_possible || 0} pts
+          → ${score}/100
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        ${factors.map(f => {
+          const pct   = Math.round(
+            f.earned / f.max * 100
+          )
+          const color = f.pass    ? '#34c759'
+                      : pct >= 50 ? '#ff9500'
+                      : '#ff3b30'
+          return `
+            <div class="flex items-center gap-3"
+                 title="${f.detail || ''}">
+              <span class="text-[10px]
+                           text-apple-secondary
+                           w-36 shrink-0 truncate">
+                ${f.label}
+              </span>
+              <div class="flex-1 progress-track h-1.5">
+                <div class="h-full rounded-full bar"
+                     style="width:${pct}%;
+                            background:${color}">
+                </div>
+              </div>
+              <span class="num text-[10px] w-8
+                           text-right shrink-0
+                           font-semibold"
+                    style="color:${color}">
+                ${f.earned}/${f.max}
+              </span>
+              <span class="text-[10px] w-4 shrink-0
+                           text-center">
+                ${f.pass ? '✅' : '❌'}
+              </span>
+            </div>`
+        }).join('')}
+      </div>
+    `
+
+  } catch(e) {
+    body.innerHTML = `
+      <div class="text-center py-10
+                  text-apple-red text-xs">
+        Failed to load: ${e.message}
+      </div>`
+  }
+}
+
+function closeModal() {
+  const overlay = document.getElementById(
+    'modal-overlay'
+  )
+  overlay.classList.add('hidden')
+  overlay.classList.remove('flex')
+}
+
+
+// ═══════════════════════════════════════════════
+// TRIGGER SCAN
+// ═══════════════════════════════════════════════
+async function triggerScan() {
+  if (S.scanning) return
+
+  S.scanning      = true
+  const btn       = document.getElementById('scan-btn')
+  if (btn) {
+    btn.disabled    = true
+    btn.textContent = '⏳ Scanning...'
+  }
+
+  toast(
+    '🔍 Scan Started',
+    'Analyzing all coins — 1-2 min',
+    'info',
+    3000
+  )
+
+  try {
+    const res = await fetch(`${API}/scan`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+
+    resetCountdown()
+
+    const results   = data.results || []
+    const tradeable = results.filter(r =>
+      (r.grade === 'A+' || r.grade === 'A') &&
+      (r.direction === 'LONG' ||
+       r.direction === 'SHORT')
+    )
+    const aplus = tradeable.filter(
+      r => r.grade === 'A+'
+    )
+    const a = tradeable.filter(
+      r => r.grade === 'A'
+    )
+
+    if (aplus.length) {
+      toast(
+        `🏆 ${aplus.length} A+ Signal${
+          aplus.length > 1 ? 's' : ''
+        }!`,
+        aplus.map(r =>
+          `${r.coin} ${r.direction}`
+        ).join(', '),
+        'success',
+        8000
+      )
+    } else if (a.length) {
+      toast(
+        `✅ ${a.length} Grade A Signal${
+          a.length > 1 ? 's' : ''
+        }`,
+        a.map(r =>
+          `${r.coin} ${r.direction}`
+        ).join(', '),
+        'info',
+        6000
+      )
+    } else {
+      toast(
+        '😴 No Tradeable Signals',
+        'No A/A+ setups this scan',
+        'warning',
+        4000
+      )
+    }
+
+    // Refresh dashboard after scan
+    await fetchDashboard()
+
+  } catch(e) {
+    console.error('Scan error:', e)
+    toast('❌ Scan Failed', e.message, 'error', 5000)
+  } finally {
+    S.scanning = false
+    if (btn) {
+      btn.disabled    = false
+      btn.textContent = '🔍 Scan Now'
+    }
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// CONFIRM CLOSE TRADE
+// ═══════════════════════════════════════════════
+async function confirmClose() {
+  const d = S.data
+  if (!d || d.state === 'idle') {
+    toast('⚠️ No active trade', '', 'warning')
+    return
+  }
+
+  const t  = d.trade
+  const ok = window.confirm(
+    `Close ${t.coin} ${t.direction} at market?\n\n` +
+    `Entry:   ${t.entry_price}\n` +
+    `Current: ${t.current_price}\n` +
+    `uPnL:    ${t.pnl}\n\n` +
+    `This cancels all SL/TP orders.\nAre you sure?`
+  )
+  if (!ok) return
+
+  const btn = document.getElementById('close-trade-btn')
+  if (btn) {
+    btn.disabled    = true
+    btn.textContent = '⏳ Closing...'
+  }
+
+  try {
+    const res = await fetch(
+      `${API}/trade/close`,
+      { method: 'POST' }
+    )
+    const result = await res.json()
+
+    if (result.success) {
+      toast(
+        '✅ Trade Closed',
+        'Position closed at market',
+        'success'
+      )
+      await fetchDashboard()
+    } else {
+      toast(
+        '❌ Close Failed',
+        result.reason || 'Unknown error',
+        'error'
+      )
+      if (btn) {
+        btn.disabled    = false
+        btn.textContent = '🔴 Close Trade at Market'
+      }
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+    if (btn) {
+      btn.disabled    = false
+      btn.textContent = '🔴 Close Trade at Market'
+    }
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// DOM HELPERS
+// ═══════════════════════════════════════════════
+function setText(id, val) {
+  const el = document.getElementById(id)
+  if (el && val !== undefined && val !== null)
+    el.textContent = val
+}
+
+function setHtml(id, html) {
+  const el = document.getElementById(id)
+  if (el) el.innerHTML = html
+}
+
+function setStyled(id, val, color) {
+  const el = document.getElementById(id)
+  if (!el) return
+  if (val !== undefined && val !== null)
+    el.textContent = val
+  if (color)
+    el.style.color = color
+}
+
+function setBar(id, pct, color) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.style.width      = Math.min(100, pct || 0) + '%'
+  el.style.background = color || '#0071e3'
+}
+
+function setBadge(id, text, color, borderColor) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.textContent         = text
+  el.style.color         = color
+  el.style.borderColor   = borderColor + '40'
+  el.style.background    = color + '12'
+}
+
+
+// ═══════════════════════════════════════════════
+// KEYBOARD SHORTCUTS
+// ═══════════════════════════════════════════════
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal()
+  if (
+    e.key === 's' &&
+    !e.ctrlKey &&
+    !e.metaKey &&
+    document.activeElement.tagName !== 'INPUT'
+  ) triggerScan()
+})
+
+
+// ═══════════════════════════════════════════════
+// AUTO REFRESH — 5 second poll
+// ═══════════════════════════════════════════════
+function startAutoRefresh() {
+  setInterval(fetchDashboard, 5000)
+}
+
+
+// ═══════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════
+async function init() {
+  startClock()
+  startCountdown()
+  await fetchDashboard()
+  startAutoRefresh()
+}
+
+init()
+</script>
+</body>
+</html>
