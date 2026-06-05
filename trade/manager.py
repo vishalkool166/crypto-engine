@@ -8,16 +8,13 @@ from trade.orders import (
     place_sl_order, place_tp_order,
     cancel_order, get_order_status,
     get_current_price, close_position_market,
-    calculate_quantity
-)
+    calculate_quantity)
 from alerts.telegram import send
 from config import cfg
 
 log = logging.getLogger(__name__)
 
-# Taker fee both sides
 TAKER_FEE = 0.0006
-
 
 class TradeManager:
 
@@ -29,7 +26,6 @@ class TradeManager:
         signal:    dict,
         signal_id: int = None
     ) -> dict:
-
         if not state_manager.is_idle:
             log.info(
                 f"Signal ignored — already in trade: "
@@ -64,7 +60,6 @@ class TradeManager:
         if quantity <= 0:
             return {"success": False, "reason": "Quantity calculation failed"}
 
-        # Create DB record
         db = SessionLocal()
         try:
             trade = Trade(
@@ -92,7 +87,6 @@ class TradeManager:
 
         state_manager.set_entry(trade)
 
-        # Entry order
         entry_order = place_market_order(
             coin      = coin,
             direction = direction,
@@ -103,7 +97,6 @@ class TradeManager:
             await self._abort_trade(trade, "Entry order failed")
             return {"success": False, "reason": "Entry order failed"}
 
-        # SL — critical
         sl_order = place_sl_order(
             coin      = coin,
             direction = direction,
@@ -116,7 +109,6 @@ class TradeManager:
             await self._abort_trade(trade, "SL order failed — position closed")
             return {"success": False, "reason": "SL order failed"}
 
-        # TP1 — 70%
         tp1_qty   = round(quantity * 0.70, 3)
         tp1_order = place_tp_order(
             coin      = coin,
@@ -126,7 +118,6 @@ class TradeManager:
             label     = "TP1"
         )
 
-        # TP2 — 30%
         tp2_qty   = round(quantity * 0.30, 3)
         tp2_order = place_tp_order(
             coin      = coin,
@@ -136,7 +127,6 @@ class TradeManager:
             label     = "TP2"
         )
 
-        # Save order IDs + quantities to DB
         db = SessionLocal()
         try:
             t = db.query(Trade).filter(Trade.id == trade.id).first()
@@ -146,14 +136,12 @@ class TradeManager:
                 t.tp1_order_id = str(tp1_order["id"])
             if tp2_order:
                 t.tp2_order_id = str(tp2_order["id"])
-            # Store quantities for accurate PnL
             t.notes = (
                 f"qty_total:{quantity},"
                 f"qty_tp1:{tp1_qty},"
                 f"qty_tp2:{tp2_qty}"
             )
             db.commit()
-            # Sync local object
             trade.entry_order_id = t.entry_order_id
             trade.sl_order_id    = t.sl_order_id
             trade.tp1_order_id   = t.tp1_order_id
@@ -179,16 +167,13 @@ class TradeManager:
             "direction": direction
         }
 
-
     # ═══════════════════════════════════════════════════
     # MONITOR TRADE
     # ═══════════════════════════════════════════════════
     async def monitor_trade(self):
-
         if state_manager.is_idle:
             return
 
-        # Always refresh from DB — never trust stale object
         trade_id = state_manager.current_trade.id
         db       = SessionLocal()
         try:
@@ -207,30 +192,41 @@ class TradeManager:
             log.warning(f"Could not get price: {trade.coin}")
             return
 
-        # Update current price
+        # Update current price in DB
         db = SessionLocal()
         try:
-            t = db.query(Trade).filter(Trade.id == trade.id).first()
+            t = db.query(Trade).filter(
+                Trade.id == trade.id
+            ).first()
             if t:
                 t.current_price = current_price
                 db.commit()
         finally:
             db.close()
 
-        # ── DETERMINE PHASE ──
-        # Phase 1: tp1_order exists and not yet filled
-        # Phase 2: tp1_order filled (tp1_order_id cleared),
-        #          watching tp2 and BE SL
         tp1_already_hit = self._is_tp1_already_hit(trade)
 
-        if not tp1_already_hit:
-            # ── PHASE 1 — watching TP1 and SL ──
+        # ── DETAILED LOGGING ──
+        log.info(
+            f"MONITOR [{trade.coin}] "
+            f"phase:{'2-RF' if tp1_already_hit else '1'} "
+            f"current:{current_price} "
+            f"entry:{trade.entry_price} "
+            f"sl:{trade.sl_price} "
+            f"tp1:{trade.tp1_price} "
+            f"tp2:{trade.tp2_price} "
+            f"sl_id:{trade.sl_order_id} "
+            f"tp1_id:{trade.tp1_order_id} "
+            f"tp2_id:{trade.tp2_order_id}"
+        )
 
-            # Check SL first
+        if not tp1_already_hit:
+            # ── PHASE 1 ──
             if trade.sl_order_id:
                 sl_status = get_order_status(
                     trade.coin, trade.sl_order_id
                 )
+                log.info(f"SL status: {sl_status}")
                 if sl_status and sl_status["status"] == "closed":
                     log.info(f"SL hit: {trade.coin}")
                     await self._close_trade(
@@ -242,11 +238,11 @@ class TradeManager:
                     )
                     return
 
-            # Check TP1
             if trade.tp1_order_id:
                 tp1_status = get_order_status(
                     trade.coin, trade.tp1_order_id
                 )
+                log.info(f"TP1 status: {tp1_status}")
                 if tp1_status and tp1_status["status"] == "closed":
                     log.info(f"TP1 hit: {trade.coin}")
                     await self._handle_tp1_hit(
@@ -255,17 +251,14 @@ class TradeManager:
                     return
 
         else:
-            # ── PHASE 2 — TP1 done, watching TP2 and BE SL ──
-
-            # Check BE SL first
+            # ── PHASE 2 ──
             if trade.sl_order_id:
                 sl_status = get_order_status(
                     trade.coin, trade.sl_order_id
                 )
+                log.info(f"BE SL status: {sl_status}")
                 if sl_status and sl_status["status"] == "closed":
-                    log.info(
-                        f"BE SL hit after TP1: {trade.coin}"
-                    )
+                    log.info(f"BE SL hit: {trade.coin}")
                     await self._close_trade(
                         trade        = trade,
                         exit_price   = trade.entry_price,
@@ -275,11 +268,11 @@ class TradeManager:
                     )
                     return
 
-            # Check TP2
             if trade.tp2_order_id:
                 tp2_status = get_order_status(
                     trade.coin, trade.tp2_order_id
                 )
+                log.info(f"TP2 status: {tp2_status}")
                 if tp2_status and tp2_status["status"] == "closed":
                     log.info(f"TP2 hit: {trade.coin}")
                     await self._close_trade(
@@ -291,39 +284,14 @@ class TradeManager:
                     )
                     return
 
-        # Log uPnL
-        upnl = risk_guard.calculate_unrealized_pnl(
-            direction     = trade.direction,
-            entry_price   = trade.entry_price,
-            current_price = current_price,
-            pos_size      = trade.position_size
-        )
-        log.info(
-            f"Monitor [{trade.coin}] "
-            f"{'Phase2-RF' if tp1_already_hit else 'Phase1'} "
-            f"Entry:{trade.entry_price} "
-            f"Now:{current_price} "
-            f"uPnL:${upnl}"
-        )
-
-
     # ═══════════════════════════════════════════════════
     # IS TP1 ALREADY HIT
-    # Checks DB flag — not order status
-    # Prevents re-triggering on same closed order
     # ═══════════════════════════════════════════════════
     def _is_tp1_already_hit(self, trade: Trade) -> bool:
-        """
-        TP1 is considered hit when:
-        - sl_price has been moved to entry_price (breakeven)
-        We store this in DB so it survives restarts.
-        """
         if not trade.sl_price or not trade.entry_price:
             return False
-        # SL within 0.1% of entry = breakeven = TP1 was hit
         return abs(trade.sl_price - trade.entry_price) \
                / trade.entry_price < 0.001
-
 
     # ═══════════════════════════════════════════════════
     # HANDLE TP1 HIT
@@ -333,14 +301,11 @@ class TradeManager:
         trade:         Trade,
         current_price: float
     ):
-        # Parse quantities from notes
         qty_tp1, qty_tp2 = self._parse_quantities(trade)
 
-        # Cancel old full SL
         if trade.sl_order_id:
             cancel_order(trade.coin, trade.sl_order_id)
 
-        # Place BE SL for remaining 30%
         new_sl = place_sl_order(
             coin      = trade.coin,
             direction = trade.direction,
@@ -348,41 +313,35 @@ class TradeManager:
             sl_price  = trade.entry_price
         )
 
-        # ── CRITICAL: update DB immediately ──
-        # Set sl_price = entry_price
-        # This is the flag _is_tp1_already_hit() reads
-        # Also clear tp1_order_id so we never check it again
         db = SessionLocal()
         try:
             t = db.query(Trade).filter(
                 Trade.id == trade.id
             ).first()
-            t.sl_price      = trade.entry_price  # ← BE flag
-            t.tp1_order_id  = None               # ← clear so never re-checked
+            t.sl_price     = trade.entry_price
+            t.tp1_order_id = None
             if new_sl:
                 t.sl_order_id = str(new_sl["id"])
             db.commit()
         finally:
             db.close()
 
-        # Calculate TP1 PnL (70% of position)
         if trade.direction == "LONG":
             tp1_pnl = (
                 (trade.tp1_price - trade.entry_price) /
-                trade.entry_price * (trade.position_size * 0.70)
+                trade.entry_price *
+                (trade.position_size * 0.70)
             )
         else:
             tp1_pnl = (
                 (trade.entry_price - trade.tp1_price) /
-                trade.entry_price * (trade.position_size * 0.70)
+                trade.entry_price *
+                (trade.position_size * 0.70)
             )
 
-        # Deduct fees on 70%
-        fee = (trade.position_size * 0.70) * TAKER_FEE * 2
+        fee     = (trade.position_size * 0.70) * TAKER_FEE * 2
         tp1_pnl = round(tp1_pnl - fee, 4)
 
-        # Record partial PnL to daily risk NOW
-        # So dashboard shows it immediately
         state_manager.record_partial_pnl(tp1_pnl)
 
         log.info(
@@ -407,11 +366,8 @@ class TradeManager:
             f"Risk-free trade ✅"
         )
 
-
     # ═══════════════════════════════════════════════════
     # CLOSE TRADE
-    # phase=1 → full position
-    # phase=2 → 30% remaining (70% already at TP1)
     # ═══════════════════════════════════════════════════
     async def _close_trade(
         self,
@@ -423,13 +379,9 @@ class TradeManager:
     ):
         _, qty_tp2 = self._parse_quantities(trade)
 
-        # ── ACCURATE PNL ──
         if phase == 1:
-            # Full position — no TP1 hit
             active_size = trade.position_size
         else:
-            # Phase 2 — only 30% remaining
-            # 70% already captured at TP1
             active_size = trade.position_size * 0.30
 
         if trade.direction == "LONG":
@@ -443,18 +395,9 @@ class TradeManager:
                 trade.entry_price * active_size
             )
 
-        # Fees on remaining position
-        fee     = active_size * TAKER_FEE * 2
-        pnl     = round(gross_pnl - fee, 4)
+        fee = active_size * TAKER_FEE * 2
+        pnl = round(gross_pnl - fee, 4)
 
-        # If phase 2 — add the TP1 partial PnL
-        # that was already recorded
-        # Total PnL = TP1 partial + TP2/BE close
-        # We store final close PnL only for the remainder
-        # Daily risk already has TP1 partial from
-        # record_partial_pnl() call in _handle_tp1_hit
-
-        # Update trade in DB
         db = SessionLocal()
         try:
             t              = db.query(Trade).filter(
@@ -469,7 +412,6 @@ class TradeManager:
             t.closed_at    = datetime.utcnow()
             db.commit()
 
-            # Update linked signal
             if t.signal_id:
                 sig = db.query(SignalModel).filter(
                     SignalModel.id == t.signal_id
@@ -479,14 +421,10 @@ class TradeManager:
                     sig.exit_price = exit_price
                     sig.pnl        = pnl
                     db.commit()
-
         finally:
             db.close()
 
-        # Record to daily risk
         state_manager.record_trade_close(pnl)
-
-        # Set idle
         state_manager.set_idle()
 
         await self._send_close_alert(
@@ -500,12 +438,10 @@ class TradeManager:
             f"Reason:{close_reason}"
         )
 
-
     # ═══════════════════════════════════════════════════
     # MANUAL CLOSE
     # ═══════════════════════════════════════════════════
     async def manual_close(self) -> dict:
-
         if state_manager.is_idle:
             return {"success": False, "reason": "No active trade"}
 
@@ -521,7 +457,6 @@ class TradeManager:
         if not trade:
             return {"success": False, "reason": "Trade not found"}
 
-        # Cancel all open orders
         for oid in [
             trade.sl_order_id,
             trade.tp1_order_id,
@@ -530,8 +465,7 @@ class TradeManager:
             if oid:
                 cancel_order(trade.coin, oid)
 
-        # Determine remaining quantity
-        tp1_hit  = self._is_tp1_already_hit(trade)
+        tp1_hit    = self._is_tp1_already_hit(trade)
         _, qty_tp2 = self._parse_quantities(trade)
 
         qty = calculate_quantity(
@@ -562,7 +496,6 @@ class TradeManager:
 
         return {"success": True, "reason": "Trade closed manually"}
 
-
     # ═══════════════════════════════════════════════════
     # ABORT TRADE
     # ═══════════════════════════════════════════════════
@@ -589,14 +522,12 @@ class TradeManager:
             f"Bot is idle — scanning continues"
         )
 
-
     # ═══════════════════════════════════════════════════
-    # PARSE QUANTITIES FROM NOTES
+    # PARSE QUANTITIES
     # ═══════════════════════════════════════════════════
     def _parse_quantities(
         self, trade: Trade
     ) -> tuple:
-        """Returns (qty_tp1, qty_tp2)"""
         try:
             if trade.notes:
                 parts = dict(
@@ -610,12 +541,11 @@ class TradeManager:
                 )
         except Exception:
             pass
-        # Fallback — estimate from position
+
         total = trade.position_size or 0
         price = trade.entry_price or 1
         qty   = total / price
         return round(qty * 0.70, 3), round(qty * 0.30, 3)
-
 
     # ═══════════════════════════════════════════════════
     # TELEGRAM ALERTS
@@ -642,8 +572,8 @@ class TradeManager:
         self, trade, exit_price, pnl, outcome, close_reason
     ):
         emoji     = (
-            "✅" if outcome == "win"   else
-            "❌" if outcome == "loss"  else
+            "✅" if outcome == "win"  else
+            "❌" if outcome == "loss" else
             "⏹"
         )
         pnl_emoji = "📈" if pnl >= 0 else "📉"
@@ -659,7 +589,6 @@ class TradeManager:
             f"Bot idle — scanning for next signal\n"
             f"Type /pnl for full stats"
         )
-
 
 # ── GLOBAL INSTANCE ──
 trade_manager = TradeManager()
