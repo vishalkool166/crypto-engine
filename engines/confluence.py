@@ -15,7 +15,12 @@ def score_confluence(
     factors = []
     total   = 0
     W       = cfg.WEIGHTS
-    price   = market["price"]
+
+    # ── Use d1d price for ATR calculations ──
+    # FIX: was using market["price"] causing
+    # mismatch with d1d ATR values
+    price    = market["price"]
+    d1_price = d1d.get("price") or price
 
     def add(
         key, label, earned,
@@ -53,22 +58,11 @@ def score_confluence(
     )
 
     # ── 2. Retest Confirmation (12) ──
-    # ── INSTITUTIONAL LOGIC ──
-    # HT bear + LT bull retest = price retrace
-    # into supply = perfect short entry
-    # HT bull + LT bear retest = price retrace
-    # into demand = perfect long entry
-    # Opposing TF retest is the ENTRY MECHANISM
-    # not a conflict — do not penalize
-    # Retest quality score handles confidence
-    # confirmed=12 partial=9 pending=5 none=0
     rt_score = min(
         retest.get("score", 0),
         W["retest_confirmation"]
     )
 
-    # Determine if this is an opposing TF retest
-    # purely for labeling — no score impact
     retest_dir = retest.get("trade_dir", "")
     d1_cls     = d1d["trend"]["cls"]
 
@@ -89,7 +83,10 @@ def score_confluence(
             " — " +
             retest.get("desc", "") +
             " · Retracement into " +
-            ("supply" if d1_cls == "bear" else "demand")
+            (
+                "supply" if d1_cls == "bear"
+                else "demand"
+            )
         )
 
     add(
@@ -128,31 +125,51 @@ def score_confluence(
     )
 
     # ── 5. Weekly Filter (10) ──
-    wk_cls     = d1w["trend"]["cls"]
-    d1_cls     = d1d["trend"]["cls"]
+    wk_cls = d1w["trend"]["cls"]
+    d1_cls = d1d["trend"]["cls"]
+
     wk_aligned = (
         (wk_cls == "bull" and d1_cls == "bull") or
         (wk_cls == "bear" and d1_cls == "bear")
     )
     wk_neutral = wk_cls == "neutral"
-    wk_score   = (
+
+    # ══════════════════════════════════════════
+    # FIX — Weekly filter accounts for
+    # missing ema200 on weekly timeframe
+    # If weekly ema200 is null reduce confidence
+    # ══════════════════════════════════════════
+    wk_ema200_missing = d1w.get("ema200") is None
+    wk_score = (
         W["weekly_filter"] if wk_aligned else
         round(W["weekly_filter"] * 0.5)
         if wk_neutral else 0
     )
+
+    # Reduce by 20% if ema200 missing
+    # weekly trend less reliable
+    if wk_ema200_missing and wk_score > 0:
+        wk_score = round(wk_score * 0.8)
+
+    wk_detail = (
+        "Weekly aligned" if wk_aligned else
+        "Weekly neutral" if wk_neutral else
+        "Weekly conflicts"
+    )
+    if wk_ema200_missing:
+        wk_detail += " (EMA200 unavailable — reduced confidence)"
+
     add(
         "weekly_filter",
         "Weekly Filter",
         wk_score,
         W["weekly_filter"],
         wk_score >= 7,
-        "Weekly aligned" if wk_aligned else
-        "Weekly neutral" if wk_neutral else
-        "Weekly conflicts"
+        wk_detail
     )
 
     # ── 6. Market Structure (9) ──
-    sb = d1d["structure"]["struct_bias"]
+    sb         = d1d["structure"]["struct_bias"]
     st_aligned = (
         (sb == "bull" and d1_cls == "bull") or
         (sb == "bear" and d1_cls == "bear")
@@ -187,6 +204,7 @@ def score_confluence(
     # ── 8. BTC Alignment (8) ──
     btc_score  = 0
     btc_detail = ""
+
     if coin == "BTC":
         btc_score = (
             W["btc_alignment"]
@@ -204,26 +222,29 @@ def score_confluence(
         )
     elif btc_data:
         btc_cls = btc_data["trend"]["cls"]
-        ba = (
+        ba      = (
             (d1_cls == "bull" and
              btc_cls == "bull") or
             (d1_cls == "bear" and
              btc_cls == "bear")
         )
         bn      = btc_cls == "neutral"
-        penalty = len(
-            btc_instability.get("warnings", [])
-        ) * 2
+        penalty = (
+            len(btc_instability.get("warnings", []))
+            * 2
+        )
         btc_score = (
             max(0, W["btc_alignment"] - penalty)
             if ba else
-            max(0, 4 - penalty) if bn else 0
+            max(0, 4 - penalty)
+            if bn else 0
         )
         btc_detail = (
             f"BTC {btc_cls} — confirms" if ba else
             "BTC neutral" if bn else
             f"BTC {btc_cls} — conflicts"
         )
+
     add(
         "btc_alignment",
         "BTC Alignment",
@@ -247,24 +268,44 @@ def score_confluence(
         oi_matrix.get("primary_label", "OI unclear")
     )
 
-    # ── 10. Volume Expansion (7) ──
-    vr = (
+    # ══════════════════════════════════════════
+    # FIX — Volume Expansion (7)
+    # Added daily volume fallback
+    # 4H volume alone misses big daily moves
+    # ══════════════════════════════════════════
+    vr_4h = (
         d4h["cur_vol"] / d4h["vol_ma5"]
         if d4h.get("vol_ma5") and
         d4h["vol_ma5"] > 0
         else 0
     )
+    vr_1d = (
+        d1d["cur_vol"] / d1d["vol_ma5"]
+        if d1d.get("vol_ma5") and
+        d1d["vol_ma5"] > 0
+        else 0
+    )
+
+    # Use best of 4H or daily volume
+    vr = max(vr_4h, vr_1d)
+
     v_score = (
         W["volume_expansion"] if vr > 1.5 else
         4 if vr > 0.85 else 0
     )
+
+    v_detail = (
+        f"4H vol {vr_4h*100:.0f}% of MA5 · "
+        f"1D vol {vr_1d*100:.0f}% of MA5"
+    )
+
     add(
         "volume_expansion",
         "Volume Expansion",
         v_score,
         W["volume_expansion"],
         v_score >= 5,
-        f"4H vol {vr*100:.0f}% of MA5"
+        v_detail
     )
 
     # ── 11. Funding Rate (6) ──
@@ -286,10 +327,14 @@ def score_confluence(
     div      = d4h.get("divergence", {})
     div_type = div.get("type", "none")
     div_ok   = (
-        (div_type in ["bullish", "hidden-bull"]
-         and d1_cls == "bull") or
-        (div_type in ["bearish", "hidden-bear"]
-         and d1_cls == "bear")
+        (
+            div_type in ["bullish", "hidden-bull"] and
+            d1_cls == "bull"
+        ) or
+        (
+            div_type in ["bearish", "hidden-bear"] and
+            d1_cls == "bear"
+        )
     )
     add(
         "rsi_divergence",
@@ -300,10 +345,19 @@ def score_confluence(
         f"4H: {div.get('label', 'None')}"
     )
 
-    # ── 13. ATR Volatility (3) ──
+    # ══════════════════════════════════════════
+    # FIX — ATR Volatility (3)
+    # Use d1d price not market tick price
+    # ATR was calculated on d1d candles
+    # so must divide by d1d price
+    # ══════════════════════════════════════════
     atr    = d1d.get("atr") or 0
-    ap     = (atr / price * 100) if price > 0 else 0
+    ap     = (
+        (atr / d1_price * 100)
+        if d1_price > 0 else 0
+    )
     atr_ok = 0.5 < ap < 5
+
     add(
         "atr_volatility",
         "ATR Volatility",
@@ -334,12 +388,16 @@ def score_confluence(
     macd    = d4h.get("macd")
     macd_ok = (
         macd is not None and (
-            (d4h["trend"]["cls"] == "bull" and
-             macd["bullish"] and
-             macd["expanding"]) or
-            (d4h["trend"]["cls"] == "bear" and
-             macd["bearish"] and
-             macd["expanding"])
+            (
+                d4h["trend"]["cls"] == "bull" and
+                macd["bullish"] and
+                macd["expanding"]
+            ) or
+            (
+                d4h["trend"]["cls"] == "bear" and
+                macd["bearish"] and
+                macd["expanding"]
+            )
         )
     )
     add(
@@ -356,7 +414,7 @@ def score_confluence(
         ) if macd else "N/A"
     )
 
-    # ── 16. ORDER BLOCKS (8) ──
+    # ── 16. ORDER BLOCKS (4) ──
     ob_score  = 0
     ob_label  = "No OB detected"
     ob_detail = "No order blocks found"
@@ -373,15 +431,17 @@ def score_confluence(
                 price - fvg_mid
             ) / price * 100
 
-            if fvg["type"] == "bull" and \
-               d4_cls == "bull":
+            if (
+                fvg["type"] == "bull" and
+                d4_cls == "bull"
+            ):
                 if dist_pct < 1.0:
                     ob_score  = 8
                     ob_label  = "✅ In Bull OB Zone"
                     ob_detail = (
                         f"Bull FVG/OB @ "
-                        f"{fvg['bottom']:.2f}"
-                        f"-{fvg['top']:.2f}"
+                        f"{fvg['bottom']:.4f}"
+                        f"-{fvg['top']:.4f}"
                     )
                     break
                 elif dist_pct < 2.5:
@@ -389,18 +449,20 @@ def score_confluence(
                     ob_label  = "⚡ Near Bull OB"
                     ob_detail = (
                         f"Approaching Bull OB "
-                        f"@ {fvg_mid:.2f}"
+                        f"@ {fvg_mid:.4f}"
                     )
 
-            elif fvg["type"] == "bear" and \
-                 d4_cls == "bear":
+            elif (
+                fvg["type"] == "bear" and
+                d4_cls == "bear"
+            ):
                 if dist_pct < 1.0:
                     ob_score  = 8
                     ob_label  = "✅ In Bear OB Zone"
                     ob_detail = (
                         f"Bear FVG/OB @ "
-                        f"{fvg['bottom']:.2f}"
-                        f"-{fvg['top']:.2f}"
+                        f"{fvg['bottom']:.4f}"
+                        f"-{fvg['top']:.4f}"
                     )
                     break
                 elif dist_pct < 2.5:
@@ -408,12 +470,12 @@ def score_confluence(
                     ob_label  = "⚡ Near Bear OB"
                     ob_detail = (
                         f"Approaching Bear OB "
-                        f"@ {fvg_mid:.2f}"
+                        f"@ {fvg_mid:.4f}"
                     )
 
         if ob_score == 0:
-            d1_fvgs  = d1d.get("fvgs", [])
-            d1_cls2  = d1d["trend"]["cls"]
+            d1_fvgs = d1d.get("fvgs", [])
+            d1_cls2 = d1d["trend"]["cls"]
             for fvg in d1_fvgs:
                 fvg_mid  = fvg.get("mid", 0)
                 if not fvg_mid:
@@ -421,24 +483,28 @@ def score_confluence(
                 dist_pct = abs(
                     price - fvg_mid
                 ) / price * 100
-                if fvg["type"] == "bull" and \
-                   d1_cls2 == "bull" and \
-                   dist_pct < 2.0:
+                if (
+                    fvg["type"] == "bull" and
+                    d1_cls2 == "bull" and
+                    dist_pct < 2.0
+                ):
                     ob_score  = 4
                     ob_label  = "📍 1D Bull OB nearby"
                     ob_detail = (
                         f"Daily Bull OB "
-                        f"@ {fvg_mid:.2f}"
+                        f"@ {fvg_mid:.4f}"
                     )
                     break
-                elif fvg["type"] == "bear" and \
-                     d1_cls2 == "bear" and \
-                     dist_pct < 2.0:
+                elif (
+                    fvg["type"] == "bear" and
+                    d1_cls2 == "bear" and
+                    dist_pct < 2.0
+                ):
                     ob_score  = 4
                     ob_label  = "📍 1D Bear OB nearby"
                     ob_detail = (
                         f"Daily Bear OB "
-                        f"@ {fvg_mid:.2f}"
+                        f"@ {fvg_mid:.4f}"
                     )
                     break
 
@@ -447,7 +513,7 @@ def score_confluence(
         ob_label  = "OB detection error"
         ob_detail = str(e)
 
-    ob_max = W.get("order_blocks", 8)
+    ob_max = W.get("order_blocks", 4)
     add(
         "order_blocks",
         "Order Blocks",
@@ -458,8 +524,6 @@ def score_confluence(
     )
 
     # ── NORMALIZE ──
-    # MAX_WEIGHT from config
-    # includes all weights — no double counting
     max_weight = cfg.MAX_WEIGHT
     norm_score = round(
         (total / max_weight) * 100

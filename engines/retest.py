@@ -1,12 +1,13 @@
 import pandas as pd
 
+
 def detect_retest(
-    df:  pd.DataFrame,
-    d4h: dict,
-    sweep: dict,
+    df:           pd.DataFrame,
+    d4h:          dict,
+    sweep:        dict,
     displacement: dict,
-    d1h: dict = None,
-    d1d: dict = None
+    d1h:          dict = None,
+    d1d:          dict = None
 ) -> dict:
 
     price  = float(df["close"].iloc[-1])
@@ -38,12 +39,12 @@ def detect_retest(
 
     # ══════════════════════════════════════════
     # FIX 1 — Collect FVGs from multiple TFs
+    # 4H primary → 1H secondary → 1D tertiary
     # ══════════════════════════════════════════
     MIN_WIDTH_PCT = 0.003  # 0.3% minimum width
 
     all_fvgs = []
 
-    # 4H FVGs — primary
     for fvg in d4h.get("fvgs", []):
         all_fvgs.append({
             **fvg,
@@ -51,7 +52,6 @@ def detect_retest(
             "priority":  1
         })
 
-    # 1H FVGs — secondary
     if d1h:
         for fvg in d1h.get("fvgs", []):
             all_fvgs.append({
@@ -60,7 +60,6 @@ def detect_retest(
                 "priority":  2
             })
 
-    # Daily FVGs — tertiary
     if d1d:
         for fvg in d1d.get("fvgs", []):
             all_fvgs.append({
@@ -72,27 +71,26 @@ def detect_retest(
     # ══════════════════════════════════════════
     # FIX 2 — Find BEST matching FVG
     # Must match direction
-    # Must be minimum width
+    # Must meet minimum width
     # Must be on correct side of price
     # Nearest to price wins
     # ══════════════════════════════════════════
     valid_fvgs = []
+
     for fvg in all_fvgs:
         if fvg["type"] != trade_dir:
             continue
 
         width = (fvg["top"] - fvg["bottom"]) / price
         if width < MIN_WIDTH_PCT:
-            continue  # FIX 1 — too narrow skip
+            continue
 
-        # For SHORT — zone should be ABOVE price
-        # For LONG  — zone should be BELOW price
+        # SHORT — zone must be above price
+        # LONG  — zone must be below price
         if trade_dir == "bear":
-            # Zone must be above or at price
             if fvg["bottom"] < price * 0.97:
                 continue
         if trade_dir == "bull":
-            # Zone must be below or at price
             if fvg["top"] > price * 1.03:
                 continue
 
@@ -103,7 +101,7 @@ def detect_retest(
             "dist":  dist
         })
 
-    # Sort by distance — nearest first
+    # Nearest valid FVG wins
     valid_fvgs.sort(key=lambda x: x["dist"])
     matching_fvg = valid_fvgs[0] if valid_fvgs else None
 
@@ -117,7 +115,9 @@ def detect_retest(
             "bottom": matching_fvg["bottom"],
             "mid":    matching_fvg["mid"]
         }
-        tf        = matching_fvg.get("timeframe", "4h").upper()
+        tf        = matching_fvg.get(
+            "timeframe", "4h"
+        ).upper()
         zone_type = (
             f"{tf} Bullish FVG"
             if trade_dir == "bull"
@@ -126,19 +126,21 @@ def detect_retest(
 
     # ══════════════════════════════════════════
     # FIX 3 — Wider EMA fallback zones
+    # was 0.5% either side
+    # now 1.0% either side
     # ══════════════════════════════════════════
     elif ema20 and abs(price - ema20) / price < 0.04:
         zone = {
-            "top":    ema20 * 1.01,   # was 1.005
-            "bottom": ema20 * 0.99,   # was 0.995
+            "top":    ema20 * 1.01,
+            "bottom": ema20 * 0.99,
             "mid":    ema20
         }
         zone_type = "EMA20 Zone"
 
     elif ema50 and abs(price - ema50) / price < 0.05:
         zone = {
-            "top":    ema50 * 1.01,   # was 1.005
-            "bottom": ema50 * 0.99,   # was 0.995
+            "top":    ema50 * 1.01,
+            "bottom": ema50 * 0.99,
             "mid":    ema50
         }
         zone_type = "EMA50 Zone"
@@ -147,7 +149,9 @@ def detect_retest(
         return {
             "status":    "none",
             "label":     "No retest zone",
-            "desc":      "No valid FVG or EMA zone found",
+            "desc":      (
+                "No valid FVG or EMA zone found"
+            ),
             "score":     0,
             "confirmed": False,
             "failed":    False,
@@ -166,7 +170,7 @@ def detect_retest(
     def failed_retest():
         if trade_dir == "bull":
             entered = any(
-                c["low"] <= zone["top"] and
+                c["low"]  <= zone["top"] and
                 c["high"] >= zone["bottom"]
                 for _, c in recent.iterrows()
             )
@@ -191,7 +195,10 @@ def detect_retest(
         return {
             "status":    "failed",
             "label":     "Failed Retest",
-            "desc":      f"{zone_type} broken — setup invalidated",
+            "desc":      (
+                f"{zone_type} broken "
+                f"— setup invalidated"
+            ),
             "score":     0,
             "confirmed": False,
             "failed":    True,
@@ -210,9 +217,10 @@ def detect_retest(
             br = body / rng
 
             if trade_dir == "bull":
-                lw = min(
-                    c["open"], c["close"]
-                ) - c["low"]
+                lw = (
+                    min(c["open"], c["close"]) -
+                    c["low"]
+                )
                 if (
                     lw / rng > 0.4 and
                     c["close"] > (
@@ -234,8 +242,9 @@ def detect_retest(
                         "desc":     "Bullish engulfing"
                     }
             else:
-                uw = c["high"] - max(
-                    c["open"], c["close"]
+                uw = (
+                    c["high"] -
+                    max(c["open"], c["close"])
                 )
                 if (
                     uw / rng > 0.4 and
@@ -294,7 +303,8 @@ def detect_retest(
             "status":    "partial",
             "label":     "Partial Retest",
             "desc": (
-                f"{zone_type} — rejection present, "
+                f"{zone_type} — "
+                f"rejection present, "
                 f"awaiting volume"
             ),
             "score":     9,
@@ -324,7 +334,9 @@ def detect_retest(
         }
 
     # ══════════════════════════════════════════
-    # FIX 4 — Missed = 0 not 2
+    # FIX 4 — Missed score = 0 not 2
+    # A missed entry should not
+    # contribute to confluence score
     # ══════════════════════════════════════════
 
     # ── ABOVE ZONE — BULL MISSED ──
@@ -333,7 +345,7 @@ def detect_retest(
             "status":    "missed",
             "label":     "Above Zone — Entry Missed",
             "desc":      f"Price above {zone_type}",
-            "score":     0,           # was 2
+            "score":     0,
             "confirmed": False,
             "failed":    False,
             "zone_type": zone_type,
@@ -347,7 +359,7 @@ def detect_retest(
             "status":    "missed",
             "label":     "Below Zone — Entry Missed",
             "desc":      f"Price below {zone_type}",
-            "score":     0,           # was 2
+            "score":     0,
             "confirmed": False,
             "failed":    False,
             "zone_type": zone_type,

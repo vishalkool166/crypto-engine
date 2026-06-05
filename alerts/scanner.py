@@ -29,12 +29,6 @@ def _interpret_oi(market: dict) -> dict:
     pu   = market["change24"] > 0
     oiu  = market["oi_change"] > 1
 
-    # ── FIXED OI LOGIC ──
-    # price up   + OI up   = longs added   = bullish confirm
-    # price down + OI up   = shorts added  = bearish confirm
-    # price up   + OI down = long squeeze  = bullish exhaustion
-    # price down + OI down = short squeeze = bearish exhaustion
-
     bullish_confirm = pu and oiu
     bearish_confirm = (not pu) and oiu
     confirmed       = bullish_confirm or bearish_confirm
@@ -78,7 +72,10 @@ def _interpret_oi(market: dict) -> dict:
     }
 
 
-def _extract_key_levels(d1d_df, d1w_df) -> dict:
+def _extract_key_levels(
+    d1d_df,
+    d1w_df
+) -> dict:
     return {
         "pdh": float(d1d_df.iloc[-2]["high"])
                if len(d1d_df) >= 2 else 0,
@@ -189,32 +186,56 @@ async def _attempt_trade(
     signal: dict,
     coin:   str
 ):
-    if (
-        signal.get("grade") in cfg.MIN_GRADE_TO_TRADE
-        and
-        signal.get("direction") in ["LONG", "SHORT"]
-        and
-        state_manager.is_idle
-    ):
-        log.info(
-            f"Grade {signal['grade']} — "
-            f"attempting trade: {coin}"
-        )
-        await trade_manager.open_trade(
-            signal    = signal,
-            signal_id = signal.get("db_id")
-        )
-        return True
+    grade     = signal.get("grade")
+    direction = signal.get("direction")
+    is_idle   = state_manager.is_idle
 
-    elif signal.get("grade") in ["A+", "A"]:
+    # ── Log every attempt ──
+    log.info(
+        f"_attempt_trade: {coin} "
+        f"grade:{grade} "
+        f"direction:{direction} "
+        f"idle:{is_idle}"
+    )
+
+    # ── Check each gate separately ──
+    grade_ok = grade in cfg.MIN_GRADE_TO_TRADE
+    dir_ok   = direction in ["LONG", "SHORT"]
+
+    if not grade_ok:
         log.info(
-            f"Signal alert only — "
-            f"not executing: {coin} "
-            f"idle:{state_manager.is_idle}"
+            f"Trade blocked — grade {grade} "
+            f"not in {cfg.MIN_GRADE_TO_TRADE}"
         )
         return False
 
-    return False
+    if not dir_ok:
+        log.info(
+            f"Trade blocked — direction "
+            f"{direction} not LONG/SHORT"
+        )
+        return False
+
+    if not is_idle:
+        trade = state_manager.current_trade
+        log.info(
+            f"Trade blocked — already in trade: "
+            f"{trade.coin if trade else 'unknown'}"
+        )
+        return False
+
+    # ── All checks passed ──
+    log.info(
+        f"All gates passed — "
+        f"opening trade: {coin} "
+        f"{direction} Grade:{grade}"
+    )
+
+    await trade_manager.open_trade(
+        signal    = signal,
+        signal_id = signal.get("db_id")
+    )
+    return True
 
 
 # ═══════════════════════════════════════════════════════
@@ -227,7 +248,6 @@ async def analyze_coin(
 ) -> dict:
 
     # ── CHECK CACHE ──
-    # TTL matches scanner interval — 15 minutes
     cached = cache.get(f"signal_{coin}")
     if cached:
         log.debug(f"Cache hit: {coin}")
@@ -244,11 +264,9 @@ async def analyze_coin(
 
     klines      = raw["klines"]
     news_filter = raw["news_filter"]
+    df_15m      = raw.get("klines_15m")
 
-    # ── GET 15M DATA ──
-    df_15m = raw.get("klines_15m")
-
-    # Calculate indicators
+    # ── CALCULATE INDICATORS ──
     d1w = calculate_all(klines["1w"])
     d1d = calculate_all(klines["1d"])
     d4h = calculate_all(klines["4h"])
@@ -286,12 +304,12 @@ async def analyze_coin(
         if btc_data
         else {
             "stable":   False,
-            "warnings": ["BTC data unavailable now"],
+            "warnings": ["BTC data unavailable"],
             "score":    0
         }
     )
 
-    # Market dict
+    # ── MARKET DICT ──
     market = {
         "price":       raw["price"],
         "change24":    raw["change24"],
@@ -309,27 +327,41 @@ async def analyze_coin(
         }
     }
 
-    # Run engines
+    # ── KEY LEVELS ──
     key_levels = _extract_key_levels(
         klines["1d"], klines["1w"]
     )
-    session   = get_session()
-    regime    = detect_regime(d1d, d4h)
-    sweep     = detect_sweep(
-        klines["1d"], key_levels,
+
+    # ── RUN ENGINES ──
+    session = get_session()
+    regime  = detect_regime(d1d, d4h)
+    sweep   = detect_sweep(
+        klines["1d"],
+        key_levels,
         d1d.get("atr", 0),
         d1d["swings"]
     )
-    disp      = detect_displacement(
+    disp    = detect_displacement(
         klines["4h"],
         d4h.get("atr", 0)
     )
-    retest    = detect_retest(
-        klines["4h"], d4h, sweep, disp
+
+    # ══════════════════════════════════════════
+    # FIX — Pass d1h and d1d to detect_retest
+    # enables multi-timeframe FVG detection
+    # ══════════════════════════════════════════
+    retest = detect_retest(
+        klines["4h"],
+        d4h,
+        sweep,
+        disp,
+        d1h = d1h,    # ← added
+        d1d = d1d     # ← added
     )
+
     oi_matrix = _interpret_oi(market)
 
-    # Score confluence
+    # ── SCORE CONFLUENCE ──
     wconf = score_confluence(
         d1w, d1d, d4h, d1h,
         market, key_levels,
@@ -340,7 +372,7 @@ async def analyze_coin(
         coin
     )
 
-    # No trade engine
+    # ── NO TRADE ENGINE ──
     no_trade = run_no_trade_engine(
         regime, d1d, d4h,
         market, session,
@@ -351,7 +383,7 @@ async def analyze_coin(
         wconf["norm_score"]
     )
 
-    # ── GENERATE SIGNAL WITH 15M ──
+    # ── GENERATE SIGNAL ──
     signal = generate_signal(
         d1d, d4h,
         wconf, no_trade,
@@ -360,13 +392,13 @@ async def analyze_coin(
         df_15m = df_15m
     )
 
-    # Attach extra fields
+    # ── ATTACH EXTRA FIELDS ──
     signal["sweep_score"] = sweep.get("score", 0)
     signal["disp_score"]  = disp.get("score", 0)
     signal["funding"]     = raw["funding"]
     signal["coin"]        = coin
 
-    # Save to DB
+    # ── SAVE TO DB ──
     db_id = save_signal_to_db(
         signal  = signal,
         coin    = coin,
@@ -381,7 +413,7 @@ async def analyze_coin(
     if db_id:
         signal["db_id"] = db_id
 
-    # Build result
+    # ── BUILD RESULT ──
     result = {
         "coin":         coin,
         "grade":        signal["grade"],
@@ -404,8 +436,11 @@ async def analyze_coin(
         "news_filter":  news_filter
     }
 
-    # ── CACHE 15 MINUTES — matches scan interval ──
-    cache.set(f"signal_{coin}", result, ttl=900)
+    # ── CACHE 25 MINUTES ──
+    # FIX: was 900s (15m) — same as scan interval
+    # causing cache to always expire on scan
+    # now 1500s (25m) — outlasts scan interval
+    cache.set(f"signal_{coin}", result, ttl=1500)
 
     # ── ATTEMPT TRADE ──
     traded = await _attempt_trade(signal, coin)
@@ -440,7 +475,8 @@ async def scan_all_coins() -> list:
         )
     else:
         log.info(
-            "Scan — bot idle, looking for signals"
+            "Scan — bot idle, "
+            "looking for signals"
         )
 
     # ── TIER 1 ──
@@ -476,13 +512,13 @@ async def scan_all_coins() -> list:
             log.error(f"Scan error {coin}: {e}")
             continue
 
-    # Sort by score
+    # ── SORT BY SCORE ──
     results.sort(
         key=lambda x: x.get("score", 0),
         reverse=True
     )
 
-    # Send summary
+    # ── SEND SUMMARY ──
     await send_scan_summary(results)
 
     log.info(
@@ -522,7 +558,8 @@ def get_db_stats() -> dict:
             by_grade[g] = {
                 "total":    len(g_trades),
                 "wins":     len(g_wins),
-                "losses":   len(g_trades) - len(g_wins),
+                "losses":   len(g_trades) -
+                            len(g_wins),
                 "win_rate": round(
                     len(g_wins) /
                     len(g_trades) * 100, 1
@@ -546,7 +583,10 @@ def get_db_stats() -> dict:
                 len(closed) * 100, 1
             ) if closed else 0,
             "total_pnl": round(
-                sum(s.pnl or 0 for s in closed), 2
+                sum(
+                    s.pnl or 0
+                    for s in closed
+                ), 2
             ),
             "by_grade":  by_grade
         }

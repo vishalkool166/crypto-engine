@@ -1,6 +1,8 @@
 import ccxt
 import logging
 import time
+import json
+import os
 from datetime import datetime
 from config import cfg
 
@@ -52,12 +54,63 @@ TAKER_FEE = 0.0006  # 0.06%
 
 # ═══════════════════════════════════════════════════════
 # PAPER ORDER STORE
+# ══════════════════════════════════════════════════════
+# FIX — Persistent storage
+# Orders saved to disk on every change
+# Survives app restarts
+# This was the root cause of
+# TP1/TP2 not executing after restart
 # ═══════════════════════════════════════════════════════
 class PaperOrderStore:
+
+    STORE_FILE = "database/paper_orders.json"
 
     def __init__(self):
         self._orders  = {}
         self._counter = 1000
+        self._load()
+
+    # ── LOAD FROM DISK ON STARTUP ──
+    def _load(self):
+        try:
+            if os.path.exists(self.STORE_FILE):
+                with open(self.STORE_FILE, "r") as f:
+                    data = json.load(f)
+                    self._orders  = data.get(
+                        "orders", {}
+                    )
+                    self._counter = data.get(
+                        "counter", 1000
+                    )
+                log.info(
+                    f"Paper orders loaded: "
+                    f"{len(self._orders)} orders"
+                )
+            else:
+                log.info(
+                    "No paper orders file found "
+                    "— starting fresh"
+                )
+        except Exception as e:
+            log.error(f"Paper store load error: {e}")
+            self._orders  = {}
+            self._counter = 1000
+
+    # ── SAVE TO DISK AFTER EVERY CHANGE ──
+    def _save(self):
+        try:
+            os.makedirs("database", exist_ok=True)
+            with open(self.STORE_FILE, "w") as f:
+                json.dump(
+                    {
+                        "orders":  self._orders,
+                        "counter": self._counter
+                    },
+                    f,
+                    indent=2
+                )
+        except Exception as e:
+            log.error(f"Paper store save error: {e}")
 
     def create_order(
         self,
@@ -69,7 +122,7 @@ class PaperOrderStore:
         stop_price: float = None,
         label:      str   = ""
     ) -> dict:
-        order_id = str(self._counter)
+        order_id      = str(self._counter)
         self._counter += 1
 
         order = {
@@ -88,6 +141,7 @@ class PaperOrderStore:
         }
 
         self._orders[order_id] = order
+        self._save()  # ← persist immediately
 
         log.info(
             f"[PAPER] Order created: "
@@ -99,12 +153,13 @@ class PaperOrderStore:
         return order
 
     def get_order(self, order_id: str) -> dict:
-        return self._orders.get(order_id)
+        return self._orders.get(str(order_id))
 
     def cancel_order(self, order_id: str) -> bool:
-        order = self._orders.get(order_id)
+        order = self._orders.get(str(order_id))
         if order:
             order["status"] = "cancelled"
+            self._save()  # ← persist immediately
             log.info(
                 f"[PAPER] Order cancelled: {order_id}"
             )
@@ -116,11 +171,12 @@ class PaperOrderStore:
         order_id:   str,
         fill_price: float
     ) -> bool:
-        order = self._orders.get(order_id)
+        order = self._orders.get(str(order_id))
         if order and order["status"] == "open":
             order["status"]  = "closed"
             order["filled"]  = order["quantity"]
             order["average"] = fill_price
+            self._save()  # ← persist immediately
             log.info(
                 f"[PAPER] Order filled: "
                 f"{order_id} @ {fill_price}"
@@ -133,7 +189,7 @@ class PaperOrderStore:
         order_id:      str,
         current_price: float
     ) -> bool:
-        order = self._orders.get(order_id)
+        order = self._orders.get(str(order_id))
         if not order or order["status"] != "open":
             return False
 
@@ -162,6 +218,9 @@ class PaperOrderStore:
             o for o in self._orders.values()
             if o["status"] == "open"
         ]
+
+    def get_all(self) -> list:
+        return list(self._orders.values())
 
 
 # ── GLOBAL PAPER STORE ──
@@ -232,7 +291,6 @@ def set_leverage(coin: str, leverage: int) -> bool:
 # ═══════════════════════════════════════════════════════
 # PLACE MARKET ORDER — paper mode
 # fills immediately at current price
-# deducts entry fee
 # ═══════════════════════════════════════════════════════
 def place_market_order(
     coin:      str,
@@ -248,9 +306,9 @@ def place_market_order(
         )
         return None
 
-    # Calculate and log entry fee
     notional  = quantity * current
     entry_fee = notional * TAKER_FEE
+
     log.info(
         f"[PAPER] Entry fee: "
         f"${entry_fee:.4f} "
@@ -267,8 +325,6 @@ def place_market_order(
     )
 
     paper_store.fill_order(order["id"], current)
-
-    # Store fee on order for P&L calculation
     order["fee"] = entry_fee
 
     log.info(
@@ -289,7 +345,7 @@ def place_sl_order(
     quantity:  float,
     sl_price:  float
 ) -> dict:
-    side  = "sell" if direction == "LONG" else "buy"
+    side = "sell" if direction == "LONG" else "buy"
 
     order = paper_store.create_order(
         coin       = coin,
@@ -342,8 +398,11 @@ def place_tp_order(
 # ═══════════════════════════════════════════════════════
 # CANCEL ORDER — paper mode
 # ═══════════════════════════════════════════════════════
-def cancel_order(coin: str, order_id: str) -> bool:
-    result = paper_store.cancel_order(order_id)
+def cancel_order(
+    coin:     str,
+    order_id: str
+) -> bool:
+    result = paper_store.cancel_order(str(order_id))
     if result:
         log.info(
             f"[PAPER] Order cancelled: "
@@ -360,9 +419,14 @@ def get_order_status(
     coin:     str,
     order_id: str
 ) -> dict:
-    order = paper_store.get_order(order_id)
+    # ── FIX: always cast to string ──
+    order = paper_store.get_order(str(order_id))
 
     if not order:
+        log.warning(
+            f"[PAPER] Order not found: "
+            f"{order_id} — may have been lost on restart"
+        )
         return None
 
     # Already closed
@@ -394,17 +458,17 @@ def get_order_status(
         }
 
     triggered = paper_store.check_trigger(
-        order_id, current
+        str(order_id), current
     )
 
     if triggered:
         fill_price = order["stop_price"]
+        notional   = order["quantity"] * fill_price
+        exit_fee   = notional * TAKER_FEE
 
-        # Calculate exit fee
-        notional = order["quantity"] * fill_price
-        exit_fee = notional * TAKER_FEE
-
-        paper_store.fill_order(order_id, fill_price)
+        paper_store.fill_order(
+            str(order_id), fill_price
+        )
         order["fee"] = exit_fee
 
         log.info(
@@ -437,7 +501,9 @@ def get_order_status(
 # ═══════════════════════════════════════════════════════
 def get_current_price(coin: str) -> float:
     result = with_retry(
-        lambda: exchange.fetch_ticker(f"{coin}/USDT")
+        lambda: exchange.fetch_ticker(
+            f"{coin}/USDT"
+        )
     )
     if result:
         return float(result["last"])
@@ -462,7 +528,6 @@ def close_position_market(
         )
         return None
 
-    # Calculate exit fee
     notional = quantity * current
     exit_fee = notional * TAKER_FEE
 
@@ -547,8 +612,10 @@ def calculate_quantity(
 # ═══════════════════════════════════════════════════════
 def get_paper_status() -> dict:
     open_orders = paper_store.get_all_open()
+    all_orders  = paper_store.get_all()
     return {
         "mode":        "PAPER",
         "open_orders": len(open_orders),
+        "total_orders": len(all_orders),
         "orders":      open_orders
     }

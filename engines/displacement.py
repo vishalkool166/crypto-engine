@@ -1,16 +1,24 @@
 import pandas as pd
 
-def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
+
+def detect_displacement(
+    df:  pd.DataFrame,
+    atr: float
+) -> dict:
+
     if not atr or len(df) < 10:
         return {
             "confirmed": False,
             "score":     0,
             "label":     "No displacement",
+            "desc":      "Not enough data",
             "items":     []
         }
 
     recent = df.tail(8)
-    vol_ma = float(df["volume"].rolling(10).mean().iloc[-1]) or 1
+    vol_ma = float(
+        df["volume"].rolling(10).mean().iloc[-1]
+    ) or 1
     disps  = []
 
     for i in range(1, len(recent)):
@@ -19,17 +27,20 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
         body = abs(c["close"] - c["open"])
         rng  = c["high"] - c["low"]
         bull = c["close"] > c["open"]
+
         if rng == 0:
             continue
 
-        re  = rng > atr * 1.5
-        sb  = body / rng > 0.6
-        bp  = (
+        re = rng > atr * 1.5
+        sb = body / rng > 0.6
+        bp = (
             c["close"] > prev["high"] if bull
             else c["close"] < prev["low"]
         )
-        vs  = c["volume"] / vol_ma
-        vc  = vs > 1.2
+        vs = c["volume"] / vol_ma
+
+        # ── FIX: vol_confirm always bool ──
+        vc = bool(vs > 1.2)
 
         if re and sb and bp:
             disps.append({
@@ -47,6 +58,7 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
                 ),
                 "score": 11 if vc else 8
             })
+
         elif rng > atr * 1.2 and body / rng > 0.5:
             disps.append({
                 "direction":   "bull" if bull else "bear",
@@ -63,6 +75,7 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
                 ),
                 "score": 7
             })
+
         elif rng > atr * 0.8 and body / rng > 0.4:
             disps.append({
                 "direction":   "bull" if bull else "bear",
@@ -99,8 +112,6 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
     latest = disps[-1]
 
     # ── DIRECTION CONSENSUS ──
-    # Count bull vs bear displacements
-    # Majority direction wins
     bull_disps = [
         d for d in disps
         if d["direction"] == "bull"
@@ -115,14 +126,9 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
     elif len(bear_disps) > len(bull_disps):
         consensus_dir = "bear"
     else:
-        # Tie — use best score direction
         consensus_dir = best["direction"]
 
     # ── CONSENSUS LABEL ──
-    # FIXED — use consensus direction for label
-    # not best candle label
-    # this prevents "Bullish Displacement" showing
-    # on a SHORT signal when consensus is bear
     if consensus_dir == "bull":
         if best["moderate"] and not best["weak"]:
             consensus_label = "Moderate Bull Move"
@@ -141,33 +147,45 @@ def detect_displacement(df: pd.DataFrame, atr: float) -> dict:
     # ── RECENCY BONUS/PENALTY ──
     final_score = best["score"]
 
-    # Latest agrees with consensus — small bonus
     if latest["direction"] == consensus_dir:
         final_score = min(11, final_score + 1)
 
-    # Latest conflicts with consensus strongly
-    # recent move is fighting the dominant direction
     if (
         latest["direction"] != consensus_dir and
         latest["score"] >= best["score"] * 0.8
     ):
         final_score = max(0, final_score - 2)
 
+    # ══════════════════════════════════════════
+    # FIX — vol_confirm on best and latest
+    # always bool not string
+    # ══════════════════════════════════════════
     return {
         "confirmed":   True,
         "strong":      not best["moderate"],
-        "moderate":    best["moderate"] and not best["weak"],
+        "moderate": (
+            best["moderate"] and not best["weak"]
+        ),
         "weak":        best.get("weak", False),
         "type":        consensus_dir,
         "label":       consensus_label,
         "range_mult":  best["range_mult"],
         "body_pct":    best["body_pct"],
         "vol_spike":   best["vol_spike"],
-        "vol_confirm": best["vol_confirm"],
+        "vol_confirm": bool(best["vol_confirm"]),
         "score":       final_score,
-        "latest":      latest,
-        "best":        best,
-        "items":       disps,
+        "latest": {
+            **latest,
+            "vol_confirm": bool(latest["vol_confirm"])
+        },
+        "best": {
+            **best,
+            "vol_confirm": bool(best["vol_confirm"])
+        },
+        "items": [
+            {**d, "vol_confirm": bool(d["vol_confirm"])}
+            for d in disps
+        ],
         "desc": (
             f"Range {best['range_mult']}x ATR · "
             f"Body {best['body_pct']}% · "

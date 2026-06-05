@@ -1,6 +1,9 @@
 import logging
 from datetime import datetime
-from database import SessionLocal, Trade, Signal as SignalModel
+from database import (
+    SessionLocal, Trade,
+    Signal as SignalModel
+)
 from trade.state import state_manager, TradeState
 from trade.risk import risk_guard
 from trade.orders import (
@@ -8,13 +11,15 @@ from trade.orders import (
     place_sl_order, place_tp_order,
     cancel_order, get_order_status,
     get_current_price, close_position_market,
-    calculate_quantity)
+    calculate_quantity
+)
 from alerts.telegram import send
 from config import cfg
 
 log = logging.getLogger(__name__)
 
 TAKER_FEE = 0.0006
+
 
 class TradeManager:
 
@@ -26,28 +31,68 @@ class TradeManager:
         signal:    dict,
         signal_id: int = None
     ) -> dict:
+
+        log.info(
+            f"open_trade called: "
+            f"{signal.get('coin')} "
+            f"{signal.get('direction')} "
+            f"Grade:{signal.get('grade')} "
+            f"Score:{signal.get('score')}"
+        )
+
         if not state_manager.is_idle:
+            trade = state_manager.current_trade
             log.info(
-                f"Signal ignored — already in trade: "
-                f"{state_manager.current_trade.coin}"
+                f"Already in trade: "
+                f"{trade.coin if trade else 'unknown'}"
+                f" — signal ignored"
             )
-            return {"success": False, "reason": "Already in trade"}
+            return {
+                "success": False,
+                "reason":  "Already in trade"
+            }
 
         daily = state_manager.can_trade_today()
         if not daily["allowed"]:
-            log.warning(f"Daily cap: {daily['reason']}")
-            await send(f"🚫 *Daily Cap*\n{daily['reason']}")
-            return {"success": False, "reason": daily["reason"]}
+            log.warning(
+                f"Daily cap blocked: "
+                f"{daily['reason']}"
+            )
+            await send(
+                f"🚫 *Daily Cap*\n{daily['reason']}"
+            )
+            return {
+                "success": False,
+                "reason":  daily["reason"]
+            }
 
         check = risk_guard.pre_trade_check(signal)
         if not check["allowed"]:
             reasons = "\n".join(check["reasons"])
-            log.warning(f"Pre trade check failed:\n{reasons}")
-            return {"success": False, "reason": reasons}
+            log.warning(
+                f"Pre trade check FAILED:\n{reasons}"
+            )
+            await send(
+                f"⚠️ *Trade Blocked*\n\n"
+                f"Coin: `{signal.get('coin')}`\n"
+                f"Grade: `{signal.get('grade')}`\n\n"
+                f"Reason:\n`{reasons}`"
+            )
+            return {
+                "success": False,
+                "reason":  reasons
+            }
 
         sizing    = check["sizing"]
         coin      = signal["coin"]
         direction = signal["direction"]
+
+        log.info(
+            f"Sizing approved: "
+            f"risk:${sizing['risk_amt']} "
+            f"pos:${sizing['pos_size']} "
+            f"margin:${sizing['margin']}"
+        )
 
         set_leverage(coin, cfg.LEVERAGE)
 
@@ -58,7 +103,15 @@ class TradeManager:
         )
 
         if quantity <= 0:
-            return {"success": False, "reason": "Quantity calculation failed"}
+            await send(
+                f"⚠️ *Trade Blocked*\n\n"
+                f"Coin: `{coin}`\n"
+                f"Reason: `Quantity calculation failed`"
+            )
+            return {
+                "success": False,
+                "reason":  "Quantity calculation failed"
+            }
 
         db = SessionLocal()
         try:
@@ -77,7 +130,9 @@ class TradeManager:
                 margin_used   = sizing["margin"],
                 leverage      = cfg.LEVERAGE,
                 risk_amt      = sizing["risk_amt"],
-                trade_date    = str(datetime.utcnow().date())
+                trade_date    = str(
+                    datetime.utcnow().date()
+                )
             )
             db.add(trade)
             db.commit()
@@ -94,8 +149,14 @@ class TradeManager:
         )
 
         if not entry_order:
-            await self._abort_trade(trade, "Entry order failed")
-            return {"success": False, "reason": "Entry order failed"}
+            await self._abort_trade(
+                trade,
+                "Entry order failed"
+            )
+            return {
+                "success": False,
+                "reason":  "Entry order failed"
+            }
 
         sl_order = place_sl_order(
             coin      = coin,
@@ -105,9 +166,17 @@ class TradeManager:
         )
 
         if not sl_order:
-            close_position_market(coin, direction, quantity)
-            await self._abort_trade(trade, "SL order failed — position closed")
-            return {"success": False, "reason": "SL order failed"}
+            close_position_market(
+                coin, direction, quantity
+            )
+            await self._abort_trade(
+                trade,
+                "SL order failed — position closed"
+            )
+            return {
+                "success": False,
+                "reason":  "SL order failed"
+            }
 
         tp1_qty   = round(quantity * 0.70, 3)
         tp1_order = place_tp_order(
@@ -129,7 +198,9 @@ class TradeManager:
 
         db = SessionLocal()
         try:
-            t = db.query(Trade).filter(Trade.id == trade.id).first()
+            t = db.query(Trade).filter(
+                Trade.id == trade.id
+            ).first()
             t.entry_order_id = str(entry_order["id"])
             t.sl_order_id    = str(sl_order["id"])
             if tp1_order:
@@ -142,6 +213,8 @@ class TradeManager:
                 f"qty_tp2:{tp2_qty}"
             )
             db.commit()
+
+            # ── Read back all values ──
             trade.entry_order_id = t.entry_order_id
             trade.sl_order_id    = t.sl_order_id
             trade.tp1_order_id   = t.tp1_order_id
@@ -153,11 +226,17 @@ class TradeManager:
         state_manager.set_in_trade(trade)
         state_manager.record_trade_open()
 
-        await self._send_entry_alert(trade, signal, sizing)
+        await self._send_entry_alert(
+            trade, signal, sizing
+        )
 
         log.info(
             f"Trade opened: {coin} {direction} "
-            f"@ {signal['entry']} Grade:{signal['grade']}"
+            f"@ {signal['entry']} "
+            f"Grade:{signal['grade']} "
+            f"SL:{signal['sl']} "
+            f"TP1:{signal['tp1']} "
+            f"TP2:{signal['tp2']}"
         )
 
         return {
@@ -175,28 +254,52 @@ class TradeManager:
             return
 
         trade_id = state_manager.current_trade.id
-        db       = SessionLocal()
+
+        # ══════════════════════════════════════════
+        # FIX — Read ALL values before closing
+        # DB session to prevent detached instance
+        # errors and None order IDs
+        # ══════════════════════════════════════════
+        db = SessionLocal()
         try:
             trade = db.query(Trade).filter(
                 Trade.id == trade_id
             ).first()
+
+            if not trade or not trade.is_active:
+                state_manager.set_idle()
+                return
+
+            # Read all values while session open
+            t_id           = trade.id
+            t_coin         = trade.coin
+            t_direction    = trade.direction
+            t_entry_price  = trade.entry_price
+            t_sl_price     = trade.sl_price
+            t_tp1_price    = trade.tp1_price
+            t_tp2_price    = trade.tp2_price
+            t_position_size = trade.position_size
+            t_sl_order_id  = trade.sl_order_id
+            t_tp1_order_id = trade.tp1_order_id
+            t_tp2_order_id = trade.tp2_order_id
+            t_notes        = trade.notes
+
         finally:
             db.close()
 
-        if not trade or not trade.is_active:
-            state_manager.set_idle()
-            return
-
-        current_price = get_current_price(trade.coin)
+        # ── Get current price ──
+        current_price = get_current_price(t_coin)
         if not current_price:
-            log.warning(f"Could not get price: {trade.coin}")
+            log.warning(
+                f"Could not get price: {t_coin}"
+            )
             return
 
-        # Update current price in DB
+        # ── Update current price in DB ──
         db = SessionLocal()
         try:
             t = db.query(Trade).filter(
-                Trade.id == trade.id
+                Trade.id == t_id
             ).first()
             if t:
                 t.current_price = current_price
@@ -204,33 +307,70 @@ class TradeManager:
         finally:
             db.close()
 
-        tp1_already_hit = self._is_tp1_already_hit(trade)
+        # ── TP1 hit check using local values ──
+        tp1_already_hit = (
+            abs(t_sl_price - t_entry_price) /
+            t_entry_price < 0.001
+            if t_sl_price and t_entry_price
+            else False
+        )
 
-        # ── DETAILED LOGGING ──
+        # ── Detailed logging ──
         log.info(
-            f"MONITOR [{trade.coin}] "
+            f"MONITOR [{t_coin}] "
             f"phase:{'2-RF' if tp1_already_hit else '1'} "
             f"current:{current_price} "
-            f"entry:{trade.entry_price} "
-            f"sl:{trade.sl_price} "
-            f"tp1:{trade.tp1_price} "
-            f"tp2:{trade.tp2_price} "
-            f"sl_id:{trade.sl_order_id} "
-            f"tp1_id:{trade.tp1_order_id} "
-            f"tp2_id:{trade.tp2_order_id}"
+            f"entry:{t_entry_price} "
+            f"sl:{t_sl_price} "
+            f"tp1:{t_tp1_price} "
+            f"tp2:{t_tp2_price} "
+            f"sl_id:{t_sl_order_id} "
+            f"tp1_id:{t_tp1_order_id} "
+            f"tp2_id:{t_tp2_order_id}"
         )
+
+        # ── Warn if order IDs missing ──
+        if not t_sl_order_id:
+            log.warning(
+                f"SL order ID missing for "
+                f"{t_coin} — trade unprotected!"
+            )
+        if not t_tp1_order_id and not tp1_already_hit:
+            log.warning(
+                f"TP1 order ID missing for {t_coin}"
+            )
+
+        # ── Need trade object for close methods ──
+        # Reload fresh for passing to close methods
+        db = SessionLocal()
+        try:
+            trade_obj = db.query(Trade).filter(
+                Trade.id == t_id
+            ).first()
+        finally:
+            db.close()
 
         if not tp1_already_hit:
             # ── PHASE 1 ──
-            if trade.sl_order_id:
+
+            if t_sl_order_id:
                 sl_status = get_order_status(
-                    trade.coin, trade.sl_order_id
+                    t_coin,
+                    str(t_sl_order_id)
                 )
-                log.info(f"SL status: {sl_status}")
-                if sl_status and sl_status["status"] == "closed":
-                    log.info(f"SL hit: {trade.coin}")
+                log.info(
+                    f"SL status: {sl_status}"
+                )
+                if (
+                    sl_status and
+                    sl_status["status"] == "closed"
+                ):
+                    log.info(
+                        f"SL hit: {t_coin} "
+                        f"@ {current_price}"
+                    )
                     await self._close_trade(
-                        trade        = trade,
+                        trade        = trade_obj,
                         exit_price   = current_price,
                         outcome      = "loss",
                         close_reason = "SL",
@@ -238,45 +378,74 @@ class TradeManager:
                     )
                     return
 
-            if trade.tp1_order_id:
+            if t_tp1_order_id:
                 tp1_status = get_order_status(
-                    trade.coin, trade.tp1_order_id
+                    t_coin,
+                    str(t_tp1_order_id)
                 )
-                log.info(f"TP1 status: {tp1_status}")
-                if tp1_status and tp1_status["status"] == "closed":
-                    log.info(f"TP1 hit: {trade.coin}")
+                log.info(
+                    f"TP1 status: {tp1_status}"
+                )
+                if (
+                    tp1_status and
+                    tp1_status["status"] == "closed"
+                ):
+                    log.info(
+                        f"TP1 hit: {t_coin} "
+                        f"@ {current_price}"
+                    )
                     await self._handle_tp1_hit(
-                        trade, current_price
+                        trade_obj,
+                        current_price
                     )
                     return
 
         else:
-            # ── PHASE 2 ──
-            if trade.sl_order_id:
+            # ── PHASE 2 — Risk Free ──
+
+            if t_sl_order_id:
                 sl_status = get_order_status(
-                    trade.coin, trade.sl_order_id
+                    t_coin,
+                    str(t_sl_order_id)
                 )
-                log.info(f"BE SL status: {sl_status}")
-                if sl_status and sl_status["status"] == "closed":
-                    log.info(f"BE SL hit: {trade.coin}")
+                log.info(
+                    f"BE SL status: {sl_status}"
+                )
+                if (
+                    sl_status and
+                    sl_status["status"] == "closed"
+                ):
+                    log.info(
+                        f"BE SL hit: {t_coin} "
+                        f"— closing at breakeven"
+                    )
                     await self._close_trade(
-                        trade        = trade,
-                        exit_price   = trade.entry_price,
+                        trade        = trade_obj,
+                        exit_price   = t_entry_price,
                         outcome      = "win",
                         close_reason = "TP1 + BE",
                         phase        = 2
                     )
                     return
 
-            if trade.tp2_order_id:
+            if t_tp2_order_id:
                 tp2_status = get_order_status(
-                    trade.coin, trade.tp2_order_id
+                    t_coin,
+                    str(t_tp2_order_id)
                 )
-                log.info(f"TP2 status: {tp2_status}")
-                if tp2_status and tp2_status["status"] == "closed":
-                    log.info(f"TP2 hit: {trade.coin}")
+                log.info(
+                    f"TP2 status: {tp2_status}"
+                )
+                if (
+                    tp2_status and
+                    tp2_status["status"] == "closed"
+                ):
+                    log.info(
+                        f"TP2 hit: {t_coin} "
+                        f"@ {current_price}"
+                    )
                     await self._close_trade(
-                        trade        = trade,
+                        trade        = trade_obj,
                         exit_price   = current_price,
                         outcome      = "win",
                         close_reason = "TP2",
@@ -287,11 +456,16 @@ class TradeManager:
     # ═══════════════════════════════════════════════════
     # IS TP1 ALREADY HIT
     # ═══════════════════════════════════════════════════
-    def _is_tp1_already_hit(self, trade: Trade) -> bool:
+    def _is_tp1_already_hit(
+        self,
+        trade: Trade
+    ) -> bool:
         if not trade.sl_price or not trade.entry_price:
             return False
-        return abs(trade.sl_price - trade.entry_price) \
-               / trade.entry_price < 0.001
+        return (
+            abs(trade.sl_price - trade.entry_price) /
+            trade.entry_price < 0.001
+        )
 
     # ═══════════════════════════════════════════════════
     # HANDLE TP1 HIT
@@ -301,10 +475,15 @@ class TradeManager:
         trade:         Trade,
         current_price: float
     ):
-        qty_tp1, qty_tp2 = self._parse_quantities(trade)
+        qty_tp1, qty_tp2 = self._parse_quantities(
+            trade
+        )
 
         if trade.sl_order_id:
-            cancel_order(trade.coin, trade.sl_order_id)
+            cancel_order(
+                trade.coin,
+                str(trade.sl_order_id)
+            )
 
         new_sl = place_sl_order(
             coin      = trade.coin,
@@ -339,7 +518,9 @@ class TradeManager:
                 (trade.position_size * 0.70)
             )
 
-        fee     = (trade.position_size * 0.70) * TAKER_FEE * 2
+        fee     = (
+            trade.position_size * 0.70
+        ) * TAKER_FEE * 2
         tp1_pnl = round(tp1_pnl - fee, 4)
 
         state_manager.record_partial_pnl(tp1_pnl)
@@ -428,11 +609,13 @@ class TradeManager:
         state_manager.set_idle()
 
         await self._send_close_alert(
-            trade, exit_price, pnl, outcome, close_reason
+            trade, exit_price, pnl,
+            outcome, close_reason
         )
 
         log.info(
-            f"Trade closed: {trade.coin} {outcome} "
+            f"Trade closed: {trade.coin} "
+            f"{outcome} "
             f"phase:{phase} "
             f"PnL:${pnl} "
             f"Reason:{close_reason}"
@@ -443,7 +626,10 @@ class TradeManager:
     # ═══════════════════════════════════════════════════
     async def manual_close(self) -> dict:
         if state_manager.is_idle:
-            return {"success": False, "reason": "No active trade"}
+            return {
+                "success": False,
+                "reason":  "No active trade"
+            }
 
         trade_id = state_manager.current_trade.id
         db       = SessionLocal()
@@ -455,7 +641,10 @@ class TradeManager:
             db.close()
 
         if not trade:
-            return {"success": False, "reason": "Trade not found"}
+            return {
+                "success": False,
+                "reason":  "Trade not found"
+            }
 
         for oid in [
             trade.sl_order_id,
@@ -463,14 +652,18 @@ class TradeManager:
             trade.tp2_order_id
         ]:
             if oid:
-                cancel_order(trade.coin, oid)
+                cancel_order(trade.coin, str(oid))
 
         tp1_hit    = self._is_tp1_already_hit(trade)
         _, qty_tp2 = self._parse_quantities(trade)
 
         qty = calculate_quantity(
             coin     = trade.coin,
-            pos_size = trade.position_size * (0.30 if tp1_hit else 1.0),
+            pos_size = (
+                trade.position_size * 0.30
+                if tp1_hit
+                else trade.position_size
+            ),
             price    = trade.entry_price
         )
 
@@ -481,7 +674,10 @@ class TradeManager:
         )
 
         if not close_order:
-            return {"success": False, "reason": "Close order failed"}
+            return {
+                "success": False,
+                "reason":  "Close order failed"
+            }
 
         current_price = get_current_price(trade.coin)
         phase         = 2 if tp1_hit else 1
@@ -494,12 +690,19 @@ class TradeManager:
             phase        = phase
         )
 
-        return {"success": True, "reason": "Trade closed manually"}
+        return {
+            "success": True,
+            "reason":  "Trade closed manually"
+        }
 
     # ═══════════════════════════════════════════════════
     # ABORT TRADE
     # ═══════════════════════════════════════════════════
-    async def _abort_trade(self, trade: Trade, reason: str):
+    async def _abort_trade(
+        self,
+        trade:  Trade,
+        reason: str
+    ):
         db = SessionLocal()
         try:
             t = db.query(Trade).filter(
@@ -526,7 +729,8 @@ class TradeManager:
     # PARSE QUANTITIES
     # ═══════════════════════════════════════════════════
     def _parse_quantities(
-        self, trade: Trade
+        self,
+        trade: Trade
     ) -> tuple:
         try:
             if trade.notes:
@@ -545,17 +749,45 @@ class TradeManager:
         total = trade.position_size or 0
         price = trade.entry_price or 1
         qty   = total / price
-        return round(qty * 0.70, 3), round(qty * 0.30, 3)
+        return (
+            round(qty * 0.70, 3),
+            round(qty * 0.30, 3)
+        )
 
     # ═══════════════════════════════════════════════════
     # TELEGRAM ALERTS
     # ═══════════════════════════════════════════════════
-    async def _send_entry_alert(self, trade, signal, sizing):
-        emoji     = "🏆" if trade.grade == "A+" else "✅"
-        dir_emoji = "📈" if trade.direction == "LONG" else "📉"
+    async def _send_entry_alert(
+        self,
+        trade,
+        signal,
+        sizing
+    ):
+        emoji     = (
+            "🏆" if trade.grade == "A+"
+            else "✅"
+        )
+        dir_emoji = (
+            "📈" if trade.direction == "LONG"
+            else "📉"
+        )
+
+        tv_4h = (
+            f"https://www.tradingview.com/chart/"
+            f"?symbol=BINANCE:{trade.coin}USDT"
+            f"&interval=240"
+        )
+        tv_1d = (
+            f"https://www.tradingview.com/chart/"
+            f"?symbol=BINANCE:{trade.coin}USDT"
+            f"&interval=D"
+        )
+
         await send(
-            f"{emoji} *Grade {trade.grade} — TRADE OPENED*\n\n"
-            f"{dir_emoji} *{trade.coin}USDT {trade.direction}*\n"
+            f"{emoji} *Grade {trade.grade} "
+            f"— TRADE OPENED*\n\n"
+            f"{dir_emoji} "
+            f"*{trade.coin}USDT {trade.direction}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Entry:  `{trade.entry_price}`\n"
             f"SL:     `{trade.sl_price}`\n"
@@ -565,18 +797,32 @@ class TradeManager:
             f"Risk:   `${sizing['risk_amt']}`\n"
             f"Size:   `${sizing['pos_size']}`\n"
             f"Lev:    `{cfg.LEVERAGE}x`\n\n"
+            f"📊 [4H Chart]({tv_4h})\n"
+            f"📅 [Daily Chart]({tv_1d})\n\n"
             f"Type /status to monitor"
         )
 
     async def _send_close_alert(
-        self, trade, exit_price, pnl, outcome, close_reason
+        self,
+        trade,
+        exit_price,
+        pnl,
+        outcome,
+        close_reason
     ):
-        emoji     = (
+        emoji = (
             "✅" if outcome == "win"  else
             "❌" if outcome == "loss" else
             "⏹"
         )
         pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+        tv_4h = (
+            f"https://www.tradingview.com/chart/"
+            f"?symbol=BINANCE:{trade.coin}USDT"
+            f"&interval=240"
+        )
+
         await send(
             f"{emoji} *Trade Closed — {close_reason}*\n\n"
             f"*{trade.coin}USDT {trade.direction}*\n"
@@ -586,9 +832,11 @@ class TradeManager:
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{pnl_emoji} PnL:    `${pnl}`\n"
             f"Outcome: `{outcome.upper()}`\n\n"
+            f"📊 [4H Chart]({tv_4h})\n\n"
             f"Bot idle — scanning for next signal\n"
             f"Type /pnl for full stats"
         )
+
 
 # ── GLOBAL INSTANCE ──
 trade_manager = TradeManager()

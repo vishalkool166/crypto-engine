@@ -126,11 +126,6 @@ def check_15m_entry(
     direction: str,
     atr_4h:    float
 ) -> dict:
-    """
-    Checks 15m chart for entry confirmation.
-    Reduced penalty for no confirmation — 
-    15m data is often noisy or unavailable.
-    """
 
     if df_15m is None or len(df_15m) < 20:
         return {
@@ -195,8 +190,9 @@ def check_15m_entry(
         # Pin bar / hammer
         elif (
             last_range > 0 and
-            (min(last_open, last_close) - last_low)
-            / last_range > 0.45 and
+            (
+                min(last_open, last_close) - last_low
+            ) / last_range > 0.45 and
             last_close > (last_high + last_low) / 2
         ):
             pattern       = "Hammer / Pin Bar"
@@ -236,8 +232,9 @@ def check_15m_entry(
         # Shooting star
         elif (
             last_range > 0 and
-            (last_high - max(last_open, last_close))
-            / last_range > 0.45 and
+            (
+                last_high - max(last_open, last_close)
+            ) / last_range > 0.45 and
             last_close < (last_high + last_low) / 2
         ):
             pattern       = "Shooting Star"
@@ -403,28 +400,58 @@ def run_no_trade_engine(
         hard(
             "🚫",
             "High-impact macro event ACTIVE",
-            active_events or
-            "Check Finnhub calendar"
+            active_events or "Check Finnhub calendar"
         )
 
-    # 6. Retest FAILED — downgraded to SOFT
-    # Hard block was too aggressive
-    # A failed retest zone costs points
-    # but doesn't kill the entire signal
+    # ══════════════════════════════════════════
+    # FIX 1 — RSI Extreme Hard Block
+    # Prevents shorting oversold market
+    # Prevents longing overbought market
+    # This would have blocked ADA trade
+    # ══════════════════════════════════════════
+    rsi = d1d.get("rsi")
+    if rsi is not None:
+        if rsi < 25 and d1_cls == "bear":
+            hard(
+                "🚫",
+                f"RSI {rsi:.1f} — extreme oversold",
+                (
+                    "Short squeeze risk very high. "
+                    "Wait for RSI to recover above 30 "
+                    "before shorting."
+                )
+            )
+        if rsi > 75 and d1_cls == "bull":
+            hard(
+                "🚫",
+                f"RSI {rsi:.1f} — extreme overbought",
+                (
+                    "Long exhaustion risk very high. "
+                    "Wait for RSI to cool below 70 "
+                    "before longing."
+                )
+            )
+
+    # 6. Retest FAILED — hard block
+    # ══════════════════════════════════════════
+    # FIX 2 — Retest failed back to hard block
+    # A failed retest = setup completely invalid
+    # Soft block was too lenient
+    # ══════════════════════════════════════════
     if retest.get("failed"):
-        soft(
-            "⚠️",
-            "Retest zone broken",
-            "Zone invalidated — wait for new setup",
-            penalty=8
+        hard(
+            "🚫",
+            "Retest zone FAILED",
+            (
+                "Zone invalidated — "
+                "wait for new setup to form."
+            )
         )
 
     # 7. BTC unstable
     if (
-        len(btc_instability.get(
-            "warnings", []
-        )) >= 2 and
-        d1d.get("coin") != "BTC"
+        len(btc_instability.get("warnings", [])) >= 2
+        and d1d.get("coin") != "BTC"
     ):
         hard(
             "🚫",
@@ -442,8 +469,10 @@ def run_no_trade_engine(
             hard(
                 "🚫",
                 "Minimum condition not met",
-                "Neither sweep nor displacement "
-                "confirmed."
+                (
+                    "Neither sweep nor displacement "
+                    "confirmed."
+                )
             )
 
     # ── SOFT BLOCKS ──
@@ -495,16 +524,36 @@ def run_no_trade_engine(
         "structure", {}
     ).get("struct_bias", "neutral")
     if (
-        (d1_cls == "bull" and
-         struct_4h == "bear") or
-        (d1_cls == "bear" and
-         struct_4h == "bull")
+        (d1_cls == "bull" and struct_4h == "bear") or
+        (d1_cls == "bear" and struct_4h == "bull")
     ):
         soft(
             "⚠️",
             "4H structure conflicts daily",
             "Wait for 4H structure to align.", 3
         )
+
+    # ══════════════════════════════════════════
+    # FIX 3 — RSI soft warning zone
+    # Between 25-30 for shorts
+    # Between 70-75 for longs
+    # Not hard blocked but penalized
+    # ══════════════════════════════════════════
+    if rsi is not None:
+        if 25 <= rsi < 30 and d1_cls == "bear":
+            soft(
+                "⚠️",
+                f"RSI {rsi:.1f} — approaching oversold",
+                "Bounce risk elevated. Reduce size.",
+                3
+            )
+        if 70 < rsi <= 75 and d1_cls == "bull":
+            soft(
+                "⚠️",
+                f"RSI {rsi:.1f} — approaching overbought",
+                "Exhaustion risk elevated. Reduce size.",
+                3
+            )
 
     hard_blocks  = [
         r for r in reasons
@@ -615,12 +664,14 @@ def generate_signal(
         atr_4h    = d4h.get("atr", atr)
     )
 
-    # ── FIXED: Reduced penalty from -5 to -2 ──
-    # 15m data is noisy and often unavailable
-    # Should inform not dominate
+    # ══════════════════════════════════════════
+    # FIX 1 — Increased 15m penalty from -2 to -5
+    # 15m confirmation exists for a reason
+    # 2 point penalty was not enough deterrent
+    # ══════════════════════════════════════════
     score_15m = score
     if not entry_15m["confirmed"]:
-        score_15m = max(0, score - 2)
+        score_15m = max(0, score - 5)
         tier = get_tier(
             score_15m,
             len(no_trade["hard_blocks"]) > 0
@@ -652,8 +703,15 @@ def generate_signal(
             if candidates
             else entry * 0.985
         )
-        if (entry - sl) / entry < 0.005:
-            sl = entry * 0.995
+
+        # ══════════════════════════════════════
+        # FIX 2 — Minimum SL 1% not 0.5%
+        # 0.5% too tight with 10x leverage
+        # gets stopped on noise
+        # ══════════════════════════════════════
+        if (entry - sl) / entry < 0.01:
+            sl = entry * 0.99
+
     else:
         candidates = [
             entry + atr * 1.5,
@@ -673,8 +731,12 @@ def generate_signal(
             if candidates
             else entry * 1.015
         )
-        if (sl - entry) / entry < 0.005:
-            sl = entry * 1.005
+
+        # ══════════════════════════════════════
+        # FIX 2 — Minimum SL 1% not 0.5%
+        # ══════════════════════════════════════
+        if (sl - entry) / entry < 0.01:
+            sl = entry * 1.01
 
     sl_dist = abs(entry - sl)
     sl_pct  = sl_dist / entry * 100
@@ -737,6 +799,6 @@ def generate_signal(
         "reason": (
             f"15m: {entry_15m['pattern']}"
             if entry_15m["confirmed"]
-            else "15m not confirmed — minor reduction"
+            else "15m not confirmed — score reduced"
         )
     }
