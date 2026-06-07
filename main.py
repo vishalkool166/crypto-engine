@@ -1,3 +1,4 @@
+import asyncio
 import uvicorn
 import logging
 import json
@@ -39,8 +40,8 @@ async def broadcast_price(coin: str, price: float):
 
     from api.formatters import fmt_price, fmt_pnl, fmt_pct, pnl_color
 
-    is_long = trade.direction == "LONG"
-    upnl    = risk_guard.calculate_unrealized_pnl(
+    is_long  = trade.direction == "LONG"
+    upnl     = risk_guard.calculate_unrealized_pnl(
         direction     = trade.direction,
         entry_price   = trade.entry_price,
         current_price = price,
@@ -82,9 +83,12 @@ async def lifespan(app: FastAPI):
     price_feed.on_price(trade_manager.on_price_update)
     price_feed.on_price(broadcast_price)
 
+    log.info(f"Callbacks registered: {len(price_feed._callbacks)}")
+
     if not state_manager.is_idle:
         trade = state_manager.current_trade
         log.info(f"Resumed trade: {trade.coin} {trade.direction} {trade.state}")
+        await asyncio.sleep(1)
         await price_feed.start(trade.coin)
         await send(
             f"🔄 *Bot Restarted*\n\n"
