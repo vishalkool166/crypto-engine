@@ -319,6 +319,7 @@ async def analyze_coin(
         "retest":       retest,
         "displacement": disp,
         "wconf":        wconf,
+        "oi_matrix":    oi_matrix,
         "no_trade":     no_trade,
         "news_filter":  news_filter,
         "explanation":  signal.get("explanation", {})

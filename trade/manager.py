@@ -267,7 +267,7 @@ class TradeManager:
                 d1d             = cached.get("d1d", {}),
                 d4h             = cached.get("d4h", {}),
                 btc_data        = cache.get("btc_1d_data"),
-                oi_matrix       = cached.get("wconf", {}),
+                oi_matrix       = cached.get("oi_matrix", {}),
                 retest          = cached.get("retest", {}),
                 sweep           = cached.get("sweep", {}),
                 original_thesis = cached.get("explanation", {}).get("thesis", ""),
