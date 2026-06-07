@@ -1,5 +1,6 @@
 import httpx
 import logging
+from datetime import datetime, timezone
 from fastapi import Request
 from config import cfg
 from database import SessionLocal, Trade
@@ -7,15 +8,12 @@ from trade.state import state_manager
 
 log = logging.getLogger(__name__)
 
-BASE    = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
-DOMAIN  = "https://small-salaried-study.ngrok-free.dev"
+BASE   = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
+DOMAIN = "https://small-salaried-study.ngrok-free.dev"
 
-# Duplicate prevention for signals only
 _sent_signals = set()
 
-# ═══════════════════════════════════════════════════════
-# BASE SEND
-# ═══════════════════════════════════════════════════════
+
 async def send(message: str):
     if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
         log.warning("Telegram not configured")
@@ -36,14 +34,12 @@ async def send(message: str):
     except Exception as e:
         log.error(f"Telegram error: {e}")
 
-# ═══════════════════════════════════════════════════════
-# REGISTER WEBHOOK
-# ═══════════════════════════════════════════════════════
+
 async def register_webhook():
     webhook_url = f"{DOMAIN}/webhook/telegram"
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.post(
+            r    = await client.post(
                 f"{BASE}/setWebhook",
                 json={"url": webhook_url},
                 timeout=10
@@ -56,42 +52,29 @@ async def register_webhook():
     except Exception as e:
         log.error(f"Webhook register error: {e}")
 
-# ═══════════════════════════════════════════════════════
-# WEBHOOK HANDLER
-# called by FastAPI route on every Telegram update
-# ═══════════════════════════════════════════════════════
+
 async def handle_webhook(request: Request):
     try:
         data    = await request.json()
         msg     = data.get("message", {})
         text    = msg.get("text", "").strip().lower()
         chat_id = str(msg.get("chat", {}).get("id", ""))
-
         if chat_id != str(cfg.TELEGRAM_CHAT_ID):
             return
-
         await _handle_command(text)
     except Exception as e:
         log.error(f"Webhook handler error: {e}")
 
-# ═══════════════════════════════════════════════════════
-# COMMAND HANDLER
-# ═══════════════════════════════════════════════════════
+
 async def _handle_command(text: str):
-    if text == "/status":
-        await _cmd_status()
-    elif text == "/pnl":
-        await _cmd_pnl()
-    elif text == "/close":
-        await _cmd_close()
-    elif text == "/queue":
-        await _cmd_queue()
-    elif text == "/daily":
-        await _cmd_daily()
-    elif text == "/scan":
-        await _cmd_scan()
-    elif text == "/help":
-        await _cmd_help()
+    if text == "/status": await _cmd_status()
+    elif text == "/pnl":   await _cmd_pnl()
+    elif text == "/close": await _cmd_close()
+    elif text == "/queue": await _cmd_queue()
+    elif text == "/daily": await _cmd_daily()
+    elif text == "/scan":  await _cmd_scan()
+    elif text == "/help":  await _cmd_help()
+
 
 # ═══════════════════════════════════════════════════════
 # COMMANDS
@@ -114,8 +97,8 @@ async def _cmd_status():
 
     from trade.orders import get_current_price
     from trade.risk import risk_guard
-    current = get_current_price(trade.coin)
-    upnl    = risk_guard.calculate_unrealized_pnl(
+    current  = get_current_price(trade.coin)
+    upnl     = risk_guard.calculate_unrealized_pnl(
         direction     = trade.direction,
         entry_price   = trade.entry_price,
         current_price = current,
@@ -136,6 +119,7 @@ async def _cmd_status():
         f"{pnl_emoji} uPnL: `${upnl}`\n"
         f"Risk:    `${trade.risk_amt}`\n"
     )
+
 
 async def _cmd_pnl():
     from trade.risk import risk_guard
@@ -168,6 +152,7 @@ async def _cmd_pnl():
         f"PnL:     `${round(total_pnl, 2)}`\n"
     )
 
+
 async def _cmd_close():
     if state_manager.is_idle:
         await send("⚠️ No active trade to close.")
@@ -180,6 +165,7 @@ async def _cmd_close():
         await send("✅ Trade closed manually.")
     else:
         await send(f"❌ Close failed: {result['reason']}")
+
 
 async def _cmd_queue():
     from data.cache import cache
@@ -217,6 +203,7 @@ async def _cmd_queue():
         )
     )
 
+
 async def _cmd_daily():
     from trade.risk import risk_guard
     stats = risk_guard.get_daily_stats()
@@ -230,6 +217,7 @@ async def _cmd_daily():
         f"Remaining loss:   `${stats['remaining_loss']}`\n"
         f"Cap hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n"
     )
+
 
 async def _cmd_scan():
     await send(
@@ -246,21 +234,22 @@ async def _cmd_scan():
             if r.get("grade") in ["A+", "A"]
             and r.get("direction") in ["LONG", "SHORT"]
         ]
-        aplus = [r for r in tradeable if r.get("grade") == "A+"]
-        a     = [r for r in tradeable if r.get("grade") == "A"]
+        aplus   = [r for r in tradeable if r.get("grade") == "A+"]
+        a       = [r for r in tradeable if r.get("grade") == "A"]
         summary = (
             f"✅ *Scan Complete*\n\n"
             f"Coins scanned: `{len(results)}`\n"
             f"A+ signals:    `{len(aplus)}`\n"
             f"A signals:     `{len(a)}`\n\n"
         )
-        if aplus:   summary += f"🏆 {len(aplus)} A+ found!\n"
-        if a:       summary += f"✅ {len(a)} A found!\n"
+        if aplus:        summary += f"🏆 {len(aplus)} A+ found!\n"
+        if a:            summary += f"✅ {len(a)} A found!\n"
         if not tradeable: summary += "😴 No tradeable signals found.\n"
-        summary += f"\nNext auto scan in 15 minutes."
+        summary += f"\nNext auto scan at next :00/:15/:30/:45 UTC"
         await send(summary)
     except Exception as e:
         await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
+
 
 async def _cmd_help():
     await send(
@@ -274,8 +263,10 @@ async def _cmd_help():
         "/help   — this message\n"
     )
 
+
 # ═══════════════════════════════════════════════════════
 # SEND SIGNAL ALERT
+# Includes trade thesis and risk thesis from explanation.
 # ═══════════════════════════════════════════════════════
 async def send_signal(
     signal:  dict,
@@ -313,13 +304,34 @@ async def send_signal(
     emoji     = "🏆" if grade == "A+" else "✅"
     dir_emoji = "📈" if direction == "LONG" else "📉"
 
+    # Explanation fields
+    explanation      = signal.get("explanation", {})
+    thesis           = explanation.get("thesis", "")
+    risk_thesis      = explanation.get("risk_thesis", "")
+    conf_label       = explanation.get("confidence_label", "")
+
+    # Build thesis block
+    thesis_block = ""
+    if thesis:
+        thesis_block = f"\n*Why This Trade?*\n{thesis}\n"
+
+    risk_block = ""
+    if risk_thesis:
+        risk_block = f"\n*Risk Factors*\n{risk_thesis}\n"
+
+    conf_block = f"Confidence: `{conf_label} ({score}/100)`\n" if conf_label else ""
+
+    # UTC timestamp on alert
+    utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+
     await send(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
-        f"Score:   `{score}/100`\n"
+        f"{conf_block}"
         f"Regime:  `{regime}`\n"
-        f"Session: `{session}`\n\n"
+        f"Session: `{session}`\n"
+        f"Time:    `{utc_now}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry:   `{entry:.4f}`\n"
         f"SL:      `{sl:.4f}` ({sl_pct:.2f}%)\n"
@@ -329,10 +341,14 @@ async def send_signal(
         f"Risk:    `${risk_amt:.2f}`\n"
         f"Size:    `${pos_size:.2f}`\n"
         f"Lev:     `{cfg.LEVERAGE}x`\n"
+        f"{thesis_block}"
+        f"{risk_block}"
     )
+
 
 # ═══════════════════════════════════════════════════════
 # SEND SCAN SUMMARY
+# Includes no-trade explanation for top rejected signals.
 # ═══════════════════════════════════════════════════════
 async def send_scan_summary(results: list):
     tradeable = [
@@ -343,11 +359,14 @@ async def send_scan_summary(results: list):
     if not tradeable:
         return
 
+    utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+
     lines = [
-        f"🔍 *Scan Complete*\n"
+        f"🔍 *Scan Complete — {utc_now}*\n"
         f"{len(tradeable)} tradeable signal(s)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
     ]
+
     for r in tradeable[:3]:
         g         = r.get("grade", "?")
         emoji     = "🏆" if g == "A+" else "✅"
@@ -355,8 +374,13 @@ async def send_scan_summary(results: list):
         dir_emoji = "📈" if direction == "LONG" else "📉"
         score     = r.get("score", 0)
         coin      = r.get("coin", "?")
+
+        explanation = r.get("explanation", {})
+        conf_label  = explanation.get("confidence_label", "")
+        conf_str    = f" · {conf_label}" if conf_label else ""
+
         lines.append(
-            f"{emoji} *{coin}* — Grade {g} ({score}/100)\n"
+            f"{emoji} *{coin}* — Grade {g} ({score}/100){conf_str}\n"
             f"{dir_emoji} {direction}\n"
         )
 
@@ -365,5 +389,7 @@ async def send_scan_summary(results: list):
         lines.append(f"\n⚡ Active trade: {trade.coin} {trade.direction}")
     else:
         lines.append(f"\n💤 Bot idle — will execute best signal")
+
+    lines.append(f"\nNext scan: next :00/:15/:30/:45 UTC")
 
     await send("\n".join(lines))

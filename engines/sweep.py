@@ -10,42 +10,19 @@ def detect_sweep(
 ) -> dict:
 
     price  = float(df["close"].iloc[-1])
-    vol_ma = float(
-        df["volume"].rolling(10).mean().iloc[-1]
-    ) or 1
+    vol_ma = float(df["volume"].rolling(10).mean().iloc[-1]) or 1
     results = []
 
     def relevance(candles_ago: int) -> dict:
         if candles_ago <= 5:
-            return {
-                "label": "HIGH",
-                "pts":   12,
-                "mult":  1.0
-            }
+            return {"label": "HIGH",    "pts": 12, "mult": 1.0}
         if candles_ago <= 12:
-            return {
-                "label": "MEDIUM",
-                "pts":   8,
-                "mult":  0.67
-            }
+            return {"label": "MEDIUM",  "pts": 8,  "mult": 0.67}
         if candles_ago <= 20:
-            return {
-                "label": "LOW",
-                "pts":   4,
-                "mult":  0.33
-            }
-        return {
-            "label": "EXPIRED",
-            "pts":   0,
-            "mult":  0.0
-        }
+            return {"label": "LOW",     "pts": 4,  "mult": 0.33}
+        return {"label": "EXPIRED", "pts": 0,  "mult": 0.0}
 
-    def check_below(
-        level,
-        label,
-        base_strength,
-        lookback=20
-    ):
+    def check_below(level, label, base_strength, lookback=20):
         if not level or level <= 0:
             return None
         sl = df.tail(lookback)
@@ -58,24 +35,19 @@ def detect_sweep(
                     continue
                 mag        = (level - c["low"]) / atr
                 vs         = c["volume"] / vol_ma
-                body_below = (
-                    min(c["open"], c["close"]) < level
-                )
+                body_below = min(c["open"], c["close"]) < level
 
-                # ── FIX: intensity uses bool not string ──
+                # Wick below level without body close below = clean sweep
+                # Body close below = potential breakdown not sweep
                 intensity = min(10,
                     (3 if mag > 0.5 else 1) +
-                    (3 if vs > 1.5 else
-                     1 if vs > 1.0 else 0) +
+                    (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
                     2 +
                     (2 if not body_below else 0)
                 )
 
-                # ── FIX: confirmed is always bool ──
-                confirmed  = bool(price > level)
-                adj_score  = round(
-                    rel["pts"] * (intensity / 10)
-                )
+                confirmed = bool(price > level)
+                adj_score = round(rel["pts"] * (intensity / 10))
 
                 return {
                     "type":        "bull",
@@ -96,12 +68,7 @@ def detect_sweep(
                 }
         return None
 
-    def check_above(
-        level,
-        label,
-        base_strength,
-        lookback=20
-    ):
+    def check_above(level, label, base_strength, lookback=20):
         if not level or level <= 0:
             return None
         sl = df.tail(lookback)
@@ -114,24 +81,19 @@ def detect_sweep(
                     continue
                 mag        = (c["high"] - level) / atr
                 vs         = c["volume"] / vol_ma
-                body_above = (
-                    max(c["open"], c["close"]) > level
-                )
+                body_above = max(c["open"], c["close"]) > level
 
-                # ── FIX: intensity uses bool not string ──
+                # Wick above level without body close above = clean sweep
+                # Body close above = potential breakout not sweep
                 intensity = min(10,
                     (3 if mag > 0.5 else 1) +
-                    (3 if vs > 1.5 else
-                     1 if vs > 1.0 else 0) +
+                    (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
                     2 +
                     (2 if not body_above else 0)
                 )
 
-                # ── FIX: confirmed is always bool ──
-                confirmed  = bool(price < level)
-                adj_score  = round(
-                    rel["pts"] * (intensity / 10)
-                )
+                confirmed = bool(price < level)
+                adj_score = round(rel["pts"] * (intensity / 10))
 
                 return {
                     "type":        "bear",
@@ -152,46 +114,13 @@ def detect_sweep(
                 }
         return None
 
-    # ── ALL LEVEL CHECKS ──
     checks = [
-        (
-            check_below,
-            key_levels.get("pdl"),
-            "PDL Sweep",
-            8
-        ),
-        (
-            check_above,
-            key_levels.get("pdh"),
-            "PDH Sweep",
-            8
-        ),
-        (
-            check_below,
-            swings["last_low"]["price"]
-            if swings["last_low"] else None,
-            "Swing Low Sweep",
-            7
-        ),
-        (
-            check_above,
-            swings["last_high"]["price"]
-            if swings["last_high"] else None,
-            "Swing High Sweep",
-            7
-        ),
-        (
-            check_below,
-            key_levels.get("pwl"),
-            "Weekly Low Sweep",
-            10
-        ),
-        (
-            check_above,
-            key_levels.get("pwh"),
-            "Weekly High Sweep",
-            10
-        ),
+        (check_below, key_levels.get("pdl"),                                    "PDL Sweep",        8),
+        (check_above, key_levels.get("pdh"),                                    "PDH Sweep",        8),
+        (check_below, swings["last_low"]["price"]  if swings["last_low"]  else None, "Swing Low Sweep",  7),
+        (check_above, swings["last_high"]["price"] if swings["last_high"] else None, "Swing High Sweep", 7),
+        (check_below, key_levels.get("pwl"),                                    "Weekly Low Sweep", 10),
+        (check_above, key_levels.get("pwh"),                                    "Weekly High Sweep",10),
     ]
 
     for fn, level, label, strength in checks:
@@ -206,16 +135,10 @@ def detect_sweep(
             "score":     0,
             "items":     [],
             "label":     "No sweep detected",
-            "desc": (
-                "No confirmed liquidity grab "
-                "on key levels"
-            )
+            "desc":      "No confirmed liquidity grab on key levels"
         }
 
-    results.sort(
-        key=lambda x: x["score"],
-        reverse=True
-    )
+    results.sort(key=lambda x: x["score"], reverse=True)
     best      = results[0]
     confirmed = any(r["confirmed"] for r in results)
 

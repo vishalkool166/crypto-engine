@@ -1,35 +1,25 @@
+import logging
+from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from alerts.scanner import scan_all_coins
 from trade.manager import trade_manager
-from data.cache import cache
-from datetime import datetime, timezone
-import logging
 
 log = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone="UTC")
 
 
-# ═══════════════════════════════════════════════════════
-# SCAN JOB
-# ═══════════════════════════════════════════════════════
 async def job_scan():
     now = datetime.now(timezone.utc)
-    log.info(
-        f"Scheduled scan running: "
-        f"{now.strftime('%H:%M:%S')} UTC"
-    )
+    log.info(f"Scheduled scan: {now.strftime('%H:%M:%S')} UTC")
     try:
         await scan_all_coins()
     except Exception as e:
         log.error(f"Scan job error: {e}")
 
 
-# ═══════════════════════════════════════════════════════
-# MONITOR JOB
-# ═══════════════════════════════════════════════════════
 async def job_monitor():
     try:
         await trade_manager.monitor_trade()
@@ -37,46 +27,48 @@ async def job_monitor():
         log.error(f"Monitor job error: {e}")
 
 
-# ═══════════════════════════════════════════════════════
-# CACHE CLEANUP JOB
-# ═══════════════════════════════════════════════════════
 async def job_cache_cleanup():
     log.info("Cache cleanup running")
 
 
-# ═══════════════════════════════════════════════════════
-# GET NEXT SYNC TIME
-# Returns human readable next scan time
-# ═══════════════════════════════════════════════════════
 def get_next_scan_time() -> str:
+    # Returns next quarter-hour boundary in UTC
     now     = datetime.now(timezone.utc)
     minute  = now.minute
-    # Next :00, :15, :30, :45
     buckets = [0, 15, 30, 45]
     for b in buckets:
         if minute < b:
-            return (
-                f"{now.hour:02d}:{b:02d} UTC"
-            )
-    # Next hour :00
+            return f"{now.hour:02d}:{b:02d} UTC"
     next_hour = (now.hour + 1) % 24
     return f"{next_hour:02d}:00 UTC"
 
 
-# ═══════════════════════════════════════════════════════
-# START SCHEDULER
-# ══════════════════════════════════════════════════════
-# FIX — Timestamped sync scanning
-# Uses CronTrigger at :00 :15 :30 :45
-# every hour every day
-# All devices sync to same clock
-# Manual scan does NOT reset timer
-# Next auto scan always at next quarter hour
-# ═══════════════════════════════════════════════════════
-def start_scheduler():
+def get_next_scan_epoch() -> int:
+    # Returns next quarter-hour as unix timestamp.
+    # Used by frontend countdown — single UTC source.
+    now     = datetime.now(timezone.utc)
+    minute  = now.minute
+    buckets = [0, 15, 30, 45]
+    for b in buckets:
+        if minute < b:
+            next_dt = now.replace(
+                minute=b, second=0, microsecond=0
+            )
+            return int(next_dt.timestamp() * 1000)
+    import math
+    next_hour = now.replace(
+        hour=(now.hour + 1) % 24,
+        minute=0,
+        second=0,
+        microsecond=0
+    )
+    return int(next_hour.timestamp() * 1000)
 
-    # ── SCAN — fixed clock times ──
-    # Runs at :00 :15 :30 :45 of every hour
+
+def start_scheduler():
+    # Scan at :00 :15 :30 :45 of every hour UTC.
+    # All devices derive countdown from same UTC clock.
+    # Manual scan does not reset this timer.
     scheduler.add_job(
         job_scan,
         trigger=CronTrigger(
@@ -87,8 +79,6 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # ── MONITOR — every 1 minute ──
-    # Unchanged — needs frequent checks
     scheduler.add_job(
         job_monitor,
         trigger=IntervalTrigger(minutes=1),
@@ -96,7 +86,6 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # ── CACHE CLEANUP — every 20 minutes ──
     scheduler.add_job(
         job_cache_cleanup,
         trigger=IntervalTrigger(minutes=20),
@@ -108,9 +97,9 @@ def start_scheduler():
 
     next_scan = get_next_scan_time()
     log.info(
-        f"Scheduler started — "
-        f"scan: :00/:15/:30/:45 UTC (synced) "
-        f"monitor: 1m "
+        f"Scheduler started — UTC — "
+        f"scan: :00/:15/:30/:45 — "
+        f"monitor: 1m — "
         f"next scan: {next_scan}"
     )
 

@@ -1,3 +1,6 @@
+from config import cfg
+
+
 def detect_regime(d1d: dict, d4h: dict) -> dict:
     adx_1d = d1d.get("adx")
     adx_4h = d4h.get("adx")
@@ -6,8 +9,8 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
     s50    = d1d.get("slope50")
     trend  = d1d.get("trend", {})
 
-    # ── CHOPPY — hard block ──
-    # Both TFs must be weak
+    # Both TFs must be weak to confirm chop —
+    # single TF weakness alone is not enough
     if (
         adx_1d is not None and
         adx_4h is not None and
@@ -22,7 +25,6 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "ADX weak on 1D+4H. No trend."
         }
 
-    # ── RANGING ──
     flat = (
         s20 is not None and abs(s20) < 0.15 and
         s50 is not None and abs(s50) < 0.15
@@ -42,7 +44,6 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "Low ADX + narrow BB + flat EMAs."
         }
 
-    # ── VOLATILITY EXPANSION ──
     if (
         bb_1d and
         bb_1d["width"] > 8 and
@@ -56,12 +57,7 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "BB wide + volume spike. Breakout mode."
         }
 
-    # ── TRENDING BULL ──
-    if (
-        trend.get("cls") == "bull" and
-        adx_1d and
-        adx_1d >= 25
-    ):
+    if trend.get("cls") == "bull" and adx_1d and adx_1d >= 25:
         return {
             "type":      "trending-bull",
             "tradeable": True,
@@ -70,12 +66,7 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "Strong uptrend. Use continuation logic."
         }
 
-    # ── TRENDING BEAR ──
-    if (
-        trend.get("cls") == "bear" and
-        adx_1d and
-        adx_1d >= 25
-    ):
+    if trend.get("cls") == "bear" and adx_1d and adx_1d >= 25:
         return {
             "type":      "trending-bear",
             "tradeable": True,
@@ -84,16 +75,12 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "Strong downtrend. Use continuation logic."
         }
 
-    # ══════════════════════════════════════════
-    # FIX — Weak trend is now SOFT block
-    # not hard block
-    # ADX 18-25 with strong sweep/displacement
-    # can still be a valid trade
-    # ══════════════════════════════════════════
+    # ADX 18-25 is a soft block — weak trend can still
+    # produce valid setups if sweep and displacement confirm
     if adx_1d and 18 <= adx_1d < 25:
         return {
             "type":      "weak-trend",
-            "tradeable": True,        # was False
+            "tradeable": True,
             "score":     4,
             "label":     "WEAK TREND",
             "desc": (

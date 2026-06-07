@@ -1,5 +1,4 @@
-from datetime import datetime, date
-from sqlalchemy.orm import Session
+from datetime import datetime, timezone, date
 from database import Trade, DailyRisk, SessionLocal
 from config import cfg
 import logging
@@ -7,9 +6,6 @@ import logging
 log = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════
-# TRADE STATES
-# ═══════════════════════════════════════════════════════
 class TradeState:
     IDLE     = "idle"
     ENTRY    = "entry"
@@ -17,19 +13,14 @@ class TradeState:
     EXIT     = "exit"
 
 
-# ═══════════════════════════════════════════════════════
-# STATE MANAGER
-# ═══════════════════════════════════════════════════════
 class StateManager:
 
     def __init__(self):
-        self._active_trade: Trade | None = None
+        self._active_trade:  Trade | None = None
+        self._health_state:  str          = "HEALTHY"
+        self._health_data:   dict         = {}
         self._load_active_trade()
 
-    # ═══════════════════════════════════════════════════
-    # LOAD ON STARTUP
-    # resumes any trade that was active before restart
-    # ═══════════════════════════════════════════════════
     def _load_active_trade(self):
         try:
             db = SessionLocal()
@@ -49,22 +40,12 @@ class StateManager:
                 else:
                     self._active_trade = None
                     log.info("No active trade found — idle")
-
             finally:
                 db.close()
-
         except Exception as e:
-            log.warning(
-                f"Could not load active trade "
-                f"(first run?): {e}"
-            )
+            log.warning(f"Could not load active trade (first run?): {e}")
             self._active_trade = None
 
-    # ═══════════════════════════════════════════════════
-    # TP1 HIT CHECK
-    # SL moved to entry = TP1 was hit
-    # stored in DB — survives restarts
-    # ═══════════════════════════════════════════════════
     def _check_tp1_hit(self, trade: Trade) -> bool:
         if not trade:
             return False
@@ -101,22 +82,39 @@ class StateManager:
 
     @property
     def is_tp1_hit(self) -> bool:
-        """
-        Public property — used by routes.py
-        and manager.py to check phase.
-        """
         return self._check_tp1_hit(self._active_trade)
 
+    @property
+    def health_state(self) -> str:
+        return self._health_state
+
+    @property
+    def health_data(self) -> dict:
+        return self._health_data
+
     # ═══════════════════════════════════════════════════
-    # REFRESH ACTIVE TRADE FROM DB
-    # call this before any read that needs fresh data
+    # HEALTH STATE
+    # Updated by trade manager monitor loop.
+    # Never triggers auto-close — informs only.
+    # ═══════════════════════════════════════════════════
+    def update_health(self, health: dict):
+        self._health_state = health.get("state", "HEALTHY")
+        self._health_data  = health
+
+        log.info(
+            f"Health updated: {self._health_state} "
+            f"warnings:{len(health.get('warnings', []))} "
+            f"failures:{len(health.get('failures', []))}"
+        )
+
+    def reset_health(self):
+        self._health_state = "HEALTHY"
+        self._health_data  = {}
+
+    # ═══════════════════════════════════════════════════
+    # REFRESH
     # ═══════════════════════════════════════════════════
     def refresh(self):
-        """
-        Re-reads active trade from DB.
-        Ensures sl_price, tp1_order_id etc
-        are always current after monitor updates.
-        """
         if self._active_trade is None:
             return
 
@@ -128,9 +126,8 @@ class StateManager:
 
             if not trade or not trade.is_active:
                 self._active_trade = None
-                log.info(
-                    "Refresh: trade no longer active — idle"
-                )
+                self.reset_health()
+                log.info("Refresh: trade no longer active — idle")
             else:
                 self._active_trade = trade
                 log.debug(
@@ -148,37 +145,30 @@ class StateManager:
     # ═══════════════════════════════════════════════════
     def set_entry(self, trade: Trade):
         self._active_trade = trade
+        self.reset_health()
         self._update_state(trade, TradeState.ENTRY)
-        log.info(
-            f"State → ENTRY: "
-            f"{trade.coin} {trade.direction}"
-        )
+        log.info(f"State → ENTRY: {trade.coin} {trade.direction}")
 
     def set_in_trade(self, trade: Trade):
         self._active_trade = trade
         self._update_state(trade, TradeState.IN_TRADE)
-        log.info(
-            f"State → IN_TRADE: "
-            f"{trade.coin} {trade.direction}"
-        )
+        log.info(f"State → IN_TRADE: {trade.coin} {trade.direction}")
 
     def set_exit(self, trade: Trade):
         self._update_state(trade, TradeState.EXIT)
-        log.info(
-            f"State → EXIT: "
-            f"{trade.coin} {trade.direction}"
-        )
+        log.info(f"State → EXIT: {trade.coin} {trade.direction}")
 
     def set_idle(self):
         self._active_trade = None
+        self.reset_health()
         log.info("State → IDLE")
 
     # ═══════════════════════════════════════════════════
-    # DAILY RISK CHECKS
+    # DAILY RISK
     # ═══════════════════════════════════════════════════
     def can_trade_today(self) -> dict:
         db    = SessionLocal()
-        today = str(date.today())
+        today = str(datetime.now(timezone.utc).date())
         try:
             risk = db.query(DailyRisk).filter(
                 DailyRisk.date == today
@@ -192,7 +182,6 @@ class StateManager:
                     "reason":       None
                 }
 
-            # Cap already flagged
             if risk.cap_hit:
                 return {
                     "allowed":      False,
@@ -204,7 +193,6 @@ class StateManager:
                     )
                 }
 
-            # Max trades
             if risk.trades_taken >= cfg.MAX_TRADES_PER_DAY:
                 return {
                     "allowed":      False,
@@ -216,7 +204,6 @@ class StateManager:
                     )
                 }
 
-            # Loss cap check
             daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
             if abs(risk.total_loss) >= daily_cap:
                 risk.cap_hit = True
@@ -225,10 +212,7 @@ class StateManager:
                     "allowed":      False,
                     "trades_taken": risk.trades_taken,
                     "total_loss":   risk.total_loss,
-                    "reason": (
-                        f"Daily loss cap "
-                        f"${daily_cap:.4f} reached"
-                    )
+                    "reason": f"Daily loss cap ${daily_cap:.4f} reached"
                 }
 
             return {
@@ -241,13 +225,9 @@ class StateManager:
         finally:
             db.close()
 
-    # ═══════════════════════════════════════════════════
-    # RECORD TRADE OPEN
-    # increments trades_taken counter
-    # ═══════════════════════════════════════════════════
     def record_trade_open(self):
         db    = SessionLocal()
-        today = str(date.today())
+        today = str(datetime.now(timezone.utc).date())
         try:
             risk = db.query(DailyRisk).filter(
                 DailyRisk.date == today
@@ -266,10 +246,7 @@ class StateManager:
                 risk.trades_taken += 1
 
             db.commit()
-            log.info(
-                f"Trade open recorded — "
-                f"trades today: {risk.trades_taken}"
-            )
+            log.info(f"Trade open recorded — trades today: {risk.trades_taken}")
 
         except Exception as e:
             log.error(f"record_trade_open error: {e}")
@@ -277,20 +254,9 @@ class StateManager:
         finally:
             db.close()
 
-    # ═══════════════════════════════════════════════════
-    # RECORD PARTIAL PNL
-    # called immediately when TP1 hits
-    # so dashboard shows real numbers without
-    # waiting for full trade close
-    # ═══════════════════════════════════════════════════
     def record_partial_pnl(self, pnl: float):
-        """
-        Records TP1 partial PnL to DailyRisk.
-        Called from manager._handle_tp1_hit().
-        Ensures today_pnl updates immediately.
-        """
         db    = SessionLocal()
-        today = str(date.today())
+        today = str(datetime.now(timezone.utc).date())
         try:
             risk = db.query(DailyRisk).filter(
                 DailyRisk.date == today
@@ -308,22 +274,16 @@ class StateManager:
 
             risk.total_pnl += pnl
 
-            # TP1 should always be positive
-            # but guard for edge cases
             if pnl < 0:
                 risk.total_loss += pnl
                 daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
                 if abs(risk.total_loss) >= daily_cap:
                     risk.cap_hit = True
-                    log.warning(
-                        f"Daily cap hit on partial: "
-                        f"${risk.total_loss:.4f}"
-                    )
+                    log.warning(f"Daily cap hit on partial: ${risk.total_loss:.4f}")
 
             db.commit()
             log.info(
-                f"Partial PnL recorded: "
-                f"${pnl:.4f} (TP1 hit) — "
+                f"Partial PnL recorded: ${pnl:.4f} — "
                 f"total today: ${risk.total_pnl:.4f}"
             )
 
@@ -333,20 +293,9 @@ class StateManager:
         finally:
             db.close()
 
-    # ═══════════════════════════════════════════════════
-    # RECORD TRADE CLOSE
-    # called when trade fully closes (TP2, SL, manual)
-    # adds remaining PnL to daily totals
-    # ═══════════════════════════════════════════════════
     def record_trade_close(self, pnl: float):
-        """
-        Records final close PnL.
-        If TP1 was hit — this is only the 30% remainder.
-        TP1 partial was already recorded via
-        record_partial_pnl().
-        """
         db    = SessionLocal()
-        today = str(date.today())
+        today = str(datetime.now(timezone.utc).date())
         try:
             risk = db.query(DailyRisk).filter(
                 DailyRisk.date == today
@@ -369,15 +318,11 @@ class StateManager:
                 daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
                 if abs(risk.total_loss) >= daily_cap:
                     risk.cap_hit = True
-                    log.warning(
-                        f"Daily loss cap hit: "
-                        f"${abs(risk.total_loss):.4f}"
-                    )
+                    log.warning(f"Daily loss cap hit: ${abs(risk.total_loss):.4f}")
 
             db.commit()
             log.info(
-                f"Trade close PnL recorded: "
-                f"${pnl:.4f} — "
+                f"Trade close PnL recorded: ${pnl:.4f} — "
                 f"total today: ${risk.total_pnl:.4f}"
             )
 
@@ -387,18 +332,13 @@ class StateManager:
         finally:
             db.close()
 
-    # ═══════════════════════════════════════════════════
-    # GET DAILY SUMMARY
-    # convenience method — used by telegram /daily
-    # ═══════════════════════════════════════════════════
     def get_daily_summary(self) -> dict:
         db    = SessionLocal()
-        today = str(date.today())
+        today = str(datetime.now(timezone.utc).date())
         try:
-            risk = db.query(DailyRisk).filter(
+            risk      = db.query(DailyRisk).filter(
                 DailyRisk.date == today
             ).first()
-
             daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
 
             if not risk:
@@ -413,30 +353,18 @@ class StateManager:
                 }
 
             return {
-                "date":         today,
-                "trades_taken": risk.trades_taken,
-                "total_pnl":    round(risk.total_pnl, 4),
-                "total_loss":   round(risk.total_loss, 4),
-                "cap_hit":      risk.cap_hit,
-                "remaining_trades": max(
-                    0,
-                    cfg.MAX_TRADES_PER_DAY -
-                    risk.trades_taken
-                ),
-                "remaining_loss": round(
-                    max(
-                        0,
-                        daily_cap - abs(risk.total_loss)
-                    ), 4
-                )
+                "date":             today,
+                "trades_taken":     risk.trades_taken,
+                "total_pnl":        round(risk.total_pnl, 4),
+                "total_loss":       round(risk.total_loss, 4),
+                "cap_hit":          risk.cap_hit,
+                "remaining_trades": max(0, cfg.MAX_TRADES_PER_DAY - risk.trades_taken),
+                "remaining_loss":   round(max(0, daily_cap - abs(risk.total_loss)), 4)
             }
 
         finally:
             db.close()
 
-    # ═══════════════════════════════════════════════════
-    # INTERNAL — UPDATE STATE IN DB
-    # ═══════════════════════════════════════════════════
     def _update_state(self, trade: Trade, state: str):
         db = SessionLocal()
         try:
@@ -454,5 +382,4 @@ class StateManager:
             db.close()
 
 
-# ── GLOBAL INSTANCE ──
 state_manager = StateManager()
