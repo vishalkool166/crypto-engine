@@ -10,7 +10,7 @@ from engines.displacement import detect_displacement
 from engines.retest import detect_retest
 from engines.confluence import score_confluence
 from engines.signal import (
-    get_tier, get_session,
+    get_tier, get_session as get_trading_session,
     run_no_trade_engine, generate_signal
 )
 from alerts.telegram import send_signal, send_scan_summary
@@ -224,7 +224,7 @@ async def analyze_coin(
     }
 
     key_levels = _extract_key_levels(klines["1d"], klines["1w"])
-    session    = get_session()
+    session    = get_trading_session()
     regime     = detect_regime(d1d, d4h)
 
     sweep = detect_sweep(
@@ -346,8 +346,6 @@ async def scan_all_coins() -> list:
     if state_manager.is_paused:
         log.info("Scan — auto-execution paused, alerts only")
 
-    # Pre-fetch BTC data before coin loop — makes dependency explicit
-    # and ensures all alts get cache hit instead of triggering fetch
     btc_cached = cache.get("btc_1d_data")
     if not btc_cached:
         try:

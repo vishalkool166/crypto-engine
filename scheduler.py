@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -9,6 +9,8 @@ from trade.manager import trade_manager
 log = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler(timezone="UTC")
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 
 async def job_scan():
@@ -39,22 +41,29 @@ def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
     buckets = [0, 15, 30, 45]
+
     for b in buckets:
         if minute < b:
-            return f"{now.hour:02d}:{b:02d} UTC"
-    return f"{(now.hour + 1) % 24:02d}:00 UTC"
+            next_utc = now.replace(minute=b, second=0, microsecond=0)
+            next_ist = next_utc.astimezone(IST)
+            return next_ist.strftime("%I:%M %p IST")
+
+    # next hour
+    next_utc = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    next_ist = next_utc.astimezone(IST)
+    return next_ist.strftime("%I:%M %p IST")
 
 
 def get_next_scan_epoch() -> int:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
     buckets = [0, 15, 30, 45]
+
     for b in buckets:
         if minute < b:
-            next_dt = now.replace(
-                minute=b, second=0, microsecond=0
-            )
+            next_dt = now.replace(minute=b, second=0, microsecond=0)
             return int(next_dt.timestamp() * 1000)
+
     next_hour = now.replace(
         hour=(now.hour + 1) % 24,
         minute=0,
@@ -82,7 +91,6 @@ def start_scheduler():
         replace_existing=True
     )
 
-    # Morning briefing at 8:00 AM IST = 02:30 UTC
     scheduler.add_job(
         job_morning_briefing,
         trigger=CronTrigger(

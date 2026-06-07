@@ -738,8 +738,8 @@ async def _cmd_risk():
 
 
 async def _cmd_session():
-    from engines.signal import get_session
-    session   = get_session()
+    from engines.signal import get_session as get_trading_session
+    session   = get_trading_session()
     hrs, mins = _mins_until(8)
     now       = datetime.now(timezone.utc)
 
@@ -772,8 +772,8 @@ async def _cmd_daily():
 
 async def _cmd_next():
     from scheduler import get_next_scan_time
-    from engines.signal import get_session
-    session = get_session()
+    from engines.signal import get_session as get_trading_session
+    session = get_trading_session()
     next_s  = get_next_scan_time()
     london  = _next_dt(8)
     ny      = _next_dt(13)
@@ -1084,6 +1084,8 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         if state_manager.is_paused else ""
     )
 
+    from scheduler import get_next_scan_time
+
     await send_with_keyboard(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1117,10 +1119,12 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
 
 
 async def send_scan_summary(results: list):
+    from scheduler import get_next_scan_time
     cats      = categorize_results(results)
     tradeable = cats["tradeable"]
     watching  = cats["watching"]
     building  = cats["building"]
+    next_scan = get_next_scan_time()
 
     if tradeable:
         lines = [
@@ -1150,7 +1154,7 @@ async def send_scan_summary(results: list):
                 f"{'tap Approve to enter' if state_manager.is_paused else 'will execute best signal'}"
             )
 
-        lines.append("\nNext scan: next :00/:15/:30/:45 UTC")
+        lines.append(f"\nNext scan: `{next_scan}`")
         await send("\n".join(lines))
         return
 
@@ -1172,7 +1176,7 @@ async def send_scan_summary(results: list):
     else:
         lines.append("No setups building across all coins.")
 
-    lines.append("\nNext scan: next :00/:15/:30/:45 UTC")
+    lines.append(f"\nNext scan: `{next_scan}`")
     await send("\n".join(lines))
 
 

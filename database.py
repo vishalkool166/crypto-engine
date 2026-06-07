@@ -16,13 +16,7 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
-# ═══════════════════════════════════════════════════════
-# SESSION CONTEXT MANAGER
-# Replaces the repeated try/finally/db.close() pattern
-# used 20+ times across the codebase.
-# Auto-commits on success, rolls back on exception.
-# Usage: with get_session() as db: ...
-# ═══════════════════════════════════════════════════════
+
 @contextmanager
 def get_session():
     db = SessionLocal()
@@ -99,8 +93,6 @@ class Trade(Base):
     close_reason     = Column(String, nullable=True)
     trade_date       = Column(String)
     notes            = Column(Text, nullable=True)
-    # Health state at moment of close — used by factor
-    # analysis to correlate thesis health with outcome
     health_at_close  = Column(String, nullable=True)
 
 
