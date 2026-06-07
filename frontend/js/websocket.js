@@ -32,7 +32,8 @@ function startPriceSocket() {
     console.log('WS closed:', e.code, e.reason)
     _cleanup()
     setWsStatus(false)
-    if (S.data?.state !== 'idle') {
+    // Reconnect if in trade OR if state is unknown (null on first load)
+    if (S.data === null || S.data?.state !== 'idle') {
       console.log('WS reconnecting in 3s...')
       _reconnectTimer = setTimeout(startPriceSocket, 3000)
     }

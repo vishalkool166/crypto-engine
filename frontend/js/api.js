@@ -14,10 +14,8 @@ async function fetchDashboard() {
     renderStatusBar(data)
     renderRisk(data.risk)
 
-
     renderTrade(data.trade, data.state)
     syncConnectionMode(data.state)
-
 
     renderRadar(data.radar)
     renderSignalQueue(data.queue)
