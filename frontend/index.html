@@ -4,618 +4,802 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Signal Engine v5</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-tailwind.config = {
-  theme: {
-    extend: {
-      colors: {
-        apple: {
-          bg:        '#f5f5f7',
-          card:      'rgba(255,255,255,0.72)',
-          text:      '#1d1d1f',
-          secondary: '#6e6e73',
-          border:    'rgba(0,0,0,0.08)',
-          blue:      '#0071e3',
-          green:     '#34c759',
-          red:       '#ff3b30',
-          orange:    '#ff9500',
-          purple:    '#af52de',
-          yellow:    '#ffcc00',
-          teal:      '#5ac8fa',
-        }
-      },
-      fontFamily: {
-        sans: ['-apple-system','BlinkMacSystemFont','SF Pro Display','SF Pro Text','Inter','system-ui','sans-serif'],
-        mono: ['SF Mono','JetBrains Mono','Fira Code','monospace']
-      },
-      borderRadius: {
-        apple:    '18px',
-        'apple-sm': '12px',
-        'apple-xs': '8px'
-      },
-      boxShadow: {
-        apple:    '0 2px 20px rgba(0,0,0,0.08)',
-        'apple-md':'0 8px 32px rgba(0,0,0,0.12)',
-      }
-    }
-  }
-}
-</script>
 <style>
-  * { -webkit-font-smoothing: antialiased; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  body {
-    background: #f5f5f7;
-    min-height: 100vh;
-  }
+:root {
+  --bg:       #0a0a0a;
+  --bg1:      #111111;
+  --bg2:      #1a1a1a;
+  --bg3:      #222222;
+  --border:   #2a2a2a;
+  --text:     #e0e0e0;
+  --text2:    #888888;
+  --text3:    #555555;
+  --green:    #00c853;
+  --red:      #ff3d3d;
+  --blue:     #2979ff;
+  --orange:   #ff9100;
+  --yellow:   #ffd600;
+  --mono:     'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  --sans:     -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+}
 
-  .glass {
-    background: rgba(255,255,255,0.72);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    border: 1px solid rgba(255,255,255,0.5);
-    box-shadow: 0 2px 20px rgba(0,0,0,0.08);
-  }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
 
-  .glass-strong {
-    background: rgba(255,255,255,0.88);
-    backdrop-filter: blur(40px) saturate(200%);
-    -webkit-backdrop-filter: blur(40px) saturate(200%);
-    border: 1px solid rgba(255,255,255,0.6);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.10);
-  }
+/* ── LAYOUT ── */
+.app       { max-width: 1400px; margin: 0 auto; padding: 12px; }
+.grid-main { display: grid; grid-template-columns: 1fr 280px; gap: 10px; margin-top: 10px; }
+.col-left  { display: flex; flex-direction: column; gap: 10px; }
+.col-right { display: flex; flex-direction: column; gap: 10px; }
+.grid-2    { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid-4    { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+.grid-perf { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
 
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+/* ── CARD ── */
+.card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
 
-  @keyframes slide-up {
-    from { transform: translateY(12px); opacity: 0; }
-    to   { transform: translateY(0);    opacity: 1; }
-  }
-  @keyframes slide-in-right {
-    from { transform: translateX(110%); opacity: 0; }
-    to   { transform: translateX(0);    opacity: 1; }
-  }
-  @keyframes fade-out-down {
-    from { opacity: 1; transform: translateY(0); }
-    to   { opacity: 0; transform: translateY(8px); }
-  }
-  @keyframes shimmer {
-    0%   { background-position: -200% 0; }
-    100% { background-position:  200% 0; }
-  }
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+}
 
-  .animate-slide-up  { animation: slide-up 0.4s ease; }
-  .animate-slide-in  { animation: slide-in-right 0.35s cubic-bezier(0.34,1.56,0.64,1); }
-  .animate-fade-out  { animation: fade-out-down 0.3s ease forwards; }
+.card-header .title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text2);
+}
 
-  .bar { transition: width 0.7s cubic-bezier(0.4,0,0.2,1); }
+.card-body { padding: 12px; }
 
-  .radar-card {
-    transition: transform 0.18s ease, box-shadow 0.18s ease;
-    cursor: pointer;
-  }
-  .radar-card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-  }
+/* ── HEADER BAR ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
 
-  .shimmer {
-    background: linear-gradient(90deg,rgba(0,0,0,0.04) 25%,rgba(0,0,0,0.08) 50%,rgba(0,0,0,0.04) 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    border-radius: 6px;
-  }
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
-  .num {
-    font-family: 'SF Mono','JetBrains Mono',monospace;
-    font-variant-numeric: tabular-nums;
-  }
+.header-brand .name {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
 
-  .progress-track {
-    background: rgba(0,0,0,0.06);
-    border-radius: 100px;
-    overflow: hidden;
-  }
+.header-brand .sub {
+  font-size: 10px;
+  color: var(--text3);
+  font-family: var(--mono);
+}
 
-  .ladder-now {
-    background: rgba(0,113,227,0.08);
-    border: 1.5px solid rgba(0,113,227,0.3);
-    border-radius: 10px;
-  }
+.header-stats {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
 
-  .modal-overlay {
-    background: rgba(0,0,0,0.4);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-  }
+.hstat { text-align: center; }
+.hstat .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); }
+.hstat .value { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text); }
 
-  .btn-apple {
-    background: #0071e3;
-    color: #fff;
-    border-radius: 980px;
-    font-weight: 600;
-    font-size: 13px;
-    padding: 7px 16px;
-    transition: background 0.2s;
-    border: none;
-    cursor: pointer;
-  }
-  .btn-apple:hover    { background: #0077ed; }
-  .btn-apple:disabled { background: rgba(0,0,0,0.12); color: rgba(0,0,0,0.3); cursor: not-allowed; }
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 
-  .btn-danger {
-    background: rgba(255,59,48,0.1);
-    color: #ff3b30;
-    border: 1px solid rgba(255,59,48,0.25);
-    border-radius: 12px;
-    font-weight: 600;
-    font-size: 13px;
-    padding: 12px 20px;
-    width: 100%;
-    transition: background 0.2s;
-    cursor: pointer;
-  }
-  .btn-danger:hover { background: rgba(255,59,48,0.16); }
+/* ── STATUS BAR ── */
+.statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 12px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
 
-  .section-label {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: #6e6e73;
-  }
+.status-left { display: flex; align-items: center; gap: 8px; }
+.status-dot  { width: 8px; height: 8px; border-radius: 50%; background: var(--text3); flex-shrink: 0; }
+.status-text { font-weight: 600; font-size: 12px; }
+.status-sub  { font-size: 11px; color: var(--text2); }
+.status-right { display: flex; align-items: center; gap: 8px; }
 
-  .divider { border-color: rgba(0,0,0,0.06); }
+/* ── BUTTONS ── */
+.btn {
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.15s;
+}
+.btn:hover    { opacity: 0.8; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary  { background: var(--blue);  color: #fff; border-color: var(--blue); }
+.btn-danger   { background: transparent; color: var(--red); border-color: var(--red); width: 100%; padding: 10px; margin-top: 8px; }
 
-  .thesis-block {
-    background: rgba(0,113,227,0.04);
-    border-left: 3px solid rgba(0,113,227,0.3);
-    border-radius: 0 8px 8px 0;
-    padding: 10px 12px;
-    font-size: 11px;
-    line-height: 1.6;
-    color: #3a3a3c;
-    white-space: pre-line;
-  }
+/* ── MONO VALUES ── */
+.mono { font-family: var(--mono); }
+.green  { color: var(--green); }
+.red    { color: var(--red); }
+.blue   { color: var(--blue); }
+.orange { color: var(--orange); }
+.muted  { color: var(--text2); }
+.label  { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
 
-  .risk-block {
-    background: rgba(255,149,0,0.04);
-    border-left: 3px solid rgba(255,149,0,0.3);
-    border-radius: 0 8px 8px 0;
-    padding: 10px 12px;
-    font-size: 11px;
-    line-height: 1.6;
-    color: #3a3a3c;
-    white-space: pre-line;
-  }
+/* ── TRADE PANEL ── */
+.trade-idle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text2);
+}
 
-  .no-trade-block {
-    background: rgba(255,59,48,0.04);
-    border-left: 3px solid rgba(255,59,48,0.3);
-    border-radius: 0 8px 8px 0;
-    padding: 10px 12px;
-    font-size: 11px;
-    line-height: 1.6;
-    color: #3a3a3c;
-    white-space: pre-line;
-  }
+.trade-active { display: none; }
 
-  .health-healthy    { color: #248a3d; }
-  .health-warning    { color: #e8820c; }
-  .health-invalidated{ color: #c0392b; }
+.trade-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trade-coin-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.trade-coin     { font-size: 20px; font-weight: 700; font-family: var(--mono); }
+.badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 3px;
+  border: 1px solid;
+  font-family: var(--mono);
+}
+
+.trade-pnl-block { text-align: right; }
+.trade-pnl       { font-size: 26px; font-weight: 700; font-family: var(--mono); }
+.trade-pnl-sub   { font-size: 10px; color: var(--text2); }
+
+/* ── PROGRESS ── */
+.progress-wrap { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.progress-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text2);
+  font-family: var(--mono);
+  margin-bottom: 5px;
+}
+.progress-track {
+  height: 4px;
+  background: var(--bg3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.6s ease;
+}
+.progress-status {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+
+/* ── STATS GRID ── */
+.stat-cell {
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.stat-cell:nth-child(4n) { border-right: none; }
+.stat-cell:nth-last-child(-n+4) { border-bottom: none; }
+.stat-val { font-family: var(--mono); font-size: 13px; font-weight: 600; margin-top: 2px; }
+
+/* ── LADDER ── */
+.ladder { padding: 10px 12px; border-top: 1px solid var(--border); }
+.ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 3px;
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.ladder-row.current { background: rgba(41,121,255,0.12); border: 1px solid rgba(41,121,255,0.3); }
+.ladder-row.normal  { background: var(--bg2); }
+.ladder-row.hit     { opacity: 0.35; text-decoration: line-through; background: var(--bg2); }
+.ladder-label { width: 36px; font-size: 10px; font-weight: 700; flex-shrink: 0; }
+.ladder-price { flex: 1; font-weight: 600; }
+.ladder-dist  { width: 60px; text-align: right; font-size: 10px; color: var(--text2); }
+.ladder-badge { font-size: 10px; padding: 1px 6px; border-radius: 2px; flex-shrink: 0; }
+
+/* ── THESIS ── */
+.thesis-block {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--blue);
+  background: rgba(41,121,255,0.05);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text2);
+  white-space: pre-line;
+  border-radius: 0 3px 3px 0;
+}
+.risk-block {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--orange);
+  background: rgba(255,145,0,0.05);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text2);
+  white-space: pre-line;
+  border-radius: 0 3px 3px 0;
+}
+.no-trade-block {
+  margin: 8px 12px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--red);
+  background: rgba(255,61,61,0.05);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text2);
+  white-space: pre-line;
+  border-radius: 0 3px 3px 0;
+}
+
+/* ── HEALTH ── */
+.health-block {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.7;
+  background: var(--bg2);
+}
+
+/* ── RADAR ── */
+.radar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+  gap: 6px;
+  padding: 10px;
+}
+.radar-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.radar-card:hover { border-color: var(--blue); }
+.radar-coin  { font-weight: 700; font-size: 11px; font-family: var(--mono); margin-bottom: 3px; }
+.radar-dir   { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.radar-bar   { height: 2px; background: var(--bg3); border-radius: 1px; margin-bottom: 4px; overflow: hidden; }
+.radar-bar-fill { height: 100%; border-radius: 1px; }
+.radar-meta  { display: flex; justify-content: space-between; font-size: 10px; font-family: var(--mono); }
+
+/* ── SIGNAL QUEUE ── */
+.queue-item {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+}
+.queue-item:last-child { border-bottom: none; }
+.queue-top   { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.queue-coin  { font-weight: 700; font-family: var(--mono); font-size: 12px; }
+.queue-levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 6px; }
+.queue-level  { font-size: 10px; }
+.queue-level .lbl { color: var(--text2); }
+.queue-level .val { font-family: var(--mono); font-weight: 600; }
+.queue-footer { display: flex; justify-content: space-between; font-size: 10px; color: var(--text2); }
+
+/* ── RISK BARS ── */
+.risk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.risk-label { font-size: 11px; color: var(--text2); width: 80px; flex-shrink: 0; }
+.risk-track { flex: 1; height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.risk-fill  { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+.risk-val   { font-family: var(--mono); font-size: 11px; font-weight: 600; width: 60px; text-align: right; flex-shrink: 0; }
+.risk-caps  { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.risk-cap   { background: var(--bg2); border-radius: 4px; padding: 8px 10px; }
+.risk-cap .lbl { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text2); }
+.risk-cap .val { font-family: var(--mono); font-size: 20px; font-weight: 700; margin-top: 2px; }
+
+/* ── PERFORMANCE ── */
+.perf-cell {
+  padding: 10px 12px;
+  border-right: 1px solid var(--border);
+}
+.perf-cell:last-child { border-right: none; }
+.perf-val { font-family: var(--mono); font-size: 18px; font-weight: 700; margin: 2px 0; }
+.perf-sub { font-size: 10px; color: var(--text2); }
+
+/* ── GRADE BARS ── */
+.grade-row { margin-bottom: 12px; }
+.grade-top { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; }
+.grade-track { height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; margin-bottom: 3px; }
+.grade-fill  { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+.grade-detail { font-size: 10px; color: var(--text2); font-family: var(--mono); }
+
+/* ── HISTORY ── */
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  border-left: 2px solid transparent;
+  font-size: 11px;
+}
+.history-row:last-child { border-bottom: none; }
+.history-coin { font-family: var(--mono); font-weight: 600; width: 36px; flex-shrink: 0; }
+.history-dir  { width: 44px; flex-shrink: 0; font-weight: 600; }
+.history-reason { flex: 1; color: var(--text2); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-pnl  { font-family: var(--mono); font-weight: 600; flex-shrink: 0; }
+
+/* ── MODAL ── */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 50;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.modal-overlay.open { display: flex; }
+.modal-box {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 100%;
+  max-width: 640px;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg2);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.modal-head .title { font-weight: 600; font-size: 13px; font-family: var(--mono); }
+.modal-close {
+  background: var(--bg3);
+  border: none;
+  color: var(--text2);
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.modal-body { padding: 14px; }
+
+/* ── FACTOR ROWS ── */
+.factor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+.factor-name  { width: 140px; flex-shrink: 0; color: var(--text2); }
+.factor-track { flex: 1; height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.factor-fill  { height: 100%; border-radius: 2px; }
+.factor-score { font-family: var(--mono); width: 36px; text-align: right; flex-shrink: 0; font-size: 10px; }
+.factor-pass  { width: 16px; text-align: center; flex-shrink: 0; font-size: 11px; }
+
+/* ── TOAST ── */
+.toasts {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.toast {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--blue);
+  border-radius: 4px;
+  padding: 10px 12px;
+  max-width: 280px;
+  pointer-events: auto;
+  animation: slide-in 0.25s ease;
+}
+.toast-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.toast-body  { font-size: 11px; color: var(--text2); }
+
+@keyframes slide-in {
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; transform: translateY(4px); }
+}
+
+/* ── MISC ── */
+.divider { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+.clock   { font-family: var(--mono); font-size: 11px; color: var(--text2); text-align: right; }
+.countdown { font-family: var(--mono); font-size: 10px; color: var(--text3); }
+
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--bg3); border-radius: 2px; }
+
+@media (max-width: 900px) {
+  .grid-main { grid-template-columns: 1fr; }
+  .grid-perf { grid-template-columns: repeat(3, 1fr); }
+}
 </style>
 </head>
-<body class="text-apple-text text-sm font-sans">
+<body>
 
-<!-- TOAST CONTAINER -->
-<div id="toasts" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
+<div class="toasts" id="toasts"></div>
 
-<!-- COIN DETAIL MODAL -->
-<div id="modal-overlay"
-     class="modal-overlay fixed inset-0 z-40 hidden items-center justify-center p-4"
-     onclick="closeModal()">
-  <div id="modal-box"
-       class="glass-strong rounded-apple w-full max-w-2xl max-h-[88vh] overflow-y-auto animate-slide-up"
-       onclick="event.stopPropagation()">
-    <div class="flex items-center justify-between px-6 py-4 border-b divider sticky top-0 glass-strong z-10 rounded-t-apple">
-      <h3 id="modal-title" class="font-semibold text-base text-apple-text"></h3>
-      <button onclick="closeModal()"
-              class="w-7 h-7 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center text-apple-secondary transition-colors text-sm">
-        ✕
-      </button>
+<!-- MODAL -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-head">
+      <span class="title" id="modal-title">--</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
-    <div id="modal-body" class="p-6"></div>
+    <div class="modal-body" id="modal-body"></div>
   </div>
 </div>
 
-<!-- APP -->
-<div class="max-w-[1360px] mx-auto px-4 py-4 space-y-3">
+<div class="app">
 
   <!-- HEADER -->
-  <header class="glass rounded-apple px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
-    <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-apple-sm bg-gradient-to-br from-apple-blue to-blue-600 flex items-center justify-center text-white text-base shadow-apple">
-        ⚡
-      </div>
+  <div class="header">
+    <div class="header-brand">
       <div>
-        <div class="font-semibold text-[15px] text-apple-text leading-tight">Signal Engine</div>
-        <div class="text-apple-secondary text-[11px]">v5 · Binance Futures</div>
+        <div class="name">⚡ Signal Engine <span class="mono" style="color:var(--text3);font-size:11px">v5</span></div>
+        <div class="sub">Binance Futures · Paper Mode</div>
       </div>
     </div>
-
-    <div class="flex items-center gap-5 flex-wrap">
-      <div class="text-center">
-        <div class="section-label mb-0.5">Capital</div>
-        <div id="h-capital" class="num font-semibold text-sm text-apple-text">$10</div>
+    <div class="header-stats">
+      <div class="hstat">
+        <div class="label">Capital</div>
+        <div class="value" id="h-capital">$10</div>
       </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Leverage</div>
-        <div class="num font-semibold text-sm text-apple-text">10x</div>
+      <div class="hstat">
+        <div class="label">Leverage</div>
+        <div class="value">10x</div>
       </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Today PnL</div>
-        <div id="h-today-pnl" class="num font-semibold text-sm">--</div>
+      <div class="hstat">
+        <div class="label">Today PnL</div>
+        <div class="value mono" id="h-today-pnl">--</div>
       </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Trades Left</div>
-        <div id="h-trades-left" class="num font-semibold text-sm text-apple-text">3</div>
+      <div class="hstat">
+        <div class="label">Trades Left</div>
+        <div class="value mono" id="h-trades-left">3</div>
       </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Win Rate</div>
-        <div id="h-winrate" class="num font-semibold text-sm">--%</div>
+      <div class="hstat">
+        <div class="label">Win Rate</div>
+        <div class="value mono" id="h-winrate">--%</div>
       </div>
-    </div>
-
-    <div class="flex items-center gap-3">
-      <span id="mode-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-apple-blue/10 text-apple-blue border border-apple-blue/20">
-        PAPER
-      </span>
-      <div class="text-right">
-        <div id="live-clock" class="num text-xs text-apple-secondary">--:-- UTC</div>
-        <div class="text-[10px] text-apple-secondary/70">
-          Next: <span id="countdown-val" class="text-apple-blue font-semibold">--:--</span>
-        </div>
+      <div class="hstat">
+        <div class="label">Mode</div>
+        <div class="value mono blue" id="h-mode">PAPER</div>
       </div>
     </div>
-  </header>
+    <div class="header-right">
+      <div class="clock">
+        <div id="live-clock">--:-- IST</div>
+        <div class="countdown">Next: <span id="countdown-val" class="blue">--:--</span></div>
+      </div>
+    </div>
+  </div>
 
   <!-- STATUS BAR -->
-  <div class="glass rounded-apple px-5 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-    <div class="flex items-center gap-3">
-      <div class="w-2.5 h-2.5 rounded-full" id="status-dot" style="background:#6e6e73"></div>
+  <div class="statusbar" style="margin-top:8px">
+    <div class="status-left">
+      <div class="status-dot" id="status-dot"></div>
       <div>
-        <div id="status-text" class="font-semibold text-sm text-apple-text">Initializing...</div>
-        <div id="status-sub" class="text-apple-secondary text-xs">Loading dashboard</div>
+        <div class="status-text" id="status-text">Initializing...</div>
+        <div class="status-sub"  id="status-sub">Loading</div>
       </div>
     </div>
-    <div class="flex items-center gap-2">
-      <span class="text-xs text-apple-secondary">
-        Last scan: <span id="last-scan-time" class="text-apple-text font-medium">--</span>
-      </span>
-      <button id="scan-btn" onclick="triggerScan()" class="btn-apple">🔍 Scan Now</button>
+    <div class="status-right">
+      <span style="font-size:11px;color:var(--text2)">Last scan: <span id="last-scan-time" style="color:var(--text)">--</span></span>
+      <button class="btn btn-primary" id="scan-btn" onclick="triggerScan()">🔍 Scan Now</button>
     </div>
   </div>
 
   <!-- MAIN GRID -->
-  <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-3">
+  <div class="grid-main">
 
     <!-- LEFT -->
-    <div class="space-y-3">
+    <div class="col-left">
 
-      <!-- ACTIVE TRADE -->
-      <section id="trade-section">
+      <!-- TRADE PANEL -->
+      <div id="trade-idle" class="trade-idle">
+        <span style="font-size:20px">⚪</span>
+        <div>
+          <div style="font-weight:600;color:var(--text2)">No Active Trade</div>
+          <div style="font-size:11px;color:var(--text3)">Scanning at :00/:15/:30/:45 UTC · A/A+ signals auto-execute</div>
+        </div>
+      </div>
 
-        <!-- IDLE -->
-        <div id="trade-idle" class="glass rounded-apple p-5 flex items-center gap-4">
-          <div class="w-12 h-12 rounded-apple-sm bg-black/5 flex items-center justify-center text-2xl">⚪</div>
+      <div id="trade-active" class="card trade-active">
+
+        <div class="trade-top">
           <div>
-            <div class="font-semibold text-base text-apple-secondary">No Active Trade</div>
-            <div class="text-apple-secondary text-xs mt-0.5">Scanning at :00/:15/:30/:45 UTC · A/A+ signals auto-execute</div>
+            <div class="trade-coin-row">
+              <span class="trade-coin" id="trade-coin">--</span>
+              <span class="badge" id="trade-dir-badge">--</span>
+              <span class="badge" id="trade-grade-badge">--</span>
+              <span class="badge" id="trade-phase-badge">--</span>
+              <span class="badge" id="trade-health-badge">--</span>
+            </div>
+            <div style="font-size:11px;color:var(--text2);margin-top:4px" id="trade-state-label">--</div>
           </div>
-          <div class="ml-auto text-right hidden sm:block">
-            <div class="section-label mb-0.5">Last Scan</div>
-            <div id="idle-last-scan" class="text-xs text-apple-text num font-medium">--</div>
+          <div class="trade-pnl-block">
+            <div class="trade-pnl" id="trade-pnl">--</div>
+            <div class="trade-pnl-sub">unrealized PnL</div>
+            <div class="trade-pnl-sub mono" id="trade-pnl-pct">--</div>
           </div>
         </div>
 
-        <!-- ACTIVE -->
-        <div id="trade-active" class="hidden glass-strong rounded-apple overflow-hidden">
-
-          <!-- Trade header -->
-          <div id="trade-header" class="px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <div class="flex items-center gap-2 flex-wrap">
-                <h2 id="trade-coin" class="text-2xl font-bold tracking-tight">--</h2>
-                <span id="trade-dir-badge"   class="px-3 py-1 rounded-full text-sm font-semibold border">--</span>
-                <span id="trade-grade-badge" class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-phase-badge" class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-health-badge" class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-duration-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-black/5 text-apple-secondary">--</span>
-              </div>
-              <div id="trade-state-label" class="text-xs text-apple-secondary mt-1.5">--</div>
-            </div>
-            <div class="text-right">
-              <div id="trade-pnl" class="text-3xl font-bold tracking-tight num">--</div>
-              <div class="text-xs text-apple-secondary mt-0.5">unrealized PnL</div>
-              <div id="trade-pnl-pct" class="text-xs mt-0.5 num text-apple-secondary">--</div>
-            </div>
+        <div class="progress-wrap">
+          <div class="progress-labels">
+            <span id="prog-sl-label">SL</span>
+            <span id="prog-mid-label">Entry</span>
+            <span id="prog-tp1-label">TP1</span>
           </div>
-
-          <!-- Progress -->
-          <div class="px-5 pb-4 border-t divider pt-4">
-            <div class="flex justify-between text-[10px] text-apple-secondary num mb-2">
-              <span id="prog-sl-label">SL</span>
-              <span id="prog-mid-label">Entry</span>
-              <span id="prog-tp1-label">TP1</span>
-            </div>
-            <div class="progress-track h-2">
-              <div id="prog-fill" class="h-full rounded-full bar" style="width:0%;background:#0071e3"></div>
-            </div>
-            <div class="flex items-center justify-between mt-2">
-              <div id="prog-status" class="text-xs font-semibold num">--</div>
-              <div id="prog-phase"  class="text-[10px] text-apple-secondary">Phase 1</div>
-            </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="prog-fill" style="width:0%;background:var(--blue)"></div>
           </div>
-
-          <!-- Stats grid -->
-          <div class="grid grid-cols-4 border-t divider divide-x divide-black/6">
-            <div class="p-3">
-              <div class="section-label mb-1">Current</div>
-              <div id="ts-current" class="font-semibold num text-sm">--</div>
-              <div id="ts-move"    class="text-[10px] mt-0.5 text-apple-secondary num">--</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Entry</div>
-              <div id="ts-entry" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">filled at</div>
-            </div>
-            <div class="p-3">
-              <div id="ts-sl-label" class="section-label mb-1">To SL</div>
-              <div id="ts-to-sl"   class="font-semibold num text-sm text-apple-red">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">distance</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">To TP1</div>
-              <div id="ts-to-tp1" class="font-semibold num text-sm text-apple-green">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">distance</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Risk</div>
-              <div id="ts-risk" class="font-semibold num text-sm text-apple-red">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">max loss</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">TP1 Reward</div>
-              <div id="ts-tp1-rew" class="font-semibold num text-sm text-apple-green">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">if TP1 hit</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Position</div>
-              <div id="ts-pos" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">notional</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">R:R</div>
-              <div id="ts-rr" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">risk reward</div>
-            </div>
-          </div>
-
-          <!-- Trade thesis -->
-          <div id="trade-thesis-section" class="px-5 py-4 border-t divider hidden">
-            <div class="section-label mb-2">Why This Trade</div>
-            <div id="trade-thesis-text" class="thesis-block"></div>
-            <div class="section-label mb-2 mt-3">Risk Factors</div>
-            <div id="trade-risk-text" class="risk-block"></div>
-          </div>
-
-          <!-- Health warnings -->
-          <div id="trade-health-section" class="px-5 py-4 border-t divider hidden">
-            <div class="section-label mb-2">Trade Health</div>
-            <div id="trade-health-detail" class="text-xs text-apple-secondary leading-relaxed"></div>
-          </div>
-
-          <!-- Ladder -->
-          <div class="px-5 py-4 border-t divider">
-            <div class="section-label mb-3">Price Ladder</div>
-            <div id="ladder-rows" class="space-y-1.5"></div>
-          </div>
-
-          <!-- Close button -->
-          <div class="px-5 pb-5 pt-2">
-            <button onclick="confirmClose()" id="close-trade-btn" class="btn-danger">
-              🔴 Close Trade at Market
-            </button>
-          </div>
-
-        </div>
-      </section>
-
-      <!-- MARKET RADAR -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-3 border-b divider">
-          <h2 class="section-label">📡 Market Radar</h2>
-          <span id="radar-updated" class="text-[10px] text-apple-secondary">--</span>
-        </div>
-        <div class="p-3">
-          <div id="radar-grid" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-4 2xl:grid-cols-6 gap-2">
-            <div class="shimmer h-24 rounded-apple-sm"></div>
-            <div class="shimmer h-24 rounded-apple-sm"></div>
-            <div class="shimmer h-24 rounded-apple-sm"></div>
-            <div class="shimmer h-24 rounded-apple-sm"></div>
+          <div class="progress-status">
+            <span id="prog-status" class="mono">--</span>
+            <span id="prog-phase"  style="color:var(--text2);font-size:10px">Phase 1</span>
           </div>
         </div>
-      </section>
 
-      <!-- PERFORMANCE STRIP -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="grid grid-cols-5 divide-x divide-black/6">
-          <div class="p-4">
-            <div class="section-label mb-1.5">Win Rate</div>
-            <div id="perf-wr"     class="num font-bold text-xl text-apple-text">--%</div>
-            <div id="perf-wr-sub" class="text-[10px] mt-0.5 text-apple-secondary">-- trades</div>
+        <div class="grid-4">
+          <div class="stat-cell">
+            <div class="label">Current</div>
+            <div class="stat-val" id="ts-current">--</div>
+            <div style="font-size:10px;color:var(--text2);font-family:var(--mono)" id="ts-move">--</div>
           </div>
-          <div class="p-4">
-            <div class="section-label mb-1.5">Total PnL</div>
-            <div id="perf-pnl"     class="num font-bold text-xl">$--</div>
-            <div id="perf-pnl-sub" class="text-[10px] mt-0.5 text-apple-secondary">all time</div>
+          <div class="stat-cell">
+            <div class="label">Entry</div>
+            <div class="stat-val mono" id="ts-entry">--</div>
           </div>
-          <div class="p-4">
-            <div class="section-label mb-1.5">Profit Factor</div>
-            <div id="perf-pf"     class="num font-bold text-xl text-apple-text">--</div>
-            <div id="perf-pf-sub" class="text-[10px] mt-0.5 text-apple-secondary">gross P/L</div>
+          <div class="stat-cell">
+            <div class="label" id="ts-sl-label">To SL</div>
+            <div class="stat-val red mono" id="ts-to-sl">--</div>
           </div>
-          <div class="p-4">
-            <div class="section-label mb-1.5">Best Trade</div>
-            <div id="perf-best"     class="num font-bold text-xl text-apple-green">$--</div>
-            <div id="perf-best-sub" class="text-[10px] mt-0.5 text-apple-secondary">--</div>
+          <div class="stat-cell">
+            <div class="label">To TP1</div>
+            <div class="stat-val green mono" id="ts-to-tp1">--</div>
           </div>
-          <div class="p-4">
-            <div class="section-label mb-1.5">Max Drawdown</div>
-            <div id="perf-dd"     class="num font-bold text-xl">--%</div>
-            <div id="perf-dd-sub" class="text-[10px] mt-0.5 text-apple-secondary">peak to trough</div>
+          <div class="stat-cell">
+            <div class="label">Risk</div>
+            <div class="stat-val red mono" id="ts-risk">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="label">TP1 Reward</div>
+            <div class="stat-val green mono" id="ts-tp1-rew">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="label">Position</div>
+            <div class="stat-val mono" id="ts-pos">--</div>
+          </div>
+          <div class="stat-cell">
+            <div class="label">R:R</div>
+            <div class="stat-val mono" id="ts-rr">--</div>
           </div>
         </div>
-      </section>
+
+        <div id="trade-thesis-section" style="display:none">
+          <div class="thesis-block" id="trade-thesis-text"></div>
+          <div class="risk-block"   id="trade-risk-text"></div>
+        </div>
+
+        <div id="trade-health-section" style="display:none">
+          <div class="health-block" id="trade-health-detail"></div>
+        </div>
+
+        <div class="ladder" id="ladder-rows"></div>
+
+        <div style="padding:0 12px 12px">
+          <button class="btn btn-danger" onclick="confirmClose()">🔴 Close Trade at Market</button>
+        </div>
+
+      </div>
+
+      <!-- PERFORMANCE -->
+      <div class="card">
+        <div class="card-header"><span class="title">Performance</span></div>
+        <div class="grid-perf">
+          <div class="perf-cell">
+            <div class="label">Win Rate</div>
+            <div class="perf-val" id="perf-wr">--%</div>
+            <div class="perf-sub" id="perf-wr-sub">0 trades</div>
+          </div>
+          <div class="perf-cell">
+            <div class="label">Total PnL</div>
+            <div class="perf-val mono" id="perf-pnl">$--</div>
+            <div class="perf-sub" id="perf-pnl-sub">all time</div>
+          </div>
+          <div class="perf-cell">
+            <div class="label">Profit Factor</div>
+            <div class="perf-val mono" id="perf-pf">--</div>
+            <div class="perf-sub" id="perf-pf-sub">gross P/L</div>
+          </div>
+          <div class="perf-cell">
+            <div class="label">Best Trade</div>
+            <div class="perf-val green mono" id="perf-best">$--</div>
+            <div class="perf-sub" id="perf-best-sub">--</div>
+          </div>
+          <div class="perf-cell">
+            <div class="label">Max Drawdown</div>
+            <div class="perf-val mono" id="perf-dd">--%</div>
+            <div class="perf-sub" id="perf-dd-sub">peak to trough</div>
+          </div>
+        </div>
+      </div>
 
       <!-- BOTTOM GRID -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div class="grid-2">
 
-        <section class="glass rounded-apple overflow-hidden">
-          <div class="flex items-center justify-between px-5 py-3 border-b divider">
-            <h2 class="section-label">📈 Equity Curve</h2>
-            <span class="text-[10px] text-apple-secondary">cumulative PnL</span>
+        <!-- RADAR -->
+        <div class="card">
+          <div class="card-header">
+            <span class="title">📡 Market Radar</span>
+            <span style="font-size:10px;color:var(--text3)" id="radar-updated">--</span>
           </div>
-          <div class="p-4">
-            <div class="relative h-44">
-              <canvas id="chart-equity"></canvas>
-            </div>
+          <div class="radar-grid" id="radar-grid">
+            <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text3);font-size:11px">No scan data</div>
           </div>
-        </section>
+        </div>
 
-        <section class="glass rounded-apple overflow-hidden">
-          <div class="flex items-center justify-between px-5 py-3 border-b divider">
-            <h2 class="section-label">💼 Recent Trades</h2>
-            <span class="text-[10px] text-apple-secondary">last 10</span>
+        <!-- HISTORY -->
+        <div class="card">
+          <div class="card-header"><span class="title">Recent Trades</span><span style="font-size:10px;color:var(--text3)">last 10</span></div>
+          <div id="history-list">
+            <div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">No closed trades yet</div>
           </div>
-          <div class="p-3 max-h-48 overflow-y-auto space-y-1.5" id="history-list">
-            <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
-          </div>
-        </section>
+        </div>
 
       </div>
     </div>
-    <!-- END LEFT -->
 
     <!-- RIGHT -->
-    <div class="space-y-3">
+    <div class="col-right">
 
       <!-- SIGNAL QUEUE -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-3 border-b divider">
-          <h2 class="section-label">🎯 Signal Queue</h2>
-          <span class="text-[10px] text-apple-secondary">A/A+ only</span>
+      <div class="card">
+        <div class="card-header"><span class="title">🎯 Signal Queue</span><span style="font-size:10px;color:var(--text3)">A/A+ only</span></div>
+        <div id="signal-queue">
+          <div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">No signals yet</div>
         </div>
-        <div class="p-3 space-y-2" id="signal-queue">
-          <div class="text-center py-8 text-apple-secondary text-xs">
-            No A/A+ signals yet.<br>Waiting for next scan.
-          </div>
-        </div>
-      </section>
+      </div>
 
       <!-- DAILY RISK -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-3 border-b divider">
-          <h2 class="section-label">🛡️ Daily Risk</h2>
-          <span id="risk-cap-status" class="text-xs font-semibold text-apple-green">✅ Active</span>
+      <div class="card">
+        <div class="card-header">
+          <span class="title">🛡️ Daily Risk</span>
+          <span id="risk-cap-status" class="green" style="font-size:11px;font-weight:600">✅ Active</span>
         </div>
-        <div class="p-4 space-y-3">
-
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Trades Today</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-trades-bar" class="h-full rounded-full bar bg-apple-blue" style="width:0%"></div>
-            </div>
-            <span id="risk-trades-val" class="num text-xs font-semibold w-8 text-right text-apple-text">0/3</span>
+        <div class="card-body">
+          <div class="risk-row">
+            <span class="risk-label">Trades Today</span>
+            <div class="risk-track"><div class="risk-fill" id="risk-trades-bar" style="width:0%;background:var(--blue)"></div></div>
+            <span class="risk-val mono" id="risk-trades-val">0/3</span>
           </div>
-
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Daily Loss</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-loss-bar" class="h-full rounded-full bar bg-apple-green" style="width:0%"></div>
-            </div>
-            <span id="risk-loss-val" class="num text-xs font-semibold w-14 text-right text-apple-text">$0.00</span>
+          <div class="risk-row">
+            <span class="risk-label">Daily Loss</span>
+            <div class="risk-track"><div class="risk-fill" id="risk-loss-bar" style="width:0%;background:var(--green)"></div></div>
+            <span class="risk-val mono" id="risk-loss-val">$0.00</span>
           </div>
-
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Today PnL</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-pnl-bar" class="h-full rounded-full bar bg-apple-green" style="width:0%"></div>
-            </div>
-            <span id="risk-pnl-val" class="num text-xs font-semibold w-14 text-right">$0.00</span>
+          <div class="risk-row">
+            <span class="risk-label">Today PnL</span>
+            <div class="risk-track"><div class="risk-fill" id="risk-pnl-bar" style="width:0%;background:var(--green)"></div></div>
+            <span class="risk-val mono" id="risk-pnl-val">$0.00</span>
           </div>
-
-          <div class="grid grid-cols-2 gap-2 pt-1">
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Trades Left</div>
-              <div id="risk-remaining-trades" class="num font-bold text-2xl text-apple-text">3</div>
+          <div class="risk-caps">
+            <div class="risk-cap">
+              <div class="lbl">Trades Left</div>
+              <div class="val mono" id="risk-remaining-trades">3</div>
             </div>
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Loss Cap Left</div>
-              <div id="risk-remaining-loss" class="num font-bold text-2xl text-apple-text">$2.00</div>
+            <div class="risk-cap">
+              <div class="lbl">Loss Cap Left</div>
+              <div class="val mono" id="risk-remaining-loss">$2.00</div>
             </div>
           </div>
-
         </div>
-      </section>
+      </div>
 
       <!-- GRADE BREAKDOWN -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-3 border-b divider">
-          <h2 class="section-label">🏆 Grade Breakdown</h2>
+      <div class="card">
+        <div class="card-header"><span class="title">Grade Breakdown</span></div>
+        <div class="card-body">
+          <div class="grade-row">
+            <div class="grade-top">
+              <span class="green" style="font-weight:600;font-size:11px">Grade A+</span>
+              <span class="mono" style="font-size:11px;font-weight:600" id="aplus-wr">--%</span>
+            </div>
+            <div class="grade-track"><div class="grade-fill" id="aplus-bar" style="width:0%;background:var(--green)"></div></div>
+            <div class="grade-detail" id="aplus-detail">0W · 0L · 0 trades</div>
+          </div>
+          <div class="grade-row">
+            <div class="grade-top">
+              <span class="blue" style="font-weight:600;font-size:11px">Grade A</span>
+              <span class="mono" style="font-size:11px;font-weight:600" id="a-wr">--%</span>
+            </div>
+            <div class="grade-track"><div class="grade-fill" id="a-bar" style="width:0%;background:var(--blue)"></div></div>
+            <div class="grade-detail" id="a-detail">0W · 0L · 0 trades</div>
+          </div>
         </div>
-        <div class="p-4 space-y-4">
-
-          <div>
-            <div class="flex justify-between items-center mb-2">
-              <span class="text-xs font-semibold text-apple-green">Grade A+</span>
-              <span id="aplus-wr" class="num text-xs font-semibold text-apple-text">--%</span>
-            </div>
-            <div class="progress-track h-1.5 mb-1.5">
-              <div id="aplus-bar" class="h-full rounded-full bar bg-apple-green" style="width:0%"></div>
-            </div>
-            <div id="aplus-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades</div>
-          </div>
-
-          <div>
-            <div class="flex justify-between items-center mb-2">
-              <span class="text-xs font-semibold text-apple-blue">Grade A</span>
-              <span id="a-wr" class="num text-xs font-semibold text-apple-text">--%</span>
-            </div>
-            <div class="progress-track h-1.5 mb-1.5">
-              <div id="a-bar" class="h-full rounded-full bar bg-apple-blue" style="width:0%"></div>
-            </div>
-            <div id="a-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades</div>
-          </div>
-
-          <div class="relative h-28 mt-1">
-            <canvas id="chart-daily"></canvas>
-          </div>
-
-        </div>
-      </section>
+      </div>
 
     </div>
-    <!-- END RIGHT -->
-
   </div>
 </div>
 
@@ -623,62 +807,32 @@ tailwind.config = {
 'use strict'
 
 const API = window.location.origin + '/api'
-
-const S = {
-  data:           null,
-  scanning:       false,
-  nextScanEpoch:  null,
-  prevGrades:     {}
-}
-
-let chartEquity = null
-let chartDaily  = null
-
-Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, Inter, sans-serif'
-Chart.defaults.font.size   = 10
-Chart.defaults.color       = '#6e6e73'
-Chart.defaults.borderColor = 'rgba(0,0,0,0.06)'
-
+const S   = { data: null, scanning: false, nextScanEpoch: null, prevGrades: {} }
+let priceSocket     = null
+let pollingInterval = null
 
 // ═══════════════════════════════════════════════════════
-// CLOCK — UTC only
+// CLOCK + COUNTDOWN
 // ═══════════════════════════════════════════════════════
 function startClock() {
   const tick = () => {
     const el = document.getElementById('live-clock')
-    if (!el) return
-    el.textContent = new Date().toLocaleTimeString('en-IN', {
-      hour:     '2-digit',
-      minute:   '2-digit',
-      second:   '2-digit',
-      hour12:   false,
-      timeZone: 'Asia/Kolkata'
+    if (el) el.textContent = new Date().toLocaleTimeString('en-IN', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false, timeZone: 'Asia/Kolkata'
     }) + ' IST'
   }
   tick()
   setInterval(tick, 1000)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// COUNTDOWN — derived from server UTC epoch
-// Single source of truth — all devices sync to same clock
-// ═══════════════════════════════════════════════════════
 function startCountdown() {
   const tick = () => {
     const el = document.getElementById('countdown-val')
     if (!el) return
-
-    if (!S.nextScanEpoch) {
-      el.textContent = '--:--'
-      return
-    }
-
+    if (!S.nextScanEpoch) { el.textContent = '--:--'; return }
     const rem = S.nextScanEpoch - Date.now()
-    if (rem <= 0) {
-      el.textContent = '00:00'
-      return
-    }
+    if (rem <= 0) { el.textContent = '00:00'; return }
     const m = Math.floor(rem / 60000)
     const s = Math.floor((rem % 60000) / 1000)
     el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0')
@@ -687,34 +841,86 @@ function startCountdown() {
   setInterval(tick, 1000)
 }
 
-
 // ═══════════════════════════════════════════════════════
 // TOAST
 // ═══════════════════════════════════════════════════════
 function toast(title, body = '', type = 'info', dur = 5000) {
-  const accent = { info: '#0071e3', success: '#34c759', warning: '#ff9500', error: '#ff3b30' }
-  const icons  = { info: '💬', success: '✅', warning: '⚠️', error: '❌' }
-
+  const colors = { info: 'var(--blue)', success: 'var(--green)', warning: 'var(--orange)', error: 'var(--red)' }
   const el = document.createElement('div')
-  el.className = `animate-slide-in pointer-events-auto glass-strong rounded-apple-sm p-3.5 max-w-xs shadow-apple-md border-l-4`
-  el.style.borderLeftColor = accent[type] || accent.info
-  el.innerHTML = `
-    <div class="flex items-start gap-2.5">
-      <span class="text-base mt-0.5 shrink-0">${icons[type]}</span>
-      <div>
-        <div class="font-semibold text-xs text-apple-text leading-snug">${title}</div>
-        ${body ? `<div class="text-[11px] mt-0.5 text-apple-secondary leading-snug">${body}</div>` : ''}
-      </div>
-    </div>`
-
+  el.className = 'toast'
+  el.style.borderLeftColor = colors[type] || colors.info
+  el.innerHTML = `<div class="toast-title">${title}</div>${body ? `<div class="toast-body">${body}</div>` : ''}`
   document.getElementById('toasts').appendChild(el)
   setTimeout(() => {
-    el.classList.remove('animate-slide-in')
-    el.classList.add('animate-fade-out')
+    el.style.animation = 'fade-out 0.3s ease forwards'
     setTimeout(() => el.remove(), 300)
   }, dur)
 }
 
+// ═══════════════════════════════════════════════════════
+// WEBSOCKET — 1s price updates
+// ═══════════════════════════════════════════════════════
+function startPriceSocket() {
+  if (priceSocket) return
+  const wsUrl = `${window.location.origin.replace('https','wss').replace('http','ws')}/ws/price`
+  priceSocket = new WebSocket(wsUrl)
+
+  priceSocket.onopen = () => {
+    priceSocket._ping = setInterval(() => {
+      if (priceSocket.readyState === WebSocket.OPEN) priceSocket.send('ping')
+    }, 30000)
+  }
+
+  priceSocket.onmessage = (event) => {
+    try {
+      const d = JSON.parse(event.data)
+      if (d.type === 'price') applyPriceUpdate(d)
+    } catch(e) {}
+  }
+
+  priceSocket.onclose = () => {
+    clearInterval(priceSocket._ping)
+    priceSocket = null
+    setTimeout(() => {
+      if (S.data?.state !== 'idle') startPriceSocket()
+    }, 3000)
+  }
+
+  priceSocket.onerror = () => priceSocket?.close()
+}
+
+function stopPriceSocket() {
+  if (priceSocket) {
+    clearInterval(priceSocket._ping)
+    priceSocket.close()
+    priceSocket = null
+  }
+}
+
+function applyPriceUpdate(d) {
+  setStyled('ts-current',   d.price,    d.current_color)
+  setStyled('ts-move',      d.move_pct, d.move_color)
+  setStyled('trade-pnl',    d.pnl,      d.pnl_color)
+  setStyled('trade-pnl-pct',d.pnl_pct,  d.pnl_color)
+  const hpnl = document.getElementById('h-today-pnl')
+  if (hpnl) { hpnl.textContent = d.pnl; hpnl.style.color = d.pnl_color }
+}
+
+function syncConnectionMode(state) {
+  if (state !== 'idle') {
+    startPriceSocket()
+  } else {
+    stopPriceSocket()
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// POLLING
+// ═══════════════════════════════════════════════════════
+function startPolling() {
+  if (pollingInterval) return
+  pollingInterval = setInterval(fetchDashboard, 5000)
+}
 
 // ═══════════════════════════════════════════════════════
 // FETCH DASHBOARD
@@ -724,18 +930,12 @@ async function fetchDashboard() {
     const res = await fetch(`${API}/dashboard`)
     if (!res.ok) return
     S.data = await res.json()
-
-    // Update countdown epoch from server — UTC source of truth
-    if (S.data.next_scan_epoch) {
-      S.nextScanEpoch = S.data.next_scan_epoch
-    }
-
+    if (S.data.next_scan_epoch) S.nextScanEpoch = S.data.next_scan_epoch
     renderAll()
   } catch(e) {
     console.error('Dashboard fetch error:', e)
   }
 }
-
 
 // ═══════════════════════════════════════════════════════
 // RENDER ALL
@@ -743,7 +943,6 @@ async function fetchDashboard() {
 function renderAll() {
   const d = S.data
   if (!d) return
-
   renderHeader(d.header)
   renderStatusBar(d)
   renderTrade(d.trade, d.state)
@@ -752,113 +951,66 @@ function renderAll() {
   renderRisk(d.risk)
   renderPerformance(d.performance)
   renderHistory(d.history)
-  renderCharts(d.history)
+  syncConnectionMode(d.state)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER HEADER
-// ═══════════════════════════════════════════════════════
 function renderHeader(h) {
   if (!h) return
-  setText('h-capital', h.capital)
-
-  const pnlEl = document.getElementById('h-today-pnl')
-  if (pnlEl) { pnlEl.textContent = h.today_pnl; pnlEl.style.color = h.today_pnl_color }
-
-  const tlEl = document.getElementById('h-trades-left')
-  if (tlEl) { tlEl.textContent = h.trades_left; tlEl.style.color = h.trades_left_color }
-
-  const wrEl = document.getElementById('h-winrate')
-  if (wrEl) { wrEl.textContent = h.win_rate; wrEl.style.color = h.win_rate_color }
-
-  const badge = document.getElementById('mode-badge')
-  if (badge) {
-    badge.textContent = h.mode
-    if (h.mode === 'LIVE') {
-      badge.className = 'px-3 py-1 rounded-full text-xs font-semibold bg-apple-red/10 text-apple-red border border-apple-red/20'
-    }
-  }
+  setText('h-capital',    h.capital)
+  setText('h-mode',       h.mode)
+  setStyled('h-today-pnl',  h.today_pnl,  h.today_pnl_color)
+  setStyled('h-trades-left',h.trades_left, h.trades_left_color)
+  setStyled('h-winrate',    h.win_rate,    h.win_rate_color)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER STATUS BAR
-// ═══════════════════════════════════════════════════════
 function renderStatusBar(d) {
   const dot  = document.getElementById('status-dot')
-  const text = document.getElementById('status-text')
-  const sub  = document.getElementById('status-sub')
   const lst  = document.getElementById('last-scan-time')
-  const ilst = document.getElementById('idle-last-scan')
 
   if (S.scanning) {
-    if (dot)  dot.style.background = '#0071e3'
-    if (text) text.textContent = '🔍 Scanning all coins...'
-    if (sub)  sub.textContent  = 'Analyzing — takes 1-2 min'
+    if (dot) dot.style.background = 'var(--blue)'
+    setText('status-text', '🔍 Scanning...')
+    setText('status-sub',  'Analyzing all coins — 1-2 min')
     return
   }
 
   if (d.state === 'idle') {
-    if (dot)  dot.style.background = '#6e6e73'
-    if (text) text.textContent = 'IDLE — Watching markets'
-    if (sub)  sub.textContent  = 'Auto-executes A/A+ signals'
+    if (dot) dot.style.background = 'var(--text3)'
+    setText('status-text', 'IDLE — Watching markets')
+    setText('status-sub',  'Auto-executes A/A+ signals')
   } else {
     const t = d.trade
-    if (dot)  dot.style.background = '#34c759'
-    if (text) text.textContent = t ? `IN TRADE — ${t.coin} ${t.direction}` : 'IN TRADE'
-    if (sub)  sub.textContent  = t ? `Entry: ${t.entry_price} · SL: ${t.sl_price} · Grade ${t.grade}` : '--'
+    if (dot) dot.style.background = 'var(--green)'
+    setText('status-text', t ? `IN TRADE — ${t.coin} ${t.direction}` : 'IN TRADE')
+    setText('status-sub',  t ? `Entry: ${t.entry_price} · SL: ${t.sl_price} · Grade ${t.grade}` : '--')
   }
 
-  if (d.last_scan && d.last_scan !== '--') {
-    if (lst)  lst.textContent  = d.last_scan
-    if (ilst) ilst.textContent = d.last_scan
-  }
+  if (d.last_scan && d.last_scan !== '--') setText('last-scan-time', d.last_scan)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER TRADE
-// ═══════════════════════════════════════════════════════
 function renderTrade(t, state) {
   const idleEl   = document.getElementById('trade-idle')
   const activeEl = document.getElementById('trade-active')
 
   if (state === 'idle' || !t) {
-    idleEl.classList.remove('hidden')
-    activeEl.classList.add('hidden')
+    idleEl.style.display   = 'flex'
+    activeEl.style.display = 'none'
     return
   }
 
-  idleEl.classList.add('hidden')
-  activeEl.classList.remove('hidden')
+  idleEl.style.display   = 'none'
+  activeEl.style.display = 'block'
 
-  const header = document.getElementById('trade-header')
-  if (header) header.style.background = t.header_bg
-
-  const coinEl = document.getElementById('trade-coin')
-  if (coinEl) { coinEl.textContent = t.coin; coinEl.style.color = t.dir_color }
-
-  setBadge('trade-dir-badge',   `${t.dir_emoji} ${t.direction}`, t.dir_color,   t.dir_border)
-  setBadge('trade-grade-badge', `Grade ${t.grade}`,              t.grade_color, t.grade_color)
-  setBadge('trade-phase-badge', t.phase_badge,                   t.phase_color, t.phase_color)
-
-  // Health badge
-  const healthBadge = document.getElementById('trade-health-badge')
-  if (healthBadge && t.health_state) {
-    healthBadge.textContent       = `${t.health_emoji} ${t.health_state}`
-    healthBadge.style.color       = t.health_color
-    healthBadge.style.borderColor = t.health_color + '40'
-    healthBadge.style.background  = t.health_color + '12'
-  }
-
-  setText('trade-duration-badge', `${t.duration} open`)
-  setText('trade-state-label', `State: ${t.state} · Opened: ${t.opened_at || '--'}`)
+  setStyled('trade-coin', t.coin, t.dir_color)
+  setBadge('trade-dir-badge',    `${t.dir_emoji} ${t.direction}`, t.dir_color)
+  setBadge('trade-grade-badge',  `Grade ${t.grade}`,              t.grade_color)
+  setBadge('trade-phase-badge',  t.phase_badge,                   t.phase_color)
+  setBadge('trade-health-badge', `${t.health_emoji} ${t.health_state}`, t.health_color)
+  setText('trade-state-label', `State: ${t.state} · ${t.duration} open`)
 
   setStyled('trade-pnl',     t.pnl,     t.pnl_color)
   setStyled('trade-pnl-pct', t.pnl_pct, t.pnl_color)
 
-  // Progress
   const prog = t.progress
   if (prog) {
     const fill = document.getElementById('prog-fill')
@@ -866,421 +1018,180 @@ function renderTrade(t, state) {
     setText('prog-sl-label',  prog.left_label)
     setText('prog-mid-label', prog.mid_label)
     setText('prog-tp1-label', prog.right_label)
-    const statusEl = document.getElementById('prog-status')
-    if (statusEl) { statusEl.textContent = prog.label; statusEl.style.color = prog.color }
+    setStyled('prog-status', prog.label, prog.color)
     setText('prog-phase', prog.phase_label)
   }
 
   setStyled('ts-current', t.current_price, t.current_color)
   setStyled('ts-move',    t.move_pct,      t.move_color)
-  setText('ts-entry', t.entry_price)
-
-  const slLabelEl = document.getElementById('ts-sl-label')
-  if (slLabelEl) { slLabelEl.textContent = `To ${t.sl_label}`; slLabelEl.style.color = t.sl_color }
-
+  setText('ts-entry',   t.entry_price)
+  setText('ts-sl-label',`To ${t.sl_label}`)
   setStyled('ts-to-sl',   t.dist_to_sl,  t.sl_color)
-  setStyled('ts-to-tp1',  t.dist_to_tp1, '#34c759')
-  setStyled('ts-risk',    t.risk_amt,    '#ff3b30')
-  setStyled('ts-tp1-rew', t.tp1_reward,  '#34c759')
+  setStyled('ts-to-tp1',  t.dist_to_tp1, 'var(--green)')
+  setStyled('ts-risk',    t.risk_amt,    'var(--red)')
+  setStyled('ts-tp1-rew', t.tp1_reward,  'var(--green)')
   setText('ts-pos', t.position_size)
   setText('ts-rr',  t.rr_ratio)
 
-  // Thesis block
   const thesisSection = document.getElementById('trade-thesis-section')
-  const thesisText    = document.getElementById('trade-thesis-text')
-  const riskText      = document.getElementById('trade-risk-text')
   if (t.thesis && thesisSection) {
-    thesisSection.classList.remove('hidden')
-    if (thesisText) thesisText.textContent = t.thesis
-    if (riskText)   riskText.textContent   = t.risk_thesis || 'No risk factors identified.'
+    thesisSection.style.display = 'block'
+    setText('trade-thesis-text', t.thesis)
+    setText('trade-risk-text',   t.risk_thesis || 'No risk factors identified.')
   }
 
-  // Health detail
   const healthSection = document.getElementById('trade-health-section')
   const healthDetail  = document.getElementById('trade-health-detail')
-  if (healthSection && t.health_warnings) {
-    const hasDetail = (
-      t.health_warnings.length > 0 ||
-      t.health_failures.length > 0
-    )
-    if (hasDetail) {
-      healthSection.classList.remove('hidden')
-      const lines = []
-      if (t.health_failures.length) {
-        lines.push('<span class="font-semibold text-apple-red">Invalidated:</span>')
-        t.health_failures.forEach(f => lines.push(`✘ ${f}`))
-      }
-      if (t.health_warnings.length) {
-        lines.push('<span class="font-semibold" style="color:#e8820c">Warnings:</span>')
-        t.health_warnings.forEach(w => lines.push(`⚠ ${w}`))
-      }
-      if (t.health_checks && t.health_checks.length && t.health_state === 'HEALTHY') {
-        t.health_checks.forEach(c => lines.push(`✔ ${c}`))
-      }
-      if (healthDetail) healthDetail.innerHTML = lines.join('<br>')
-    } else {
-      healthSection.classList.add('hidden')
+  if (healthSection && (t.health_warnings?.length || t.health_failures?.length)) {
+    healthSection.style.display = 'block'
+    const lines = []
+    if (t.health_failures?.length) {
+      lines.push('<span style="color:var(--red);font-weight:600">Invalidated:</span>')
+      t.health_failures.forEach(f => lines.push(`✘ ${f}`))
     }
+    if (t.health_warnings?.length) {
+      lines.push('<span style="color:var(--orange);font-weight:600">Warnings:</span>')
+      t.health_warnings.forEach(w => lines.push(`⚠ ${w}`))
+    }
+    if (healthDetail) healthDetail.innerHTML = lines.join('<br>')
+  } else if (healthSection) {
+    healthSection.style.display = 'none'
   }
 
   renderLadder(t.ladder)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER LADDER
-// ═══════════════════════════════════════════════════════
 function renderLadder(ladder) {
   const wrap = document.getElementById('ladder-rows')
   if (!wrap || !ladder) return
 
   wrap.innerHTML = ladder.map(row => {
     if (!row) return ''
-
-    if (row.is_current) {
-      return `
-        <div class="ladder-now flex items-center gap-3 px-3 py-2.5">
-          <span class="text-[10px] font-bold w-10 shrink-0 text-apple-blue">NOW</span>
-          <span class="flex-1 num font-bold text-sm text-apple-blue">${row.price}</span>
-          <span class="num text-[10px] w-14 text-right"></span>
-          <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full" style="${row.badge_style}">${row.badge}</span>
-        </div>`
-    }
-
-    if (row.is_hit) {
-      return `
-        <div class="flex items-center gap-3 px-3 py-2 rounded-apple-xs opacity-40" style="background:${row.color}08">
-          <span class="text-[10px] font-semibold w-10 shrink-0" style="color:${row.color}">${row.label}</span>
-          <span class="flex-1 num font-semibold text-sm line-through" style="color:${row.color}">${row.price}</span>
-          <span class="num text-[10px] w-14 text-right" style="color:${row.color}60">${row.dist}</span>
-          <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full" style="${row.badge_style}">✅ HIT</span>
-        </div>`
-    }
-
+    const cls = row.is_current ? 'current' : row.is_hit ? 'hit' : 'normal'
     return `
-      <div class="flex items-center gap-3 px-3 py-2 rounded-apple-xs" style="background:${row.color}08;border:1px solid ${row.color}18">
-        <span class="text-[10px] font-semibold w-10 shrink-0" style="color:${row.color}">${row.label}</span>
-        <span class="flex-1 num font-semibold text-sm" style="color:${row.color}">${row.price}</span>
-        <span class="num text-[10px] w-14 text-right font-medium" style="color:${row.color}80">${row.dist}</span>
-        <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full" style="${row.badge_style}">${row.badge}</span>
+      <div class="ladder-row ${cls}">
+        <span class="ladder-label" style="color:${row.color}">${row.label}</span>
+        <span class="ladder-price" style="color:${row.color}">${row.price}</span>
+        <span class="ladder-dist">${row.dist}</span>
+        <span class="ladder-badge" style="background:${row.color}18;color:${row.color}">${row.badge}</span>
       </div>`
   }).join('')
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER RADAR
-// Shows confidence label on each card.
-// ═══════════════════════════════════════════════════════
 function renderRadar(radar) {
   const grid = document.getElementById('radar-grid')
   if (!grid) return
 
-  if (!radar || !radar.length) {
-    grid.innerHTML = `
-      <div class="col-span-full text-center py-10 text-apple-secondary text-xs">
-        No scan data yet.<br>
-        <button onclick="triggerScan()" class="mt-2 text-apple-blue hover:underline font-medium">Click Scan Now</button>
-      </div>`
+  if (!radar?.length) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--text3);font-size:11px">No scan data.<br><button onclick="triggerScan()" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:11px;margin-top:4px">Scan Now</button></div>`
     return
   }
 
   radar.forEach(r => {
     const prev = S.prevGrades[r.coin]
-    if (prev && prev !== r.grade && r.tradeable) {
-      toast(`🎯 Grade ${r.grade} Signal`, `${r.coin} ${r.direction} — Score ${r.score}`, r.grade === 'A+' ? 'success' : 'info')
-    }
+    if (prev && prev !== r.grade && r.tradeable)
+      toast(`🎯 Grade ${r.grade}`, `${r.coin} ${r.direction} — ${r.score}/100`, r.grade === 'A+' ? 'success' : 'info')
     S.prevGrades[r.coin] = r.grade
   })
 
   grid.innerHTML = radar.map(r => `
-    <div class="radar-card glass rounded-apple-sm p-3 relative overflow-hidden"
-         style="border-top: 3px solid ${r.grade_color}"
-         onclick="showCoinDetail('${r.coin}')"
-         title="${r.coin} — ${r.grade} — ${r.direction}">
-      <div class="font-semibold text-xs text-apple-text mb-1">${r.coin}</div>
-      <div class="text-[11px] font-semibold mb-2" style="color:${r.dir_color}">${r.dir_emoji} ${r.direction}</div>
-      <div class="progress-track h-1 mb-2">
-        <div class="h-full rounded-full bar" style="width:${r.score_pct}%;background:${r.grade_color}"></div>
+    <div class="radar-card" onclick="showCoinDetail('${r.coin}')" style="border-top:2px solid ${r.grade_color}">
+      <div class="radar-coin" style="color:${r.grade_color}">${r.coin}</div>
+      <div class="radar-dir"  style="color:${r.dir_color}">${r.dir_emoji} ${r.direction}</div>
+      <div class="radar-bar"><div class="radar-bar-fill" style="width:${r.score_pct}%;background:${r.grade_color}"></div></div>
+      <div class="radar-meta">
+        <span style="color:${r.grade_color};font-weight:700">${r.grade}</span>
+        <span style="color:${r.change_color}">${r.change}</span>
       </div>
-      <div class="flex items-center justify-between">
-        <span class="text-[10px] font-bold" style="color:${r.grade_color}">${r.grade} · ${r.score}</span>
-        <span class="text-[10px] text-apple-secondary num" style="color:${r.change_color}">${r.change}</span>
-      </div>
-      <div class="text-[10px] text-apple-secondary num mt-0.5">${r.price}</div>
-      ${r.confidence ? `<div class="text-[10px] mt-1" style="color:${r.grade_color}80">${r.confidence}</div>` : ''}
-    </div>
-  `).join('')
+    </div>`).join('')
 
   const upd = document.getElementById('radar-updated')
-  if (upd) {
-    upd.textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', {
-      hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
-    }) + ' UTC'
-  }
+  if (upd) upd.textContent = new Date().toLocaleTimeString('en-GB', { hour:'2-digit', minute:'2-digit', timeZone:'UTC' }) + ' UTC'
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER SIGNAL QUEUE
-// Shows thesis and confidence per signal.
-// ═══════════════════════════════════════════════════════
 function renderSignalQueue(queue) {
   const wrap = document.getElementById('signal-queue')
   if (!wrap) return
 
-  if (!queue || !queue.length) {
-    wrap.innerHTML = `
-      <div class="text-center py-8 text-apple-secondary text-xs">
-        No A/A+ signals in last scan.<br>
-        <span class="text-[10px]">Next scan at next :00/:15/:30/:45 UTC</span>
-      </div>`
+  if (!queue?.length) {
+    wrap.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">No A/A+ signals.<br>Next scan at :00/:15/:30/:45 UTC</div>`
     return
   }
 
   wrap.innerHTML = queue.map(q => `
-    <div class="glass rounded-apple-sm p-3 cursor-pointer border-l-4"
-         style="border-left-color:${q.dir_color}"
-         onclick="showCoinDetail('${q.coin}')">
-
-      <div class="flex items-center justify-between mb-2">
-        <div class="flex items-center gap-2">
-          <span class="font-semibold text-sm text-apple-text">${q.coin}USDT</span>
-          <span class="text-xs font-semibold" style="color:${q.dir_color}">${q.dir_emoji} ${q.direction}</span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          ${q.confidence_label ? `<span class="text-[10px]" style="color:${q.grade_color}80">${q.confidence_label}</span>` : ''}
-          <span class="text-xs font-bold px-2 py-0.5 rounded-full"
-                style="color:${q.grade_color};background:${q.grade_color}15">
-            ${q.grade} · ${q.score}
-          </span>
-        </div>
+    <div class="queue-item" style="border-left-color:${q.dir_color};cursor:pointer" onclick="showCoinDetail('${q.coin}')">
+      <div class="queue-top">
+        <div class="queue-coin">${q.coin}USDT <span style="color:${q.dir_color}">${q.dir_emoji} ${q.direction}</span></div>
+        <span class="mono" style="color:${q.grade_color};font-weight:700;font-size:11px">${q.grade} · ${q.score}</span>
       </div>
-
-      <div class="grid grid-cols-3 gap-2 mb-2">
-        <div>
-          <div class="section-label mb-0.5">Entry</div>
-          <div class="num text-xs font-semibold text-apple-blue">${q.entry}</div>
-        </div>
-        <div>
-          <div class="section-label mb-0.5">Stop</div>
-          <div class="num text-xs font-semibold text-apple-red">${q.sl}</div>
-        </div>
-        <div>
-          <div class="section-label mb-0.5">TP1</div>
-          <div class="num text-xs font-semibold text-apple-green">${q.tp1}</div>
-        </div>
+      <div class="queue-levels">
+        <div class="queue-level"><div class="lbl">Entry</div><div class="val blue">${q.entry}</div></div>
+        <div class="queue-level"><div class="lbl">Stop</div><div class="val red">${q.sl}</div></div>
+        <div class="queue-level"><div class="lbl">TP1</div><div class="val green">${q.tp1}</div></div>
       </div>
-
-      ${q.thesis ? `
-        <div class="thesis-block mt-2">${q.thesis}</div>
-      ` : ''}
-
-      ${q.no_trade_reason ? `
-        <div class="no-trade-block mt-2">${q.no_trade_reason}</div>
-      ` : ''}
-
-      <div class="flex items-center justify-between mt-2 pt-2 border-t divider">
-        <span class="text-[10px] text-apple-secondary">${q.regime} · ${q.session}</span>
-        <span class="text-[10px] text-apple-red num font-medium">Risk: ${q.risk_amt}</span>
+      ${q.thesis ? `<div style="font-size:10px;color:var(--text2);line-height:1.6;margin-bottom:4px;white-space:pre-line">${q.thesis}</div>` : ''}
+      <div class="queue-footer">
+        <span>${q.regime} · ${q.session}</span>
+        <span class="red mono">Risk: ${q.risk_amt}</span>
       </div>
-    </div>
-  `).join('')
+    </div>`).join('')
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER RISK
-// ═══════════════════════════════════════════════════════
 function renderRisk(r) {
   if (!r) return
   setBar('risk-trades-bar', r.trades_bar_pct, r.trades_bar_color)
   setText('risk-trades-val', r.trades_label)
   setBar('risk-loss-bar', r.loss_bar_pct, r.loss_bar_color)
   setText('risk-loss-val', r.loss_label)
-  setBar('risk-pnl-bar', r.pnl_bar_pct, r.pnl_color === '#34c759' ? '#34c759' : '#ff3b30')
+  setBar('risk-pnl-bar', r.pnl_bar_pct, r.pnl_color === 'var(--green)' ? 'var(--green)' : 'var(--red)')
   setStyled('risk-pnl-val', r.pnl_label, r.pnl_color)
   setText('risk-remaining-trades', r.remaining_trades)
   setText('risk-remaining-loss',   r.remaining_loss)
-  const capEl = document.getElementById('risk-cap-status')
-  if (capEl) { capEl.textContent = r.cap_status; capEl.style.color = r.cap_color }
+  const cap = document.getElementById('risk-cap-status')
+  if (cap) { cap.textContent = r.cap_status; cap.style.color = r.cap_color }
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER PERFORMANCE
-// ═══════════════════════════════════════════════════════
 function renderPerformance(p) {
   if (!p) return
-  setStyled('perf-wr',     p.win_rate,      p.win_rate_color)
+  setStyled('perf-wr',     p.win_rate,     p.win_rate_color)
   setText('perf-wr-sub',   p.win_rate_sub)
-  setStyled('perf-pnl',    p.total_pnl,     p.pnl_color)
+  setStyled('perf-pnl',    p.total_pnl,    p.pnl_color)
   setText('perf-pnl-sub',  p.pnl_sub)
   setText('perf-pf',       p.profit_factor)
   setText('perf-pf-sub',   p.pf_sub)
   setText('perf-best',     p.best_trade)
   setText('perf-best-sub', p.best_sub)
-  setStyled('perf-dd',     p.max_drawdown,  p.dd_color)
+  setStyled('perf-dd',     p.max_drawdown, p.dd_color)
   setText('perf-dd-sub',   p.dd_sub)
   setText('aplus-wr',      p.aplus_wr)
-  setBar('aplus-bar',      p.aplus_bar, '#34c759')
+  setBar('aplus-bar',      p.aplus_bar, 'var(--green)')
   setText('aplus-detail',  p.aplus_detail)
   setText('a-wr',          p.a_wr)
-  setBar('a-bar',          p.a_bar, '#0071e3')
+  setBar('a-bar',          p.a_bar, 'var(--blue)')
   setText('a-detail',      p.a_detail)
 }
 
-
-// ═══════════════════════════════════════════════════════
-// RENDER HISTORY
-// ═══════════════════════════════════════════════════════
 function renderHistory(history) {
   const list = document.getElementById('history-list')
   if (!list) return
 
-  if (!history || !history.length) {
-    list.innerHTML = `<div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>`
+  if (!history?.length) {
+    list.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text3);font-size:11px">No closed trades yet</div>`
     return
   }
 
   list.innerHTML = history.map(h => `
-    <div class="flex items-center gap-2 px-3 py-2 rounded-apple-xs bg-black/3 border-l-2"
-         style="border-left-color:${h.border_color}">
-      <span class="font-semibold text-xs text-apple-text w-12 shrink-0">${h.coin}</span>
-      <span class="text-xs font-semibold w-10 shrink-0" style="color:${h.dir_color}">${h.dir_emoji} ${h.direction}</span>
-      <span class="flex-1 text-[10px] text-apple-secondary truncate">${h.close_reason || '--'} · Grade ${h.grade}</span>
-      <span class="num text-xs font-semibold shrink-0" style="color:${h.pnl_color}">${h.pnl}</span>
-      <span class="text-xs shrink-0">${h.outcome_emoji}</span>
-    </div>
-  `).join('')
+    <div class="history-row" style="border-left-color:${h.border_color}">
+      <span class="history-coin">${h.coin}</span>
+      <span class="history-dir" style="color:${h.dir_color}">${h.dir_emoji} ${h.direction}</span>
+      <span class="history-reason">${h.close_reason || '--'} · ${h.grade}</span>
+      <span class="history-pnl" style="color:${h.pnl_color}">${h.pnl}</span>
+      <span style="font-size:11px">${h.outcome_emoji}</span>
+    </div>`).join('')
 }
-
-
-// ═══════════════════════════════════════════════════════
-// RENDER CHARTS
-// ═══════════════════════════════════════════════════════
-function renderCharts(history) {
-  if (!history) return
-  const closed = history.filter(h => h.outcome !== 'pending')
-  renderEquityChart(closed)
-  renderDailyChart(closed)
-}
-
-function renderEquityChart(closed) {
-  const ctx = document.getElementById('chart-equity')
-  if (!ctx) return
-
-  if (!closed.length) {
-    ctx.parentElement.innerHTML = `<div class="flex items-center justify-center h-full text-apple-secondary text-xs">No closed trades yet</div>`
-    return
-  }
-
-  let equity = 0
-  const labels   = []
-  const values   = []
-  const ptColors = []
-  const sorted   = [...closed].reverse()
-
-  sorted.forEach((t, i) => {
-    const pnl = typeof t.pnl_raw === 'number' ? t.pnl_raw : 0
-    equity += pnl
-    labels.push(t.coin || `#${i + 1}`)
-    values.push(parseFloat(equity.toFixed(4)))
-    ptColors.push(equity >= 0 ? '#34c759' : '#ff3b30')
-  })
-
-  if (chartEquity) chartEquity.destroy()
-
-  chartEquity = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data:                 values,
-        borderColor:          '#0071e3',
-        backgroundColor:      'rgba(0,113,227,0.08)',
-        borderWidth:          2,
-        fill:                 true,
-        tension:              0.4,
-        pointRadius:          3,
-        pointHoverRadius:     5,
-        pointBackgroundColor: ptColors,
-        pointBorderWidth:     0
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: 'rgba(255,255,255,0.95)',
-          titleColor: '#1d1d1f', bodyColor: '#6e6e73',
-          borderColor: 'rgba(0,0,0,0.08)', borderWidth: 1,
-          padding: 10, cornerRadius: 10,
-          callbacks: { label: ctx => ' Equity: $' + ctx.parsed.y.toFixed(4) }
-        }
-      },
-      scales: {
-        x: { ticks: { maxTicksLimit: 6, color: '#6e6e73', font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
-        y: { ticks: { color: '#6e6e73', font: { size: 9 }, callback: v => '$' + v.toFixed(2) }, grid: { color: 'rgba(0,0,0,0.04)' } }
-      }
-    }
-  })
-}
-
-function renderDailyChart(closed) {
-  const ctx = document.getElementById('chart-daily')
-  if (!ctx) return
-
-  if (!closed.length) {
-    ctx.parentElement.innerHTML = `<div class="flex items-center justify-center h-full text-apple-secondary text-xs">No data yet</div>`
-    return
-  }
-
-  const recent  = [...closed].reverse().slice(-12)
-  const labels  = recent.map(t => t.coin || '--')
-  const values  = recent.map(t => typeof t.pnl_raw === 'number' ? parseFloat(t.pnl_raw.toFixed(4)) : 0)
-  const colors  = values.map(v => v >= 0 ? 'rgba(52,199,89,0.8)'  : 'rgba(255,59,48,0.8)')
-  const borders = values.map(v => v >= 0 ? '#34c759' : '#ff3b30')
-
-  if (chartDaily) chartDaily.destroy()
-
-  chartDaily = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        data: values, backgroundColor: colors,
-        borderColor: borders, borderWidth: 1,
-        borderRadius: 4, borderSkipped: false
-      }]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: 'rgba(255,255,255,0.95)',
-          titleColor: '#1d1d1f', bodyColor: '#6e6e73',
-          borderColor: 'rgba(0,0,0,0.08)', borderWidth: 1,
-          padding: 10, cornerRadius: 10,
-          callbacks: { label: ctx => ' PnL: $' + ctx.parsed.y.toFixed(4) }
-        }
-      },
-      scales: {
-        x: { ticks: { maxTicksLimit: 8, color: '#6e6e73', font: { size: 9 } }, grid: { display: false } },
-        y: { ticks: { color: '#6e6e73', font: { size: 9 }, callback: v => '$' + v.toFixed(2) }, grid: { color: 'rgba(0,0,0,0.04)' } }
-      }
-    }
-  })
-}
-
 
 // ═══════════════════════════════════════════════════════
 // COIN DETAIL MODAL
-// Shows thesis, risk thesis, no-trade explanation,
-// confluence factors.
 // ═══════════════════════════════════════════════════════
 async function showCoinDetail(coin) {
   const overlay = document.getElementById('modal-overlay')
@@ -1288,17 +1199,11 @@ async function showCoinDetail(coin) {
   const body    = document.getElementById('modal-body')
 
   title.textContent = `${coin}USDT — Loading...`
-  body.innerHTML = `
-    <div class="flex items-center justify-center gap-3 py-16 text-apple-secondary text-xs">
-      <div class="w-5 h-5 border-2 border-black/10 border-t-apple-blue rounded-full animate-spin"></div>
-      Fetching analysis...
-    </div>`
-
-  overlay.classList.remove('hidden')
-  overlay.classList.add('flex')
+  body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text2);font-size:12px">Fetching analysis...</div>`
+  overlay.classList.add('open')
 
   try {
-    const res = await fetch(`${API}/analyze/${coin}`)
+    const res  = await fetch(`${API}/analyze/${coin}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
 
@@ -1317,227 +1222,125 @@ async function showCoinDetail(coin) {
     const market  = data.market || {}
     const expl    = data.explanation || {}
 
-    const gradeColors = { 'A+': '#34c759', 'A': '#0071e3', 'B': '#ff9500', 'C': '#ffcc00', 'F': '#6e6e73' }
-    const gc = gradeColors[grade] || '#6e6e73'
+    const gc = { 'A+':'var(--green)', 'A':'var(--blue)', 'B':'var(--orange)', 'C':'var(--yellow)', 'F':'var(--text2)' }[grade] || 'var(--text2)'
 
-    title.textContent = `${coin}USDT — Grade ${grade} ${dir} — Score ${score}/100`
+    title.textContent = `${coin}USDT — Grade ${grade} ${dir} — ${score}/100`
 
     body.innerHTML = `
-
-      <!-- Market + Engines -->
-      <div class="grid grid-cols-2 gap-3 mb-4">
-        <div class="bg-black/4 rounded-apple-sm p-3">
-          <div class="section-label mb-2">Market</div>
-          <div class="num font-bold text-base text-apple-text">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div style="background:var(--bg2);border-radius:4px;padding:10px">
+          <div class="label" style="margin-bottom:6px">Market</div>
+          <div class="mono" style="font-size:15px;font-weight:700">
             ${market.price ? '$' + Number(market.price).toLocaleString() : '--'}
-            <span class="text-xs font-semibold ml-1" style="color:${(market.change24||0)>=0?'#34c759':'#ff3b30'}">
+            <span style="font-size:11px;font-weight:600;color:${(market.change24||0)>=0?'var(--green)':'var(--red)'}">
               ${(market.change24||0)>=0?'+':''}${Number(market.change24||0).toFixed(2)}%
             </span>
           </div>
-          <div class="text-[10px] text-apple-secondary mt-1">${data.regime||'--'} · ${data.session||'--'}</div>
-          <div class="text-[10px] text-apple-secondary mt-0.5">
-            Funding: ${(Number(market.funding||0)*100).toFixed(4)}% · OI Δ: ${Number(market.oi_change||0).toFixed(2)}%
-          </div>
-          ${expl.confidence_label ? `<div class="text-[10px] mt-1 font-semibold" style="color:${gc}">Confidence: ${expl.confidence_label} (${score}/100)</div>` : ''}
+          <div style="font-size:10px;color:var(--text2);margin-top:4px">${data.regime||'--'} · ${data.session||'--'}</div>
+          <div style="font-size:10px;color:var(--text2)">Funding: ${(Number(market.funding||0)*100).toFixed(4)}%</div>
+          ${expl.confidence_label ? `<div style="font-size:10px;margin-top:4px;font-weight:600;color:${gc}">${expl.confidence_label} (${score}/100)</div>` : ''}
         </div>
-
-        <div class="bg-black/4 rounded-apple-sm p-3">
-          <div class="section-label mb-2">Engines</div>
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <span class="text-xs text-apple-secondary">Sweep</span>
-              <span class="num text-xs font-semibold" style="color:${sweep.confirmed?'#34c759':'#6e6e73'}">
-                ${sweep.confirmed?'✅':'❌'} ${sweep.score||0}/12
-              </span>
+        <div style="background:var(--bg2);border-radius:4px;padding:10px">
+          <div class="label" style="margin-bottom:6px">Engines</div>
+          <div style="display:flex;flex-direction:column;gap:5px;font-size:11px">
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:var(--text2)">Sweep</span>
+              <span class="mono" style="color:${sweep.confirmed?'var(--green)':'var(--text2)'}">${sweep.confirmed?'✅':'❌'} ${sweep.score||0}/12</span>
             </div>
-            <div class="flex items-center justify-between">
-              <span class="text-xs text-apple-secondary">Displacement</span>
-              <span class="num text-xs font-semibold" style="color:${disp.confirmed?'#34c759':'#6e6e73'}">
-                ${disp.confirmed?'✅':'❌'} ${disp.score||0}/11
-              </span>
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:var(--text2)">Displacement</span>
+              <span class="mono" style="color:${disp.confirmed?'var(--green)':'var(--text2)'}">${disp.confirmed?'✅':'❌'} ${disp.score||0}/11</span>
             </div>
-            <div class="flex items-center justify-between">
-              <span class="text-xs text-apple-secondary">Retest</span>
-              <span class="num text-xs font-semibold" style="color:${retest.confirmed?'#34c759':retest.failed?'#ff3b30':'#6e6e73'}">
-                ${retest.confirmed?'✅':retest.failed?'❌':'⏳'} ${retest.score||0}/12
-              </span>
+            <div style="display:flex;justify-content:space-between">
+              <span style="color:var(--text2)">Retest</span>
+              <span class="mono" style="color:${retest.confirmed?'var(--green)':retest.failed?'var(--red)':'var(--text2)'}">${retest.confirmed?'✅':retest.failed?'❌':'⏳'} ${retest.score||0}/12</span>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Trade thesis -->
-      ${expl.thesis ? `
-        <div class="mb-4">
-          <div class="section-label mb-2">Why This Trade</div>
-          <div class="thesis-block">${expl.thesis}</div>
-        </div>
-      ` : ''}
+      ${expl.thesis ? `<div class="label" style="margin-bottom:4px">Why This Trade</div><div class="thesis-block" style="margin:0 0 10px">${expl.thesis}</div>` : ''}
+      ${expl.risk_thesis ? `<div class="label" style="margin-bottom:4px">Risk Factors</div><div class="risk-block" style="margin:0 0 10px">${expl.risk_thesis}</div>` : ''}
+      ${expl.no_trade_reason ? `<div class="label" style="margin-bottom:4px">Why No Trade</div><div class="no-trade-block" style="margin:0 0 10px">${expl.no_trade_reason}</div>` : ''}
 
-      <!-- Risk thesis -->
-      ${expl.risk_thesis ? `
-        <div class="mb-4">
-          <div class="section-label mb-2">Risk Factors</div>
-          <div class="risk-block">${expl.risk_thesis}</div>
-        </div>
-      ` : ''}
-
-      <!-- No trade explanation -->
-      ${expl.no_trade_reason ? `
-        <div class="mb-4">
-          <div class="section-label mb-2">Why No Trade</div>
-          <div class="no-trade-block">${expl.no_trade_reason}</div>
-        </div>
-      ` : ''}
-
-      <!-- Signal levels -->
-      ${grade === 'A+' || grade === 'A' ? `
-        <div class="rounded-apple-sm p-3 mb-4" style="background:${gc}10;border:1px solid ${gc}25">
-          <div class="section-label mb-2">Signal Levels</div>
-          <div class="grid grid-cols-4 gap-3">
-            <div>
-              <div class="section-label mb-1">Entry</div>
-              <div class="num font-semibold text-sm text-apple-blue">${sig.entry ? '$'+Number(sig.entry).toFixed(4) : '--'}</div>
-            </div>
-            <div>
-              <div class="section-label mb-1">Stop</div>
-              <div class="num font-semibold text-sm text-apple-red">${sig.sl ? '$'+Number(sig.sl).toFixed(4) : '--'}</div>
-            </div>
-            <div>
-              <div class="section-label mb-1">TP1</div>
-              <div class="num font-semibold text-sm text-apple-green">${sig.tp1 ? '$'+Number(sig.tp1).toFixed(4) : '--'}</div>
-            </div>
-            <div>
-              <div class="section-label mb-1">TP2</div>
-              <div class="num font-semibold text-sm text-apple-green">${sig.tp2 ? '$'+Number(sig.tp2).toFixed(4) : '--'}</div>
-            </div>
+      ${(grade === 'A+' || grade === 'A') ? `
+        <div style="background:${gc}12;border:1px solid ${gc}30;border-radius:4px;padding:10px;margin-bottom:10px">
+          <div class="label" style="margin-bottom:6px">Signal Levels</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+            <div><div class="label">Entry</div><div class="mono blue" style="font-weight:600;font-size:12px">${sig.entry ? '$'+Number(sig.entry).toFixed(4) : '--'}</div></div>
+            <div><div class="label">Stop</div><div class="mono red" style="font-weight:600;font-size:12px">${sig.sl ? '$'+Number(sig.sl).toFixed(4) : '--'}</div></div>
+            <div><div class="label">TP1</div><div class="mono green" style="font-weight:600;font-size:12px">${sig.tp1 ? '$'+Number(sig.tp1).toFixed(4) : '--'}</div></div>
+            <div><div class="label">TP2</div><div class="mono green" style="font-weight:600;font-size:12px">${sig.tp2 ? '$'+Number(sig.tp2).toFixed(4) : '--'}</div></div>
           </div>
-          <div class="flex items-center gap-4 mt-2 pt-2 border-t divider text-[10px] text-apple-secondary">
+          <div style="display:flex;gap:12px;margin-top:8px;font-size:10px;color:var(--text2);font-family:var(--mono)">
             <span>SL: ${sig.sl_pct ? Number(sig.sl_pct).toFixed(2)+'%' : '--'}</span>
             <span>Risk: $${sig.risk_amt ? Number(sig.risk_amt).toFixed(2) : '--'}</span>
             <span>Size: $${sig.pos_size ? Number(sig.pos_size).toFixed(2) : '--'}</span>
-            <span>Lev: ${sig.eff_lev||'--'}x</span>
           </div>
-        </div>
-      ` : ''}
+        </div>` : ''}
 
-      <!-- Hard blocks -->
       ${hards.length ? `
-        <div class="rounded-apple-sm p-3 mb-3" style="background:rgba(255,59,48,0.06);border:1px solid rgba(255,59,48,0.2)">
-          <div class="space-y-1.5">
-            ${hards.map(b => `
-              <div class="flex items-start gap-2 text-xs">
-                <span class="shrink-0">🚫</span>
-                <div>
-                  <span class="font-semibold text-apple-red">${b.reason}</span>
-                  <span class="text-apple-secondary ml-1">— ${b.detail}</span>
-                </div>
-              </div>`).join('')}
-          </div>
-        </div>
-      ` : ''}
+        <div style="background:rgba(255,61,61,0.06);border:1px solid rgba(255,61,61,0.2);border-radius:4px;padding:10px;margin-bottom:8px">
+          ${hards.map(b => `<div style="font-size:11px;margin-bottom:4px">🚫 <span style="color:var(--red);font-weight:600">${b.reason}</span> — <span style="color:var(--text2)">${b.detail}</span></div>`).join('')}
+        </div>` : ''}
 
-      <!-- Soft blocks -->
       ${softs.length ? `
-        <div class="rounded-apple-sm p-3 mb-3" style="background:rgba(255,149,0,0.06);border:1px solid rgba(255,149,0,0.2)">
-          <div class="space-y-1.5">
-            ${softs.map(s => `
-              <div class="flex items-start gap-2 text-xs">
-                <span class="shrink-0">⚠️</span>
-                <div>
-                  <span class="text-apple-text">${s.reason}</span>
-                  <span class="text-apple-red num ml-1">(-${s.penalty}pts)</span>
-                                  </div>
-              </div>`).join('')}
-          </div>
-        </div>
-      ` : ''}
+        <div style="background:rgba(255,145,0,0.06);border:1px solid rgba(255,145,0,0.2);border-radius:4px;padding:10px;margin-bottom:10px">
+          ${softs.map(s => `<div style="font-size:11px;margin-bottom:4px">⚠️ ${s.reason} <span class="mono red">(-${s.penalty}pts)</span></div>`).join('')}
+        </div>` : ''}
 
-      <!-- Confluence factors -->
-      <div class="flex items-center justify-between mb-3">
-        <div class="section-label">Confluence Factors</div>
-        <div class="text-[10px] text-apple-secondary num">
-          ${wconf.total_earned||0} / ${wconf.max_possible||0} pts → ${score}/100
-        </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="label">Confluence Factors</div>
+        <div class="mono" style="font-size:10px;color:var(--text2)">${wconf.total_earned||0} / ${wconf.max_possible||0} → ${score}/100</div>
       </div>
 
-      <div class="space-y-2">
-        ${factors.map(f => {
-          const pct   = Math.round(f.earned / f.max * 100)
-          const color = f.pass ? '#34c759' : pct >= 50 ? '#ff9500' : '#ff3b30'
-          return `
-            <div class="flex items-center gap-3" title="${f.detail||''}">
-              <span class="text-[10px] text-apple-secondary w-36 shrink-0 truncate">${f.label}</span>
-              <div class="flex-1 progress-track h-1.5">
-                <div class="h-full rounded-full bar" style="width:${pct}%;background:${color}"></div>
-              </div>
-              <span class="num text-[10px] w-8 text-right shrink-0 font-semibold" style="color:${color}">
-                ${f.earned}/${f.max}
-              </span>
-              <span class="text-[10px] w-4 shrink-0 text-center">${f.pass?'✅':'❌'}</span>
-            </div>`
-        }).join('')}
-      </div>
+      ${factors.map(f => {
+        const pct   = Math.round(f.earned / f.max * 100)
+        const color = f.pass ? 'var(--green)' : pct >= 50 ? 'var(--orange)' : 'var(--red)'
+        return `
+          <div class="factor-row" title="${f.detail||''}">
+            <span class="factor-name">${f.label}</span>
+            <div class="factor-track"><div class="factor-fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="factor-score" style="color:${color}">${f.earned}/${f.max}</span>
+            <span class="factor-pass">${f.pass?'✅':'❌'}</span>
+          </div>`
+      }).join('')}
     `
-
   } catch(e) {
-    body.innerHTML = `
-      <div class="text-center py-10 text-apple-red text-xs">Failed to load: ${e.message}</div>`
+    body.innerHTML = `<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Failed: ${e.message}</div>`
   }
 }
 
 function closeModal() {
-  const overlay = document.getElementById('modal-overlay')
-  overlay.classList.add('hidden')
-  overlay.classList.remove('flex')
+  document.getElementById('modal-overlay').classList.remove('open')
 }
 
-
 // ═══════════════════════════════════════════════════════
-// TRIGGER SCAN
+// SCAN
 // ═══════════════════════════════════════════════════════
 async function triggerScan() {
   if (S.scanning) return
-
-  S.scanning      = true
-  const btn       = document.getElementById('scan-btn')
+  S.scanning = true
+  const btn  = document.getElementById('scan-btn')
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning...' }
-
   toast('🔍 Scan Started', 'Analyzing all coins — 1-2 min', 'info', 3000)
 
   try {
-    const res = await fetch(`${API}/scan`)
+    const res  = await fetch(`${API}/scan`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
 
     const results   = data.results || []
-    const tradeable = results.filter(r =>
-      (r.grade === 'A+' || r.grade === 'A') &&
-      (r.direction === 'LONG' || r.direction === 'SHORT')
-    )
-    const aplus = tradeable.filter(r => r.grade === 'A+')
-    const a     = tradeable.filter(r => r.grade === 'A')
+    const tradeable = results.filter(r => ['A+','A'].includes(r.grade) && ['LONG','SHORT'].includes(r.direction))
+    const aplus     = tradeable.filter(r => r.grade === 'A+')
+    const a         = tradeable.filter(r => r.grade === 'A')
 
-    if (aplus.length) {
-      toast(
-        `🏆 ${aplus.length} A+ Signal${aplus.length > 1 ? 's' : ''}!`,
-        aplus.map(r => `${r.coin} ${r.direction}`).join(', '),
-        'success', 8000
-      )
-    } else if (a.length) {
-      toast(
-        `✅ ${a.length} Grade A Signal${a.length > 1 ? 's' : ''}`,
-        a.map(r => `${r.coin} ${r.direction}`).join(', '),
-        'info', 6000
-      )
-    } else {
-      toast('😴 No Tradeable Signals', 'No A/A+ setups this scan', 'warning', 4000)
-    }
+    if (aplus.length)      toast(`🏆 ${aplus.length} A+ Signal${aplus.length>1?'s':''}!`, aplus.map(r=>`${r.coin} ${r.direction}`).join(', '), 'success', 8000)
+    else if (a.length)     toast(`✅ ${a.length} Grade A Signal${a.length>1?'s':''}`, a.map(r=>`${r.coin} ${r.direction}`).join(', '), 'info', 6000)
+    else                   toast('😴 No Tradeable Signals', 'No A/A+ setups this scan', 'warning', 4000)
 
     await fetchDashboard()
-
   } catch(e) {
-    console.error('Scan error:', e)
     toast('❌ Scan Failed', e.message, 'error', 5000)
   } finally {
     S.scanning = false
@@ -1545,24 +1348,15 @@ async function triggerScan() {
   }
 }
 
-
 // ═══════════════════════════════════════════════════════
-// CONFIRM CLOSE TRADE
+// CLOSE TRADE
 // ═══════════════════════════════════════════════════════
 async function confirmClose() {
   const d = S.data
-  if (!d || d.state === 'idle') {
-    toast('⚠️ No active trade', '', 'warning')
-    return
-  }
-
+  if (!d || d.state === 'idle') { toast('⚠️ No active trade', '', 'warning'); return }
   const t  = d.trade
   const ok = window.confirm(
-    `Close ${t.coin} ${t.direction} at market?\n\n` +
-    `Entry:   ${t.entry_price}\n` +
-    `Current: ${t.current_price}\n` +
-    `uPnL:    ${t.pnl}\n\n` +
-    `This cancels all SL/TP orders.\nAre you sure?`
+    `Close ${t.coin} ${t.direction} at market?\n\nEntry: ${t.entry_price}\nCurrent: ${t.current_price}\nuPnL: ${t.pnl}\n\nThis cancels all SL/TP orders.`
   )
   if (!ok) return
 
@@ -1572,7 +1366,6 @@ async function confirmClose() {
   try {
     const res    = await fetch(`${API}/trade/close`, { method: 'POST' })
     const result = await res.json()
-
     if (result.success) {
       toast('✅ Trade Closed', 'Position closed at market', 'success')
       await fetchDashboard()
@@ -1586,7 +1379,6 @@ async function confirmClose() {
   }
 }
 
-
 // ═══════════════════════════════════════════════════════
 // DOM HELPERS
 // ═══════════════════════════════════════════════════════
@@ -1598,46 +1390,33 @@ function setText(id, val) {
 function setStyled(id, val, color) {
   const el = document.getElementById(id)
   if (!el) return
-  if (val !== undefined && val !== null) el.textContent = val
-  if (color) el.style.color = color
+  if (val   !== undefined && val   !== null) el.textContent = val
+  if (color !== undefined && color !== null) el.style.color = color
 }
 
 function setBar(id, pct, color) {
   const el = document.getElementById(id)
   if (!el) return
   el.style.width      = Math.min(100, pct || 0) + '%'
-  el.style.background = color || '#0071e3'
+  el.style.background = color || 'var(--blue)'
 }
 
-function setBadge(id, text, color, borderColor) {
+function setBadge(id, text, color) {
   const el = document.getElementById(id)
   if (!el) return
   el.textContent       = text
   el.style.color       = color
-  el.style.borderColor = borderColor + '40'
-  el.style.background  = color + '12'
+  el.style.borderColor = color
+  el.style.background  = color + '18'
 }
 
-
 // ═══════════════════════════════════════════════════════
-// KEYBOARD SHORTCUTS
+// KEYBOARD
 // ═══════════════════════════════════════════════════════
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal()
-  if (
-    e.key === 's' && !e.ctrlKey && !e.metaKey &&
-    document.activeElement.tagName !== 'INPUT'
-  ) triggerScan()
+  if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') triggerScan()
 })
-
-
-// ═══════════════════════════════════════════════════════
-// AUTO REFRESH — 5 second poll
-// ═══════════════════════════════════════════════════════
-function startAutoRefresh() {
-  setInterval(fetchDashboard, 5000)
-}
-
 
 // ═══════════════════════════════════════════════════════
 // INIT
@@ -1646,7 +1425,7 @@ async function init() {
   startClock()
   startCountdown()
   await fetchDashboard()
-  startAutoRefresh()
+  startPolling()
 }
 
 init()
