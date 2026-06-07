@@ -15,17 +15,14 @@ const S = {
 }
 
 function getPollingInterval() {
-  if (S.scanning)              return 1000
-  if (S.data?.state !== 'idle') return 2000
+  if (S.scanning)               return 1000
+  if (S.data?.state !== 'idle') return 5000
   return 15000
 }
 
 function restartPolling() {
   if (S._pollingInterval) clearInterval(S._pollingInterval)
-  S._pollingInterval = setInterval(async () => {
-    await fetchDashboard()
-    restartPolling()
-  }, getPollingInterval())
+  S._pollingInterval = setInterval(fetchDashboard, getPollingInterval())
 }
 
 function startClock() {

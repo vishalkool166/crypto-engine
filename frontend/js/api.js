@@ -14,13 +14,9 @@ async function fetchDashboard() {
     renderStatusBar(data)
     renderRisk(data.risk)
 
-    if (stateChanged || tradeChanged) {
+    if (stateChanged || tradeChanged || healthChanged) {
       renderTrade(data.trade, data.state)
       syncConnectionMode(data.state)
-    }
-
-    if (tradeChanged || healthChanged) {
-      renderTrade(data.trade, data.state)
     }
 
     renderRadar(data.radar)
@@ -34,12 +30,10 @@ async function fetchDashboard() {
     }
 
     setApiStatus(true)
-    restartPolling()
 
   } catch(e) {
     console.error('Dashboard fetch error:', e)
     setApiStatus(false)
-    restartPolling()
   }
 }
 
@@ -102,7 +96,6 @@ async function triggerScan() {
     S.scanning = false
     if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan Now' }
     renderStatusBar(S.data)
-    restartPolling()
   }
 }
 
