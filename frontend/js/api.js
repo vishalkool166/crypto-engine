@@ -40,12 +40,8 @@ async function fetchDashboard() {
 function setApiStatus(ok) {
   const dot  = $id('status-dot')
   const text = $id('api-error-banner')
-
-  if (dot) dot.style.background = ok ? null : '#ff3b30'
-
-  if (text) {
-    text.style.display = ok ? 'none' : 'flex'
-  }
+  if (dot)  dot.style.background = ok ? null : '#ff3b30'
+  if (text) text.style.display   = ok ? 'none' : 'flex'
 }
 
 async function triggerScan() {

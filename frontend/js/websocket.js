@@ -2,8 +2,8 @@
 
 const WS_URL = `${window.location.origin.replace('https','wss').replace('http','ws')}/ws/price`
 
-let _socket        = null
-let _pingTimer     = null
+let _socket         = null
+let _pingTimer      = null
 let _reconnectTimer = null
 
 function startPriceSocket() {
@@ -44,8 +44,8 @@ function stopPriceSocket() {
 function _cleanup() {
   clearInterval(_pingTimer)
   clearTimeout(_reconnectTimer)
-  _pingTimer       = null
-  _reconnectTimer  = null
+  _pingTimer      = null
+  _reconnectTimer = null
   if (_socket) {
     _socket.onclose = null
     _socket.close()
@@ -65,15 +65,15 @@ function applyPriceUpdate(d) {
   const trade = S.data?.trade
   if (!trade) return
 
-  // Price ticker
+  // Live price
   $set('ts-current',    { text: d.price,    color: d.current_color })
   $set('ts-move',       { text: d.move_pct, color: d.move_color })
 
-  // PnL
+  // Live PnL
   $set('trade-pnl',     { text: d.pnl,      color: d.pnl_color })
   $set('trade-pnl-pct', { text: d.pnl_pct,  color: d.pnl_color })
 
-  // Header
+  // Header PnL
   $set('h-today-pnl',   { text: d.pnl,      color: d.pnl_color })
 
   // Progress bar
@@ -82,6 +82,10 @@ function applyPriceUpdate(d) {
     $set('prog-fill',   { width: pct, bg: trade.progress?.color })
     $set('prog-status', { text: `${pct}% to TP1` })
   }
+
+  // Live price in ladder NOW row
+  const ladderNow = document.querySelector('.ladder-now span:nth-child(2)')
+  if (ladderNow) ladderNow.textContent = d.price
 }
 
 function _calcProgressPct(price, trade) {
