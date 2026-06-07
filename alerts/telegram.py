@@ -1,6 +1,6 @@
 import httpx
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import Request
 from config import cfg
 from database import SessionLocal, Trade
@@ -12,6 +12,11 @@ BASE   = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
 DOMAIN = "https://small-salaried-study.ngrok-free.dev"
 
 _sent_signals = set()
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def now_ist() -> str:
+    return datetime.now(IST).strftime("%I:%M %p IST")
 
 
 async def send(message: str):
@@ -76,9 +81,6 @@ async def _handle_command(text: str):
     elif text == "/help":  await _cmd_help()
 
 
-# ═══════════════════════════════════════════════════════
-# COMMANDS
-# ═══════════════════════════════════════════════════════
 async def _cmd_status():
     if state_manager.is_idle:
         await send(
@@ -234,16 +236,16 @@ async def _cmd_scan():
             if r.get("grade") in ["A+", "A"]
             and r.get("direction") in ["LONG", "SHORT"]
         ]
-        aplus   = [r for r in tradeable if r.get("grade") == "A+"]
-        a       = [r for r in tradeable if r.get("grade") == "A"]
-        summary = (
+        aplus    = [r for r in tradeable if r.get("grade") == "A+"]
+        a        = [r for r in tradeable if r.get("grade") == "A"]
+        summary  = (
             f"✅ *Scan Complete*\n\n"
             f"Coins scanned: `{len(results)}`\n"
             f"A+ signals:    `{len(aplus)}`\n"
             f"A signals:     `{len(a)}`\n\n"
         )
-        if aplus:        summary += f"🏆 {len(aplus)} A+ found!\n"
-        if a:            summary += f"✅ {len(a)} A found!\n"
+        if aplus:         summary += f"🏆 {len(aplus)} A+ found!\n"
+        if a:             summary += f"✅ {len(a)} A found!\n"
         if not tradeable: summary += "😴 No tradeable signals found.\n"
         summary += f"\nNext auto scan at next :00/:15/:30/:45 UTC"
         await send(summary)
@@ -264,10 +266,6 @@ async def _cmd_help():
     )
 
 
-# ═══════════════════════════════════════════════════════
-# SEND SIGNAL ALERT
-# Includes trade thesis and risk thesis from explanation.
-# ═══════════════════════════════════════════════════════
 async def send_signal(
     signal:  dict,
     coin:    str,
@@ -304,25 +302,14 @@ async def send_signal(
     emoji     = "🏆" if grade == "A+" else "✅"
     dir_emoji = "📈" if direction == "LONG" else "📉"
 
-    # Explanation fields
-    explanation      = signal.get("explanation", {})
-    thesis           = explanation.get("thesis", "")
-    risk_thesis      = explanation.get("risk_thesis", "")
-    conf_label       = explanation.get("confidence_label", "")
+    explanation = signal.get("explanation", {})
+    thesis      = explanation.get("thesis", "")
+    risk_thesis = explanation.get("risk_thesis", "")
+    conf_label  = explanation.get("confidence_label", "")
 
-    # Build thesis block
-    thesis_block = ""
-    if thesis:
-        thesis_block = f"\n*Why This Trade?*\n{thesis}\n"
-
-    risk_block = ""
-    if risk_thesis:
-        risk_block = f"\n*Risk Factors*\n{risk_thesis}\n"
-
-    conf_block = f"Confidence: `{conf_label} ({score}/100)`\n" if conf_label else ""
-
-    # UTC timestamp on alert
-    utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    thesis_block = f"\n*Why This Trade?*\n{thesis}\n" if thesis else ""
+    risk_block   = f"\n*Risk Factors*\n{risk_thesis}\n" if risk_thesis else ""
+    conf_block   = f"Confidence: `{conf_label} ({score}/100)`\n" if conf_label else ""
 
     await send(
         f"{emoji} *Grade {grade} — {direction}*\n"
@@ -331,7 +318,7 @@ async def send_signal(
         f"{conf_block}"
         f"Regime:  `{regime}`\n"
         f"Session: `{session}`\n"
-        f"Time:    `{utc_now}`\n\n"
+        f"Time:    `{now_ist()}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry:   `{entry:.4f}`\n"
         f"SL:      `{sl:.4f}` ({sl_pct:.2f}%)\n"
@@ -346,10 +333,6 @@ async def send_signal(
     )
 
 
-# ═══════════════════════════════════════════════════════
-# SEND SCAN SUMMARY
-# Includes no-trade explanation for top rejected signals.
-# ═══════════════════════════════════════════════════════
 async def send_scan_summary(results: list):
     tradeable = [
         r for r in results
@@ -359,10 +342,8 @@ async def send_scan_summary(results: list):
     if not tradeable:
         return
 
-    utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-
     lines = [
-        f"🔍 *Scan Complete — {utc_now}*\n"
+        f"🔍 *Scan Complete — {now_ist()}*\n"
         f"{len(tradeable)} tradeable signal(s)\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
     ]

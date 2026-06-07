@@ -647,13 +647,13 @@ function startClock() {
   const tick = () => {
     const el = document.getElementById('live-clock')
     if (!el) return
-    el.textContent = new Date().toLocaleTimeString('en-GB', {
+    el.textContent = new Date().toLocaleTimeString('en-IN', {
       hour:     '2-digit',
       minute:   '2-digit',
       second:   '2-digit',
       hour12:   false,
-      timeZone: 'UTC'
-    }) + ' UTC'
+      timeZone: 'Asia/Kolkata'
+    }) + ' IST'
   }
   tick()
   setInterval(tick, 1000)

@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from alerts.telegram import send, now_ist
 from database import (
     SessionLocal, Trade,
     Signal as SignalModel
@@ -687,7 +688,7 @@ class TradeManager:
         risk_block   = f"\n*Risk Factors*\n{risk_thesis}\n" if risk_thesis else ""
         conf_block   = f"Confidence: `{conf_label}`\n" if conf_label else ""
 
-        utc_now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        utc_now = now_ist()
 
         await send(
             f"{emoji} *Grade {trade.grade} — TRADE OPENED*\n\n"
@@ -719,7 +720,7 @@ class TradeManager:
             "⏹"
         )
         pnl_emoji = "📈" if pnl >= 0 else "📉"
-        utc_now   = datetime.now(timezone.utc).strftime("%H:%M UTC")
+        utc_now   = now_ist()
 
         tv_4h = (
             f"https://www.tradingview.com/chart/"
