@@ -176,6 +176,15 @@ function renderLadder(ladder) {
   }).join('')
 }
 
+function _nowIST() {
+  return new Date().toLocaleTimeString('en-IN', {
+    hour:     '2-digit',
+    minute:   '2-digit',
+    hour12:   true,
+    timeZone: 'Asia/Kolkata'
+  }) + ' IST'
+}
+
 function renderRadar(radar) {
   const grid = $id('radar-grid')
   if (!grid) return
@@ -188,6 +197,9 @@ function renderRadar(radar) {
       </div>`
     return
   }
+
+  // Clear shimmer placeholders on first real render
+  if (!grid.querySelector('[id^="radar-"]')) grid.innerHTML = ''
 
   radar.forEach(r => {
     const prev = S.prevGrades[r.coin]
@@ -205,11 +217,7 @@ function renderRadar(radar) {
   })
 
   const upd = $id('radar-updated')
-  if (upd) {
-    upd.textContent = 'Updated ' + new Date().toLocaleTimeString('en-GB', {
-      hour: '2-digit', minute: '2-digit', timeZone: 'UTC'
-    }) + ' UTC'
-  }
+  if (upd) upd.textContent = 'Updated ' + _nowIST()
 }
 
 function _createRadarCard(r) {
