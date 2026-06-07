@@ -14,8 +14,7 @@ engine = create_engine(
     "sqlite:///database/signals.db",
     connect_args={"check_same_thread": False}
 )
-SessionLocal = sessionmaker(bind=engine)
-
+SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 # ═══════════════════════════════════════════════════════
 # SESSION CONTEXT MANAGER
