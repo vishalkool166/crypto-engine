@@ -1,18 +1,16 @@
-import ccxt
+import ccxt.async_support as ccxt_async
 import httpx
 import pandas as pd
 from datetime import datetime, timezone
 from config import cfg
-from data.store import (
-    save_candles, load_candles,
-    get_last_timestamp, has_enough_data
-)
+from data.store import save_candles, load_candles, get_last_timestamp
 from data.cache import cache
+import asyncio
 import logging
 
 log = logging.getLogger(__name__)
 
-exchange = ccxt.binance({
+exchange = ccxt_async.binance({
     "apiKey": cfg.BINANCE_API_KEY,
     "secret": cfg.BINANCE_SECRET,
     "options": {"defaultType": "future"}
@@ -26,9 +24,6 @@ TF_MAP = {
     "15m": "15m"
 }
 
-# Weekly needs more history for EMA200 to be valid.
-# EMA200 on weekly = 200 weeks = ~4 years of data.
-# Without this weekly filter is unreliable.
 TF_LIMITS = {
     "1w":  500,
     "1d":  1000,
@@ -38,99 +33,71 @@ TF_LIMITS = {
 }
 
 
-def fetch_and_store(
-    coin:  str,
-    tf:    str,
-    limit: int = None
-) -> pd.DataFrame:
+async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
     sym     = f"{coin}/USDT"
     limit   = limit or TF_LIMITS.get(tf, 1000)
     last_ts = get_last_timestamp(coin, tf)
 
     if last_ts is None:
-        log.info(
-            f"First fetch: {coin} {tf} "
-            f"— downloading {limit} candles"
-        )
-        raw = exchange.fetch_ohlcv(
-            sym, TF_MAP[tf], limit=limit
-        )
+        log.info(f"First fetch: {coin} {tf} — downloading {limit} candles")
+        raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], limit=limit)
     else:
         log.debug(f"Incremental fetch: {coin} {tf} since {last_ts}")
-        raw = exchange.fetch_ohlcv(
-            sym, TF_MAP[tf],
-            since=last_ts,
-            limit=100
-        )
+        raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], since=last_ts, limit=100)
 
     if raw:
         df_new = pd.DataFrame(
             raw,
             columns=["timestamp", "open", "high", "low", "close", "volume"]
         )
-        df_new["timestamp"] = pd.to_datetime(
-            df_new["timestamp"], unit="ms"
-        )
+        df_new["timestamp"] = pd.to_datetime(df_new["timestamp"], unit="ms")
         df_new = df_new.set_index("timestamp")
-
         if cfg.REQUIRE_CANDLE_CLOSE:
             df_new = df_new.iloc[:-1]
-
         save_candles(coin, tf, df_new)
 
     df = load_candles(coin, tf, limit=limit)
-
     if df is None or df.empty:
-        raise Exception(
-            f"No candle data available: {coin} {tf}"
-        )
+        raise Exception(f"No candle data available: {coin} {tf}")
 
-    # Weekly candle depth warning —
-    # EMA200 needs 200 candles minimum
-    # fewer than that means weekly filter is degraded
     if tf == "1w" and len(df) < 200:
         log.warning(
             f"Weekly candles for {coin}: {len(df)} — "
-            f"EMA200 needs 200+. "
-            f"Weekly filter confidence reduced."
+            f"EMA200 needs 200+. Weekly filter confidence reduced."
         )
 
     return df
 
 
-def get_ohlcv(
-    coin:  str,
-    tf:    str,
-    limit: int = None
-) -> pd.DataFrame:
-    return fetch_and_store(coin, tf, limit=limit)
+async def get_ohlcv(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
+    return await fetch_and_store(coin, tf, limit=limit)
 
 
-def get_ticker(coin: str) -> dict:
-    return exchange.fetch_ticker(f"{coin}/USDT")
+async def get_ticker(coin: str) -> dict:
+    return await exchange.fetch_ticker(f"{coin}/USDT")
 
 
-def get_funding_rate(coin: str) -> float:
+async def get_funding_rate(coin: str) -> float:
     try:
-        data = exchange.fetch_funding_rate(f"{coin}/USDT")
+        data = await exchange.fetch_funding_rate(f"{coin}/USDT")
         return float(data.get("fundingRate", 0))
     except Exception as e:
         log.warning(f"Funding rate failed {coin}: {e}")
         return 0.0
 
 
-def get_open_interest(coin: str) -> float:
+async def get_open_interest(coin: str) -> float:
     try:
-        data = exchange.fetch_open_interest(f"{coin}/USDT")
+        data = await exchange.fetch_open_interest(f"{coin}/USDT")
         return float(data.get("openInterestAmount", 0))
     except Exception as e:
         log.warning(f"OI failed {coin}: {e}")
         return 0.0
 
 
-def get_oi_change(coin: str) -> float:
+async def get_oi_change(coin: str) -> float:
     try:
-        hist = exchange.fetch_open_interest_history(
+        hist = await exchange.fetch_open_interest_history(
             f"{coin}/USDT", "1d", limit=2
         )
         if len(hist) >= 2:
@@ -143,20 +110,19 @@ def get_oi_change(coin: str) -> float:
         return 0.0
 
 
-def get_ls_ratio(coin: str) -> dict:
+async def get_ls_ratio(coin: str) -> dict:
     try:
-        import requests
-        url = (
-            "https://fapi.binance.com/futures/data/"
-            f"globalLongShortAccountRatio"
-            f"?symbol={coin}USDT&period=1h&limit=1"
-        )
-        r = requests.get(url, timeout=5)
-        d = r.json()
-        return {
-            "long":  float(d[0]["longAccount"]) * 100,
-            "short": float(d[0]["shortAccount"]) * 100
-        }
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
+                params={"symbol": f"{coin}USDT", "period": "1h", "limit": 1},
+                timeout=5
+            )
+            d = r.json()
+            return {
+                "long":  float(d[0]["longAccount"]) * 100,
+                "short": float(d[0]["shortAccount"]) * 100
+            }
     except Exception as e:
         log.warning(f"LS ratio failed {coin}: {e}")
         return {"long": 50.0, "short": 50.0}
@@ -191,14 +157,8 @@ async def get_news_filter() -> dict:
             events = r.json().get("economicCalendar", [])
 
         high_impact = [e for e in events if e.get("impact") == "high"]
-
         if not high_impact:
-            return {
-                "clear":   True,
-                "blocked": False,
-                "warning": False,
-                "alerts":  []
-            }
+            return {"clear": True, "blocked": False, "warning": False, "alerts": []}
 
         now     = datetime.now(timezone.utc)
         alerts  = []
@@ -228,7 +188,6 @@ async def get_news_filter() -> dict:
                     "active":   is_active,
                     "warning":  is_warning
                 })
-
             except Exception:
                 continue
 
@@ -241,22 +200,16 @@ async def get_news_filter() -> dict:
 
     except Exception as e:
         log.warning(f"Finnhub failed: {e}")
-        return {
-            "clear":   True,
-            "blocked": False,
-            "warning": False,
-            "alerts":  []
-        }
+        return {"clear": True, "blocked": False, "warning": False, "alerts": []}
 
 
-def get_15m_data(coin: str) -> pd.DataFrame:
+async def get_15m_data(coin: str) -> pd.DataFrame:
     cache_key = f"15m_{coin}"
     cached    = cache.get(cache_key)
     if cached is not None:
         return cached
-
     try:
-        df = fetch_and_store(coin, "15m", limit=200)
+        df = await fetch_and_store(coin, "15m", limit=200)
         cache.set(cache_key, df, ttl=300)
         return df
     except Exception as e:
@@ -265,37 +218,42 @@ def get_15m_data(coin: str) -> pd.DataFrame:
 
 
 async def get_all_data(coin: str) -> dict:
-    ticker  = get_ticker(coin)
-    funding = get_funding_rate(coin)
-    oi      = get_open_interest(coin)
-    oi_chg  = get_oi_change(coin)
-    ls      = get_ls_ratio(coin)
-
     news_filter = cache.get("news_filter")
-    if not news_filter:
-        news_filter = await get_news_filter()
-        cache.set("news_filter", news_filter, ttl=300)
-        log.debug("News filter fetched and cached")
-    else:
-        log.debug("News filter from cache")
 
-    df_15m = get_15m_data(coin)
+    if news_filter:
+        ticker, funding, oi, oi_chg, ls = await asyncio.gather(
+            get_ticker(coin),
+            get_funding_rate(coin),
+            get_open_interest(coin),
+            get_oi_change(coin),
+            get_ls_ratio(coin)
+        )
+    else:
+        ticker, funding, oi, oi_chg, ls, news_filter = await asyncio.gather(
+            get_ticker(coin),
+            get_funding_rate(coin),
+            get_open_interest(coin),
+            get_oi_change(coin),
+            get_ls_ratio(coin),
+            get_news_filter()
+        )
+        cache.set("news_filter", news_filter, ttl=300)
+
+    klines = {}
+    for tf in cfg.TIMEFRAMES:
+        klines[tf] = await get_ohlcv(coin, tf)
+
+    df_15m = await get_15m_data(coin)
 
     return {
         "price":       float(ticker["last"]),
         "change24":    float(ticker["percentage"] or 0),
-        "high24":      float(ticker["high"] or 0),
-        "low24":       float(ticker["low"] or 0),
-        "vol24":       float(ticker["quoteVolume"] or 0),
         "funding":     funding,
         "oi":          oi,
         "oi_change":   oi_chg,
         "long_ratio":  ls["long"],
         "short_ratio": ls["short"],
         "news_filter": news_filter,
-        "klines": {
-            tf: get_ohlcv(coin, tf)
-            for tf in cfg.TIMEFRAMES
-        },
-        "klines_15m": df_15m
+        "klines":      klines,
+        "klines_15m":  df_15m
     }

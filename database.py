@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from sqlalchemy import (
     create_engine, Column, Integer,
     String, Float, DateTime, Text, Boolean, BigInteger
@@ -16,6 +17,26 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine)
 
 
+# ═══════════════════════════════════════════════════════
+# SESSION CONTEXT MANAGER
+# Replaces the repeated try/finally/db.close() pattern
+# used 20+ times across the codebase.
+# Auto-commits on success, rolls back on exception.
+# Usage: with get_session() as db: ...
+# ═══════════════════════════════════════════════════════
+@contextmanager
+def get_session():
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 class Signal(Base):
     __tablename__ = "signals"
 
@@ -30,7 +51,6 @@ class Signal(Base):
     sl           = Column(Float)
     tp1          = Column(Float)
     tp2          = Column(Float)
-    tp3          = Column(Float)
     sl_pct       = Column(Float)
     risk_amt     = Column(Float)
     risk_pct     = Column(Float)
@@ -136,11 +156,9 @@ class BacktestResult(Base):
 
 def init_db():
     Base.metadata.create_all(engine)
-    # SQLite does not auto-add columns to existing tables.
-    # If upgrading from previous version, run this once:
-    # ALTER TABLE trades ADD COLUMN health_at_close TEXT;
     import logging
     logging.getLogger(__name__).info("Database tables created")
+
 
 def get_db():
     db = SessionLocal()

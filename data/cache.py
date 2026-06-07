@@ -1,9 +1,10 @@
 import time
 from typing import Any
 
+
 class Cache:
     def __init__(self):
-        self._store = {}
+        self._store: dict = {}
 
     def set(self, key: str, value: Any, ttl: int = 300):
         self._store[key] = {
@@ -23,5 +24,8 @@ class Cache:
     def clear(self, key: str):
         self._store.pop(key, None)
 
-# Global cache instance
+    def clear_all(self):
+        self._store.clear()
+
+
 cache = Cache()

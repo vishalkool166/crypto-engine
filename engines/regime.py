@@ -9,14 +9,8 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
     s50    = d1d.get("slope50")
     trend  = d1d.get("trend", {})
 
-    # Both TFs must be weak to confirm chop —
-    # single TF weakness alone is not enough
-    if (
-        adx_1d is not None and
-        adx_4h is not None and
-        adx_1d < 18 and
-        adx_4h < 18
-    ):
+    if (adx_1d is not None and adx_4h is not None and
+            adx_1d < 18 and adx_4h < 18):
         return {
             "type":      "chop",
             "tradeable": False,
@@ -29,13 +23,8 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
         s20 is not None and abs(s20) < 0.15 and
         s50 is not None and abs(s50) < 0.15
     )
-    if (
-        adx_1d is not None and
-        adx_1d < 25 and
-        bb_1d and
-        bb_1d["width"] < 3 and
-        flat
-    ):
+    if (adx_1d is not None and adx_1d < 25 and
+            bb_1d and bb_1d["width"] < 3 and flat):
         return {
             "type":      "ranging",
             "tradeable": False,
@@ -44,11 +33,8 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "Low ADX + narrow BB + flat EMAs."
         }
 
-    if (
-        bb_1d and
-        bb_1d["width"] > 8 and
-        d1d["cur_vol"] > d1d["vol_ma5"] * 1.8
-    ):
+    if (bb_1d and bb_1d["width"] > 8 and
+            d1d["cur_vol"] > d1d["vol_ma5"] * 1.8):
         return {
             "type":      "expansion",
             "tradeable": True,
@@ -75,19 +61,13 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "desc":      "Strong downtrend. Use continuation logic."
         }
 
-    # ADX 18-25 is a soft block — weak trend can still
-    # produce valid setups if sweep and displacement confirm
     if adx_1d and 18 <= adx_1d < 25:
         return {
             "type":      "weak-trend",
             "tradeable": True,
             "score":     4,
             "label":     "WEAK TREND",
-            "desc": (
-                "ADX developing — "
-                "reduced confidence. "
-                "Require stronger sweep/displacement."
-            )
+            "desc":      "ADX developing — reduced confidence. Require stronger sweep/displacement."
         }
 
     return {
@@ -96,4 +76,27 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
         "score":     0,
         "label":     "UNCLEAR",
         "desc":      "Market conditions unclear."
+    }
+
+
+def assess_btc_stability(btc_data: dict) -> dict:
+    if not btc_data:
+        return {
+            "stable":   False,
+            "warnings": ["BTC data unavailable"],
+            "score":    0
+        }
+
+    warnings = []
+    adx = btc_data.get("adx")
+    if adx and adx < 18:
+        warnings.append("⚠️ BTC ADX weak — ranging")
+    if (btc_data.get("structure", {}).get("struct_bias") == "bear" and
+            btc_data.get("trend", {}).get("cls") == "bull"):
+        warnings.append("⚠️ BTC CHoCH detected")
+
+    return {
+        "stable":   len(warnings) == 0,
+        "warnings": warnings,
+        "score":    max(0, 8 - len(warnings) * 3)
     }

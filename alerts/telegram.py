@@ -1,27 +1,32 @@
 import httpx
 import logging
+import time
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from fastapi import Request
 from config import cfg
-from database import SessionLocal, Trade
+from database import SessionLocal, Trade, get_session
 from trade.state import state_manager
+from alerts.utils import now_ist, grade_accuracy_str, categorize_results
 
 log = logging.getLogger(__name__)
 
 BASE   = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
 DOMAIN = "https://small-salaried-study.ngrok-free.dev"
-IST    = timezone(timedelta(hours=5, minutes=30))
 
-_sent_signals: set  = set()
-_skip_reasons: dict = {}
+_sent_signals: deque = deque(maxlen=100)
+_skip_reasons: dict  = {}
+_SKIP_TTL             = 3600
 
 
-# ═══════════════════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════════════════
-
-def now_ist() -> str:
-    return datetime.now(IST).strftime("%I:%M %p IST")
+def _is_skipped(coin: str) -> bool:
+    ts = _skip_reasons.get(coin)
+    if ts is None:
+        return False
+    if time.time() - ts > _SKIP_TTL:
+        del _skip_reasons[coin]
+        return False
+    return True
 
 
 def _mins_until(target_hour: int, target_min: int = 0) -> tuple[int, int]:
@@ -70,31 +75,6 @@ def _pnl_str(pnl: float) -> str:
     return f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
 
 
-def _grade_accuracy_str(grade: str) -> str:
-    db = SessionLocal()
-    try:
-        trades = db.query(Trade).filter(
-            Trade.grade     == grade,
-            Trade.is_active == False,
-            Trade.outcome.in_(["win", "loss"])
-        ).all()
-        if not trades:
-            return f"Grade {grade} accuracy: no data yet"
-        wins  = sum(1 for t in trades if t.outcome == "win")
-        total = len(trades)
-        wr    = round(wins / total * 100, 1)
-        return f"Grade {grade} accuracy: `{wins}W {total - wins}L` — `{wr}% win rate`"
-    except Exception as e:
-        log.error(f"Grade accuracy error: {e}")
-        return ""
-    finally:
-        db.close()
-
-
-# ═══════════════════════════════════════════════════════
-# CORE SEND
-# ═══════════════════════════════════════════════════════
-
 async def _post(endpoint: str, payload: dict):
     if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
         log.warning("Telegram not configured")
@@ -132,10 +112,6 @@ async def answer_callback(callback_id: str, text: str = ""):
     })
 
 
-# ═══════════════════════════════════════════════════════
-# WEBHOOK
-# ═══════════════════════════════════════════════════════
-
 async def register_webhook():
     webhook_url = f"{DOMAIN}/webhook/telegram"
     try:
@@ -170,12 +146,6 @@ async def handle_webhook(request: Request):
     except Exception as e:
         log.error(f"Webhook handler error: {e}")
 
-
-# ═══════════════════════════════════════════════════════
-# CALLBACK HANDLER
-# ═══════════════════════════════════════════════════════
-
-_CALLBACK_MAP = {}
 
 async def _handle_callback(callback: dict):
     callback_id = callback.get("id", "")
@@ -240,9 +210,9 @@ async def _cb_show_risks(coin: str):
         await send(f"⚠️ No cached data for {coin}.")
         return
 
-    expl   = cached.get("explanation", {})
-    softs  = (cached.get("no_trade", {}) or {}).get("soft_blocks", [])
-    lines  = [f"⚠️ *Risk Analysis — {coin}USDT*\n"]
+    expl  = cached.get("explanation", {})
+    softs = (cached.get("no_trade", {}) or {}).get("soft_blocks", [])
+    lines = [f"⚠️ *Risk Analysis — {coin}USDT*\n"]
 
     if expl.get("risk_thesis"):
         lines += ["*Risk Factors:*", expl["risk_thesis"]]
@@ -290,8 +260,8 @@ async def _cb_approve_signal(coin: str):
 
 
 async def _cb_skip_signal(coin: str):
-    _skip_reasons[coin] = "skipped_via_telegram"
-    await send(f"⏭ *{coin} signal skipped*\n\nUse /scan to get fresh signals.")
+    _skip_reasons[coin] = time.time()
+    await send(f"⏭ *{coin} signal skipped*\n\nSignal expires in 1 hour.\nUse /scan to get fresh signals.")
     log.info(f"Signal skipped via Telegram: {coin}")
 
 
@@ -305,10 +275,6 @@ async def _cb_confirm_close():
     result = await trade_manager.manual_close()
     await send("✅ Trade closed manually." if result["success"] else f"❌ Close failed: `{result['reason']}`")
 
-
-# ═══════════════════════════════════════════════════════
-# COMMAND ROUTER
-# ═══════════════════════════════════════════════════════
 
 async def _handle_command(text: str):
     t = text.lower().strip()
@@ -368,10 +334,6 @@ async def _handle_command(text: str):
         await send("🤖 Unknown command.\n\nType /help for full command list.")
 
 
-# ═══════════════════════════════════════════════════════
-# TRADE COMMANDS
-# ═══════════════════════════════════════════════════════
-
 async def _cmd_status():
     if state_manager.is_idle:
         paused_note = (
@@ -425,9 +387,9 @@ async def _cmd_health():
         await send("⚠️ No active trade — no health data.")
         return
 
-    health = state_manager.health_data
-    state  = state_manager.health_state
-    trade  = state_manager.current_trade
+    health  = state_manager.health_data
+    state   = state_manager.health_state
+    trade   = state_manager.current_trade
     h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state, "—")
 
     lines = [f"{h_emoji} *Trade Health — {trade.coin if trade else '--'}*\n", f"Status: `{state}`\n"]
@@ -463,7 +425,10 @@ async def _cmd_levels():
     current, upnl = _get_current_and_upnl(trade)
     current       = price_feed.get_price(trade.coin) or current
     is_long       = trade.direction == "LONG"
-    tp1_hit       = abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.001 if trade.sl_price and trade.entry_price else False
+    tp1_hit       = (
+        abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.002
+        if trade.sl_price and trade.entry_price else False
+    )
 
     total    = abs(trade.tp1_price - trade.entry_price) if trade.tp1_price and trade.entry_price else 0
     progress = 0
@@ -505,10 +470,6 @@ async def _cmd_close():
     )
 
 
-# ═══════════════════════════════════════════════════════
-# MARKET COMMANDS
-# ═══════════════════════════════════════════════════════
-
 async def _cmd_btc():
     await _cmd_coin("BTC")
 
@@ -528,6 +489,7 @@ async def _cmd_coin(coin: str):
     disp    = cached.get("displacement", {})
     retest  = cached.get("retest", {})
     d1d     = cached.get("d1d", {})
+    d4h     = cached.get("d4h", {})
     expl    = cached.get("explanation", {})
 
     price   = market.get("price", 0)
@@ -537,6 +499,7 @@ async def _cmd_coin(coin: str):
     em      = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
     rsi     = d1d.get("rsi")
     adx     = d1d.get("adx")
+    ob      = d4h.get("order_blocks", {})
 
     base = (
         f"📊 *{coin}USDT Analysis*\n\n"
@@ -560,6 +523,10 @@ async def _cmd_coin(coin: str):
         f"Disp:    `{'✅' if disp.get('confirmed') else '❌'} {disp.get('score',0)}/11`\n"
         f"Retest:  `{'✅' if retest.get('confirmed') else '❌'} {retest.get('score',0)}/12`\n"
     )
+
+    if ob:
+        base += f"OB:      `{ob.get('label', '--')}`\n"
+        base += f"OB Score:`{ob.get('score', 0)}/10`\n"
 
     await send(base)
 
@@ -611,24 +578,17 @@ async def _cmd_fear():
         await send(f"❌ Fear & Greed fetch failed: `{e}`")
 
 
-# ═══════════════════════════════════════════════════════
-# PERFORMANCE COMMANDS
-# ═══════════════════════════════════════════════════════
-
 async def _cmd_pnl():
     from trade.risk import risk_guard
     stats = risk_guard.get_daily_stats()
 
-    db = SessionLocal()
-    try:
+    with get_session() as db:
         all_trades = db.query(Trade).filter(Trade.outcome != "pending").all()
         total_pnl  = sum(t.pnl or 0 for t in all_trades)
         wins       = sum(1 for t in all_trades if t.outcome == "win")
         losses     = sum(1 for t in all_trades if t.outcome == "loss")
         total      = len(all_trades)
         wr         = round(wins / total * 100, 1) if total else 0
-    finally:
-        db.close()
 
     await send(
         f"💰 *PnL Report*\n\n"
@@ -646,14 +606,11 @@ async def _cmd_pnl():
 
 
 async def _cmd_history():
-    db = SessionLocal()
-    try:
+    with get_session() as db:
         trades = db.query(Trade).filter(
             Trade.is_active == False,
             Trade.outcome.in_(["win", "loss", "manual"])
         ).order_by(Trade.closed_at.desc()).limit(5).all()
-    finally:
-        db.close()
 
     if not trades:
         await send("📜 No closed trades yet.")
@@ -698,14 +655,11 @@ async def _cmd_stats():
 
 
 async def _cmd_streak():
-    db = SessionLocal()
-    try:
+    with get_session() as db:
         trades = db.query(Trade).filter(
             Trade.is_active == False,
             Trade.outcome.in_(["win", "loss"])
         ).order_by(Trade.closed_at.desc()).all()
-    finally:
-        db.close()
 
     if not trades:
         await send("📊 No closed trades yet.")
@@ -745,7 +699,7 @@ async def _cmd_grade():
     ap    = bg.get("A+", {})
     a     = bg.get("A", {})
 
-    def grade_block(label, color, data):
+    def grade_block(label, data):
         return (
             f"*Grade {label}*\n"
             f"Trades:   `{data.get('total', 0)}`\n"
@@ -757,15 +711,11 @@ async def _cmd_grade():
 
     await send(
         f"🏆 *Grade Accuracy*\n\n"
-        f"{grade_block('A+', 'green', ap)}\n"
-        f"{grade_block('A', 'blue', a)}\n"
+        f"{grade_block('A+', ap)}\n"
+        f"{grade_block('A', a)}\n"
         f"_Minimum 50 trades for reliable data_"
     )
 
-
-# ═══════════════════════════════════════════════════════
-# RISK & SESSION COMMANDS
-# ═══════════════════════════════════════════════════════
 
 async def _cmd_risk():
     from trade.risk import risk_guard
@@ -789,9 +739,9 @@ async def _cmd_risk():
 
 async def _cmd_session():
     from engines.signal import get_session
-    session = get_session()
+    session   = get_session()
     hrs, mins = _mins_until(8)
-    now = datetime.now(timezone.utc)
+    now       = datetime.now(timezone.utc)
 
     await send(
         f"🕐 *Session Status*\n\n"
@@ -823,10 +773,10 @@ async def _cmd_daily():
 async def _cmd_next():
     from scheduler import get_next_scan_time
     from engines.signal import get_session
-    session  = get_session()
-    next_s   = get_next_scan_time()
-    london   = _next_dt(8)
-    ny       = _next_dt(13)
+    session = get_session()
+    next_s  = get_next_scan_time()
+    london  = _next_dt(8)
+    ny      = _next_dt(13)
 
     await send(
         f"⏱ *Next Events*\n\n"
@@ -837,10 +787,6 @@ async def _cmd_next():
         f"Entries: `{'✅ ALLOWED' if session['tradeable'] else '🚫 BLOCKED'}`"
     )
 
-
-# ═══════════════════════════════════════════════════════
-# BOT CONTROL COMMANDS
-# ═══════════════════════════════════════════════════════
 
 async def _cmd_pause():
     if state_manager.is_paused:
@@ -894,10 +840,6 @@ async def _cmd_brief():
     await send("🌅 Generating briefing...")
     await send_morning_briefing()
 
-
-# ═══════════════════════════════════════════════════════
-# ANALYSIS COMMANDS
-# ═══════════════════════════════════════════════════════
 
 async def _cmd_factors():
     from backtest.factor_analysis import run_factor_analysis
@@ -972,14 +914,11 @@ async def _cmd_backtest(coin: str):
 
 
 async def _cmd_debrief():
-    db = SessionLocal()
-    try:
+    with get_session() as db:
         trade = db.query(Trade).filter(
             Trade.is_active == False,
             Trade.outcome.in_(["win", "loss", "manual"])
         ).order_by(Trade.closed_at.desc()).first()
-    finally:
-        db.close()
 
     if not trade:
         await send("📋 No closed trades yet.")
@@ -1025,7 +964,7 @@ async def _cmd_queue():
     best_score = 0
 
     for coin in cfg.COINS:
-        if coin in _skip_reasons:
+        if _is_skipped(coin):
             continue
         cached = cache.get(f"signal_{coin}")
         if cached:
@@ -1110,24 +1049,18 @@ async def _cmd_help():
     )
 
 
-# ═══════════════════════════════════════════════════════
-# SIGNAL ALERT
-# ═══════════════════════════════════════════════════════
-
 async def send_signal(signal: dict, coin: str, regime: str, session: str):
     if signal.get("grade") not in ["A+", "A"]:
         return
     if signal.get("direction") not in ["LONG", "SHORT"]:
         return
-    if coin in _skip_reasons:
+    if _is_skipped(coin):
         return
 
     sig_key = f"{coin}_{signal.get('direction')}_{signal.get('grade')}_{round(signal.get('entry', 0), 0)}"
     if sig_key in _sent_signals:
         return
-    _sent_signals.add(sig_key)
-    if len(_sent_signals) > 100:
-        _sent_signals.pop()
+    _sent_signals.append(sig_key)
 
     grade     = signal.get("grade", "?")
     direction = signal.get("direction", "?")
@@ -1183,16 +1116,11 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
     )
 
 
-# ═══════════════════════════════════════════════════════
-# SCAN SUMMARY
-# ═══════════════════════════════════════════════════════
-
 async def send_scan_summary(results: list):
-    tradeable = [
-        r for r in results
-        if r.get("grade") in ["A+", "A"] and
-        r.get("direction") in ["LONG", "SHORT"]
-    ]
+    cats      = categorize_results(results)
+    tradeable = cats["tradeable"]
+    watching  = cats["watching"]
+    building  = cats["building"]
 
     if tradeable:
         lines = [
@@ -1226,10 +1154,6 @@ async def send_scan_summary(results: list):
         await send("\n".join(lines))
         return
 
-    # No tradeable — show closest
-    watching = [r for r in results if r.get("grade") == "B" and r.get("direction") in ["LONG", "SHORT"]]
-    building = [r for r in results if r.get("grade") == "C"]
-
     lines = [f"😴 *No Tradeable Signals — {now_ist()}*\n━━━━━━━━━━━━━━━━━━━━━━\n"]
 
     if watching:
@@ -1251,10 +1175,6 @@ async def send_scan_summary(results: list):
     lines.append("\nNext scan: next :00/:15/:30/:45 UTC")
     await send("\n".join(lines))
 
-
-# ═══════════════════════════════════════════════════════
-# PROGRESS UPDATE
-# ═══════════════════════════════════════════════════════
 
 async def send_progress_update(trade, current_price: float, milestone_pct: int):
     is_long  = trade.direction == "LONG"
@@ -1281,10 +1201,6 @@ async def send_progress_update(trade, current_price: float, milestone_pct: int):
         f"Type /status for full details"
     )
 
-
-# ═══════════════════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════════════════
 
 async def _show_active_thesis(coin: str):
     from data.cache import cache

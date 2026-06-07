@@ -7,55 +7,35 @@ TIERS = {
         "min":         85,
         "cls":         "aplus",
         "action":      "FULL SIGNAL — Institutional Quality",
-        "risk_pct":    0.10,
-        "lev_mult":    1.0,
-        "tps":         ["TP1", "TP2"],
         "desc":        "All confluence aligned. Full position.",
-        "color":       "green",
         "signal_type": "FULL"
     },
     "A": {
         "min":         68,
         "cls":         "a",
         "action":      "FULL SIGNAL — High Confidence",
-        "risk_pct":    0.10,
-        "lev_mult":    1.0,
-        "tps":         ["TP1", "TP2"],
         "desc":        "Strong confluence. Full position.",
-        "color":       "blue",
         "signal_type": "FULL"
     },
     "B": {
         "min":         52,
         "cls":         "b",
         "action":      "SKIP — Below minimum grade",
-        "risk_pct":    0.0,
-        "lev_mult":    0.0,
-        "tps":         [],
         "desc":        "Grade B skipped.",
-        "color":       "orange",
         "signal_type": "SKIP"
     },
     "C": {
         "min":         38,
         "cls":         "c",
         "action":      "WATCH MODE — Set Alerts",
-        "risk_pct":    0.0,
-        "lev_mult":    0.0,
-        "tps":         [],
         "desc":        "Setup building. No entry.",
-        "color":       "yellow",
         "signal_type": "WATCH"
     },
     "F": {
         "min":         0,
         "cls":         "f",
         "action":      "STAY OUT — Hard Block",
-        "risk_pct":    0.0,
-        "lev_mult":    0.0,
-        "tps":         [],
         "desc":        "Market untradeable.",
-        "color":       "red",
         "signal_type": "HARD_BLOCK"
     }
 }
@@ -80,115 +60,84 @@ def get_session() -> dict:
 
     if london and ny:
         return {
-            "name":       "London/NY Overlap",
-            "quality":    "BEST",
-            "score":      9,
-            "tradeable":  True,
-            "desc":       "Highest volume. Best signal quality."
+            "name":      "London/NY Overlap",
+            "quality":   "BEST",
+            "score":     9,
+            "tradeable": True,
+            "desc":      "Highest volume. Best signal quality."
         }
     if ny:
         return {
-            "name":       "New York Session",
-            "quality":    "GOOD",
-            "score":      7,
-            "tradeable":  True,
-            "desc":       "High volume. Good for entries."
+            "name":      "New York Session",
+            "quality":   "GOOD",
+            "score":     7,
+            "tradeable": True,
+            "desc":      "High volume. Good for entries."
         }
     if london:
         return {
-            "name":       "London Session",
-            "quality":    "GOOD",
-            "score":      7,
-            "tradeable":  True,
-            "desc":       "High volume. Trend initiation common."
+            "name":      "London Session",
+            "quality":   "GOOD",
+            "score":     7,
+            "tradeable": True,
+            "desc":      "High volume. Trend initiation common."
         }
     if asia:
         return {
-            "name":       "Asian Session",
-            "quality":    "CAUTION",
-            "score":      2,
-            "tradeable":  False,
-            "desc":       "Low volume. Liquidity grabs frequently fake."
+            "name":      "Asian Session",
+            "quality":   "CAUTION",
+            "score":     2,
+            "tradeable": False,
+            "desc":      "Low volume. Liquidity grabs frequently fake."
         }
     return {
-        "name":       "Off Hours",
-        "quality":    "CAUTION",
-        "score":      2,
-        "tradeable":  False,
-        "desc":       "Low volume. Wait for London open."
+        "name":      "Off Hours",
+        "quality":   "CAUTION",
+        "score":     2,
+        "tradeable": False,
+        "desc":      "Low volume. Wait for London open."
     }
 
 
-# ═══════════════════════════════════════════════════════
-# CORRELATION FILTER
-# Blocks altcoin entry if BTC already in active trade.
-# BTC and alts are 85%+ correlated — same trade twice
-# doubles risk without doubling edge.
-# ═══════════════════════════════════════════════════════
 def check_correlation(coin: str) -> dict:
     if coin == "BTC":
         return {"blocked": False, "reason": ""}
-
     try:
         from trade.state import state_manager
         if not state_manager.is_idle:
             active = state_manager.current_trade
             if active:
-                active_coin = active.coin
-                # BTC active — block all alts
-                if active_coin == "BTC":
+                if active.coin == "BTC":
                     return {
                         "blocked": True,
-                        "reason":  (
-                            f"BTC trade active — "
-                            f"altcoin entries blocked "
-                            f"(correlation risk)"
-                        )
+                        "reason":  "BTC trade active — altcoin entries blocked (correlation risk)"
                     }
-                # Same coin — obviously blocked
-                if active_coin == coin:
+                if active.coin == coin:
                     return {
                         "blocked": True,
                         "reason":  f"{coin} already in active trade"
                     }
     except Exception:
         pass
-
     return {"blocked": False, "reason": ""}
 
 
-# ═══════════════════════════════════════════════════════
-# DYNAMIC POSITION SIZING
-# Scales risk % linearly with confidence score.
-# Higher confidence = larger position.
-# Keeps risk within defined bounds — never exceeds
-# max risk or drops below min risk.
-# ═══════════════════════════════════════════════════════
 def dynamic_risk_pct(score: float) -> float:
-    min_risk = 0.07   # 7% at score 68 (minimum A)
-    max_risk = 0.13   # 13% at score 100
-    base     = 0.10   # 10% at score 85 (A+)
+    min_risk = 0.07
+    max_risk = 0.13
+    base     = 0.10
 
     if score >= 95:
         return max_risk
     if score >= 85:
-        # Scale from 10% to 13% between 85-95
         t = (score - 85) / 10
         return round(base + t * (max_risk - base), 3)
     if score >= 68:
-        # Scale from 7% to 10% between 68-85
         t = (score - 68) / 17
         return round(min_risk + t * (base - min_risk), 3)
-
     return min_risk
 
 
-# ═══════════════════════════════════════════════════════
-# 15M ENTRY CONFIRMATION
-# Expanded with micro sweep and displacement detection.
-# Micro sweep: price briefly breaks a recent 15m level
-# then closes back — confirms institutional interest.
-# ═══════════════════════════════════════════════════════
 def check_15m_entry(
     df_15m:    pd.DataFrame,
     direction: str,
@@ -236,68 +185,35 @@ def check_15m_entry(
     pattern_score = 0
 
     if direction == "LONG":
-        if (
-            prev_close < prev_open and
-            last_close > last_open and
-            last_close > prev_open and
-            last_open  < prev_close and
-            last_body  > last_range * 0.6
-        ):
-            pattern       = "Bullish Engulfing"
-            pattern_score = 9
-        elif (
-            last_range > 0 and
-            (min(last_open, last_close) - last_low) / last_range > 0.45 and
-            last_close > (last_high + last_low) / 2
-        ):
-            pattern       = "Hammer / Pin Bar"
-            pattern_score = 7
-        elif (
-            last_close > last_open and
-            last_close > prev_high and
-            last_body > last_range * 0.5
-        ):
-            pattern       = "Bullish Break"
-            pattern_score = 6
-        elif (
-            last_high > prev_high and
-            last_low  > prev_low and
-            last_close > last_open
-        ):
-            pattern       = "Higher High/Low"
-            pattern_score = 5
-
+        if (prev_close < prev_open and last_close > last_open and
+                last_close > prev_open and last_open < prev_close and
+                last_body > last_range * 0.6):
+            pattern, pattern_score = "Bullish Engulfing", 9
+        elif (last_range > 0 and
+                (min(last_open, last_close) - last_low) / last_range > 0.45 and
+                last_close > (last_high + last_low) / 2):
+            pattern, pattern_score = "Hammer / Pin Bar", 7
+        elif (last_close > last_open and last_close > prev_high and
+                last_body > last_range * 0.5):
+            pattern, pattern_score = "Bullish Break", 6
+        elif (last_high > prev_high and last_low > prev_low and
+                last_close > last_open):
+            pattern, pattern_score = "Higher High/Low", 5
     else:
-        if (
-            prev_close > prev_open and
-            last_close < last_open and
-            last_close < prev_open and
-            last_open  > prev_close and
-            last_body  > last_range * 0.6
-        ):
-            pattern       = "Bearish Engulfing"
-            pattern_score = 9
-        elif (
-            last_range > 0 and
-            (last_high - max(last_open, last_close)) / last_range > 0.45 and
-            last_close < (last_high + last_low) / 2
-        ):
-            pattern       = "Shooting Star"
-            pattern_score = 7
-        elif (
-            last_close < last_open and
-            last_close < prev_low and
-            last_body > last_range * 0.5
-        ):
-            pattern       = "Bearish Break"
-            pattern_score = 6
-        elif (
-            last_high < prev_high and
-            last_low  < prev_low and
-            last_close < last_open
-        ):
-            pattern       = "Lower High/Low"
-            pattern_score = 5
+        if (prev_close > prev_open and last_close < last_open and
+                last_close < prev_open and last_open > prev_close and
+                last_body > last_range * 0.6):
+            pattern, pattern_score = "Bearish Engulfing", 9
+        elif (last_range > 0 and
+                (last_high - max(last_open, last_close)) / last_range > 0.45 and
+                last_close < (last_high + last_low) / 2):
+            pattern, pattern_score = "Shooting Star", 7
+        elif (last_close < last_open and last_close < prev_low and
+                last_body > last_range * 0.5):
+            pattern, pattern_score = "Bearish Break", 6
+        elif (last_high < prev_high and last_low < prev_low and
+                last_close < last_open):
+            pattern, pattern_score = "Lower High/Low", 5
 
     ema_ok = False
     if ema20:
@@ -313,11 +229,7 @@ def check_15m_entry(
         (direction == "SHORT" and struct_bear)
     )
 
-    # ── MICRO SWEEP DETECTION ──
-    # Looks for a wick below recent 15m swing low
-    # that closes back above it — micro liquidity grab
-    # This is the 15m equivalent of the daily sweep engine
-    micro_sweep = False
+    micro_sweep      = False
     micro_sweep_desc = ""
 
     try:
@@ -329,30 +241,19 @@ def check_15m_entry(
 
         if direction == "LONG":
             recent_low = float(swing_window["low"].iloc[:-1].min())
-            if (
-                last_low < recent_low and
-                last_close > recent_low and
-                (recent_low - last_low) < atr_15m * 0.5
-            ):
+            if (last_low < recent_low and last_close > recent_low and
+                    (recent_low - last_low) < atr_15m * 0.5):
                 micro_sweep      = True
                 micro_sweep_desc = f"Micro sweep below {recent_low:.4f}"
-
         else:
             recent_high = float(swing_window["high"].iloc[:-1].max())
-            if (
-                last_high > recent_high and
-                last_close < recent_high and
-                (last_high - recent_high) < atr_15m * 0.5
-            ):
+            if (last_high > recent_high and last_close < recent_high and
+                    (last_high - recent_high) < atr_15m * 0.5):
                 micro_sweep      = True
                 micro_sweep_desc = f"Micro sweep above {recent_high:.4f}"
-
     except Exception:
         pass
 
-    # ── MICRO DISPLACEMENT ──
-    # Strong 15m candle after the sweep confirms
-    # institutional participation at this level
     micro_disp = False
     if len(recent) >= 3:
         prev2      = recent.iloc[-3]
@@ -360,11 +261,9 @@ def check_15m_entry(
         prev2_rng  = float(prev2["high"]) - float(prev2["low"])
         if prev2_rng > 0:
             if direction == "LONG" and float(prev2["close"]) > float(prev2["open"]):
-                if prev2_body / prev2_rng > 0.6:
-                    micro_disp = True
+                if prev2_body / prev2_rng > 0.6: micro_disp = True
             elif direction == "SHORT" and float(prev2["close"]) < float(prev2["open"]):
-                if prev2_body / prev2_rng > 0.6:
-                    micro_disp = True
+                if prev2_body / prev2_rng > 0.6: micro_disp = True
 
     score = pattern_score
     if vol_ok:      score += 1
@@ -374,21 +273,17 @@ def check_15m_entry(
     if micro_disp:  score += 1
     score = min(score, 10)
 
-    confirmed   = (
+    confirmed = (
         pattern_score >= 5 and
         (ema_ok or struct_ok) and
         (not micro_sweep or micro_sweep)
     )
 
-    # Micro sweep alone can confirm even without
-    # classic candle pattern — it IS the signal
     if micro_sweep and micro_disp and vol_ok:
         confirmed = True
         if pattern == "None":
             pattern       = "Micro Sweep + Displacement"
             pattern_score = max(pattern_score, 7)
-
-    entry_price = price
 
     desc_parts = [f"15m: {pattern}"]
     if micro_sweep: desc_parts.append(micro_sweep_desc)
@@ -397,28 +292,20 @@ def check_15m_entry(
     desc_parts.append(f"Vol:{'✅' if vol_ok else '❌'}")
 
     return {
-        "confirmed":    confirmed,
-        "score":        score,
-        "pattern":      pattern,
-        "entry_price":  entry_price,
-        "ema20":        ema20,
-        "ema_ok":       ema_ok,
-        "vol_ok":       vol_ok,
-        "struct_ok":    struct_ok,
-        "micro_sweep":  micro_sweep,
-        "micro_disp":   micro_disp,
-        "desc":         " · ".join(desc_parts)
+        "confirmed":   confirmed,
+        "score":       score,
+        "pattern":     pattern,
+        "entry_price": price,
+        "ema20":       ema20,
+        "ema_ok":      ema_ok,
+        "vol_ok":      vol_ok,
+        "struct_ok":   struct_ok,
+        "micro_sweep": micro_sweep,
+        "micro_disp":  micro_disp,
+        "desc":        " · ".join(desc_parts)
     }
 
 
-# ═══════════════════════════════════════════════════════
-# NO TRADE ENGINE
-# Hard blocks: choppy, weekly conflict, ADX, extreme
-# funding, news, failed retest, BTC unstable,
-# minimum condition, Asian/Off hours session,
-# correlation with active trade.
-# RSI is soft penalty only — never a hard block.
-# ═══════════════════════════════════════════════════════
 def run_no_trade_engine(
     regime, d1d, d4h,
     market, session,
@@ -427,7 +314,8 @@ def run_no_trade_engine(
     btc_instability,
     oi_matrix, news_filter,
     base_score: float,
-    coin: str = ""
+    coin: str = "",
+    d1w: dict = None
 ) -> dict:
 
     reasons       = []
@@ -454,15 +342,13 @@ def run_no_trade_engine(
 
     d1_cls = d1d["trend"]["cls"]
 
-    # ── HARD BLOCKS ──
-
     if regime["type"] == "chop":
         hard("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
 
-    wk_bear = d1d.get("wk_trend_cls") == "bear"
-    wk_bull = d1d.get("wk_trend_cls") == "bull"
-    if (wk_bear and d1_cls == "bull") or (wk_bull and d1_cls == "bear"):
-        hard("🚫", "Weekly gate BLOCKED", "Weekly and daily directly conflict.")
+    if d1w:
+        wk_cls = d1w["trend"]["cls"]
+        if (wk_cls == "bear" and d1_cls == "bull") or (wk_cls == "bull" and d1_cls == "bear"):
+            hard("🚫", "Weekly gate BLOCKED", "Weekly and daily directly conflict.")
 
     adx = d1d.get("adx")
     if adx is not None and adx < 18:
@@ -484,10 +370,8 @@ def run_no_trade_engine(
         hard("🚫", "Retest zone FAILED",
              "Zone invalidated — wait for new setup to form.")
 
-    if (
-        len(btc_instability.get("warnings", [])) >= 2 and
-        d1d.get("coin") != "BTC"
-    ):
+    if (len(btc_instability.get("warnings", [])) >= 2 and
+            d1d.get("coin") != "BTC"):
         hard("🚫", "BTC unstable",
              " · ".join(btc_instability["warnings"][:2]))
 
@@ -498,48 +382,28 @@ def run_no_trade_engine(
             hard("🚫", "Minimum condition not met",
                  "Neither sweep nor displacement confirmed.")
 
-    # Asian and Off Hours are hard blocked —
-    # sweeps in these sessions are frequently fake
-    # designed to hunt stops before London reverses
     if not session.get("tradeable", True):
-        hard(
-            "🚫",
-            f"{session['name']} — entries blocked",
-            session["desc"]
-        )
+        hard("🚫", f"{session['name']} — entries blocked", session["desc"])
 
-    # Correlation filter — altcoin blocked if BTC in trade
     if coin:
         corr = check_correlation(coin)
         if corr["blocked"]:
             hard("🚫", "Correlation block", corr["reason"])
 
-    # ── SOFT BLOCKS ──
-    # RSI is soft penalty only — audit requirement.
-    # Raw RSI values reduce confidence, never block trades.
-
     rsi = d1d.get("rsi")
     if rsi is not None:
         if rsi < 25 and d1_cls == "bear":
-            soft("⚠️",
-                 f"RSI {rsi:.1f} — deeply oversold",
-                 "Bounce risk elevated. Confidence reduced.",
-                 penalty=6)
+            soft("⚠️", f"RSI {rsi:.1f} — deeply oversold",
+                 "Bounce risk elevated. Confidence reduced.", penalty=6)
         elif rsi < 30 and d1_cls == "bear":
-            soft("⚠️",
-                 f"RSI {rsi:.1f} — approaching oversold",
-                 "Bounce risk present. Reduce confidence.",
-                 penalty=3)
+            soft("⚠️", f"RSI {rsi:.1f} — approaching oversold",
+                 "Bounce risk present. Reduce confidence.", penalty=3)
         if rsi > 75 and d1_cls == "bull":
-            soft("⚠️",
-                 f"RSI {rsi:.1f} — deeply overbought",
-                 "Exhaustion risk elevated. Confidence reduced.",
-                 penalty=6)
+            soft("⚠️", f"RSI {rsi:.1f} — deeply overbought",
+                 "Exhaustion risk elevated. Confidence reduced.", penalty=6)
         elif rsi > 70 and d1_cls == "bull":
-            soft("⚠️",
-                 f"RSI {rsi:.1f} — approaching overbought",
-                 "Exhaustion risk present. Reduce confidence.",
-                 penalty=3)
+            soft("⚠️", f"RSI {rsi:.1f} — approaching overbought",
+                 "Exhaustion risk present. Reduce confidence.", penalty=3)
 
     if news_filter and news_filter.get("warning"):
         upcoming = ", ".join(
@@ -562,10 +426,8 @@ def run_no_trade_engine(
              oi_matrix["crowding_warning"], 3)
 
     struct_4h = d4h.get("structure", {}).get("struct_bias", "neutral")
-    if (
-        (d1_cls == "bull" and struct_4h == "bear") or
-        (d1_cls == "bear" and struct_4h == "bull")
-    ):
+    if ((d1_cls == "bull" and struct_4h == "bear") or
+            (d1_cls == "bear" and struct_4h == "bull")):
         soft("⚠️", "4H structure conflicts daily",
              "Wait for 4H structure to align.", 3)
 
@@ -586,18 +448,13 @@ def run_no_trade_engine(
     }
 
 
-# ═══════════════════════════════════════════════════════
-# GENERATE SIGNAL
-# Dynamic position sizing by confidence score.
-# Explanation bundle attached to every signal.
-# ═══════════════════════════════════════════════════════
 def generate_signal(
     d1d, d4h,
     wconf, no_trade,
     market, key_levels,
-    capital:  float,
-    leverage: int,
-    df_15m:   pd.DataFrame = None,
+    capital:      float,
+    leverage:     int,
+    df_15m:       pd.DataFrame = None,
     sweep:        dict = None,
     displacement: dict = None,
     retest:       dict = None,
@@ -612,92 +469,69 @@ def generate_signal(
     score = no_trade["adj_score"]
     price = market["price"]
 
-    if tier["signal_type"] == "HARD_BLOCK":
-        base = {
-            "direction":   "NO TRADE",
-            "dir_class":   "notrade",
-            "tier":        tier,
-            "grade":       "F",
-            "score":       score,
-            "signal_type": "HARD_BLOCK",
-            "reason": (
-                no_trade["hard_blocks"][0]["reason"]
-                if no_trade["hard_blocks"]
-                else "Hard block active"
-            )
-        }
-        base["explanation"] = _attach_explanation(
-            base, sweep, displacement, retest,
-            d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime, session,
-            no_trade, wconf
-        )
-        return base
+    base = {
+        "grade": tier["label"],
+        "score": score,
+        "tier":  tier,
+    }
 
-    if tier["signal_type"] == "SKIP":
-        base = {
-            "direction":   "SKIP",
-            "dir_class":   "skip",
-            "tier":        tier,
-            "grade":       "B",
-            "score":       score,
-            "signal_type": "SKIP",
-            "reason":      "Grade B — skipped"
-        }
-        base["explanation"] = _attach_explanation(
-            base, sweep, displacement, retest,
-            d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime, session,
-            no_trade, wconf
-        )
-        return base
+    non_trade_type = tier["signal_type"]
 
-    if tier["signal_type"] == "WATCH":
-        base = {
-            "direction":   "WATCH",
-            "dir_class":   "watch",
-            "tier":        tier,
-            "grade":       "C",
-            "score":       score,
-            "signal_type": "WATCH",
-            "reason":      "Setup building — not ready"
+    if non_trade_type in ("HARD_BLOCK", "SKIP", "WATCH"):
+        direction_map = {
+            "HARD_BLOCK": ("NO TRADE", "notrade", "F"),
+            "SKIP":       ("SKIP",     "skip",    "B"),
+            "WATCH":      ("WATCH",    "watch",   "C"),
         }
-        base["explanation"] = _attach_explanation(
-            base, sweep, displacement, retest,
+        direction, dir_class, grade = direction_map[non_trade_type]
+        reason = (
+            no_trade["hard_blocks"][0]["reason"]
+            if non_trade_type == "HARD_BLOCK" and no_trade["hard_blocks"]
+            else "Grade B — skipped" if non_trade_type == "SKIP"
+            else "Setup building — not ready"
+        )
+        result = {
+            **base,
+            "direction":   direction,
+            "dir_class":   dir_class,
+            "grade":       grade,
+            "signal_type": non_trade_type,
+            "reason":      reason
+        }
+        result["explanation"] = _attach_explanation(
+            result, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
             oi_matrix, market, regime, session,
             no_trade, wconf
         )
-        return base
+        return result
 
     d1_cls = d1d["trend"]["cls"]
     d4_cls = d4h["trend"]["cls"]
 
-    if d1_cls == "bull" and d4_cls == "bull":
-        direction = "LONG"
-    elif d1_cls == "bear" and d4_cls == "bear":
-        direction = "SHORT"
-    else:
-        base = {
+    if not (d1_cls == "bull" and d4_cls == "bull") and \
+       not (d1_cls == "bear" and d4_cls == "bear"):
+        result = {
+            **base,
             "direction":   "WATCH",
             "dir_class":   "watch",
             "tier":        get_tier(38, False),
             "grade":       "C",
-            "score":       score,
             "signal_type": "WATCH",
             "reason":      "1D and 4H not aligned"
         }
-        base["explanation"] = _attach_explanation(
-            base, sweep, displacement, retest,
+        result["explanation"] = _attach_explanation(
+            result, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
             oi_matrix, market, regime, session,
             no_trade, wconf
         )
-        return base
+        return result
 
-    is_long = direction == "LONG"
-    atr     = d1d.get("atr") or price * 0.015
-    swings  = d1d.get("swings", {})
+    direction = "LONG" if d1_cls == "bull" else "SHORT"
+    is_long   = direction == "LONG"
+    atr       = d1d.get("atr") or price * 0.015
+    swings    = d1d.get("swings", {})
 
     entry_15m = check_15m_entry(
         df_15m    = df_15m,
@@ -708,10 +542,7 @@ def generate_signal(
     score_15m = score
     if not entry_15m["confirmed"]:
         score_15m = max(0, score - 5)
-        tier = get_tier(
-            score_15m,
-            len(no_trade["hard_blocks"]) > 0
-        )
+        tier = get_tier(score_15m, len(no_trade["hard_blocks"]) > 0)
 
     entry = (
         entry_15m["entry_price"]
@@ -722,8 +553,7 @@ def generate_signal(
     if is_long:
         candidates = [
             entry - atr * 1.5,
-            swings["last_low"]["price"] * 0.998
-            if swings.get("last_low") else 0,
+            swings["last_low"]["price"] * 0.998 if swings.get("last_low") else 0,
             key_levels.get("pdl", 0) * 0.998
         ]
         candidates = [c for c in candidates if 0 < c < entry]
@@ -733,8 +563,7 @@ def generate_signal(
     else:
         candidates = [
             entry + atr * 1.5,
-            swings["last_high"]["price"] * 1.002
-            if swings.get("last_high") else float("inf"),
+            swings["last_high"]["price"] * 1.002 if swings.get("last_high") else float("inf"),
             key_levels.get("pdh", float("inf")) * 1.002
         ]
         candidates = [c for c in candidates if c > entry]
@@ -742,48 +571,39 @@ def generate_signal(
         if (sl - entry) / entry < 0.01:
             sl = entry * 1.01
 
-    sl_dist = abs(entry - sl)
-    sl_pct  = sl_dist / entry * 100
+    sl_dist  = abs(entry - sl)
+    sl_pct   = sl_dist / entry * 100
+    tp1      = entry + sl_dist * 1.5 if is_long else entry - sl_dist * 1.5
+    tp2      = entry + sl_dist * 2.5 if is_long else entry - sl_dist * 2.5
 
-    tp1 = entry + sl_dist * 1.5 if is_long else entry - sl_dist * 1.5
-    tp2 = entry + sl_dist * 2.5 if is_long else entry - sl_dist * 2.5
-
-    # Dynamic risk — scales with confidence score
-    # Higher confidence = larger position within bounds
     risk_pct = dynamic_risk_pct(score_15m)
     risk_amt = capital * risk_pct
     pos_size = risk_amt / (sl_pct / 100)
     margin   = pos_size / leverage
 
-    be_level  = entry + (sl_dist * 0.5  if is_long else -sl_dist * 0.5)
-    trail_sl1 = tp1   - (sl_dist * 0.3  if is_long else -sl_dist * 0.3)
-
     result = {
-        "direction":    direction,
-        "dir_class":    "long" if is_long else "short",
-        "tier":         tier,
-        "grade":        tier["label"],
-        "score":        score_15m,
-        "signal_type":  tier["signal_type"],
-        "entry":        entry,
-        "sl":           sl,
-        "tp1":          tp1,
-        "tp2":          tp2,
-        "sl_pct":       sl_pct,
-        "sl_method":    "ATR 1.5x",
-        "risk_pct":     risk_pct * 100,
-        "risk_amt":     risk_amt,
-        "pos_size":     pos_size,
-        "margin":       margin,
-        "eff_lev":      leverage,
-        "atr_used":     atr,
-        "active_tps":   tier["tps"],
-        "be_level":     be_level,
-        "trail_sl1":    trail_sl1,
-        "funding":      market.get("funding", 0),
-        "sweep_score":  0,
-        "disp_score":   0,
-        "entry_15m":    entry_15m,
+        **base,
+        "direction":   direction,
+        "dir_class":   "long" if is_long else "short",
+        "grade":       tier["label"],
+        "score":       score_15m,
+        "signal_type": tier["signal_type"],
+        "entry":       entry,
+        "sl":          sl,
+        "tp1":         tp1,
+        "tp2":         tp2,
+        "sl_pct":      sl_pct,
+        "sl_method":   "ATR 1.5x",
+        "risk_pct":    risk_pct * 100,
+        "risk_amt":    risk_amt,
+        "pos_size":    pos_size,
+        "margin":      margin,
+        "eff_lev":     leverage,
+        "atr_used":    atr,
+        "funding":     market.get("funding", 0),
+        "sweep_score": 0,
+        "disp_score":  0,
+        "entry_15m":   entry_15m,
         "reason": (
             f"15m: {entry_15m['pattern']}"
             if entry_15m["confirmed"]

@@ -1,5 +1,4 @@
 from config import cfg
-from engines.orderblocks import detect_order_blocks
 
 
 def score_confluence(
@@ -18,6 +17,8 @@ def score_confluence(
 
     price    = market["price"]
     d1_price = d1d.get("price") or price
+    d1_cls   = d1d["trend"]["cls"]
+    d4_cls   = d4h["trend"]["cls"]
 
     def add(key, label, earned, max_w, passed, detail):
         nonlocal total
@@ -39,16 +40,13 @@ def score_confluence(
         sw_score, W["liquidity_sweep"],
         sw_score >= 8,
         sweep.get("label", "No sweep") +
-        " — Relevance: " +
-        f"{sweep.get('relevance', {}).get('label', '--')}" +
-        " · Intensity: " +
-        f"{sweep.get('intensity', 0)}/10"
+        " — Relevance: " + f"{sweep.get('relevance', {}).get('label', '--')}" +
+        " · Intensity: " + f"{sweep.get('intensity', 0)}/10"
     )
 
     # ── 2. Retest Confirmation (12) ──
     rt_score   = min(retest.get("score", 0), W["retest_confirmation"])
     retest_dir = retest.get("trade_dir", "")
-    d1_cls     = d1d["trend"]["cls"]
 
     opposing_retest = (
         (d1_cls == "bear" and retest_dir == "bull") or
@@ -56,13 +54,10 @@ def score_confluence(
     )
 
     retest_detail = retest.get("label", "") + " — " + retest.get("desc", "")
-
     if opposing_retest and retest.get("score", 0) > 0:
         retest_detail = (
-            retest.get("label", "") + " — " +
-            retest.get("desc", "") +
-            " · Retracement into " +
-            ("supply" if d1_cls == "bear" else "demand")
+            retest.get("label", "") + " — " + retest.get("desc", "") +
+            " · Retracement into " + ("supply" if d1_cls == "bear" else "demand")
         )
 
     add(
@@ -92,16 +87,13 @@ def score_confluence(
 
     # ── 5. Weekly Filter (10) ──
     wk_cls    = d1w["trend"]["cls"]
-    d1_cls    = d1d["trend"]["cls"]
     wk_aligned = (
         (wk_cls == "bull" and d1_cls == "bull") or
         (wk_cls == "bear" and d1_cls == "bear")
     )
-    wk_neutral = wk_cls == "neutral"
-
-    # Weekly ema200 missing reduces confidence —
-    # fewer data points means less reliable trend read
+    wk_neutral        = wk_cls == "neutral"
     wk_ema200_missing = d1w.get("ema200") is None
+
     wk_score = (
         W["weekly_filter"] if wk_aligned else
         round(W["weekly_filter"] * 0.5) if wk_neutral else 0
@@ -200,8 +192,6 @@ def score_confluence(
     )
 
     # ── 10. Volume Expansion (7) ──
-    # Use best of 4H or daily — daily catches big moves
-    # that 4H alone misses
     vr_4h = (
         d4h["cur_vol"] / d4h["vol_ma5"]
         if d4h.get("vol_ma5") and d4h["vol_ma5"] > 0 else 0
@@ -233,7 +223,6 @@ def score_confluence(
     )
 
     # ── 12. RSI Divergence (4) ──
-    # Divergence is more predictive than raw RSI values
     div      = d4h.get("divergence", {})
     div_type = div.get("type", "none")
     div_ok   = (
@@ -249,7 +238,6 @@ def score_confluence(
     )
 
     # ── 13. ATR Volatility (3) ──
-    # ATR divided by d1d price — both from same timeframe
     atr    = d1d.get("atr") or 0
     ap     = (atr / d1_price * 100) if d1_price > 0 else 0
     atr_ok = 0.5 < ap < 5
@@ -262,7 +250,6 @@ def score_confluence(
     )
 
     # ── 14. RSI Context (2) ──
-    # Raw RSI contributes to score only — never blocks
     rsi    = d1d.get("rsi")
     rsi_ok = (
         rsi is not None and (
@@ -282,8 +269,8 @@ def score_confluence(
     macd    = d4h.get("macd")
     macd_ok = (
         macd is not None and (
-            (d4h["trend"]["cls"] == "bull" and macd["bullish"] and macd["expanding"]) or
-            (d4h["trend"]["cls"] == "bear" and macd["bearish"] and macd["expanding"])
+            (d4_cls == "bull" and macd["bullish"] and macd["expanding"]) or
+            (d4_cls == "bear" and macd["bearish"] and macd["expanding"])
         )
     )
     add(
@@ -298,72 +285,51 @@ def score_confluence(
     )
 
     # ── 16. Order Blocks (4) ──
+    ob_max    = W.get("order_blocks", 4)
     ob_score  = 0
     ob_label  = "No OB detected"
-    ob_detail = "No order blocks found"
+    ob_detail = ""
 
-    try:
-        fvgs   = d4h.get("fvgs", [])
-        d4_cls = d4h["trend"]["cls"]
+    ob_4h = d4h.get("order_blocks", {})
+    ob_1d = d1d.get("order_blocks", {})
 
-        for fvg in fvgs:
-            fvg_mid  = fvg.get("mid", 0)
-            if not fvg_mid:
-                continue
-            dist_pct = abs(price - fvg_mid) / price * 100
+    nearest_4h = (
+        ob_4h.get("nearest_bull") if d4_cls == "bull"
+        else ob_4h.get("nearest_bear")
+    )
 
-            if fvg["type"] == "bull" and d4_cls == "bull":
-                if dist_pct < 1.0:
-                    ob_score  = 8
-                    ob_label  = "✅ In Bull OB Zone"
-                    ob_detail = f"Bull FVG/OB @ {fvg['bottom']:.4f}-{fvg['top']:.4f}"
-                    break
-                elif dist_pct < 2.5:
-                    ob_score  = 5
-                    ob_label  = "⚡ Near Bull OB"
-                    ob_detail = f"Approaching Bull OB @ {fvg_mid:.4f}"
+    if nearest_4h:
+        if nearest_4h["in_zone"]:
+            ob_score  = ob_max
+            ob_label  = ob_4h.get("label", "In 4H OB Zone")
+            ob_detail = ob_4h.get("desc", "")
+        elif nearest_4h["approaching"]:
+            ob_score  = round(ob_max * 0.6)
+            ob_label  = "Approaching 4H OB"
+            ob_detail = ob_4h.get("desc", "")
 
-            elif fvg["type"] == "bear" and d4_cls == "bear":
-                if dist_pct < 1.0:
-                    ob_score  = 8
-                    ob_label  = "✅ In Bear OB Zone"
-                    ob_detail = f"Bear FVG/OB @ {fvg['bottom']:.4f}-{fvg['top']:.4f}"
-                    break
-                elif dist_pct < 2.5:
-                    ob_score  = 5
-                    ob_label  = "⚡ Near Bear OB"
-                    ob_detail = f"Approaching Bear OB @ {fvg_mid:.4f}"
+    for b in ob_4h.get("breakers", []):
+        if b.get("in_zone") or b.get("approaching"):
+            ob_score  = ob_max
+            ob_label  = "Breaker Block Active"
+            ob_detail = b.get("desc", "")
+            break
 
-        if ob_score == 0:
-            d1_fvgs = d1d.get("fvgs", [])
-            d1_cls2 = d1d["trend"]["cls"]
-            for fvg in d1_fvgs:
-                fvg_mid  = fvg.get("mid", 0)
-                if not fvg_mid:
-                    continue
-                dist_pct = abs(price - fvg_mid) / price * 100
-                if fvg["type"] == "bull" and d1_cls2 == "bull" and dist_pct < 2.0:
-                    ob_score  = 4
-                    ob_label  = "📍 1D Bull OB nearby"
-                    ob_detail = f"Daily Bull OB @ {fvg_mid:.4f}"
-                    break
-                elif fvg["type"] == "bear" and d1_cls2 == "bear" and dist_pct < 2.0:
-                    ob_score  = 4
-                    ob_label  = "📍 1D Bear OB nearby"
-                    ob_detail = f"Daily Bear OB @ {fvg_mid:.4f}"
-                    break
+    if ob_score == 0:
+        nearest_1d = (
+            ob_1d.get("nearest_bull") if d1_cls == "bull"
+            else ob_1d.get("nearest_bear")
+        )
+        if nearest_1d and (nearest_1d["in_zone"] or nearest_1d["approaching"]):
+            ob_score  = round(ob_max * 0.5)
+            ob_label  = "1D OB nearby"
+            ob_detail = ob_1d.get("desc", "")
 
-    except Exception as e:
-        ob_score  = 0
-        ob_label  = "OB detection error"
-        ob_detail = str(e)
-
-    ob_max = W.get("order_blocks", 4)
     add(
         "order_blocks", "Order Blocks",
         min(ob_score, ob_max), ob_max,
-        ob_score >= 5,
-        f"{ob_label} — {ob_detail}"
+        ob_score >= round(ob_max * 0.6),
+        f"{ob_label} — {ob_detail}" if ob_detail else ob_label
     )
 
     max_weight = cfg.MAX_WEIGHT
