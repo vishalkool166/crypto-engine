@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import websockets
 from typing import Callable, Dict
 
 log = logging.getLogger(__name__)
@@ -12,18 +11,19 @@ BINANCE_WS = "wss://fstream.binance.com/ws"
 class PriceFeed:
 
     def __init__(self):
-        self._prices:      Dict[str, float] = {}
-        self._callbacks:   list             = []
-        self._running:     bool             = False
-        self._task:        asyncio.Task     = None
-        self._coin:        str              = None
-        self._milestones:  set              = set()
+        self._prices:     Dict[str, float] = {}
+        self._callbacks:  list             = []
+        self._running:    bool             = False
+        self._task:       asyncio.Task     = None
+        self._coin:       str              = None
+        self._milestones: set              = set()
 
     def get_price(self, coin: str) -> float:
         return self._prices.get(coin, 0.0)
 
     def on_price(self, callback: Callable):
-        self._callbacks.append(callback)
+        if callback not in self._callbacks:
+            self._callbacks.append(callback)
 
     def reset_milestones(self):
         self._milestones = set()
@@ -53,15 +53,19 @@ class PriceFeed:
         log.info("Price feed stopped")
 
     async def _stream(self, coin: str):
+        import websockets
         stream = f"{coin.lower()}usdt@markPrice@1s"
         url    = f"{BINANCE_WS}/{stream}"
+
+        log.info(f"Connecting to: {url}")
 
         while self._running:
             try:
                 async with websockets.connect(
                     url,
                     ping_interval = 20,
-                    ping_timeout  = 10
+                    ping_timeout  = 10,
+                    close_timeout = 5
                 ) as ws:
                     log.info(f"WS connected: {stream}")
                     async for raw in ws:
@@ -71,7 +75,7 @@ class PriceFeed:
                             data  = json.loads(raw)
                             price = float(data["p"])
                             self._prices[coin] = price
-                            log.info(f"Price received: {coin} {price}")
+                            log.debug(f"Price: {coin} {price}")
 
                             for cb in self._callbacks:
                                 try:
@@ -112,8 +116,6 @@ class PriceFeed:
         if not entry or not tp1 or not sl:
             return
 
-        # Only track phase 1 — entry to TP1
-        # Phase 2 milestones not needed — already risk free
         tp1_already_hit = (
             abs(sl - entry) / entry < 0.001
             if sl and entry else False
@@ -130,17 +132,13 @@ class PriceFeed:
         else:
             progress = (entry - price) / total * 100
 
-        # Only fire on positive progress toward TP1
         if progress <= 0:
             return
 
         for milestone in [25, 50, 75]:
             if progress >= milestone and milestone not in self._milestones:
                 self._milestones.add(milestone)
-                log.info(
-                    f"Milestone {milestone}% reached: "
-                    f"{coin} @ {price}"
-                )
+                log.info(f"Milestone {milestone}% reached: {coin} @ {price}")
                 try:
                     await send_progress_update(
                         trade         = trade,
