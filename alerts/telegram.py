@@ -8,11 +8,12 @@ from config import cfg
 from database import SessionLocal, Trade, get_session
 from trade.state import state_manager
 from alerts.utils import now_ist, grade_accuracy_str, categorize_results
+from config import cfg
 
 log = logging.getLogger(__name__)
 
 BASE   = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
-DOMAIN = "https://small-salaried-study.ngrok-free.dev"
+DOMAIN = cfg.DOMAIN
 
 _sent_signals: deque = deque(maxlen=100)
 _skip_reasons: dict  = {}

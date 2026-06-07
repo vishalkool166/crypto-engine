@@ -12,6 +12,8 @@ class Config:
 
     FINNHUB_KEY = os.getenv("FINNHUB_KEY")
 
+    DOMAIN = os.getenv("DOMAIN", "https://small-salaried-study.ngrok-free.dev")
+
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
 
