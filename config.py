@@ -42,6 +42,19 @@ class Config:
     GRADE_B     = 52
     GRADE_C     = 38
 
+    # Session filter
+    # Asian and Off Hours are hard blocked in signal engine.
+    # Only London and NY sessions allow entries.
+    # Change to False to revert to soft penalty only.
+    SESSION_HARD_FILTER = True
+
+    # Candle depth minimums
+    # Weekly needs 200+ for EMA200 to be valid.
+    # Below this weekly filter confidence is reduced.
+    MIN_WEEKLY_CANDLES = 200
+    MIN_DAILY_CANDLES  = 200
+    MIN_4H_CANDLES     = 200
+
     # Weights
     WEIGHTS = {
         "liquidity_sweep":      12,

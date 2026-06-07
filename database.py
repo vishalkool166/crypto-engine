@@ -6,7 +6,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 
-# ── CREATE FOLDER BEFORE ENGINE CONNECTS ──
 os.makedirs("database", exist_ok=True)
 
 Base = declarative_base()
@@ -17,9 +16,6 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine)
 
 
-# ═══════════════════════════════════════════════════════
-# SIGNAL TABLE
-# ═══════════════════════════════════════════════════════
 class Signal(Base):
     __tablename__ = "signals"
 
@@ -53,9 +49,6 @@ class Signal(Base):
     notes        = Column(Text, nullable=True)
 
 
-# ═══════════════════════════════════════════════════════
-# TRADE TABLE
-# ═══════════════════════════════════════════════════════
 class Trade(Base):
     __tablename__ = "trades"
 
@@ -87,11 +80,11 @@ class Trade(Base):
     close_reason     = Column(String, nullable=True)
     trade_date       = Column(String)
     notes            = Column(Text, nullable=True)
+    # Health state at moment of close — used by factor
+    # analysis to correlate thesis health with outcome
+    health_at_close  = Column(String, nullable=True)
 
 
-# ═══════════════════════════════════════════════════════
-# DAILY RISK TABLE
-# ═══════════════════════════════════════════════════════
 class DailyRisk(Base):
     __tablename__ = "daily_risk"
 
@@ -103,9 +96,6 @@ class DailyRisk(Base):
     cap_hit      = Column(Boolean, default=False)
 
 
-# ═══════════════════════════════════════════════════════
-# CANDLE TABLE
-# ═══════════════════════════════════════════════════════
 class Candle(Base):
     __tablename__ = "candles"
 
@@ -120,9 +110,6 @@ class Candle(Base):
     volume    = Column(Float)
 
 
-# ═══════════════════════════════════════════════════════
-# BACKTEST RESULT TABLE
-# ═══════════════════════════════════════════════════════
 class BacktestResult(Base):
     __tablename__ = "backtest_results"
 
@@ -147,15 +134,13 @@ class BacktestResult(Base):
     notes         = Column(Text, nullable=True)
 
 
-# ═══════════════════════════════════════════════════════
-# HELPERS
-# ═══════════════════════════════════════════════════════
 def init_db():
     Base.metadata.create_all(engine)
+    # SQLite does not auto-add columns to existing tables.
+    # If upgrading from previous version, run this once:
+    # ALTER TABLE trades ADD COLUMN health_at_close TEXT;
     import logging
-    logging.getLogger(__name__).info(
-        "Database tables created"
-    )
+    logging.getLogger(__name__).info("Database tables created")
 
 def get_db():
     db = SessionLocal()
@@ -165,8 +150,4 @@ def get_db():
         db.close()
 
 
-# ═══════════════════════════════════════════════════════
-# AUTO INIT ON IMPORT
-# guarantees tables exist before anything queries them
-# ═══════════════════════════════════════════════════════
 init_db()

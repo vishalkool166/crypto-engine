@@ -71,7 +71,6 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
 
 
 def get_session() -> dict:
-    # All session timing derives from UTC — audit requirement
     now  = datetime.now(timezone.utc)
     hour = now.hour + now.minute / 60
 
@@ -81,42 +80,114 @@ def get_session() -> dict:
 
     if london and ny:
         return {
-            "name":    "London/NY Overlap",
-            "quality": "BEST",
-            "score":   9,
-            "desc":    "Highest volume. Best signal quality."
+            "name":       "London/NY Overlap",
+            "quality":    "BEST",
+            "score":      9,
+            "tradeable":  True,
+            "desc":       "Highest volume. Best signal quality."
         }
     if ny:
         return {
-            "name":    "New York Session",
-            "quality": "GOOD",
-            "score":   7,
-            "desc":    "High volume. Good for entries."
+            "name":       "New York Session",
+            "quality":    "GOOD",
+            "score":      7,
+            "tradeable":  True,
+            "desc":       "High volume. Good for entries."
         }
     if london:
         return {
-            "name":    "London Session",
-            "quality": "GOOD",
-            "score":   7,
-            "desc":    "High volume. Trend initiation common."
+            "name":       "London Session",
+            "quality":    "GOOD",
+            "score":      7,
+            "tradeable":  True,
+            "desc":       "High volume. Trend initiation common."
         }
     if asia:
         return {
-            "name":    "Asian Session",
-            "quality": "CAUTION",
-            "score":   2,
-            "desc":    "Low volume. Liquidity grabs common."
+            "name":       "Asian Session",
+            "quality":    "CAUTION",
+            "score":      2,
+            "tradeable":  False,
+            "desc":       "Low volume. Liquidity grabs frequently fake."
         }
     return {
-        "name":    "Off Hours",
-        "quality": "CAUTION",
-        "score":   2,
-        "desc":    "Low volume. Wait for London open."
+        "name":       "Off Hours",
+        "quality":    "CAUTION",
+        "score":      2,
+        "tradeable":  False,
+        "desc":       "Low volume. Wait for London open."
     }
 
 
 # ═══════════════════════════════════════════════════════
+# CORRELATION FILTER
+# Blocks altcoin entry if BTC already in active trade.
+# BTC and alts are 85%+ correlated — same trade twice
+# doubles risk without doubling edge.
+# ═══════════════════════════════════════════════════════
+def check_correlation(coin: str) -> dict:
+    if coin == "BTC":
+        return {"blocked": False, "reason": ""}
+
+    try:
+        from trade.state import state_manager
+        if not state_manager.is_idle:
+            active = state_manager.current_trade
+            if active:
+                active_coin = active.coin
+                # BTC active — block all alts
+                if active_coin == "BTC":
+                    return {
+                        "blocked": True,
+                        "reason":  (
+                            f"BTC trade active — "
+                            f"altcoin entries blocked "
+                            f"(correlation risk)"
+                        )
+                    }
+                # Same coin — obviously blocked
+                if active_coin == coin:
+                    return {
+                        "blocked": True,
+                        "reason":  f"{coin} already in active trade"
+                    }
+    except Exception:
+        pass
+
+    return {"blocked": False, "reason": ""}
+
+
+# ═══════════════════════════════════════════════════════
+# DYNAMIC POSITION SIZING
+# Scales risk % linearly with confidence score.
+# Higher confidence = larger position.
+# Keeps risk within defined bounds — never exceeds
+# max risk or drops below min risk.
+# ═══════════════════════════════════════════════════════
+def dynamic_risk_pct(score: float) -> float:
+    min_risk = 0.07   # 7% at score 68 (minimum A)
+    max_risk = 0.13   # 13% at score 100
+    base     = 0.10   # 10% at score 85 (A+)
+
+    if score >= 95:
+        return max_risk
+    if score >= 85:
+        # Scale from 10% to 13% between 85-95
+        t = (score - 85) / 10
+        return round(base + t * (max_risk - base), 3)
+    if score >= 68:
+        # Scale from 7% to 10% between 68-85
+        t = (score - 68) / 17
+        return round(min_risk + t * (base - min_risk), 3)
+
+    return min_risk
+
+
+# ═══════════════════════════════════════════════════════
 # 15M ENTRY CONFIRMATION
+# Expanded with micro sweep and displacement detection.
+# Micro sweep: price briefly breaks a recent 15m level
+# then closes back — confirms institutional interest.
 # ═══════════════════════════════════════════════════════
 def check_15m_entry(
     df_15m:    pd.DataFrame,
@@ -140,16 +211,12 @@ def check_15m_entry(
 
     try:
         import ta
-        ema20_series = ta.trend.ema_indicator(
-            df_15m["close"], window=20
-        )
-        ema20 = float(ema20_series.iloc[-1])
+        ema20_series = ta.trend.ema_indicator(df_15m["close"], window=20)
+        ema20        = float(ema20_series.iloc[-1])
     except Exception:
         ema20 = None
 
-    vol_ma  = float(
-        df_15m["volume"].rolling(10).mean().iloc[-1]
-    ) or 1
+    vol_ma  = float(df_15m["volume"].rolling(10).mean().iloc[-1]) or 1
     cur_vol = float(last["volume"])
     vol_ok  = cur_vol > vol_ma * 1.1
 
@@ -180,8 +247,7 @@ def check_15m_entry(
             pattern_score = 9
         elif (
             last_range > 0 and
-            (min(last_open, last_close) - last_low) /
-            last_range > 0.45 and
+            (min(last_open, last_close) - last_low) / last_range > 0.45 and
             last_close > (last_high + last_low) / 2
         ):
             pattern       = "Hammer / Pin Bar"
@@ -213,8 +279,7 @@ def check_15m_entry(
             pattern_score = 9
         elif (
             last_range > 0 and
-            (last_high - max(last_open, last_close)) /
-            last_range > 0.45 and
+            (last_high - max(last_open, last_close)) / last_range > 0.45 and
             last_close < (last_high + last_low) / 2
         ):
             pattern       = "Shooting Star"
@@ -243,36 +308,106 @@ def check_15m_entry(
     closes      = [float(c["close"]) for _, c in last5.iterrows()]
     struct_bull = closes[-1] > closes[0]
     struct_bear = closes[-1] < closes[0]
-
-    struct_ok = (
+    struct_ok   = (
         (direction == "LONG"  and struct_bull) or
         (direction == "SHORT" and struct_bear)
     )
 
+    # ── MICRO SWEEP DETECTION ──
+    # Looks for a wick below recent 15m swing low
+    # that closes back above it — micro liquidity grab
+    # This is the 15m equivalent of the daily sweep engine
+    micro_sweep = False
+    micro_sweep_desc = ""
+
+    try:
+        swing_window = df_15m.tail(20)
+        atr_15m      = float(
+            swing_window["high"].values[-5:].max() -
+            swing_window["low"].values[-5:].min()
+        ) / 5
+
+        if direction == "LONG":
+            recent_low = float(swing_window["low"].iloc[:-1].min())
+            if (
+                last_low < recent_low and
+                last_close > recent_low and
+                (recent_low - last_low) < atr_15m * 0.5
+            ):
+                micro_sweep      = True
+                micro_sweep_desc = f"Micro sweep below {recent_low:.4f}"
+
+        else:
+            recent_high = float(swing_window["high"].iloc[:-1].max())
+            if (
+                last_high > recent_high and
+                last_close < recent_high and
+                (last_high - recent_high) < atr_15m * 0.5
+            ):
+                micro_sweep      = True
+                micro_sweep_desc = f"Micro sweep above {recent_high:.4f}"
+
+    except Exception:
+        pass
+
+    # ── MICRO DISPLACEMENT ──
+    # Strong 15m candle after the sweep confirms
+    # institutional participation at this level
+    micro_disp = False
+    if len(recent) >= 3:
+        prev2      = recent.iloc[-3]
+        prev2_body = abs(float(prev2["close"]) - float(prev2["open"]))
+        prev2_rng  = float(prev2["high"]) - float(prev2["low"])
+        if prev2_rng > 0:
+            if direction == "LONG" and float(prev2["close"]) > float(prev2["open"]):
+                if prev2_body / prev2_rng > 0.6:
+                    micro_disp = True
+            elif direction == "SHORT" and float(prev2["close"]) < float(prev2["open"]):
+                if prev2_body / prev2_rng > 0.6:
+                    micro_disp = True
+
     score = pattern_score
-    if vol_ok:    score += 1
-    if ema_ok:    score += 1
-    if struct_ok: score += 1
+    if vol_ok:      score += 1
+    if ema_ok:      score += 1
+    if struct_ok:   score += 1
+    if micro_sweep: score += 2
+    if micro_disp:  score += 1
     score = min(score, 10)
 
-    confirmed   = pattern_score >= 5 and (ema_ok or struct_ok)
+    confirmed   = (
+        pattern_score >= 5 and
+        (ema_ok or struct_ok) and
+        (not micro_sweep or micro_sweep)
+    )
+
+    # Micro sweep alone can confirm even without
+    # classic candle pattern — it IS the signal
+    if micro_sweep and micro_disp and vol_ok:
+        confirmed = True
+        if pattern == "None":
+            pattern       = "Micro Sweep + Displacement"
+            pattern_score = max(pattern_score, 7)
+
     entry_price = price
 
+    desc_parts = [f"15m: {pattern}"]
+    if micro_sweep: desc_parts.append(micro_sweep_desc)
+    if micro_disp:  desc_parts.append("micro displacement")
+    desc_parts.append(f"EMA:{'✅' if ema_ok else '❌'}")
+    desc_parts.append(f"Vol:{'✅' if vol_ok else '❌'}")
+
     return {
-        "confirmed":   confirmed,
-        "score":       score,
-        "pattern":     pattern,
-        "entry_price": entry_price,
-        "ema20":       ema20,
-        "ema_ok":      ema_ok,
-        "vol_ok":      vol_ok,
-        "struct_ok":   struct_ok,
-        "desc": (
-            f"15m: {pattern} · "
-            f"EMA:{'✅' if ema_ok else '❌'} · "
-            f"Vol:{'✅' if vol_ok else '❌'} · "
-            f"Struct:{'✅' if struct_ok else '❌'}"
-        )
+        "confirmed":    confirmed,
+        "score":        score,
+        "pattern":      pattern,
+        "entry_price":  entry_price,
+        "ema20":        ema20,
+        "ema_ok":       ema_ok,
+        "vol_ok":       vol_ok,
+        "struct_ok":    struct_ok,
+        "micro_sweep":  micro_sweep,
+        "micro_disp":   micro_disp,
+        "desc":         " · ".join(desc_parts)
     }
 
 
@@ -280,7 +415,8 @@ def check_15m_entry(
 # NO TRADE ENGINE
 # Hard blocks: choppy, weekly conflict, ADX, extreme
 # funding, news, failed retest, BTC unstable,
-# minimum sweep/displacement condition.
+# minimum condition, Asian/Off hours session,
+# correlation with active trade.
 # RSI is soft penalty only — never a hard block.
 # ═══════════════════════════════════════════════════════
 def run_no_trade_engine(
@@ -290,7 +426,8 @@ def run_no_trade_engine(
     retest, btc_data,
     btc_instability,
     oi_matrix, news_filter,
-    base_score: float
+    base_score: float,
+    coin: str = ""
 ) -> dict:
 
     reasons       = []
@@ -361,6 +498,22 @@ def run_no_trade_engine(
             hard("🚫", "Minimum condition not met",
                  "Neither sweep nor displacement confirmed.")
 
+    # Asian and Off Hours are hard blocked —
+    # sweeps in these sessions are frequently fake
+    # designed to hunt stops before London reverses
+    if not session.get("tradeable", True):
+        hard(
+            "🚫",
+            f"{session['name']} — entries blocked",
+            session["desc"]
+        )
+
+    # Correlation filter — altcoin blocked if BTC in trade
+    if coin:
+        corr = check_correlation(coin)
+        if corr["blocked"]:
+            hard("🚫", "Correlation block", corr["reason"])
+
     # ── SOFT BLOCKS ──
     # RSI is soft penalty only — audit requirement.
     # Raw RSI values reduce confidence, never block trades.
@@ -395,10 +548,6 @@ def run_no_trade_engine(
             if a.get("warning")
         )
         soft("⚠️", "High-impact event approaching", upcoming, 3)
-
-    if session["score"] <= 2:
-        soft("⚠️", f"{session['name']} — low volume",
-             "Wait for London/NY session.", 3)
 
     if not sweep.get("detected"):
         soft("⚠️", "No liquidity sweep",
@@ -439,7 +588,8 @@ def run_no_trade_engine(
 
 # ═══════════════════════════════════════════════════════
 # GENERATE SIGNAL
-# Attaches explanation bundle to every signal.
+# Dynamic position sizing by confidence score.
+# Explanation bundle attached to every signal.
 # ═══════════════════════════════════════════════════════
 def generate_signal(
     d1d, d4h,
@@ -448,7 +598,6 @@ def generate_signal(
     capital:  float,
     leverage: int,
     df_15m:   pd.DataFrame = None,
-    # Explanation inputs — passed from scanner
     sweep:        dict = None,
     displacement: dict = None,
     retest:       dict = None,
@@ -480,8 +629,8 @@ def generate_signal(
         base["explanation"] = _attach_explanation(
             base, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime,
-            session, no_trade, wconf
+            oi_matrix, market, regime, session,
+            no_trade, wconf
         )
         return base
 
@@ -498,8 +647,8 @@ def generate_signal(
         base["explanation"] = _attach_explanation(
             base, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime,
-            session, no_trade, wconf
+            oi_matrix, market, regime, session,
+            no_trade, wconf
         )
         return base
 
@@ -516,8 +665,8 @@ def generate_signal(
         base["explanation"] = _attach_explanation(
             base, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime,
-            session, no_trade, wconf
+            oi_matrix, market, regime, session,
+            no_trade, wconf
         )
         return base
 
@@ -541,8 +690,8 @@ def generate_signal(
         base["explanation"] = _attach_explanation(
             base, sweep, displacement, retest,
             d1d, d4h, btc_data, btc_inst,
-            oi_matrix, market, regime,
-            session, no_trade, wconf
+            oi_matrix, market, regime, session,
+            no_trade, wconf
         )
         return base
 
@@ -556,7 +705,6 @@ def generate_signal(
         atr_4h    = d4h.get("atr", atr)
     )
 
-    # 15m penalty — 5 points if not confirmed
     score_15m = score
     if not entry_15m["confirmed"]:
         score_15m = max(0, score - 5)
@@ -571,7 +719,6 @@ def generate_signal(
         else price
     )
 
-    # SL placement — minimum 1% distance
     if is_long:
         candidates = [
             entry - atr * 1.5,
@@ -601,12 +748,15 @@ def generate_signal(
     tp1 = entry + sl_dist * 1.5 if is_long else entry - sl_dist * 1.5
     tp2 = entry + sl_dist * 2.5 if is_long else entry - sl_dist * 2.5
 
-    risk_amt = capital * cfg.RISK_PCT_PER_TRADE
+    # Dynamic risk — scales with confidence score
+    # Higher confidence = larger position within bounds
+    risk_pct = dynamic_risk_pct(score_15m)
+    risk_amt = capital * risk_pct
     pos_size = risk_amt / (sl_pct / 100)
     margin   = pos_size / leverage
 
-    be_level  = entry + (sl_dist * 0.5 if is_long else -sl_dist * 0.5)
-    trail_sl1 = tp1 - (sl_dist * 0.3 if is_long else -sl_dist * 0.3)
+    be_level  = entry + (sl_dist * 0.5  if is_long else -sl_dist * 0.5)
+    trail_sl1 = tp1   - (sl_dist * 0.3  if is_long else -sl_dist * 0.3)
 
     result = {
         "direction":    direction,
@@ -621,7 +771,7 @@ def generate_signal(
         "tp2":          tp2,
         "sl_pct":       sl_pct,
         "sl_method":    "ATR 1.5x",
-        "risk_pct":     cfg.RISK_PCT_PER_TRADE * 100,
+        "risk_pct":     risk_pct * 100,
         "risk_amt":     risk_amt,
         "pos_size":     pos_size,
         "margin":       margin,
@@ -644,30 +794,21 @@ def generate_signal(
     result["explanation"] = _attach_explanation(
         result, sweep, displacement, retest,
         d1d, d4h, btc_data, btc_inst,
-        oi_matrix, market, regime,
-        session, no_trade, wconf
+        oi_matrix, market, regime, session,
+        no_trade, wconf
     )
 
     return result
 
 
-# ═══════════════════════════════════════════════════════
-# ATTACH EXPLANATION
-# Internal helper — calls thesis.py build_explanation().
-# Gracefully returns empty dict if inputs missing.
-# ═══════════════════════════════════════════════════════
 def _attach_explanation(
     signal, sweep, displacement, retest,
     d1d, d4h, btc_data, btc_inst,
     oi_matrix, market, regime,
     session, no_trade, wconf
 ) -> dict:
-
-    # Guard — explanation inputs are optional
-    # scanner passes them, backtest does not
     if not sweep or not no_trade or not wconf:
         return {}
-
     try:
         from engines.thesis import build_explanation
         return build_explanation(

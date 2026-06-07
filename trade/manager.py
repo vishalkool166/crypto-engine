@@ -1,6 +1,5 @@
 import logging
-from datetime import datetime, timezone
-from alerts.telegram import send, now_ist
+from datetime import datetime, timezone, timedelta
 from database import (
     SessionLocal, Trade,
     Signal as SignalModel
@@ -14,7 +13,7 @@ from trade.orders import (
     get_current_price, close_position_market,
     calculate_quantity
 )
-from alerts.telegram import send
+from alerts.telegram import send, now_ist
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -24,9 +23,6 @@ TAKER_FEE = 0.0006
 
 class TradeManager:
 
-    # ═══════════════════════════════════════════════════
-    # OPEN TRADE
-    # ═══════════════════════════════════════════════════
     async def open_trade(
         self,
         signal:    dict,
@@ -205,11 +201,6 @@ class TradeManager:
             "direction": direction
         }
 
-    # ═══════════════════════════════════════════════════
-    # MONITOR TRADE
-    # Checks order status and runs health engine.
-    # Health engine informs only — never auto-closes.
-    # ═══════════════════════════════════════════════════
     async def monitor_trade(self):
         if state_manager.is_idle:
             return
@@ -286,7 +277,6 @@ class TradeManager:
         finally:
             db.close()
 
-        # ── RUN HEALTH ENGINE ──
         await self._run_health_check(
             trade_obj     = trade_obj,
             current_price = current_price
@@ -344,12 +334,6 @@ class TradeManager:
                     )
                     return
 
-    # ═══════════════════════════════════════════════════
-    # RUN HEALTH CHECK
-    # Pulls latest market data and runs health engine.
-    # Sends Telegram alert only on state change.
-    # Never auto-closes — informs only.
-    # ═══════════════════════════════════════════════════
     async def _run_health_check(
         self,
         trade_obj:     Trade,
@@ -357,12 +341,10 @@ class TradeManager:
     ):
         try:
             from data.cache import cache
-            from engines.indicators import calculate_all
             from engines.health import check_trade_health, format_health_alert
 
             coin = trade_obj.coin
 
-            # Use cached scan data — avoid extra API calls
             cached = cache.get(f"signal_{coin}")
             if not cached:
                 return
@@ -373,28 +355,26 @@ class TradeManager:
             sweep     = cached.get("sweep", {})
             oi_matrix = cached.get("wconf", {})
 
-            btc_cached = cache.get("btc_1d_data")
-            btc_data   = btc_cached if btc_cached else None
-
-            explanation      = cached.get("explanation", {})
-            original_thesis  = explanation.get("thesis", "")
+            btc_cached      = cache.get("btc_1d_data")
+            btc_data        = btc_cached if btc_cached else None
+            explanation     = cached.get("explanation", {})
+            original_thesis = explanation.get("thesis", "")
 
             health = check_trade_health(
-                trade            = trade_obj,
-                current_price    = current_price,
-                d1d              = d1d,
-                d4h              = d4h,
-                btc_data         = btc_data,
-                oi_matrix        = oi_matrix,
-                retest           = retest,
-                sweep            = sweep,
-                original_thesis  = original_thesis
+                trade           = trade_obj,
+                current_price   = current_price,
+                d1d             = d1d,
+                d4h             = d4h,
+                btc_data        = btc_data,
+                oi_matrix       = oi_matrix,
+                retest          = retest,
+                sweep           = sweep,
+                original_thesis = original_thesis
             )
 
             prev_state = state_manager.health_state
             state_manager.update_health(health)
 
-            # Send alert only on state change
             if health["state"] != prev_state:
                 alert = format_health_alert(health, coin)
                 await send(alert)
@@ -407,9 +387,6 @@ class TradeManager:
         except Exception as e:
             log.debug(f"Health check error: {e}")
 
-    # ═══════════════════════════════════════════════════
-    # IS TP1 ALREADY HIT
-    # ═══════════════════════════════════════════════════
     def _is_tp1_already_hit(self, trade: Trade) -> bool:
         if not trade.sl_price or not trade.entry_price:
             return False
@@ -418,9 +395,6 @@ class TradeManager:
             trade.entry_price < 0.001
         )
 
-    # ═══════════════════════════════════════════════════
-    # HANDLE TP1 HIT
-    # ═══════════════════════════════════════════════════
     async def _handle_tp1_hit(
         self,
         trade:         Trade,
@@ -491,6 +465,8 @@ class TradeManager:
 
     # ═══════════════════════════════════════════════════
     # CLOSE TRADE
+    # Records health state at close — used by
+    # factor analysis to correlate health with outcome.
     # ═══════════════════════════════════════════════════
     async def _close_trade(
         self,
@@ -522,16 +498,20 @@ class TradeManager:
         fee = active_size * TAKER_FEE * 2
         pnl = round(gross_pnl - fee, 4)
 
+        # Capture health state at moment of close
+        health_at_close = state_manager.health_state
+
         db = SessionLocal()
         try:
-            t              = db.query(Trade).filter(Trade.id == trade.id).first()
-            t.state        = TradeState.EXIT
-            t.is_active    = False
-            t.outcome      = outcome
-            t.exit_price   = exit_price
-            t.pnl          = pnl
-            t.close_reason = close_reason
-            t.closed_at    = datetime.now(timezone.utc)
+            t                  = db.query(Trade).filter(Trade.id == trade.id).first()
+            t.state            = TradeState.EXIT
+            t.is_active        = False
+            t.outcome          = outcome
+            t.exit_price       = exit_price
+            t.pnl              = pnl
+            t.close_reason     = close_reason
+            t.closed_at        = datetime.now(timezone.utc)
+            t.health_at_close  = health_at_close
             db.commit()
 
             if t.signal_id:
@@ -556,12 +536,11 @@ class TradeManager:
         log.info(
             f"Trade closed: {trade.coin} "
             f"{outcome} phase:{phase} "
-            f"PnL:${pnl} Reason:{close_reason}"
+            f"PnL:${pnl} "
+            f"Reason:{close_reason} "
+            f"Health:{health_at_close}"
         )
 
-    # ═══════════════════════════════════════════════════
-    # MANUAL CLOSE
-    # ═══════════════════════════════════════════════════
     async def manual_close(self) -> dict:
         if state_manager.is_idle:
             return {"success": False, "reason": "No active trade"}
@@ -615,9 +594,6 @@ class TradeManager:
 
         return {"success": True, "reason": "Trade closed manually"}
 
-    # ═══════════════════════════════════════════════════
-    # ABORT TRADE
-    # ═══════════════════════════════════════════════════
     async def _abort_trade(self, trade: Trade, reason: str):
         db = SessionLocal()
         try:
@@ -639,9 +615,6 @@ class TradeManager:
             f"Bot is idle — scanning continues"
         )
 
-    # ═══════════════════════════════════════════════════
-    # PARSE QUANTITIES
-    # ═══════════════════════════════════════════════════
     def _parse_quantities(self, trade: Trade) -> tuple:
         try:
             if trade.notes:
@@ -662,10 +635,6 @@ class TradeManager:
         qty   = total / price
         return (round(qty * 0.70, 3), round(qty * 0.30, 3))
 
-    # ═══════════════════════════════════════════════════
-    # TELEGRAM ALERTS
-    # Includes thesis from explanation on entry.
-    # ═══════════════════════════════════════════════════
     async def _send_entry_alert(self, trade, signal, sizing):
         emoji     = "🏆" if trade.grade == "A+" else "✅"
         dir_emoji = "📈" if trade.direction == "LONG" else "📉"
@@ -688,13 +657,11 @@ class TradeManager:
         risk_block   = f"\n*Risk Factors*\n{risk_thesis}\n" if risk_thesis else ""
         conf_block   = f"Confidence: `{conf_label}`\n" if conf_label else ""
 
-        utc_now = now_ist()
-
         await send(
             f"{emoji} *Grade {trade.grade} — TRADE OPENED*\n\n"
             f"{dir_emoji} *{trade.coin}USDT {trade.direction}*\n"
             f"{conf_block}"
-            f"Time: `{utc_now}`\n"
+            f"Time: `{now_ist()}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Entry:  `{trade.entry_price}`\n"
             f"SL:     `{trade.sl_price}`\n"
@@ -720,7 +687,6 @@ class TradeManager:
             "⏹"
         )
         pnl_emoji = "📈" if pnl >= 0 else "📉"
-        utc_now   = now_ist()
 
         tv_4h = (
             f"https://www.tradingview.com/chart/"
@@ -730,13 +696,14 @@ class TradeManager:
         await send(
             f"{emoji} *Trade Closed — {close_reason}*\n\n"
             f"*{trade.coin}USDT {trade.direction}*\n"
-            f"Time: `{utc_now}`\n"
+            f"Time: `{now_ist()}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Entry:   `{trade.entry_price}`\n"
             f"Exit:    `{exit_price}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{pnl_emoji} PnL:    `${pnl}`\n"
-            f"Outcome: `{outcome.upper()}`\n\n"
+            f"Outcome: `{outcome.upper()}`\n"
+            f"Health:  `{state_manager.health_state}`\n\n"
             f"📊 [4H Chart]({tv_4h})\n\n"
             f"Bot idle — scanning for next signal\n"
             f"Type /pnl for full stats"
