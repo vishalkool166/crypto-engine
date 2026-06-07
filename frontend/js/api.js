@@ -14,10 +14,10 @@ async function fetchDashboard() {
     renderStatusBar(data)
     renderRisk(data.risk)
 
-    if (stateChanged || tradeChanged || healthChanged) {
-      renderTrade(data.trade, data.state)
-      syncConnectionMode(data.state)
-    }
+
+    renderTrade(data.trade, data.state)
+    syncConnectionMode(data.state)
+
 
     renderRadar(data.radar)
     renderSignalQueue(data.queue)
