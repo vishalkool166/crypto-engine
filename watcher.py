@@ -15,12 +15,14 @@ APP_PROCESS   = None
 NGROK_PROCESS = None
 NGROK_DOMAIN  = "small-salaried-study.ngrok-free.dev"
 
+
 def get_local_commit():
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True, text=True
     )
     return result.stdout.strip()
+
 
 def get_remote_commit():
     subprocess.run(
@@ -33,22 +35,35 @@ def get_remote_commit():
     )
     return result.stdout.strip()
 
+
 def pull_latest():
     subprocess.run(["git", "pull", "origin", "main"])
     log.info("Pulled latest code")
+
+
+def install_requirements():
+    log.info("Installing requirements...")
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "-q"],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        log.info("Requirements installed")
+    else:
+        log.error(f"Requirements install failed:\n{result.stderr}")
+
 
 def start_ngrok():
     global NGROK_PROCESS
     log.info("Starting ngrok tunnel...")
     NGROK_PROCESS = subprocess.Popen(
-        ["ngrok", "http",
-         f"--domain={NGROK_DOMAIN}",
-         "8000"],
+        ["ngrok", "http", f"--domain={NGROK_DOMAIN}", "8000"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
     time.sleep(3)
     log.info(f"Tunnel live: https://{NGROK_DOMAIN}")
+
 
 def stop_ngrok():
     global NGROK_PROCESS
@@ -56,6 +71,7 @@ def stop_ngrok():
         NGROK_PROCESS.terminate()
         NGROK_PROCESS.wait()
         log.info("Ngrok stopped")
+
 
 def start_app():
     global APP_PROCESS
@@ -66,6 +82,7 @@ def start_app():
     )
     log.info(f"App started — PID:{APP_PROCESS.pid}")
 
+
 def stop_app():
     global APP_PROCESS
     if APP_PROCESS:
@@ -73,9 +90,11 @@ def stop_app():
         APP_PROCESS.wait()
         log.info("App stopped")
 
+
 def main():
     log.info("Watcher started")
     start_ngrok()
+    install_requirements()
     start_app()
 
     while True:
@@ -88,12 +107,14 @@ def main():
                 log.info("New commit — updating...")
                 stop_app()
                 pull_latest()
+                install_requirements()
                 start_app()
             else:
                 log.info("No changes")
 
         except Exception as e:
             log.error(f"Watcher error: {e}")
+
 
 if __name__ == "__main__":
     main()

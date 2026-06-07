@@ -1,7 +1,5 @@
 import uvicorn
 import logging
-import asyncio
-import os
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -11,6 +9,8 @@ from api.routes      import router
 from database        import init_db
 from scheduler       import start_scheduler, stop_scheduler
 from trade.state     import state_manager
+from trade.price_feed import price_feed
+from trade.manager   import trade_manager
 from alerts.telegram import send, register_webhook, handle_webhook
 from config          import cfg
 
@@ -23,17 +23,17 @@ logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 
 log = logging.getLogger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── STARTUP ──
     log.info("Starting Signal Engine v5...")
 
-    init_db()
-    log.info("Database initialized")
+    price_feed.on_price(trade_manager.on_price_update)
 
     if not state_manager.is_idle:
         trade = state_manager.current_trade
         log.info(f"Resumed trade: {trade.coin} {trade.direction} {trade.state}")
+        await price_feed.start(trade.coin)
         await send(
             f"🔄 *Bot Restarted*\n\n"
             f"Resumed active trade:\n"
@@ -46,9 +46,6 @@ async def lifespan(app: FastAPI):
         log.info("No active trade — idle")
 
     start_scheduler()
-    log.info("Scheduler started")
-
-    # Register Telegram webhook
     await register_webhook()
 
     await send(
@@ -66,8 +63,9 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # ── SHUTDOWN ──
     stop_scheduler()
+    await price_feed.stop()
+
     if not state_manager.is_idle:
         trade = state_manager.current_trade
         await send(
@@ -80,7 +78,9 @@ async def lifespan(app: FastAPI):
         )
     else:
         await send("🔴 *Signal Engine v5 Stopped*")
+
     log.info("Signal Engine stopped")
+
 
 app = FastAPI(
     title       = "Signal Engine v5",
@@ -96,16 +96,15 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-# ── TELEGRAM WEBHOOK ROUTE ──
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
     await handle_webhook(request)
     return JSONResponse(content={"ok": True})
 
-# ── API ROUTES ──
+
 app.include_router(router, prefix="/api")
 
-# ── STATIC FILES ──
 app.mount(
     "/",
     StaticFiles(directory="frontend", html=True),
