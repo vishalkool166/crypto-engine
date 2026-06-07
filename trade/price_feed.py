@@ -71,6 +71,7 @@ class PriceFeed:
                             data  = json.loads(raw)
                             price = float(data["p"])
                             self._prices[coin] = price
+                            log.info(f"Price received: {coin} {price}")
 
                             for cb in self._callbacks:
                                 try:
