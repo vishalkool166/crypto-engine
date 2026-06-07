@@ -10,91 +10,137 @@ log = logging.getLogger(__name__)
 
 BASE   = f"https://api.telegram.org/bot{cfg.TELEGRAM_TOKEN}"
 DOMAIN = "https://small-salaried-study.ngrok-free.dev"
+IST    = timezone(timedelta(hours=5, minutes=30))
 
-IST = timezone(timedelta(hours=5, minutes=30))
+_sent_signals: set  = set()
+_skip_reasons: dict = {}
 
-_sent_signals = set()
-_skip_reasons = {}
 
+# ═══════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════
 
 def now_ist() -> str:
     return datetime.now(IST).strftime("%I:%M %p IST")
 
 
+def _mins_until(target_hour: int, target_min: int = 0) -> tuple[int, int]:
+    now  = datetime.now(timezone.utc)
+    next = now.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
+    if now >= next:
+        next += timedelta(days=1)
+    total = int((next - now).total_seconds() / 60)
+    return total // 60, total % 60
+
+
+def _fmt_mins(dt: datetime) -> str:
+    now = datetime.now(timezone.utc)
+    m   = int((dt - now).total_seconds() / 60)
+    return f"{m // 60}h {m % 60}m"
+
+
+def _next_dt(hour: int, minute: int = 0) -> datetime:
+    now = datetime.now(timezone.utc)
+    dt  = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now >= dt:
+        dt += timedelta(days=1)
+    return dt
+
+
+def _active_trade_guard(msg: str = "⚠️ No active trade.") -> Trade | None:
+    if state_manager.is_idle:
+        return None
+    return state_manager.current_trade
+
+
+def _get_current_and_upnl(trade) -> tuple[float, float]:
+    from trade.orders import get_current_price
+    from trade.risk import risk_guard
+    current = get_current_price(trade.coin)
+    upnl    = risk_guard.calculate_unrealized_pnl(
+        direction     = trade.direction,
+        entry_price   = trade.entry_price,
+        current_price = current,
+        pos_size      = trade.position_size
+    )
+    return current, upnl
+
+
+def _pnl_str(pnl: float) -> str:
+    return f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+
+
+def _grade_accuracy_str(grade: str) -> str:
+    db = SessionLocal()
+    try:
+        trades = db.query(Trade).filter(
+            Trade.grade     == grade,
+            Trade.is_active == False,
+            Trade.outcome.in_(["win", "loss"])
+        ).all()
+        if not trades:
+            return f"Grade {grade} accuracy: no data yet"
+        wins  = sum(1 for t in trades if t.outcome == "win")
+        total = len(trades)
+        wr    = round(wins / total * 100, 1)
+        return f"Grade {grade} accuracy: `{wins}W {total - wins}L` — `{wr}% win rate`"
+    except Exception as e:
+        log.error(f"Grade accuracy error: {e}")
+        return ""
+    finally:
+        db.close()
+
+
 # ═══════════════════════════════════════════════════════
 # CORE SEND
 # ═══════════════════════════════════════════════════════
-async def send(message: str):
+
+async def _post(endpoint: str, payload: dict):
     if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
         log.warning("Telegram not configured")
         return
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{BASE}/sendMessage",
-                json={
-                    "chat_id":    cfg.TELEGRAM_CHAT_ID,
-                    "text":       message,
-                    "parse_mode": "Markdown"
-                },
-                timeout=10
-            )
+            r = await client.post(f"{BASE}/{endpoint}", json=payload, timeout=10)
             if r.status_code != 200:
-                log.error(f"Telegram failed: {r.text}")
+                log.error(f"Telegram {endpoint} failed: {r.text}")
     except Exception as e:
         log.error(f"Telegram error: {e}")
 
 
+async def send(message: str):
+    await _post("sendMessage", {
+        "chat_id":    cfg.TELEGRAM_CHAT_ID,
+        "text":       message,
+        "parse_mode": "Markdown"
+    })
+
+
 async def send_with_keyboard(message: str, keyboard: list):
-    if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
-        return
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{BASE}/sendMessage",
-                json={
-                    "chat_id":      cfg.TELEGRAM_CHAT_ID,
-                    "text":         message,
-                    "parse_mode":   "Markdown",
-                    "reply_markup": {
-                        "inline_keyboard": keyboard
-                    }
-                },
-                timeout=10
-            )
-            if r.status_code != 200:
-                log.error(f"Telegram keyboard send failed: {r.text}")
-    except Exception as e:
-        log.error(f"Telegram keyboard error: {e}")
+    await _post("sendMessage", {
+        "chat_id":      cfg.TELEGRAM_CHAT_ID,
+        "text":         message,
+        "parse_mode":   "Markdown",
+        "reply_markup": {"inline_keyboard": keyboard}
+    })
 
 
 async def answer_callback(callback_id: str, text: str = ""):
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{BASE}/answerCallbackQuery",
-                json={
-                    "callback_query_id": callback_id,
-                    "text":              text
-                },
-                timeout=5
-            )
-    except Exception as e:
-        log.error(f"Answer callback error: {e}")
+    await _post("answerCallbackQuery", {
+        "callback_query_id": callback_id,
+        "text":              text
+    })
 
 
 # ═══════════════════════════════════════════════════════
 # WEBHOOK
 # ═══════════════════════════════════════════════════════
+
 async def register_webhook():
     webhook_url = f"{DOMAIN}/webhook/telegram"
     try:
         async with httpx.AsyncClient() as client:
-            r    = await client.post(
-                f"{BASE}/setWebhook",
-                json={"url": webhook_url},
-                timeout=10
-            )
+            r    = await client.post(f"{BASE}/setWebhook", json={"url": webhook_url}, timeout=10)
             data = r.json()
             if data.get("ok"):
                 log.info(f"Webhook registered: {webhook_url}")
@@ -128,6 +174,9 @@ async def handle_webhook(request: Request):
 # ═══════════════════════════════════════════════════════
 # CALLBACK HANDLER
 # ═══════════════════════════════════════════════════════
+
+_CALLBACK_MAP = {}
+
 async def _handle_callback(callback: dict):
     callback_id = callback.get("id", "")
     data        = callback.get("data", "")
@@ -139,14 +188,17 @@ async def _handle_callback(callback: dict):
 
     await answer_callback(callback_id)
 
-    if data.startswith("factors:"):
-        await _cb_show_factors(data.split(":")[1])
-    elif data.startswith("risks:"):
-        await _cb_show_risks(data.split(":")[1])
-    elif data.startswith("approve:"):
-        await _cb_approve_signal(data.split(":")[1])
-    elif data.startswith("skip:"):
-        await _cb_skip_signal(data.split(":")[1])
+    if ":" in data:
+        action, coin = data.split(":", 1)
+        handlers = {
+            "factors": _cb_show_factors,
+            "risks":   _cb_show_risks,
+            "approve": _cb_approve_signal,
+            "skip":    _cb_skip_signal,
+        }
+        fn = handlers.get(action)
+        if fn:
+            await fn(coin)
     elif data == "confirm_close":
         await _cb_confirm_close()
     elif data == "cancel_close":
@@ -170,20 +222,13 @@ async def _cb_show_factors(coin: str):
 
     lines = [
         f"📊 *Confluence Factors — {coin}USDT*\n",
-        f"Score: `{score}/100` · "
-        f"Earned: `{wconf.get('total_earned',0)}"
-        f"/{wconf.get('max_possible',0)}`\n"
+        f"Score: `{score}/100` · Earned: `{wconf.get('total_earned',0)}/{wconf.get('max_possible',0)}`\n"
     ]
-
     for f in factors:
         pct  = round(f["earned"] / f["max"] * 100) if f["max"] > 0 else 0
         icon = "✅" if f["pass"] else "❌"
         bar  = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        lines.append(
-            f"{icon} *{f['label']}*\n"
-            f"`{bar}` {f['earned']}/{f['max']}\n"
-            f"_{f.get('detail', '')}_\n"
-        )
+        lines.append(f"{icon} *{f['label']}*\n`{bar}` {f['earned']}/{f['max']}\n_{f.get('detail', '')}_\n")
 
     await send("\n".join(lines))
 
@@ -195,26 +240,19 @@ async def _cb_show_risks(coin: str):
         await send(f"⚠️ No cached data for {coin}.")
         return
 
-    expl        = cached.get("explanation", {})
-    risk_thesis = expl.get("risk_thesis", "")
-    no_trade    = cached.get("no_trade", {})
-    softs       = no_trade.get("soft_blocks", []) if no_trade else []
+    expl   = cached.get("explanation", {})
+    softs  = (cached.get("no_trade", {}) or {}).get("soft_blocks", [])
+    lines  = [f"⚠️ *Risk Analysis — {coin}USDT*\n"]
 
-    lines = [f"⚠️ *Risk Analysis — {coin}USDT*\n"]
-
-    if risk_thesis:
-        lines.append("*Risk Factors:*")
-        lines.append(risk_thesis)
+    if expl.get("risk_thesis"):
+        lines += ["*Risk Factors:*", expl["risk_thesis"]]
 
     if softs:
         lines.append("\n*Score Penalties:*")
         for s in softs:
-            lines.append(
-                f"⚠ {s['reason']} "
-                f"`(-{s.get('penalty',0)}pts)`"
-            )
+            lines.append(f"⚠ {s['reason']} `(-{s.get('penalty',0)}pts)`")
 
-    if not risk_thesis and not softs:
+    if len(lines) == 1:
         lines.append("No significant risk factors identified.")
 
     await send("\n".join(lines))
@@ -226,10 +264,7 @@ async def _cb_approve_signal(coin: str):
 
     cached = cache.get(f"signal_{coin}")
     if not cached:
-        await send(
-            f"⚠️ Signal for {coin} expired. "
-            f"Run /scan for fresh data."
-        )
+        await send(f"⚠️ Signal for {coin} expired. Run /scan for fresh data.")
         return
 
     signal = cached.get("signal", {})
@@ -237,83 +272,54 @@ async def _cb_approve_signal(coin: str):
     dir_   = signal.get("direction", "")
 
     if grade not in cfg.MIN_GRADE_TO_TRADE:
-        await send(
-            f"⚠️ Grade {grade} no longer meets minimum. "
-            f"Signal expired."
-        )
+        await send(f"⚠️ Grade {grade} no longer meets minimum.")
         return
-
     if dir_ not in ["LONG", "SHORT"]:
         await send(f"⚠️ Signal direction invalid: {dir_}")
         return
-
     if not state_manager.is_idle:
         trade = state_manager.current_trade
-        await send(
-            f"⚠️ Already in trade: "
-            f"`{trade.coin}USDT {trade.direction}`\n"
-            f"Close current trade first."
-        )
+        await send(f"⚠️ Already in trade: `{trade.coin}USDT {trade.direction}`\nClose current trade first.")
         return
 
     await send(f"✅ *Approved* — Opening `{coin}USDT {dir_}`...")
-
     signal["coin"] = coin
-    result = await trade_manager.open_trade(
-        signal    = signal,
-        signal_id = signal.get("db_id")
-    )
-
+    result = await trade_manager.open_trade(signal=signal, signal_id=signal.get("db_id"))
     if not result["success"]:
         await send(f"❌ Trade failed: `{result['reason']}`")
 
 
 async def _cb_skip_signal(coin: str):
     _skip_reasons[coin] = "skipped_via_telegram"
-    await send(
-        f"⏭ *{coin} signal skipped*\n\n"
-        f"Signal will not auto-execute this scan.\n"
-        f"Use /scan to get fresh signals."
-    )
+    await send(f"⏭ *{coin} signal skipped*\n\nUse /scan to get fresh signals.")
     log.info(f"Signal skipped via Telegram: {coin}")
 
 
 async def _cb_confirm_close():
     from trade.manager import trade_manager
-
     if state_manager.is_idle:
         await send("⚠️ No active trade to close.")
         return
-
     trade = state_manager.current_trade
-    await send(
-        f"⏳ Closing `{trade.coin}USDT {trade.direction}`..."
-    )
-
+    await send(f"⏳ Closing `{trade.coin}USDT {trade.direction}`...")
     result = await trade_manager.manual_close()
-    if result["success"]:
-        await send("✅ Trade closed manually.")
-    else:
-        await send(f"❌ Close failed: `{result['reason']}`")
+    await send("✅ Trade closed manually." if result["success"] else f"❌ Close failed: `{result['reason']}`")
 
 
 # ═══════════════════════════════════════════════════════
 # COMMAND ROUTER
 # ═══════════════════════════════════════════════════════
+
 async def _handle_command(text: str):
     t = text.lower().strip()
 
-    # Commands with arguments
     if t.startswith("/coin"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else ""
         if coin in cfg.COINS:
             await _cmd_coin(coin)
         else:
-            await send(
-                f"⚠️ Unknown coin: `{coin}`\n"
-                f"Supported: `{', '.join(cfg.COINS)}`"
-            )
+            await send(f"⚠️ Unknown coin: `{coin}`\nSupported: `{', '.join(cfg.COINS)}`")
         return
 
     if t.startswith("/backtest"):
@@ -322,61 +328,54 @@ async def _handle_command(text: str):
         if coin in cfg.COINS:
             await _cmd_backtest(coin)
         else:
-            await send(
-                f"⚠️ Usage: `/backtest BTC`\n"
-                f"Supported coins: `{', '.join(cfg.TIER1)}`"
-            )
+            await send(f"⚠️ Usage: `/backtest BTC`\nSupported: `{', '.join(cfg.TIER1)}`")
         return
 
-    # Named commands
     handlers = {
-        "/status":   _cmd_status,
-        "/pnl":      _cmd_pnl,
-        "/close":    _cmd_close,
-        "/queue":    _cmd_queue,
-        "/daily":    _cmd_daily,
-        "/scan":     _cmd_scan,
-        "/help":     _cmd_help,
-        "/thesis":   _cmd_thesis,
-        "/health":   _cmd_health,
-        "/levels":   _cmd_levels,
-        "/btc":      _cmd_btc,
-        "/regime":   _cmd_regime,
-        "/funding":  _cmd_funding,
-        "/fear":     _cmd_fear,
-        "/history":  _cmd_history,
-        "/stats":    _cmd_stats,
-        "/streak":   _cmd_streak,
-        "/grade":    _cmd_grade,
-        "/risk":     _cmd_risk,
-        "/session":  _cmd_session,
-        "/next":     _cmd_next,
-        "/pause":    _cmd_pause,
-        "/resume":   _cmd_resume,
-        "/mode":     _cmd_mode,
-        "/brief":    _cmd_brief,
-        "/factors":  _cmd_factors,
-        "/debrief":  _cmd_debrief,
+        "/status":  _cmd_status,
+        "/pnl":     _cmd_pnl,
+        "/close":   _cmd_close,
+        "/queue":   _cmd_queue,
+        "/daily":   _cmd_daily,
+        "/scan":    _cmd_scan,
+        "/help":    _cmd_help,
+        "/thesis":  _cmd_thesis,
+        "/health":  _cmd_health,
+        "/levels":  _cmd_levels,
+        "/btc":     _cmd_btc,
+        "/regime":  _cmd_regime,
+        "/funding": _cmd_funding,
+        "/fear":    _cmd_fear,
+        "/history": _cmd_history,
+        "/stats":   _cmd_stats,
+        "/streak":  _cmd_streak,
+        "/grade":   _cmd_grade,
+        "/risk":    _cmd_risk,
+        "/session": _cmd_session,
+        "/next":    _cmd_next,
+        "/pause":   _cmd_pause,
+        "/resume":  _cmd_resume,
+        "/mode":    _cmd_mode,
+        "/brief":   _cmd_brief,
+        "/factors": _cmd_factors,
+        "/debrief": _cmd_debrief,
     }
 
     handler = handlers.get(t)
     if handler:
         await handler()
     else:
-        await send(
-            "🤖 Unknown command.\n\n"
-            "Type /help for full command list."
-        )
+        await send("🤖 Unknown command.\n\nType /help for full command list.")
 
 
 # ═══════════════════════════════════════════════════════
 # TRADE COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_status():
     if state_manager.is_idle:
         paused_note = (
-            "\n⏸ Auto-execution is *PAUSED*\n"
-            "Use /resume to re-enable."
+            "\n⏸ Auto-execution is *PAUSED*\nUse /resume to re-enable."
             if state_manager.is_paused else ""
         )
         await send(
@@ -393,22 +392,8 @@ async def _cmd_status():
         await send("📊 *Status*\nNo active trade.")
         return
 
-    from trade.orders import get_current_price
-    from trade.risk import risk_guard
-    current  = get_current_price(trade.coin)
-    upnl     = risk_guard.calculate_unrealized_pnl(
-        direction     = trade.direction,
-        entry_price   = trade.entry_price,
-        current_price = current,
-        pos_size      = trade.position_size
-    )
-    pnl_emoji    = "📈" if upnl >= 0 else "📉"
-    health_state = state_manager.health_state
-    h_emoji      = (
-        "✅" if health_state == "HEALTHY"     else
-        "⚠️" if health_state == "WARNING"     else
-        "🚨"
-    )
+    current, upnl = _get_current_and_upnl(trade)
+    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state_manager.health_state, "—")
 
     await send(
         f"📊 *Bot Status — IN TRADE*\n\n"
@@ -421,20 +406,17 @@ async def _cmd_status():
         f"SL:      `{trade.sl_price}`\n"
         f"TP1:     `{trade.tp1_price}`\n"
         f"TP2:     `{trade.tp2_price}`\n\n"
-        f"{pnl_emoji} uPnL: `${upnl}`\n"
+        f"{'📈' if upnl >= 0 else '📉'} uPnL: `${upnl}`\n"
         f"Risk:    `${trade.risk_amt}`\n"
-        f"{h_emoji} Health: `{health_state}`\n"
+        f"{h_emoji} Health: `{state_manager.health_state}`\n"
     )
 
 
 async def _cmd_thesis():
-    if state_manager.is_idle:
-        await send(
-            "⚠️ No active trade.\n"
-            "Use /queue to see pending signals."
-        )
+    trade = _active_trade_guard()
+    if not trade:
+        await send("⚠️ No active trade.\nUse /queue to see pending signals.")
         return
-    trade = state_manager.current_trade
     await _show_active_thesis(trade.coin)
 
 
@@ -445,144 +427,88 @@ async def _cmd_health():
 
     health = state_manager.health_data
     state  = state_manager.health_state
+    trade  = state_manager.current_trade
+    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state, "—")
 
-    h_emoji = (
-        "✅" if state == "HEALTHY"     else
-        "⚠️" if state == "WARNING"     else
-        "🚨"
-    )
+    lines = [f"{h_emoji} *Trade Health — {trade.coin if trade else '--'}*\n", f"Status: `{state}`\n"]
 
-    trade = state_manager.current_trade
-    lines = [
-        f"{h_emoji} *Trade Health — "
-        f"{trade.coin if trade else '--'}*\n",
-        f"Status: `{state}`\n"
-    ]
+    for label, items, icon in [
+        ("*Invalidated:*", health.get("failures", []), "✘"),
+        ("\n*Warnings:*",  health.get("warnings", []), "⚠"),
+    ]:
+        if items:
+            lines.append(label)
+            lines.extend(f"{icon} {i}" for i in items)
 
-    failures = health.get("failures", [])
-    warnings = health.get("warnings", [])
-    checks   = health.get("checks", [])
-
-    if failures:
-        lines.append("*Invalidated:*")
-        for f in failures:
-            lines.append(f"✘ {f}")
-
-    if warnings:
-        lines.append("\n*Warnings:*")
-        for w in warnings:
-            lines.append(f"⚠ {w}")
-
-    if checks and state == "HEALTHY":
+    if health.get("checks") and state == "HEALTHY":
         lines.append("\n*Healthy:*")
-        for c in checks:
-            lines.append(f"✔ {c}")
+        lines.extend(f"✔ {c}" for c in health["checks"])
 
-    if state == "INVALIDATED":
-        lines.append(
-            "\n_Thesis invalidated. "
-            "Use /close if you want to exit._"
-        )
-    elif state == "WARNING":
-        lines.append("\n_Thesis weakening. Monitor position._")
-    else:
-        lines.append("\n_Thesis intact. Hold position._")
+    lines.append(
+        "\n_Thesis invalidated. Use /close if you want to exit._" if state == "INVALIDATED" else
+        "\n_Thesis weakening. Monitor position._"                 if state == "WARNING"     else
+        "\n_Thesis intact. Hold position._"
+    )
 
     await send("\n".join(lines))
 
 
 async def _cmd_levels():
-    if state_manager.is_idle:
+    trade = _active_trade_guard()
+    if not trade:
         await send("⚠️ No active trade — no levels to show.")
         return
 
-    trade = state_manager.current_trade
-    if not trade:
-        return
-
-    from trade.orders import get_current_price
-    from trade.risk import risk_guard
     from trade.price_feed import price_feed
-
-    current  = price_feed.get_price(trade.coin) or get_current_price(trade.coin)
-    is_long  = trade.direction == "LONG"
-    tp1_hit  = (
-        abs(trade.sl_price - trade.entry_price) /
-        trade.entry_price < 0.001
-        if trade.sl_price and trade.entry_price else False
-    )
-
-    upnl = risk_guard.calculate_unrealized_pnl(
-        direction     = trade.direction,
-        entry_price   = trade.entry_price,
-        current_price = current,
-        pos_size      = trade.position_size
-    )
+    current, upnl = _get_current_and_upnl(trade)
+    current       = price_feed.get_price(trade.coin) or current
+    is_long       = trade.direction == "LONG"
+    tp1_hit       = abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.001 if trade.sl_price and trade.entry_price else False
 
     total    = abs(trade.tp1_price - trade.entry_price) if trade.tp1_price and trade.entry_price else 0
     progress = 0
     if total > 0:
-        if is_long:
-            progress = (current - trade.entry_price) / total * 100
-        else:
-            progress = (trade.entry_price - current) / total * 100
+        progress = ((current - trade.entry_price) if is_long else (trade.entry_price - current)) / total * 100
     progress = max(0, min(100, progress))
-
-    sl_label = "BE ✅" if tp1_hit else "SL 🛑"
-    pnl_str  = f"+${upnl:.4f}" if upnl >= 0 else f"-${abs(upnl):.4f}"
 
     await send(
         f"📐 *Price Levels — {trade.coin}USDT*\n\n"
         f"TP2:     `{trade.tp2_price}`\n"
-        f"TP1:     `{trade.tp1_price}`"
-        f"{'  ✅ HIT' if tp1_hit else ''}\n"
+        f"TP1:     `{trade.tp1_price}`{'  ✅ HIT' if tp1_hit else ''}\n"
         f"NOW:     `{current:.4f}` ← live\n"
         f"Entry:   `{trade.entry_price}`\n"
-        f"{sl_label}: `{trade.sl_price}`\n\n"
+        f"{'BE ✅' if tp1_hit else 'SL 🛑'}: `{trade.sl_price}`\n\n"
         f"Progress to TP1: `{progress:.0f}%`\n"
-        f"uPnL: `{pnl_str}`\n"
+        f"uPnL: `{_pnl_str(upnl)}`\n"
     )
 
 
 async def _cmd_close():
-    if state_manager.is_idle:
+    trade = _active_trade_guard()
+    if not trade:
         await send("⚠️ No active trade to close.")
         return
 
-    trade = state_manager.current_trade
-    if not trade:
-        return
-
-    from trade.orders import get_current_price
-    from trade.risk import risk_guard
-    current = get_current_price(trade.coin)
-    upnl    = risk_guard.calculate_unrealized_pnl(
-        direction     = trade.direction,
-        entry_price   = trade.entry_price,
-        current_price = current,
-        pos_size      = trade.position_size
-    )
-    pnl_str = f"+${upnl:.4f}" if upnl >= 0 else f"-${abs(upnl):.4f}"
+    current, upnl = _get_current_and_upnl(trade)
 
     await send_with_keyboard(
         f"⚠️ *Close {trade.coin}USDT {trade.direction}?*\n\n"
         f"Entry:   `{trade.entry_price}`\n"
         f"Current: `{current}`\n"
-        f"uPnL:    `{pnl_str}`\n"
+        f"uPnL:    `{_pnl_str(upnl)}`\n"
         f"Health:  `{state_manager.health_state}`\n\n"
         f"This cancels all SL/TP orders.",
-        keyboard=[
-            [
-                {"text": "✅ Yes, Close", "callback_data": "confirm_close"},
-                {"text": "❌ Cancel",     "callback_data": "cancel_close"}
-            ]
-        ]
+        keyboard=[[
+            {"text": "✅ Yes, Close", "callback_data": "confirm_close"},
+            {"text": "❌ Cancel",     "callback_data": "cancel_close"}
+        ]]
     )
 
 
 # ═══════════════════════════════════════════════════════
 # MARKET COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_btc():
     await _cmd_coin("BTC")
 
@@ -591,17 +517,13 @@ async def _cmd_coin(coin: str):
     from data.cache import cache
     cached = cache.get(f"signal_{coin}")
     if not cached:
-        await send(
-            f"No data for `{coin}`. Run /scan first."
-        )
+        await send(f"No data for `{coin}`. Run /scan first.")
         return
 
     market  = cached.get("market", {})
     grade   = cached.get("grade", "F")
     dir_    = cached.get("direction", "--")
     score   = cached.get("score", 0)
-    regime  = cached.get("regime", "--")
-    session = cached.get("session", "--")
     sweep   = cached.get("sweep", {})
     disp    = cached.get("displacement", {})
     retest  = cached.get("retest", {})
@@ -613,38 +535,33 @@ async def _cmd_coin(coin: str):
     funding = market.get("funding", 0) * 100
     sign    = "+" if change >= 0 else ""
     em      = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
-
     rsi     = d1d.get("rsi")
     adx     = d1d.get("adx")
-    trend   = d1d.get("trend", {}).get("cls", "--")
-    conf    = expl.get("confidence_label", "")
 
-    await send(
+    base = (
         f"📊 *{coin}USDT Analysis*\n\n"
         f"Price:   `${price:,.4f}` ({sign}{change:.2f}%)\n"
         f"Grade:   `{grade}` · Score `{score}/100`\n"
         f"Signal:  {em} `{dir_}`\n"
-        f"Conf:    `{conf}`\n\n"
-        f"Regime:  `{regime}`\n"
-        f"Trend:   `{trend}`\n"
-        f"Session: `{session}`\n\n"
-        f"RSI:     `{rsi:.1f}`\n"
-        f"ADX:     `{adx:.1f}`\n"
-        f"Funding: `{funding:.4f}%`\n\n"
+        f"Conf:    `{expl.get('confidence_label', '--')}`\n\n"
+        f"Regime:  `{cached.get('regime', '--')}`\n"
+        f"Session: `{cached.get('session', '--')}`\n\n"
+    )
+
+    if rsi and adx:
+        base += (
+            f"RSI:     `{rsi:.1f}`\n"
+            f"ADX:     `{adx:.1f}`\n"
+            f"Funding: `{funding:.4f}%`\n\n"
+        )
+
+    base += (
         f"Sweep:   `{'✅' if sweep.get('confirmed') else '❌'} {sweep.get('score',0)}/12`\n"
         f"Disp:    `{'✅' if disp.get('confirmed') else '❌'} {disp.get('score',0)}/11`\n"
         f"Retest:  `{'✅' if retest.get('confirmed') else '❌'} {retest.get('score',0)}/12`\n"
-    ) if rsi and adx else await send(
-        f"📊 *{coin}USDT Analysis*\n\n"
-        f"Price:   `${price:,.4f}` ({sign}{change:.2f}%)\n"
-        f"Grade:   `{grade}` · Score `{score}/100`\n"
-        f"Signal:  {em} `{dir_}`\n"
-        f"Regime:  `{regime}`\n"
-        f"Session: `{session}`\n\n"
-        f"Sweep:   `{'✅' if sweep.get('confirmed') else '❌'}`\n"
-        f"Disp:    `{'✅' if disp.get('confirmed') else '❌'}`\n"
-        f"Retest:  `{'✅' if retest.get('confirmed') else '❌'}`\n"
     )
+
+    await send(base)
 
 
 async def _cmd_regime():
@@ -655,12 +572,9 @@ async def _cmd_regime():
         if not cached:
             lines.append(f"`{coin}` — no data")
             continue
-        regime = cached.get("regime", "--")
-        grade  = cached.get("grade", "F")
         dir_   = cached.get("direction", "--")
         em     = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
-        lines.append(f"{em} `{coin}` — {regime} · Grade {grade}")
-
+        lines.append(f"{em} `{coin}` — {cached.get('regime','--')} · Grade {cached.get('grade','F')}")
     await send("\n".join(lines))
 
 
@@ -671,20 +585,11 @@ async def _cmd_funding():
         cached = cache.get(f"signal_{coin}")
         if not cached:
             continue
-        market  = cached.get("market", {})
-        funding = market.get("funding", 0) * 100
-        flag    = (
-            "🚨" if abs(funding) > 0.08 else
-            "⚠️" if abs(funding) > 0.05 else
-            "✅"
-        )
-        lines.append(
-            f"{flag} `{coin}` — `{funding:.4f}%`"
-        )
-
+        funding = cached.get("market", {}).get("funding", 0) * 100
+        flag    = "🚨" if abs(funding) > 0.08 else "⚠️" if abs(funding) > 0.05 else "✅"
+        lines.append(f"{flag} `{coin}` — `{funding:.4f}%`")
     if len(lines) == 1:
         lines.append("No data — run /scan first")
-
     await send("\n".join(lines))
 
 
@@ -694,11 +599,7 @@ async def _cmd_fear():
         fg    = await get_fear_greed()
         val   = fg.get("value", 50)
         label = fg.get("label", "Neutral")
-        emoji = (
-            "🟢" if val >= 60 else
-            "🔴" if val <= 30 else
-            "🟡"
-        )
+        emoji = "🟢" if val >= 60 else "🔴" if val <= 30 else "🟡"
         await send(
             f"{emoji} *Fear & Greed Index*\n\n"
             f"Value: `{val}/100`\n"
@@ -713,21 +614,19 @@ async def _cmd_fear():
 # ═══════════════════════════════════════════════════════
 # PERFORMANCE COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_pnl():
     from trade.risk import risk_guard
-    stats     = risk_guard.get_daily_stats()
-    pnl_emoji = "📈" if stats["total_pnl"] >= 0 else "📉"
+    stats = risk_guard.get_daily_stats()
 
     db = SessionLocal()
     try:
-        all_trades = db.query(Trade).filter(
-            Trade.outcome != "pending"
-        ).all()
-        total_pnl = sum(t.pnl or 0 for t in all_trades)
-        wins      = len([t for t in all_trades if t.outcome == "win"])
-        losses    = len([t for t in all_trades if t.outcome == "loss"])
-        total     = len(all_trades)
-        wr        = round(wins / total * 100, 1) if total else 0
+        all_trades = db.query(Trade).filter(Trade.outcome != "pending").all()
+        total_pnl  = sum(t.pnl or 0 for t in all_trades)
+        wins       = sum(1 for t in all_trades if t.outcome == "win")
+        losses     = sum(1 for t in all_trades if t.outcome == "loss")
+        total      = len(all_trades)
+        wr         = round(wins / total * 100, 1) if total else 0
     finally:
         db.close()
 
@@ -735,7 +634,7 @@ async def _cmd_pnl():
         f"💰 *PnL Report*\n\n"
         f"*Today*\n"
         f"Trades:  `{stats['trades_taken']}`\n"
-        f"{pnl_emoji} PnL: `${stats['total_pnl']}`\n"
+        f"{'📈' if stats['total_pnl'] >= 0 else '📉'} PnL: `${stats['total_pnl']}`\n"
         f"Loss:    `${stats['total_loss']}`\n"
         f"Cap Hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n\n"
         f"*All Time*\n"
@@ -763,29 +662,24 @@ async def _cmd_history():
     lines = ["📜 *Last 5 Trades*\n"]
     for t in trades:
         emoji  = "✅" if t.outcome == "win" else "❌" if t.outcome == "loss" else "⏹"
-        pnl    = t.pnl or 0
-        pnl_s  = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
         dir_em = "📈" if t.direction == "LONG" else "📉"
         lines.append(
-            f"{emoji} {dir_em} `{t.coin}` {t.direction} "
-            f"Grade `{t.grade}` — `{pnl_s}`\n"
+            f"{emoji} {dir_em} `{t.coin}` {t.direction} Grade `{t.grade}` — `{_pnl_str(t.pnl or 0)}`\n"
             f"_{t.close_reason or '--'}_\n"
         )
-
     await send("\n".join(lines))
 
 
 async def _cmd_stats():
     from alerts.scanner import get_db_stats
     stats = get_db_stats()
-
     if not stats:
         await send("📊 No stats yet — no closed trades.")
         return
 
-    bg   = stats.get("by_grade", {})
-    ap   = bg.get("A+", {})
-    a    = bg.get("A", {})
+    bg = stats.get("by_grade", {})
+    ap = bg.get("A+", {})
+    a  = bg.get("A", {})
 
     await send(
         f"📊 *All Time Stats*\n\n"
@@ -797,13 +691,9 @@ async def _cmd_stats():
         f"WR:      `{stats.get('win_rate', 0)}%`\n"
         f"PnL:     `${stats.get('total_pnl', 0)}`\n\n"
         f"*Grade A+*\n"
-        f"Trades: `{ap.get('total',0)}` · "
-        f"WR: `{ap.get('win_rate',0)}%` · "
-        f"PnL: `${ap.get('total_pnl',0)}`\n\n"
+        f"Trades: `{ap.get('total',0)}` · WR: `{ap.get('win_rate',0)}%` · PnL: `${ap.get('total_pnl',0)}`\n\n"
         f"*Grade A*\n"
-        f"Trades: `{a.get('total',0)}` · "
-        f"WR: `{a.get('win_rate',0)}%` · "
-        f"PnL: `${a.get('total_pnl',0)}`\n"
+        f"Trades: `{a.get('total',0)}` · WR: `{a.get('win_rate',0)}%` · PnL: `${a.get('total_pnl',0)}`\n"
     )
 
 
@@ -821,36 +711,27 @@ async def _cmd_streak():
         await send("📊 No closed trades yet.")
         return
 
-    # Current streak
     current_streak = 0
-    current_type   = trades[0].outcome if trades else None
+    current_type   = trades[0].outcome
     for t in trades:
         if t.outcome == current_type:
             current_streak += 1
         else:
             break
 
-    # Max streaks
-    max_wins   = 0
-    max_losses = 0
-    cur_w      = 0
-    cur_l      = 0
+    max_wins = max_losses = cur_w = cur_l = 0
     for t in reversed(trades):
         if t.outcome == "win":
-            cur_w += 1
-            cur_l  = 0
+            cur_w += 1; cur_l  = 0
         else:
-            cur_l += 1
-            cur_w  = 0
-        max_wins   = max(max_wins, cur_w)
+            cur_l += 1; cur_w  = 0
+        max_wins   = max(max_wins,   cur_w)
         max_losses = max(max_losses, cur_l)
 
-    streak_emoji = "🔥" if current_type == "win" else "❄️"
-
+    emoji = "🔥" if current_type == "win" else "❄️"
     await send(
         f"🔢 *Streak Report*\n\n"
-        f"Current: {streak_emoji} "
-        f"`{current_streak} {current_type}s`\n\n"
+        f"Current: {emoji} `{current_streak} {current_type}s`\n\n"
         f"All Time:\n"
         f"Max wins:   `{max_wins} in a row`\n"
         f"Max losses: `{max_losses} in a row`\n"
@@ -864,20 +745,20 @@ async def _cmd_grade():
     ap    = bg.get("A+", {})
     a     = bg.get("A", {})
 
+    def grade_block(label, color, data):
+        return (
+            f"*Grade {label}*\n"
+            f"Trades:   `{data.get('total', 0)}`\n"
+            f"Wins:     `{data.get('wins', 0)}`\n"
+            f"Losses:   `{data.get('losses', 0)}`\n"
+            f"Win Rate: `{data.get('win_rate', 0)}%`\n"
+            f"PnL:      `${data.get('total_pnl', 0)}`\n"
+        )
+
     await send(
         f"🏆 *Grade Accuracy*\n\n"
-        f"*Grade A+*\n"
-        f"Trades:   `{ap.get('total', 0)}`\n"
-        f"Wins:     `{ap.get('wins', 0)}`\n"
-        f"Losses:   `{ap.get('losses', 0)}`\n"
-        f"Win Rate: `{ap.get('win_rate', 0)}%`\n"
-        f"PnL:      `${ap.get('total_pnl', 0)}`\n\n"
-        f"*Grade A*\n"
-        f"Trades:   `{a.get('total', 0)}`\n"
-        f"Wins:     `{a.get('wins', 0)}`\n"
-        f"Losses:   `{a.get('losses', 0)}`\n"
-        f"Win Rate: `{a.get('win_rate', 0)}%`\n"
-        f"PnL:      `${a.get('total_pnl', 0)}`\n\n"
+        f"{grade_block('A+', 'green', ap)}\n"
+        f"{grade_block('A', 'blue', a)}\n"
         f"_Minimum 50 trades for reliable data_"
     )
 
@@ -885,15 +766,12 @@ async def _cmd_grade():
 # ═══════════════════════════════════════════════════════
 # RISK & SESSION COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_risk():
     from trade.risk import risk_guard
     stats     = risk_guard.get_daily_stats()
     daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
-    loss_pct  = (
-        abs(stats["total_loss"]) / daily_cap * 100
-        if daily_cap > 0 else 0
-    )
-    cap_emoji = "🚫" if stats["cap_hit"] else "✅"
+    loss_pct  = abs(stats["total_loss"]) / daily_cap * 100 if daily_cap > 0 else 0
 
     await send(
         f"🛡️ *Daily Risk State*\n\n"
@@ -905,38 +783,21 @@ async def _cmd_risk():
         f"Used:          `{loss_pct:.1f}%`\n"
         f"Remaining:     `${stats['remaining_loss']:.4f}`\n\n"
         f"PnL today:     `${stats['total_pnl']:.4f}`\n"
-        f"Cap status:    {cap_emoji} "
-        f"`{'HIT' if stats['cap_hit'] else 'ACTIVE'}`\n"
+        f"Cap status:    `{'🚫 HIT' if stats['cap_hit'] else '✅ ACTIVE'}`\n"
     )
 
 
 async def _cmd_session():
     from engines.signal import get_session
-    from datetime import datetime, timezone
     session = get_session()
-    now     = datetime.now(timezone.utc)
-
-    tradeable_emoji = "✅" if session["tradeable"] else "🚫"
-
-    # Time until London open (08:00 UTC)
-    london_open = now.replace(hour=8, minute=0, second=0, microsecond=0)
-    if now >= london_open:
-        london_open = london_open.replace(
-            day=london_open.day + 1
-        )
-    mins_to_london = int(
-        (london_    mins_to_london = int(
-        (london_open - now).total_seconds() / 60
-    )
-    hrs  = mins_to_london // 60
-    mins = mins_to_london % 60
+    hrs, mins = _mins_until(8)
+    now = datetime.now(timezone.utc)
 
     await send(
         f"🕐 *Session Status*\n\n"
         f"Current:   `{session['name']}`\n"
         f"Quality:   `{session['quality']}`\n"
-        f"Entries:   {tradeable_emoji} "
-        f"`{'ALLOWED' if session['tradeable'] else 'BLOCKED'}`\n"
+        f"Entries:   {'✅' if session['tradeable'] else '🚫'} `{'ALLOWED' if session['tradeable'] else 'BLOCKED'}`\n"
         f"Score:     `{session['score']}/9`\n\n"
         f"_{session['desc']}_\n\n"
         f"London open in: `{hrs}h {mins}m`\n"
@@ -962,37 +823,16 @@ async def _cmd_daily():
 async def _cmd_next():
     from scheduler import get_next_scan_time
     from engines.signal import get_session
-    from datetime import datetime, timezone
-
-    now     = datetime.now(timezone.utc)
-    session = get_session()
-    next_s  = get_next_scan_time()
-
-    london_open = now.replace(
-        hour=8, minute=0, second=0, microsecond=0
-    )
-    ny_open = now.replace(
-        hour=13, minute=0, second=0, microsecond=0
-    )
-
-    if now >= london_open:
-        london_open = london_open.replace(
-            day=london_open.day + 1
-        )
-    if now >= ny_open:
-        ny_open = ny_open.replace(
-            day=ny_open.day + 1
-        )
-
-    def fmt_mins(dt):
-        m = int((dt - now).total_seconds() / 60)
-        return f"{m // 60}h {m % 60}m"
+    session  = get_session()
+    next_s   = get_next_scan_time()
+    london   = _next_dt(8)
+    ny       = _next_dt(13)
 
     await send(
         f"⏱ *Next Events*\n\n"
         f"Next scan:      `{next_s}`\n"
-        f"London open:    `08:00 UTC` (in {fmt_mins(london_open)})\n"
-        f"NY open:        `13:00 UTC` (in {fmt_mins(ny_open)})\n\n"
+        f"London open:    `08:00 UTC` (in {_fmt_mins(london)})\n"
+        f"NY open:        `13:00 UTC` (in {_fmt_mins(ny)})\n\n"
         f"Current session: `{session['name']}`\n"
         f"Entries: `{'✅ ALLOWED' if session['tradeable'] else '🚫 BLOCKED'}`"
     )
@@ -1001,12 +841,10 @@ async def _cmd_next():
 # ═══════════════════════════════════════════════════════
 # BOT CONTROL COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_pause():
     if state_manager.is_paused:
-        await send(
-            "⏸ Bot is already paused.\n"
-            "Use /resume to re-enable auto-execution."
-        )
+        await send("⏸ Bot is already paused.\nUse /resume to re-enable auto-execution.")
         return
     state_manager.pause()
     await send(
@@ -1021,10 +859,7 @@ async def _cmd_pause():
 
 async def _cmd_resume():
     if not state_manager.is_paused:
-        await send(
-            "▶️ Bot is already running.\n"
-            "Auto-execution is active."
-        )
+        await send("▶️ Bot is already running.\nAuto-execution is active.")
         return
     state_manager.resume()
     await send(
@@ -1035,12 +870,8 @@ async def _cmd_resume():
 
 
 async def _cmd_mode():
-    paused_str = (
-        "⏸ PAUSED" if state_manager.is_paused
-        else "▶️ AUTO"
-    )
-    trade_str = "IN TRADE" if not state_manager.is_idle else "IDLE"
-
+    paused_str = "⏸ PAUSED" if state_manager.is_paused else "▶️ AUTO"
+    trade_str  = "IN TRADE" if not state_manager.is_idle else "IDLE"
     await send(
         f"⚙️ *Bot Configuration*\n\n"
         f"Mode:        `{'PAPER' if cfg.PAPER_TRADING else 'LIVE'}`\n"
@@ -1067,6 +898,7 @@ async def _cmd_brief():
 # ═══════════════════════════════════════════════════════
 # ANALYSIS COMMANDS
 # ═══════════════════════════════════════════════════════
+
 async def _cmd_factors():
     from backtest.factor_analysis import run_factor_analysis
     await send("⏳ Running factor analysis...")
@@ -1076,14 +908,12 @@ async def _cmd_factors():
         await send(
             f"⚠️ *Factor Analysis*\n\n"
             f"{result['error']}\n\n"
-            f"Need `{result.get('min_required', 200)}` "
-            f"closed trades minimum."
+            f"Need `{result.get('min_required', 200)}` closed trades minimum."
         )
         return
 
     total    = result.get("total", 0)
     wr       = result.get("overall_wr", 0)
-    reliable = result.get("reliable", False)
     rel_note = result.get("reliability", "")
     top      = result.get("top_factors", [])
     weak     = result.get("weak_factors", [])
@@ -1097,25 +927,15 @@ async def _cmd_factors():
     if top:
         lines.append("*Strong Edge:*")
         for f in top[:3]:
-            lines.append(
-                f"✅ `{f['factor']}` — "
-                f"edge: `+{f['edge']}%` "
-                f"({f['present_total']} trades)"
-            )
+            lines.append(f"✅ `{f['factor']}` — edge: `+{f['edge']}%` ({f['present_total']} trades)")
 
     if weak:
         lines.append("\n*Weak/No Edge:*")
         for f in weak[:3]:
-            lines.append(
-                f"⚠️ `{f['factor']}` — "
-                f"edge: `{f['edge']}%`"
-            )
+            lines.append(f"⚠️ `{f['factor']}` — edge: `{f['edge']}%`")
 
-    if not reliable:
-        lines.append(
-            f"\n_Need {200 - total} more trades "
-            f"for reliable conclusions_"
-        )
+    if not result.get("reliable"):
+        lines.append(f"\n_Need {200 - total} more trades for reliable conclusions_")
 
     await send("\n".join(lines))
 
@@ -1124,20 +944,15 @@ async def _cmd_backtest(coin: str):
     from backtest.engine import run_backtest
     await send(f"⏳ Running backtest for `{coin}`...")
     try:
-        result = run_backtest(
-            coin     = coin,
-            capital  = cfg.CAPITAL,
-            leverage = cfg.LEVERAGE
-        )
-
+        result = run_backtest(coin=coin, capital=cfg.CAPITAL, leverage=cfg.LEVERAGE)
         if "error" in result:
             await send(f"❌ Backtest failed: `{result['error']}`")
             return
 
+        bg = result.get("by_grade", {})
         await send(
             f"📊 *Backtest — {coin}USDT*\n\n"
-            f"Period: `{result.get('period_start')} → "
-            f"{result.get('period_end')}`\n\n"
+            f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
             f"Signals:  `{result.get('total_signals', 0)}`\n"
             f"Trades:   `{result.get('total_trades', 0)}`\n"
             f"Wins:     `{result.get('wins', 0)}`\n"
@@ -1149,10 +964,8 @@ async def _cmd_backtest(coin: str):
             f"Max DD:   `{result.get('max_drawdown', 0)}%`\n"
             f"Expect:   `${result.get('expectancy', 0)}`\n\n"
             f"*By Grade*\n"
-            f"A+: `{result.get('by_grade',{}).get('A+',{}).get('win_rate',0)}% WR` · "
-            f"`{result.get('by_grade',{}).get('A+',{}).get('trades',0)} trades`\n"
-            f"A:  `{result.get('by_grade',{}).get('A',{}).get('win_rate',0)}% WR` · "
-            f"`{result.get('by_grade',{}).get('A',{}).get('trades',0)} trades`\n"
+            f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
+            f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
         )
     except Exception as e:
         await send(f"❌ Backtest error: `{str(e)}`")
@@ -1192,23 +1005,15 @@ async def _cmd_scan():
     try:
         from alerts.scanner import scan_all_coins
         results   = await scan_all_coins()
-        tradeable = [
-            r for r in results
-            if r.get("grade") in ["A+", "A"] and
-            r.get("direction") in ["LONG", "SHORT"]
-        ]
-        aplus   = [r for r in tradeable if r.get("grade") == "A+"]
-        a       = [r for r in tradeable if r.get("grade") == "A"]
-        summary = (
-            f"✅ *Scan Complete*\n\n"
-            f"Coins scanned: `{len(results)}`\n"
-            f"A+ signals:    `{len(aplus)}`\n"
-            f"A signals:     `{len(a)}`\n\n"
-        )
+        tradeable = [r for r in results if r.get("grade") in ["A+", "A"] and r.get("direction") in ["LONG", "SHORT"]]
+        aplus     = [r for r in tradeable if r.get("grade") == "A+"]
+        a         = [r for r in tradeable if r.get("grade") == "A"]
+
+        summary = f"✅ *Scan Complete*\n\nCoins scanned: `{len(results)}`\nA+ signals:    `{len(aplus)}`\nA signals:     `{len(a)}`\n\n"
         if aplus:         summary += f"🏆 {len(aplus)} A+ found!\n"
         if a:             summary += f"✅ {len(a)} A found!\n"
         if not tradeable: summary += "😴 No tradeable signals found.\n"
-        summary += f"\nNext auto scan at next :00/:15/:30/:45 UTC"
+        summary += "\nNext auto scan at next :00/:15/:30/:45 UTC"
         await send(summary)
     except Exception as e:
         await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
@@ -1231,11 +1036,7 @@ async def _cmd_queue():
                 best_score = score
 
     if not best:
-        await send(
-            "📋 *Signal Queue*\n\n"
-            "No A/A+ signals in cache.\n"
-            "Use /scan to scan now."
-        )
+        await send("📋 *Signal Queue*\n\nNo A/A+ signals in cache.\nUse /scan to scan now.")
         return
 
     sig  = best.get("signal", {})
@@ -1310,14 +1111,10 @@ async def _cmd_help():
 
 
 # ═══════════════════════════════════════════════════════
-# SIGNAL ALERT — with inline keyboard
+# SIGNAL ALERT
 # ═══════════════════════════════════════════════════════
-async def send_signal(
-    signal:  dict,
-    coin:    str,
-    regime:  str,
-    session: str
-):
+
+async def send_signal(signal: dict, coin: str, regime: str, session: str):
     if signal.get("grade") not in ["A+", "A"]:
         return
     if signal.get("direction") not in ["LONG", "SHORT"]:
@@ -1325,12 +1122,7 @@ async def send_signal(
     if coin in _skip_reasons:
         return
 
-    sig_key = (
-        f"{coin}_"
-        f"{signal.get('direction')}_"
-        f"{signal.get('grade')}_"
-        f"{round(signal.get('entry', 0), 0)}"
-    )
+    sig_key = f"{coin}_{signal.get('direction')}_{signal.get('grade')}_{round(signal.get('entry', 0), 0)}"
     if sig_key in _sent_signals:
         return
     _sent_signals.add(sig_key)
@@ -1350,11 +1142,9 @@ async def send_signal(
     emoji     = "🏆" if grade == "A+" else "✅"
     dir_emoji = "📈" if direction == "LONG" else "📉"
 
-    explanation  = signal.get("explanation", {})
-    thesis       = explanation.get("thesis", "")
-    conf_label   = explanation.get("confidence_label", "")
-    thesis_block = f"\n*Why This Trade?*\n{thesis}\n" if thesis else ""
-    conf_block   = f"Confidence: `{conf_label} ({score}/100)`\n" if conf_label else ""
+    explanation = signal.get("explanation", {})
+    thesis      = explanation.get("thesis", "")
+    conf_label  = explanation.get("confidence_label", "")
 
     paused_note = (
         "\n⏸ _Auto-execution paused — tap Approve to enter_\n"
@@ -1365,7 +1155,7 @@ async def send_signal(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
-        f"{conf_block}"
+        f"{'Confidence: `' + conf_label + ' (' + str(score) + '/100)`' + chr(10) if conf_label else ''}"
         f"Regime:  `{regime}`\n"
         f"Session: `{session}`\n"
         f"Time:    `{now_ist()}`\n\n"
@@ -1378,7 +1168,7 @@ async def send_signal(
         f"Risk:    `${risk_amt:.2f}`\n"
         f"Size:    `${pos_size:.2f}`\n"
         f"Lev:     `{cfg.LEVERAGE}x`\n"
-        f"{thesis_block}"
+        f"{chr(10) + '*Why This Trade?*' + chr(10) + thesis + chr(10) if thesis else ''}"
         f"{paused_note}",
         keyboard=[
             [
@@ -1386,8 +1176,8 @@ async def send_signal(
                 {"text": "⚠️ Show Risks",   "callback_data": f"risks:{coin}"}
             ],
             [
-                {"text": "✅ Approve",       "callback_data": f"approve:{coin}"},
-                {"text": "❌ Skip",          "callback_data": f"skip:{coin}"}
+                {"text": "✅ Approve", "callback_data": f"approve:{coin}"},
+                {"text": "❌ Skip",    "callback_data": f"skip:{coin}"}
             ]
         ]
     )
@@ -1396,6 +1186,7 @@ async def send_signal(
 # ═══════════════════════════════════════════════════════
 # SCAN SUMMARY
 # ═══════════════════════════════════════════════════════
+
 async def send_scan_summary(results: list):
     tradeable = [
         r for r in results
@@ -1411,55 +1202,35 @@ async def send_scan_summary(results: list):
         ]
         for r in tradeable[:3]:
             g         = r.get("grade", "?")
-            emoji     = "🏆" if g == "A+" else "✅"
             direction = r.get("direction", "?")
-            dir_emoji = "📈" if direction == "LONG" else "📉"
             score     = r.get("score", 0)
             coin      = r.get("coin", "?")
-            expl      = r.get("explanation", {})
-            conf      = expl.get("confidence_label", "")
-            conf_str  = f" · {conf}" if conf else ""
+            conf      = r.get("explanation", {}).get("confidence_label", "")
+            emoji     = "🏆" if g == "A+" else "✅"
+            dir_emoji = "📈" if direction == "LONG" else "📉"
             lines.append(
-                f"{emoji} *{coin}* — Grade {g} "
-                f"({score}/100){conf_str}\n"
+                f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf if conf else ''}\n"
                 f"{dir_emoji} {direction}\n"
             )
 
         if not state_manager.is_idle:
             trade = state_manager.current_trade
-            lines.append(
-                f"\n⚡ Active trade: "
-                f"{trade.coin} {trade.direction}"
-            )
+            lines.append(f"\n⚡ Active trade: {trade.coin} {trade.direction}")
         else:
             lines.append(
-                f"\n💤 Bot "
-                f"{'PAUSED' if state_manager.is_paused else 'idle'}"
-                f" — "
+                f"\n💤 Bot {'PAUSED' if state_manager.is_paused else 'idle'} — "
                 f"{'tap Approve to enter' if state_manager.is_paused else 'will execute best signal'}"
             )
 
-        lines.append(
-            f"\nNext scan: next :00/:15/:30/:45 UTC"
-        )
+        lines.append("\nNext scan: next :00/:15/:30/:45 UTC")
         await send("\n".join(lines))
         return
 
-    # No tradeable signals — show closest
-    watching = [
-        r for r in results
-        if r.get("grade") == "B" and
-        r.get("direction") in ["LONG", "SHORT"]
-    ]
-    building = [
-        r for r in results
-        if r.get("grade") == "C"
-    ]
+    # No tradeable — show closest
+    watching = [r for r in results if r.get("grade") == "B" and r.get("direction") in ["LONG", "SHORT"]]
+    building = [r for r in results if r.get("grade") == "C"]
 
-    lines = [
-        f"😴 *No Tradeable Signals — {now_ist()}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-    ]
+    lines = [f"😴 *No Tradeable Signals — {now_ist()}*\n━━━━━━━━━━━━━━━━━━━━━━\n"]
 
     if watching:
         lines.append("*Closest Setups:*")
@@ -1467,41 +1238,25 @@ async def send_scan_summary(results: list):
             d      = r.get("direction", "?")
             s      = r.get("score", 0)
             em     = "📈" if d == "LONG" else "📉"
-            no_t   = r.get("no_trade", {})
-            hards  = no_t.get("hard_blocks", []) if no_t else []
+            hards  = (r.get("no_trade", {}) or {}).get("hard_blocks", [])
             reason = hards[0]["reason"] if hards else "setup building"
-            lines.append(
-                f"{em} `{r['coin']}` — B ({s}/100)\n"
-                f"_{reason}_\n"
-            )
-
-    if building and not watching:
+            lines.append(f"{em} `{r['coin']}` — B ({s}/100)\n_{reason}_\n")
+    elif building:
         lines.append("*Building:*")
         for r in building[:2]:
-            lines.append(
-                f"👁 `{r['coin']}` — "
-                f"C ({r.get('score',0)}/100)"
-            )
+            lines.append(f"👁 `{r['coin']}` — C ({r.get('score',0)}/100)")
+    else:
+        lines.append("No setups building across all coins.")
 
-    if not watching and not building:
-        lines.append(
-            "No setups building across all coins."
-        )
-
-    lines.append(
-        f"\nNext scan: next :00/:15/:30/:45 UTC"
-    )
+    lines.append("\nNext scan: next :00/:15/:30/:45 UTC")
     await send("\n".join(lines))
 
 
 # ═══════════════════════════════════════════════════════
-# PROGRESS UPDATE — called from price_feed milestones
+# PROGRESS UPDATE
 # ═══════════════════════════════════════════════════════
-async def send_progress_update(
-    trade,
-    current_price: float,
-    milestone_pct: int
-):
+
+async def send_progress_update(trade, current_price: float, milestone_pct: int):
     is_long  = trade.direction == "LONG"
     entry    = trade.entry_price
     tp1      = trade.tp1_price
@@ -1513,13 +1268,7 @@ async def send_progress_update(
         if is_long else
         (entry - current_price) / entry * trade.position_size
     )
-    pnl_str = f"+${upnl:.4f}" if upnl >= 0 else f"-${abs(upnl):.4f}"
-    health  = state_manager.health_state
-    h_emoji = (
-        "✅" if health == "HEALTHY"     else
-        "⚠️" if health == "WARNING"     else
-        "🚨"
-    )
+    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state_manager.health_state, "—")
 
     await send(
         f"⚡ *{trade.coin}USDT — {milestone_pct}% to TP1*\n\n"
@@ -1527,8 +1276,8 @@ async def send_progress_update(
         f"Entry:   `{entry}`\n"
         f"TP1:     `{tp1}` — `${dist_tp1:,.4f}` away\n"
         f"SL:      `{sl}`\n\n"
-        f"uPnL:    `{pnl_str}`\n"
-        f"{h_emoji} Health: `{health}`\n\n"
+        f"uPnL:    `{_pnl_str(upnl)}`\n"
+        f"{h_emoji} Health: `{state_manager.health_state}`\n\n"
         f"Type /status for full details"
     )
 
@@ -1536,6 +1285,7 @@ async def send_progress_update(
 # ═══════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════
+
 async def _show_active_thesis(coin: str):
     from data.cache import cache
     cached = cache.get(f"signal_{coin}")
@@ -1543,16 +1293,12 @@ async def _show_active_thesis(coin: str):
         await send(f"No cached data for {coin}.")
         return
 
-    expl   = cached.get("explanation", {})
-    thesis = expl.get("thesis", "")
-    risk   = expl.get("risk_thesis", "")
-    conf   = expl.get("confidence_label", "")
-
+    expl = cached.get("explanation", {})
     await send(
         f"📋 *Trade Thesis — {coin}USDT*\n\n"
-        f"Confidence: `{conf}`\n\n"
+        f"Confidence: `{expl.get('confidence_label', '--')}`\n\n"
         f"*Why This Trade:*\n"
-        f"{thesis or 'No thesis data'}\n\n"
+        f"{expl.get('thesis', 'No thesis data')}\n\n"
         f"*Risk Factors:*\n"
-        f"{risk or 'No risk data'}"
+        f"{expl.get('risk_thesis', 'No risk data')}"
     )
