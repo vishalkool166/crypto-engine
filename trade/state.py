@@ -16,9 +16,10 @@ class TradeState:
 class StateManager:
 
     def __init__(self):
-        self._active_trade:  Trade | None = None
-        self._health_state:  str          = "HEALTHY"
-        self._health_data:   dict         = {}
+        self._active_trade: Trade | None = None
+        self._health_state: str          = "HEALTHY"
+        self._health_data:  dict         = {}
+        self._paused:       bool         = False
         self._load_active_trade()
 
     def _load_active_trade(self):
@@ -43,7 +44,7 @@ class StateManager:
             finally:
                 db.close()
         except Exception as e:
-            log.warning(f"Could not load active trade (first run?): {e}")
+            log.warning(f"Could not load active trade: {e}")
             self._active_trade = None
 
     def _check_tp1_hit(self, trade: Trade) -> bool:
@@ -92,15 +93,27 @@ class StateManager:
     def health_data(self) -> dict:
         return self._health_data
 
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
     # ═══════════════════════════════════════════════════
-    # HEALTH STATE
-    # Updated by trade manager monitor loop.
-    # Never triggers auto-close — informs only.
+    # PAUSE / RESUME
+    # ═══════════════════════════════════════════════════
+    def pause(self):
+        self._paused = True
+        log.info("Bot paused — auto-execution disabled")
+
+    def resume(self):
+        self._paused = False
+        log.info("Bot resumed — auto-execution enabled")
+
+    # ═══════════════════════════════════════════════════
+    # HEALTH
     # ═══════════════════════════════════════════════════
     def update_health(self, health: dict):
         self._health_state = health.get("state", "HEALTHY")
         self._health_data  = health
-
         log.info(
             f"Health updated: {self._health_state} "
             f"warnings:{len(health.get('warnings', []))} "
@@ -246,7 +259,10 @@ class StateManager:
                 risk.trades_taken += 1
 
             db.commit()
-            log.info(f"Trade open recorded — trades today: {risk.trades_taken}")
+            log.info(
+                f"Trade open recorded — "
+                f"trades today: {risk.trades_taken}"
+            )
 
         except Exception as e:
             log.error(f"record_trade_open error: {e}")
@@ -279,7 +295,10 @@ class StateManager:
                 daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
                 if abs(risk.total_loss) >= daily_cap:
                     risk.cap_hit = True
-                    log.warning(f"Daily cap hit on partial: ${risk.total_loss:.4f}")
+                    log.warning(
+                        f"Daily cap hit on partial: "
+                        f"${risk.total_loss:.4f}"
+                    )
 
             db.commit()
             log.info(
@@ -318,7 +337,10 @@ class StateManager:
                 daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
                 if abs(risk.total_loss) >= daily_cap:
                     risk.cap_hit = True
-                    log.warning(f"Daily loss cap hit: ${abs(risk.total_loss):.4f}")
+                    log.warning(
+                        f"Daily loss cap hit: "
+                        f"${abs(risk.total_loss):.4f}"
+                    )
 
             db.commit()
             log.info(
@@ -329,39 +351,6 @@ class StateManager:
         except Exception as e:
             log.error(f"record_trade_close error: {e}")
             db.rollback()
-        finally:
-            db.close()
-
-    def get_daily_summary(self) -> dict:
-        db    = SessionLocal()
-        today = str(datetime.now(timezone.utc).date())
-        try:
-            risk      = db.query(DailyRisk).filter(
-                DailyRisk.date == today
-            ).first()
-            daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
-
-            if not risk:
-                return {
-                    "date":             today,
-                    "trades_taken":     0,
-                    "total_pnl":        0.0,
-                    "total_loss":       0.0,
-                    "cap_hit":          False,
-                    "remaining_trades": cfg.MAX_TRADES_PER_DAY,
-                    "remaining_loss":   daily_cap
-                }
-
-            return {
-                "date":             today,
-                "trades_taken":     risk.trades_taken,
-                "total_pnl":        round(risk.total_pnl, 4),
-                "total_loss":       round(risk.total_loss, 4),
-                "cap_hit":          risk.cap_hit,
-                "remaining_trades": max(0, cfg.MAX_TRADES_PER_DAY - risk.trades_taken),
-                "remaining_loss":   round(max(0, daily_cap - abs(risk.total_loss)), 4)
-            }
-
         finally:
             db.close()
 

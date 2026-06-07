@@ -141,7 +141,10 @@ def save_signal_to_db(
         db.add(row)
         db.commit()
         db.refresh(row)
-        log.info(f"Signal saved — ID:{row.id} {coin} Grade:{signal['grade']}")
+        log.info(
+            f"Signal saved — ID:{row.id} "
+            f"{coin} Grade:{signal['grade']}"
+        )
         return row.id
 
     except Exception as e:
@@ -159,26 +162,46 @@ async def _attempt_trade(signal: dict, coin: str):
 
     log.info(
         f"_attempt_trade: {coin} "
-        f"grade:{grade} direction:{direction} idle:{is_idle}"
+        f"grade:{grade} direction:{direction} "
+        f"idle:{is_idle} paused:{state_manager.is_paused}"
     )
+
+    if state_manager.is_paused:
+        log.info(
+            f"Auto-execution paused — "
+            f"signal skipped: {coin}"
+        )
+        return False
 
     grade_ok = grade in cfg.MIN_GRADE_TO_TRADE
     dir_ok   = direction in ["LONG", "SHORT"]
 
     if not grade_ok:
-        log.info(f"Trade blocked — grade {grade} not in {cfg.MIN_GRADE_TO_TRADE}")
+        log.info(
+            f"Trade blocked — grade {grade} "
+            f"not in {cfg.MIN_GRADE_TO_TRADE}"
+        )
         return False
 
     if not dir_ok:
-        log.info(f"Trade blocked — direction {direction} not LONG/SHORT")
+        log.info(
+            f"Trade blocked — direction "
+            f"{direction} not LONG/SHORT"
+        )
         return False
 
     if not is_idle:
         trade = state_manager.current_trade
-        log.info(f"Trade blocked — already in trade: {trade.coin if trade else 'unknown'}")
+        log.info(
+            f"Trade blocked — already in trade: "
+            f"{trade.coin if trade else 'unknown'}"
+        )
         return False
 
-    log.info(f"All gates passed — opening trade: {coin} {direction} Grade:{grade}")
+    log.info(
+        f"All gates passed — opening trade: "
+        f"{coin} {direction} Grade:{grade}"
+    )
     await trade_manager.open_trade(
         signal    = signal,
         signal_id = signal.get("db_id")
@@ -221,13 +244,11 @@ async def analyze_coin(
         btc_cached = cache.get("btc_1d_data")
         if btc_cached:
             btc_data = btc_cached
-            log.debug("BTC data from cache")
         else:
             try:
                 btc_raw  = await get_all_data("BTC")
                 btc_data = calculate_all(btc_raw["klines"]["1d"])
                 cache.set("btc_1d_data", btc_data, ttl=900)
-                log.debug("BTC data fetched and cached")
             except Exception:
                 btc_data = None
                 log.warning("BTC data fetch failed")
@@ -235,7 +256,11 @@ async def analyze_coin(
     btc_inst = (
         _btc_instability(btc_data)
         if btc_data
-        else {"stable": False, "warnings": ["BTC data unavailable"], "score": 0}
+        else {
+            "stable":   False,
+            "warnings": ["BTC data unavailable"],
+            "score":    0
+        }
     )
 
     market = {
@@ -291,10 +316,10 @@ async def analyze_coin(
         retest, btc_data,
         btc_inst, oi_matrix,
         news_filter,
-        wconf["norm_score"]
+        wconf["norm_score"],
+        coin
     )
 
-    # Pass all explanation inputs to generate_signal
     signal = generate_signal(
         d1d          = d1d,
         d4h          = d4h,
@@ -384,17 +409,15 @@ async def scan_all_coins() -> list:
     else:
         log.info("Scan — bot idle, looking for signals")
 
+    if state_manager.is_paused:
+        log.info("Scan — auto-execution paused, alerts only")
+
     log.info(f"Scanning Tier 1: {cfg.TIER1}")
     for coin in cfg.TIER1:
         try:
             r = await analyze_coin(coin)
             if "error" not in r:
                 results.append(r)
-            if not state_manager.is_idle:
-                log.info(
-                    f"Trade opened on {coin} — "
-                    f"continuing scan for alerts only"
-                )
             await asyncio.sleep(0.5)
         except Exception as e:
             log.error(f"Scan error {coin}: {e}")
@@ -423,7 +446,10 @@ def get_db_stats() -> dict:
     try:
         db       = SessionLocal()
         all_sigs = db.query(SignalModel).all()
-        closed   = [s for s in all_sigs if s.outcome not in ["pending", None]]
+        closed   = [
+            s for s in all_sigs
+            if s.outcome not in ["pending", None]
+        ]
         wins     = [s for s in closed if s.outcome == "win"]
 
         by_grade = {}
@@ -434,8 +460,12 @@ def get_db_stats() -> dict:
                 "total":     len(g_trades),
                 "wins":      len(g_wins),
                 "losses":    len(g_trades) - len(g_wins),
-                "win_rate":  round(len(g_wins) / len(g_trades) * 100, 1) if g_trades else 0,
-                "total_pnl": round(sum(s.pnl or 0 for s in g_trades), 2)
+                "win_rate":  round(
+                    len(g_wins) / len(g_trades) * 100, 1
+                ) if g_trades else 0,
+                "total_pnl": round(
+                    sum(s.pnl or 0 for s in g_trades), 2
+                )
             }
 
         return {
@@ -444,8 +474,12 @@ def get_db_stats() -> dict:
             "pending":   len(all_sigs) - len(closed),
             "wins":      len(wins),
             "losses":    len(closed) - len(wins),
-            "win_rate":  round(len(wins) / len(closed) * 100, 1) if closed else 0,
-            "total_pnl": round(sum(s.pnl or 0 for s in closed), 2),
+            "win_rate":  round(
+                len(wins) / len(closed) * 100, 1
+            ) if closed else 0,
+            "total_pnl": round(
+                sum(s.pnl or 0 for s in closed), 2
+            ),
             "by_grade":  by_grade
         }
 
