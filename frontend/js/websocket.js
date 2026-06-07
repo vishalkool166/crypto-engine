@@ -13,6 +13,7 @@ function startPriceSocket() {
 
   _socket.onopen = () => {
     setWsStatus(true)
+    console.log('WS connected:', WS_URL)
     _pingTimer = setInterval(() => {
       if (_socket?.readyState === WebSocket.OPEN) _socket.send('ping')
     }, 30000)
@@ -22,18 +23,25 @@ function startPriceSocket() {
     try {
       const d = JSON.parse(event.data)
       if (d.type === 'price') applyPriceUpdate(d)
-    } catch(e) {}
+    } catch(e) {
+      console.error('WS parse error:', e)
+    }
   }
 
-  _socket.onclose = () => {
+  _socket.onclose = (e) => {
+    console.log('WS closed:', e.code, e.reason)
     _cleanup()
     setWsStatus(false)
     if (S.data?.state !== 'idle') {
+      console.log('WS reconnecting in 3s...')
       _reconnectTimer = setTimeout(startPriceSocket, 3000)
     }
   }
 
-  _socket.onerror = () => _socket?.close()
+  _socket.onerror = (e) => {
+    console.error('WS error:', e)
+    _socket?.close()
+  }
 }
 
 function stopPriceSocket() {

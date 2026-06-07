@@ -77,7 +77,10 @@ def start_app():
     global APP_PROCESS
     log.info("Starting app...")
     APP_PROCESS = subprocess.Popen(
-        [sys.executable, "main.py"],
+        [sys.executable, "-m", "uvicorn", "main:app",
+         "--host", "0.0.0.0",
+         "--port", "8000",
+         "--log-level", "info"],
         cwd=os.path.dirname(os.path.abspath(__file__))
     )
     log.info(f"App started — PID:{APP_PROCESS.pid}")

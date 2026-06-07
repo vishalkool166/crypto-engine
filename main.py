@@ -29,6 +29,7 @@ _ws_clients: set = set()
 
 
 async def broadcast_price(coin: str, price: float):
+    log.info(f"broadcast called: {coin} {price:.4f} clients:{len(_ws_clients)}")
     if not _ws_clients:
         return
 
@@ -148,6 +149,16 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def no_cache_js(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.endswith(('.js', '.css')):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"]        = "no-cache"
+        response.headers["Expires"]       = "0"
+    return response
+
+
 @app.websocket("/ws/price")
 async def price_websocket(websocket: WebSocket):
     await websocket.accept()
@@ -180,6 +191,6 @@ if __name__ == "__main__":
         "main:app",
         host      = "0.0.0.0",
         port      = cfg.PORT,
-        reload    = cfg.ENV == "development",
+        reload    = False,
         log_level = "info"
     )
