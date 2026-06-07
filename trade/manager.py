@@ -27,12 +27,6 @@ class TradeManager:
     def __init__(self):
         self._last_db_update = 0
 
-    # ═══════════════════════════════════════════════════
-    # PRICE FEED CALLBACK
-    # Called by price_feed on every tick (~1s)
-    # Handles SL/TP detection in real time
-    # DB write throttled to every 10s
-    # ═══════════════════════════════════════════════════
     async def on_price_update(self, coin: str, price: float):
         if state_manager.is_idle:
             return
@@ -66,13 +60,17 @@ class TradeManager:
         def get_trade_from_db():
             db = SessionLocal()
             try:
-                return db.query(Trade).filter(Trade.id == trade.id).first()
+                return db.query(Trade).filter(
+                    Trade.id == trade.id
+                ).first()
             finally:
                 db.close()
 
         if not tp1_already_hit:
             if trade.sl_order_id:
-                sl_status = get_order_status(trade.coin, str(trade.sl_order_id))
+                sl_status = get_order_status(
+                    trade.coin, str(trade.sl_order_id)
+                )
                 if sl_status and sl_status["status"] == "closed":
                     log.info(f"SL hit: {trade.coin} @ {current_price}")
                     await self._close_trade(
@@ -85,14 +83,20 @@ class TradeManager:
                     return
 
             if trade.tp1_order_id:
-                tp1_status = get_order_status(trade.coin, str(trade.tp1_order_id))
+                tp1_status = get_order_status(
+                    trade.coin, str(trade.tp1_order_id)
+                )
                 if tp1_status and tp1_status["status"] == "closed":
                     log.info(f"TP1 hit: {trade.coin} @ {current_price}")
-                    await self._handle_tp1_hit(get_trade_from_db(), current_price)
+                    await self._handle_tp1_hit(
+                        get_trade_from_db(), current_price
+                    )
                     return
         else:
             if trade.sl_order_id:
-                sl_status = get_order_status(trade.coin, str(trade.sl_order_id))
+                sl_status = get_order_status(
+                    trade.coin, str(trade.sl_order_id)
+                )
                 if sl_status and sl_status["status"] == "closed":
                     log.info(f"BE SL hit: {trade.coin}")
                     await self._close_trade(
@@ -105,7 +109,9 @@ class TradeManager:
                     return
 
             if trade.tp2_order_id:
-                tp2_status = get_order_status(trade.coin, str(trade.tp2_order_id))
+                tp2_status = get_order_status(
+                    trade.coin, str(trade.tp2_order_id)
+                )
                 if tp2_status and tp2_status["status"] == "closed":
                     log.info(f"TP2 hit: {trade.coin} @ {current_price}")
                     await self._close_trade(
@@ -156,7 +162,10 @@ class TradeManager:
 
         if not state_manager.is_idle:
             trade = state_manager.current_trade
-            log.info(f"Already in trade: {trade.coin if trade else 'unknown'}")
+            log.info(
+                f"Already in trade: "
+                f"{trade.coin if trade else 'unknown'}"
+            )
             return {"success": False, "reason": "Already in trade"}
 
         daily = state_manager.can_trade_today()
@@ -243,7 +252,9 @@ class TradeManager:
 
         if not sl_order:
             close_position_market(coin, direction, quantity)
-            await self._abort_trade(trade, "SL order failed — position closed")
+            await self._abort_trade(
+                trade, "SL order failed — position closed"
+            )
             return {"success": False, "reason": "SL order failed"}
 
         tp1_qty   = round(quantity * 0.70, 3)
@@ -334,7 +345,9 @@ class TradeManager:
                 oi_matrix       = cached.get("wconf", {}),
                 retest          = cached.get("retest", {}),
                 sweep           = cached.get("sweep", {}),
-                original_thesis = cached.get("explanation", {}).get("thesis", "")
+                original_thesis = cached.get(
+                    "explanation", {}
+                ).get("thesis", "")
             )
 
             prev_state = state_manager.health_state
@@ -343,8 +356,8 @@ class TradeManager:
             if health["state"] != prev_state:
                 await send(format_health_alert(health, coin))
                 log.info(
-                    f"Health: {prev_state} → {health['state']} "
-                    f"for {coin}"
+                    f"Health: {prev_state} → "
+                    f"{health['state']} for {coin}"
                 )
 
         except Exception as e:
@@ -353,9 +366,16 @@ class TradeManager:
     def _is_tp1_already_hit(self, trade: Trade) -> bool:
         if not trade.sl_price or not trade.entry_price:
             return False
-        return abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.001
+        return (
+            abs(trade.sl_price - trade.entry_price) /
+            trade.entry_price < 0.001
+        )
 
-    async def _handle_tp1_hit(self, trade: Trade, current_price: float):
+    async def _handle_tp1_hit(
+        self,
+        trade:         Trade,
+        current_price: float
+    ):
         qty_tp1, qty_tp2 = self._parse_quantities(trade)
 
         if trade.sl_order_id:
@@ -392,7 +412,11 @@ class TradeManager:
                 (trade.position_size * 0.70)
             )
 
-        tp1_pnl = round(tp1_pnl - (trade.position_size * 0.70) * TAKER_FEE * 2, 4)
+        tp1_pnl = round(
+            tp1_pnl -
+            (trade.position_size * 0.70) * TAKER_FEE * 2,
+            4
+        )
         state_manager.record_partial_pnl(tp1_pnl)
 
         log.info(
@@ -432,16 +456,26 @@ class TradeManager:
         )
 
         if trade.direction == "LONG":
-            gross_pnl = (exit_price - trade.entry_price) / trade.entry_price * active_size
+            gross_pnl = (
+                (exit_price - trade.entry_price) /
+                trade.entry_price * active_size
+            )
         else:
-            gross_pnl = (trade.entry_price - exit_price) / trade.entry_price * active_size
+            gross_pnl = (
+                (trade.entry_price - exit_price) /
+                trade.entry_price * active_size
+            )
 
-        pnl             = round(gross_pnl - active_size * TAKER_FEE * 2, 4)
+        pnl             = round(
+            gross_pnl - active_size * TAKER_FEE * 2, 4
+        )
         health_at_close = state_manager.health_state
 
         db = SessionLocal()
         try:
-            t                 = db.query(Trade).filter(Trade.id == trade.id).first()
+            t                 = db.query(Trade).filter(
+                Trade.id == trade.id
+            ).first()
             t.state           = TradeState.EXIT
             t.is_active       = False
             t.outcome         = outcome
@@ -470,7 +504,22 @@ class TradeManager:
         from trade.price_feed import price_feed
         await price_feed.stop()
 
-        await self._send_close_alert(trade, exit_price, pnl, outcome, close_reason)
+        await self._send_close_alert(
+            trade, exit_price, pnl, outcome, close_reason
+        )
+
+        # Post-trade debrief
+        try:
+            from alerts.briefing import send_post_trade_debrief
+            await send_post_trade_debrief(
+                trade            = trade,
+                outcome          = outcome,
+                pnl              = pnl,
+                close_reason     = close_reason,
+                health_at_close  = health_at_close
+            )
+        except Exception as e:
+            log.error(f"Post-trade debrief error: {e}")
 
         log.info(
             f"Trade closed: {trade.coin} "
@@ -487,14 +536,20 @@ class TradeManager:
         trade_id = state_manager.current_trade.id
         db       = SessionLocal()
         try:
-            trade = db.query(Trade).filter(Trade.id == trade_id).first()
+            trade = db.query(Trade).filter(
+                Trade.id == trade_id
+            ).first()
         finally:
             db.close()
 
         if not trade:
             return {"success": False, "reason": "Trade not found"}
 
-        for oid in [trade.sl_order_id, trade.tp1_order_id, trade.tp2_order_id]:
+        for oid in [
+            trade.sl_order_id,
+            trade.tp1_order_id,
+            trade.tp2_order_id
+        ]:
             if oid:
                 cancel_order(trade.coin, str(oid))
 
@@ -567,8 +622,8 @@ class TradeManager:
                 )
         except Exception:
             log.warning(
-                f"Quantity parse fallback used for trade "
-                f"{trade.id} — notes: {trade.notes}"
+                f"Quantity parse fallback: "
+                f"trade {trade.id} notes: {trade.notes}"
             )
 
         total = trade.position_size or 0

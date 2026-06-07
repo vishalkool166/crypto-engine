@@ -27,6 +27,14 @@ async def job_monitor():
         log.error(f"Monitor job error: {e}")
 
 
+async def job_morning_briefing():
+    try:
+        from alerts.briefing import send_morning_briefing
+        await send_morning_briefing()
+    except Exception as e:
+        log.error(f"Morning briefing error: {e}")
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -43,7 +51,9 @@ def get_next_scan_epoch() -> int:
     buckets = [0, 15, 30, 45]
     for b in buckets:
         if minute < b:
-            next_dt = now.replace(minute=b, second=0, microsecond=0)
+            next_dt = now.replace(
+                minute=b, second=0, microsecond=0
+            )
             return int(next_dt.timestamp() * 1000)
     next_hour = now.replace(
         hour=(now.hour + 1) % 24,
@@ -57,7 +67,10 @@ def get_next_scan_epoch() -> int:
 def start_scheduler():
     scheduler.add_job(
         job_scan,
-        trigger=CronTrigger(minute="0,15,30,45", timezone="UTC"),
+        trigger=CronTrigger(
+            minute="0,15,30,45",
+            timezone="UTC"
+        ),
         id="scan",
         replace_existing=True
     )
@@ -69,11 +82,23 @@ def start_scheduler():
         replace_existing=True
     )
 
+    # Morning briefing at 8:00 AM IST = 02:30 UTC
+    scheduler.add_job(
+        job_morning_briefing,
+        trigger=CronTrigger(
+            hour=2, minute=30,
+            timezone="UTC"
+        ),
+        id="morning_briefing",
+        replace_existing=True
+    )
+
     scheduler.start()
     log.info(
         f"Scheduler started — UTC — "
         f"scan: :00/:15/:30/:45 — "
         f"monitor: 1m — "
+        f"briefing: 08:00 IST — "
         f"next scan: {get_next_scan_time()}"
     )
 
