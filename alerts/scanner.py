@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import time
 from config import cfg
 from data.cache import cache
+from data.validator import validate_all_timeframes
 from database import get_session, Signal as SignalModel
 from engines.indicators import calculate_all
 from engines.regime import detect_regime, assess_btc_stability
@@ -19,6 +21,9 @@ from trade.state import state_manager
 from trade.manager import trade_manager
 
 log = logging.getLogger(__name__)
+
+CACHE_TTL        = 1500
+TRADE_MAX_AGE    = 300
 
 
 def _interpret_oi(market: dict) -> dict:
@@ -76,6 +81,12 @@ def _extract_key_levels(d1d_df, d1w_df) -> dict:
         "pwh": float(d1w_df.iloc[-2]["high"])  if len(d1w_df) >= 2 else 0,
         "pwl": float(d1w_df.iloc[-2]["low"])   if len(d1w_df) >= 2 else 0,
     }
+
+
+def _is_cache_fresh_for_trade(cached: dict) -> bool:
+    cached_at = cached.get("cached_at", 0)
+    age       = time.time() - cached_at
+    return age <= TRADE_MAX_AGE
 
 
 def save_signal_to_db(
@@ -159,6 +170,10 @@ async def _attempt_trade(signal: dict, coin: str):
         log.info(f"Trade blocked — already in trade: {trade.coin if trade else 'unknown'}")
         return False
 
+    if signal.get("signal_type") == "PORTFOLIO_BLOCK":
+        log.info(f"Trade blocked — portfolio: {signal.get('portfolio_reason', 'unknown')}")
+        return False
+
     log.info(f"All gates passed — opening trade: {coin} {direction} Grade:{grade}")
     await trade_manager.open_trade(signal=signal, signal_id=signal.get("db_id"))
     return True
@@ -172,10 +187,21 @@ async def analyze_coin(
 
     cached = cache.get(f"signal_{coin}")
     if cached:
-        log.debug(f"Cache hit: {coin}")
         signal = cached.get("signal", {})
-        await _attempt_trade(signal, coin)
-        return cached
+        grade  = signal.get("grade", "F")
+
+        if grade in cfg.MIN_GRADE_TO_TRADE and signal.get("direction") in ["LONG", "SHORT"]:
+            if _is_cache_fresh_for_trade(cached):
+                log.debug(f"Cache hit fresh: {coin}")
+                await _attempt_trade(signal, coin)
+                return cached
+            else:
+                age = round(time.time() - cached.get("cached_at", 0))
+                log.info(f"Cache stale for trade ({age}s old) — refetching: {coin}")
+                cache.clear(f"signal_{coin}")
+        else:
+            log.debug(f"Cache hit: {coin}")
+            return cached
 
     try:
         from data.fetcher import get_all_data
@@ -187,6 +213,19 @@ async def analyze_coin(
     klines      = raw["klines"]
     news_filter = raw["news_filter"]
     df_15m      = raw.get("klines_15m")
+
+    validation = validate_all_timeframes(klines, coin)
+
+    if not validation["valid"]:
+        error_msg = " | ".join(validation["errors"])
+        log.error(f"Data validation failed: {coin} — {error_msg}")
+        return {"coin": coin, "error": f"Data quality failure: {error_msg}"}
+
+    klines = validation["klines"]
+
+    for tf, report in validation["reports"].items():
+        if report.get("issues") and report.get("valid"):
+            log.info(f"Data cleaned: {coin} {tf} — {report['issues']}")
 
     d1w = calculate_all(klines["1w"])
     d1d = calculate_all(klines["1d"])
@@ -259,7 +298,8 @@ async def analyze_coin(
         news_filter,
         wconf["norm_score"],
         coin=coin,
-        d1w=d1w
+        d1w=d1w,
+        wconf=wconf
     )
 
     signal = generate_signal(
@@ -302,35 +342,51 @@ async def analyze_coin(
         signal["db_id"] = db_id
 
     result = {
-        "coin":         coin,
-        "grade":        signal["grade"],
-        "score":        signal["score"],
-        "direction":    signal["direction"],
-        "signal":       signal,
-        "market":       market,
-        "regime":       regime["label"],
-        "session":      session["name"],
-        "d1d":          d1d,
-        "d4h":          d4h,
-        "d1h":          d1h,
-        "d1w":          d1w,
-        "key_levels":   key_levels,
-        "sweep":        sweep,
-        "retest":       retest,
-        "displacement": disp,
-        "wconf":        wconf,
-        "oi_matrix":    oi_matrix,
-        "no_trade":     no_trade,
-        "news_filter":  news_filter,
-        "explanation":  signal.get("explanation", {})
+        "coin":              coin,
+        "grade":             signal["grade"],
+        "score":             signal["score"],
+        "direction":         signal["direction"],
+        "signal":            signal,
+        "market":            market,
+        "regime":            regime["label"],
+        "session":           session["name"],
+        "d1d":               d1d,
+        "d4h":               d4h,
+        "d1h":               d1h,
+        "d1w":               d1w,
+        "key_levels":        key_levels,
+        "sweep":             sweep,
+        "retest":            retest,
+        "displacement":      disp,
+        "wconf":             wconf,
+        "oi_matrix":         oi_matrix,
+        "no_trade":          no_trade,
+        "news_filter":       news_filter,
+        "explanation":       signal.get("explanation", {}),
+        "market_score":      wconf.get("market_score", 0),
+        "entry_score":       wconf.get("entry_score",  0),
+        "market_blocked":    no_trade.get("market_blocked",    False),
+        "entry_blocked":     no_trade.get("entry_blocked",     False),
+        "portfolio_blocked": no_trade.get("portfolio_blocked", False),
+        "cached_at":         time.time(),
+        "data_quality": {
+            tf: {
+                "valid":   r["valid"],
+                "clean":   r["clean"],
+                "issues":  r["issues"],
+                "removed": r["removed"]
+            }
+            for tf, r in validation["reports"].items()
+        }
     }
 
-    cache.set(f"signal_{coin}", result, ttl=1500)
+    cache.set(f"signal_{coin}", result, ttl=CACHE_TTL)
 
     traded = await _attempt_trade(signal, coin)
 
     if not traded and signal.get("grade") in ["A+", "A"]:
-        await send_signal(signal, coin, regime["label"], session["name"])
+        if signal.get("direction") in ["LONG", "SHORT"]:
+            await send_signal(signal, coin, regime["label"], session["name"])
 
     return result
 
@@ -351,10 +407,14 @@ async def scan_all_coins() -> list:
     if not btc_cached:
         try:
             from data.fetcher import get_all_data
-            btc_raw  = await get_all_data("BTC")
-            btc_data = calculate_all(btc_raw["klines"]["1d"])
-            cache.set("btc_1d_data", btc_data, ttl=900)
-            log.info("BTC data pre-fetched for scan")
+            btc_raw        = await get_all_data("BTC")
+            btc_validation = validate_all_timeframes(btc_raw["klines"], "BTC")
+            if btc_validation["valid"]:
+                btc_data = calculate_all(btc_validation["klines"]["1d"])
+                cache.set("btc_1d_data", btc_data, ttl=900)
+                log.info("BTC data pre-fetched and validated")
+            else:
+                log.warning(f"BTC validation failed: {btc_validation['errors']}")
         except Exception as e:
             log.warning(f"BTC pre-fetch failed: {e}")
 

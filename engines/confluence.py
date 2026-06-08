@@ -1,5 +1,27 @@
 from config import cfg
 
+MARKET_QUALITY_KEYS = [
+    "market_regime",
+    "weekly_filter",
+    "market_structure",
+    "btc_alignment",
+    "atr_volatility",
+    "rsi_context",
+    "funding_extreme",
+    "oi_behavior",
+    "volume_expansion",
+]
+
+ENTRY_OPPORTUNITY_KEYS = [
+    "liquidity_sweep",
+    "retest_confirmation",
+    "displacement",
+    "session_timing",
+    "rsi_divergence",
+    "macd_histogram",
+    "order_blocks",
+]
+
 
 def score_confluence(
     d1w, d1d, d4h, d1h,
@@ -33,7 +55,6 @@ def score_confluence(
         })
         total += e
 
-    # ── 1. Liquidity Sweep (12) ──
     sw_score = min(sweep.get("score", 0), W["liquidity_sweep"])
     add(
         "liquidity_sweep", "Liquidity Sweep",
@@ -44,7 +65,6 @@ def score_confluence(
         " · Intensity: " + f"{sweep.get('intensity', 0)}/10"
     )
 
-    # ── 2. Retest Confirmation (12) ──
     rt_score   = min(retest.get("score", 0), W["retest_confirmation"])
     retest_dir = retest.get("trade_dir", "")
 
@@ -67,7 +87,6 @@ def score_confluence(
         retest_detail
     )
 
-    # ── 3. Displacement (11) ──
     dp_score = min(displacement.get("score", 0), W["displacement"])
     add(
         "displacement", "Displacement",
@@ -76,7 +95,6 @@ def score_confluence(
         displacement.get("label", "None") + " — " + displacement.get("desc", "")
     )
 
-    # ── 4. Market Regime (10) ──
     add(
         "market_regime", "Market Regime",
         W["market_regime"] if regime["tradeable"] else 0,
@@ -85,7 +103,6 @@ def score_confluence(
         regime["label"] + " — " + regime["desc"]
     )
 
-    # ── 5. Weekly Filter (10) ──
     wk_cls    = d1w["trend"]["cls"]
     wk_aligned = (
         (wk_cls == "bull" and d1_cls == "bull") or
@@ -116,7 +133,6 @@ def score_confluence(
         wk_detail
     )
 
-    # ── 6. Market Structure (9) ──
     sb         = d1d["structure"]["struct_bias"]
     st_aligned = (
         (sb == "bull" and d1_cls == "bull") or
@@ -133,7 +149,6 @@ def score_confluence(
         f"Structure: {sb}"
     )
 
-    # ── 7. Session Timing (8) ──
     ss_score = round((session["score"] / 9) * W["session_timing"])
     add(
         "session_timing", "Session Timing",
@@ -142,7 +157,6 @@ def score_confluence(
         f"{session['name']} — {session['quality']}"
     )
 
-    # ── 8. BTC Alignment (8) ──
     btc_score  = 0
     btc_detail = ""
 
@@ -182,7 +196,6 @@ def score_confluence(
         btc_detail
     )
 
-    # ── 9. OI Behavior (7) ──
     oi_score = min(oi_matrix.get("primary_score", 0), W["oi_behavior"])
     add(
         "oi_behavior", "OI Behavior",
@@ -191,7 +204,6 @@ def score_confluence(
         oi_matrix.get("primary_label", "OI unclear")
     )
 
-    # ── 10. Volume Expansion (7) ──
     vr_4h = (
         d4h["cur_vol"] / d4h["vol_ma5"]
         if d4h.get("vol_ma5") and d4h["vol_ma5"] > 0 else 0
@@ -212,7 +224,6 @@ def score_confluence(
         f"4H vol {vr_4h*100:.0f}% of MA5 · 1D vol {vr_1d*100:.0f}% of MA5"
     )
 
-    # ── 11. Funding Rate (6) ──
     add(
         "funding_extreme", "Funding Rate",
         min(oi_matrix.get("funding_score", 6), W["funding_extreme"]),
@@ -222,7 +233,6 @@ def score_confluence(
         f"Funding {market['funding']*100:.4f}% — neutral"
     )
 
-    # ── 12. RSI Divergence (4) ──
     div      = d4h.get("divergence", {})
     div_type = div.get("type", "none")
     div_ok   = (
@@ -237,7 +247,6 @@ def score_confluence(
         f"4H: {div.get('label', 'None')}"
     )
 
-    # ── 13. ATR Volatility (3) ──
     atr    = d1d.get("atr") or 0
     ap     = (atr / d1_price * 100) if d1_price > 0 else 0
     atr_ok = 0.5 < ap < 5
@@ -249,7 +258,6 @@ def score_confluence(
         f"ATR {ap:.2f}% of price"
     )
 
-    # ── 14. RSI Context (2) ──
     rsi    = d1d.get("rsi")
     rsi_ok = (
         rsi is not None and (
@@ -265,7 +273,6 @@ def score_confluence(
         f"Daily RSI {rsi:.1f}" if rsi else "RSI N/A"
     )
 
-    # ── 15. MACD Histogram (1) ──
     macd    = d4h.get("macd")
     macd_ok = (
         macd is not None and (
@@ -284,7 +291,6 @@ def score_confluence(
         ) if macd else "N/A"
     )
 
-    # ── 16. Order Blocks (4) ──
     ob_max    = W.get("order_blocks", 4)
     ob_score  = 0
     ob_label  = "No OB detected"
@@ -335,9 +341,39 @@ def score_confluence(
     max_weight = cfg.MAX_WEIGHT
     norm_score = round((total / max_weight) * 100)
 
+    market_earned = sum(
+        f["earned"] for f in factors
+        if f["key"] in MARKET_QUALITY_KEYS
+    )
+    market_max = sum(
+        W[k] for k in MARKET_QUALITY_KEYS
+        if k in W
+    )
+    market_score = round(
+        (market_earned / market_max) * 100
+    ) if market_max > 0 else 0
+
+    entry_earned = sum(
+        f["earned"] for f in factors
+        if f["key"] in ENTRY_OPPORTUNITY_KEYS
+    )
+    entry_max = sum(
+        W[k] for k in ENTRY_OPPORTUNITY_KEYS
+        if k in W
+    )
+    entry_score = round(
+        (entry_earned / entry_max) * 100
+    ) if entry_max > 0 else 0
+
     return {
-        "factors":      factors,
-        "total_earned": total,
-        "max_possible": max_weight,
-        "norm_score":   norm_score
+        "factors":       factors,
+        "total_earned":  total,
+        "max_possible":  max_weight,
+        "norm_score":    norm_score,
+        "market_score":  market_score,
+        "entry_score":   entry_score,
+        "market_earned": market_earned,
+        "market_max":    market_max,
+        "entry_earned":  entry_earned,
+        "entry_max":     entry_max,
     }

@@ -481,8 +481,8 @@ document.addEventListener('keydown', e => {
 async function init() {
   startClock()
   startCountdown()
+  startDashboardSocket()
   await fetchDashboard()
-  restartPolling()
 }
 
 init()

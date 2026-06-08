@@ -306,6 +306,25 @@ def check_15m_entry(
     }
 
 
+def _determine_direction(d1d: dict, d4h: dict) -> str:
+    """
+    Determines intended trade direction from trend alignment.
+    Used when generating signal context even for blocked setups.
+    """
+    d1_cls = d1d["trend"]["cls"]
+    d4_cls = d4h["trend"]["cls"]
+
+    if d1_cls == "bull" and d4_cls == "bull":
+        return "LONG"
+    if d1_cls == "bear" and d4_cls == "bear":
+        return "SHORT"
+    if d1_cls == "bull":
+        return "LONG"
+    if d1_cls == "bear":
+        return "SHORT"
+    return "WATCH"
+
+
 def run_no_trade_engine(
     regime, d1d, d4h,
     market, session,
@@ -315,15 +334,42 @@ def run_no_trade_engine(
     oi_matrix, news_filter,
     base_score: float,
     coin: str = "",
-    d1w: dict = None
+    d1w: dict = None,
+    wconf: dict = None
 ) -> dict:
 
-    reasons       = []
-    score_penalty = 0
+    market_blocks    = []
+    entry_blocks     = []
+    portfolio_blocks = []
+    score_penalty    = 0
 
-    def hard(icon, reason, detail):
-        reasons.append({
+    d1_cls = d1d["trend"]["cls"]
+
+    def hard_market(icon, reason, detail):
+        market_blocks.append({
             "severity": "HARD",
+            "layer":    "market",
+            "icon":     icon,
+            "reason":   reason,
+            "detail":   detail
+        })
+
+    def hard_entry(icon, reason, detail, penalty=20):
+        nonlocal score_penalty
+        entry_blocks.append({
+            "severity": "HARD",
+            "layer":    "entry",
+            "icon":     icon,
+            "reason":   reason,
+            "detail":   detail,
+            "penalty":  penalty
+        })
+        score_penalty += penalty
+
+    def hard_portfolio(icon, reason, detail):
+        portfolio_blocks.append({
+            "severity": "HARD",
+            "layer":    "portfolio",
             "icon":     icon,
             "reason":   reason,
             "detail":   detail
@@ -331,7 +377,7 @@ def run_no_trade_engine(
 
     def soft(icon, reason, detail, penalty=4):
         nonlocal score_penalty
-        reasons.append({
+        market_blocks.append({
             "severity": "SOFT",
             "icon":     "⚠️",
             "reason":   reason,
@@ -340,55 +386,78 @@ def run_no_trade_engine(
         })
         score_penalty += penalty
 
-    d1_cls = d1d["trend"]["cls"]
-
     if regime["type"] == "chop":
-        hard("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
+        hard_market("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
 
     if d1w:
         wk_cls = d1w["trend"]["cls"]
-        if (wk_cls == "bear" and d1_cls == "bull") or (wk_cls == "bull" and d1_cls == "bear"):
-            hard("🚫", "Weekly gate BLOCKED", "Weekly and daily directly conflict.")
+        if (wk_cls == "bear" and d1_cls == "bull") or \
+           (wk_cls == "bull" and d1_cls == "bear"):
+            hard_market(
+                "🚫", "Weekly gate BLOCKED",
+                "Weekly and daily directly conflict."
+            )
 
     adx = d1d.get("adx")
     if adx is not None and adx < 18:
-        hard("🚫", f"ADX {adx:.1f} — no trend", "ADX below 18. Ranging market.")
+        hard_market(
+            "🚫", f"ADX {adx:.1f} — no trend",
+            "ADX below 18. Ranging market."
+        )
 
     fund = market["funding"] * 100
     if abs(fund) > 0.08:
-        hard("🚫", f"Extreme funding {fund:.4f}%", "Squeeze risk extremely high.")
+        hard_market(
+            "🚫", f"Extreme funding {fund:.4f}%",
+            "Squeeze risk extremely high."
+        )
 
     if news_filter and news_filter.get("blocked"):
         active_events = ", ".join(
             a["name"] for a in news_filter.get("alerts", [])
             if a.get("active")
         )
-        hard("🚫", "High-impact macro event ACTIVE",
-             active_events or "Check Finnhub calendar")
+        hard_market(
+            "🚫", "High-impact macro event ACTIVE",
+            active_events or "Check Finnhub calendar"
+        )
 
     if retest.get("failed"):
-        hard("🚫", "Retest zone FAILED",
-             "Zone invalidated — wait for new setup to form.")
+        hard_entry(
+            "🚫", "Retest zone FAILED",
+            "Zone invalidated — wait for new setup to form.",
+            penalty=20
+        )
 
     if (len(btc_instability.get("warnings", [])) >= 2 and
-            d1d.get("coin") != "BTC"):
-        hard("🚫", "BTC unstable",
-             " · ".join(btc_instability["warnings"][:2]))
+            coin != "BTC"):
+        hard_entry(
+            "🚫", "BTC unstable",
+            " · ".join(btc_instability["warnings"][:2]),
+            penalty=15
+        )
 
     if cfg.REQUIRE_SWEEP_OR_DISPLACEMENT:
         sweep_ok = sweep.get("score", 0) >= 6
         disp_ok  = displacement.get("score", 0) >= 6
         if not sweep_ok and not disp_ok:
-            hard("🚫", "Minimum condition not met",
-                 "Neither sweep nor displacement confirmed.")
+            hard_entry(
+                "🚫", "Minimum condition not met",
+                "Neither sweep nor displacement confirmed.",
+                penalty=25
+            )
 
     if not session.get("tradeable", True):
-        hard("🚫", f"{session['name']} — entries blocked", session["desc"])
+        hard_entry(
+            "🚫", f"{session['name']} — entries blocked",
+            session["desc"],
+            penalty=20
+        )
 
     if coin:
         corr = check_correlation(coin)
         if corr["blocked"]:
-            hard("🚫", "Correlation block", corr["reason"])
+            hard_portfolio("🚫", "Correlation block", corr["reason"])
 
     rsi = d1d.get("rsi")
     if rsi is not None:
@@ -431,20 +500,52 @@ def run_no_trade_engine(
         soft("⚠️", "4H structure conflicts daily",
              "Wait for 4H structure to align.", 3)
 
-    hard_blocks  = [r for r in reasons if r["severity"] == "HARD"]
-    soft_blocks  = [r for r in reasons if r["severity"] == "SOFT"]
-    adj_score    = max(0, base_score - score_penalty)
-    hard_blocked = len(hard_blocks) > 0
-    final_tier   = get_tier(adj_score, hard_blocked)
+    market_hard_blocked = len(market_blocks) > 0 and any(
+        b.get("severity") == "HARD" for b in market_blocks
+    )
+    entry_hard_blocked   = len(entry_blocks) > 0
+    portfolio_blocked    = len(portfolio_blocks) > 0
+
+    adj_score  = max(0, base_score - score_penalty)
+
+    market_score = wconf.get("market_score", 0) if wconf else 0
+    if market_score >= 70 and not market_hard_blocked:
+        adj_score = max(adj_score, 38)
+
+    final_tier = get_tier(adj_score, market_hard_blocked)
+
+    if portfolio_blocked and not market_hard_blocked and not entry_hard_blocked:
+        final_tier = {
+            **final_tier,
+            "signal_type":      "PORTFOLIO_BLOCK",
+            "portfolio_reason": portfolio_blocks[0]["reason"]
+        }
+
+    all_reasons = market_blocks + entry_blocks + portfolio_blocks
+
+    hard_blocks = [
+        r for r in all_reasons
+        if r.get("severity") == "HARD"
+    ]
+    soft_blocks = [
+        r for r in market_blocks
+        if r.get("severity") == "SOFT"
+    ]
 
     return {
-        "reasons":       reasons,
-        "hard_blocks":   hard_blocks,
-        "soft_blocks":   soft_blocks,
-        "score_penalty": score_penalty,
-        "adj_score":     adj_score,
-        "blocked":       hard_blocked,
-        "final_tier":    final_tier
+        "reasons":           all_reasons,
+        "hard_blocks":       hard_blocks,
+        "market_blocks":     [b for b in market_blocks if b.get("severity") == "HARD"],
+        "entry_blocks":      entry_blocks,
+        "portfolio_blocks":  portfolio_blocks,
+        "soft_blocks":       soft_blocks,
+        "score_penalty":     score_penalty,
+        "adj_score":         adj_score,
+        "blocked":           market_hard_blocked or entry_hard_blocked,
+        "market_blocked":    market_hard_blocked,
+        "entry_blocked":     entry_hard_blocked,
+        "portfolio_blocked": portfolio_blocked,
+        "final_tier":        final_tier
     }
 
 
@@ -477,6 +578,29 @@ def generate_signal(
 
     non_trade_type = tier["signal_type"]
 
+    if non_trade_type == "PORTFOLIO_BLOCK":
+        direction = _determine_direction(d1d, d4h)
+        result = {
+            **base,
+            "direction":        direction,
+            "dir_class":        "long" if direction == "LONG" else "short" if direction == "SHORT" else "watch",
+            "grade":            tier["label"],
+            "signal_type":      "PORTFOLIO_BLOCK",
+            "portfolio_reason": tier.get("portfolio_reason", "Portfolio blocked"),
+            "reason":           tier.get("portfolio_reason", "Portfolio blocked"),
+            "entry": price,
+            "sl":    None,
+            "tp1":   None,
+            "tp2":   None,
+        }
+        result["explanation"] = _attach_explanation(
+            result, sweep, displacement, retest,
+            d1d, d4h, btc_data, btc_inst,
+            oi_matrix, market, regime, session,
+            no_trade, wconf
+        )
+        return result
+
     if non_trade_type in ("HARD_BLOCK", "SKIP", "WATCH"):
         direction_map = {
             "HARD_BLOCK": ("NO TRADE", "notrade", "F"),
@@ -484,9 +608,18 @@ def generate_signal(
             "WATCH":      ("WATCH",    "watch",   "C"),
         }
         direction, dir_class, grade = direction_map[non_trade_type]
+
+        if non_trade_type in ("WATCH", "SKIP"):
+            intended = _determine_direction(d1d, d4h)
+            if intended in ("LONG", "SHORT"):
+                direction = intended
+                dir_class = "long" if intended == "LONG" else "short"
+
         reason = (
-            no_trade["hard_blocks"][0]["reason"]
-            if non_trade_type == "HARD_BLOCK" and no_trade["hard_blocks"]
+            no_trade["market_blocks"][0]["reason"]
+            if non_trade_type == "HARD_BLOCK" and no_trade.get("market_blocks")
+            else no_trade["entry_blocks"][0]["reason"]
+            if non_trade_type == "HARD_BLOCK" and no_trade.get("entry_blocks")
             else "Grade B — skipped" if non_trade_type == "SKIP"
             else "Setup building — not ready"
         )
@@ -513,7 +646,7 @@ def generate_signal(
        not (d1_cls == "bear" and d4_cls == "bear"):
         result = {
             **base,
-            "direction":   "WATCH",
+            "direction":   _determine_direction(d1d, d4h),
             "dir_class":   "watch",
             "tier":        get_tier(38, False),
             "grade":       "C",
@@ -542,7 +675,7 @@ def generate_signal(
     score_15m = score
     if not entry_15m["confirmed"]:
         score_15m = max(0, score - 5)
-        tier = get_tier(score_15m, len(no_trade["hard_blocks"]) > 0)
+        tier = get_tier(score_15m, no_trade.get("market_blocked", False))
 
     entry = (
         entry_15m["entry_price"]

@@ -9,11 +9,15 @@ _MINOR_WARNING_KEYS = [
     "btc neutral",
     "oi unclear",
     "near entry",
-    "approaching ob"
+    "approaching ob",
+    "minor headwind",
+    "weak trend",
+    "no directional conflict",
 ]
 
-_state_first_seen: dict = {}
 _DEBOUNCE_SECONDS = 120
+
+_state_first_seen: dict = {}
 
 
 def _is_minor(warning: str) -> bool:
@@ -22,6 +26,11 @@ def _is_minor(warning: str) -> bool:
 
 
 def _debounce_state(new_state: str, current_state: str) -> str:
+    """
+    Prevents rapid state oscillation.
+    INVALIDATED is immediate — no debounce.
+    WARNING and HEALTHY require persistence.
+    """
     if new_state == INVALIDATED:
         _state_first_seen.clear()
         return INVALIDATED
@@ -63,32 +72,88 @@ def check_trade_health(
     entry     = trade.entry_price
     is_long   = direction == "LONG"
 
+    atr = d1d.get("atr") or (entry * 0.015 if entry else 0)
+
     retest_zone = retest.get("zone")
     if retest_zone:
         zone_top    = retest_zone.get("top", 0)
         zone_bottom = retest_zone.get("bottom", 0)
-        if is_long and current_price < zone_bottom * 0.995:
-            failures.append("Retest zone broken — price closed below demand zone")
-        elif not is_long and current_price > zone_top * 1.005:
-            failures.append("Retest zone broken — price closed above supply zone")
+
+        atr_buffer = atr * 0.3 if atr > 0 else zone_bottom * 0.005
+
+        if is_long and current_price < zone_bottom - atr_buffer:
+            failures.append(
+                "Retest zone broken — price closed below demand zone "
+                f"by more than {atr_buffer:.4f}"
+            )
+        elif not is_long and current_price > zone_top + atr_buffer:
+            failures.append(
+                "Retest zone broken — price closed above supply zone "
+                f"by more than {atr_buffer:.4f}"
+            )
         else:
             checks.append("Retest zone holding")
     else:
         checks.append("No retest zone to monitor")
 
+    structure_events = d1d.get("structure", {}).get("events", [])
+
+    bos_against_thesis  = False
+    choch_against_thesis = False
+
+    for event in structure_events:
+        event_type = event.get("type", "")
+        event_bias = event.get("bias", "")
+        event_desc = event.get("desc", "")
+
+        if event_type == "BOS":
+            if is_long and event_bias == "bear":
+                failures.append(
+                    f"Bearish BOS formed — {event_desc or 'swing low broken'} "
+                    f"— long thesis invalidated"
+                )
+                bos_against_thesis = True
+            elif not is_long and event_bias == "bull":
+                failures.append(
+                    f"Bullish BOS formed — {event_desc or 'swing high broken'} "
+                    f"— short thesis invalidated"
+                )
+                bos_against_thesis = True
+
+        elif event_type == "CHoCH":
+            if is_long and event_bias == "bear":
+                warnings.append(
+                    f"Bearish CHoCH detected — {event_desc or 'potential reversal'} "
+                    f"— monitor closely"
+                )
+                choch_against_thesis = True
+            elif not is_long and event_bias == "bull":
+                warnings.append(
+                    f"Bullish CHoCH detected — {event_desc or 'potential reversal'} "
+                    f"— monitor closely"
+                )
+                choch_against_thesis = True
+
+    if not bos_against_thesis and not choch_against_thesis:
+        checks.append("No adverse BOS/CHoCH detected")
+
     struct_bias = d1d.get("structure", {}).get("struct_bias", "neutral")
     d1_cls      = d1d.get("trend",     {}).get("cls",          "neutral")
 
     if is_long:
-        if struct_bias == "bear":
-            failures.append("Daily structure flipped bearish — original thesis invalidated")
+        if struct_bias == "bear" and not bos_against_thesis:
+            failures.append(
+                "Daily structure flipped bearish — original thesis invalidated"
+            )
         elif d1_cls == "bear":
             warnings.append("Daily trend weakening — monitor closely")
         else:
             checks.append("Structure intact")
     else:
-        if struct_bias == "bull":
-            failures.append("Daily structure flipped bullish — original thesis invalidated")
+        if struct_bias == "bull" and not bos_against_thesis:
+            failures.append(
+                "Daily structure flipped bullish — original thesis invalidated"
+            )
         elif d1_cls == "bull":
             warnings.append("Daily trend weakening — monitor closely")
         else:
@@ -96,24 +161,49 @@ def check_trade_health(
 
     if btc_data:
         btc_cls = btc_data.get("trend", {}).get("cls", "neutral")
+        btc_adx = btc_data.get("adx", 0) or 0
+
         if is_long and btc_cls == "bear":
-            warnings.append("BTC flipped bearish — headwind for long")
+            if btc_adx > 25:
+                warnings.append(
+                    f"BTC strongly bearish (ADX {btc_adx:.0f}) "
+                    f"— significant headwind for long"
+                )
+            else:
+                checks.append(
+                    f"BTC bearish but weak trend (ADX {btc_adx:.0f}) "
+                    f"— minor headwind"
+                )
+
         elif not is_long and btc_cls == "bull":
-            warnings.append("BTC flipped bullish — headwind for short")
+            if btc_adx > 25:
+                warnings.append(
+                    f"BTC strongly bullish (ADX {btc_adx:.0f}) "
+                    f"— significant headwind for short"
+                )
+            else:
+                checks.append(
+                    f"BTC bullish but weak trend (ADX {btc_adx:.0f}) "
+                    f"— minor headwind"
+                )
+
         elif btc_cls == "neutral":
-            warnings.append("BTC neutral — no confirmation")
+            checks.append("BTC neutral — no directional conflict")
+
         else:
-            checks.append(f"BTC {btc_cls}ish — aligned")
+            checks.append(f"BTC {btc_cls}ish — aligned with thesis")
     else:
         checks.append("BTC data unavailable — skipped")
 
     oi_label = oi_matrix.get("primary_label", "")
     if "exhaust" in oi_label.lower():
-        warnings.append(f"OI exhaustion — {oi_label} — momentum may be fading")
+        warnings.append(
+            f"OI exhaustion — {oi_label} — momentum may be fading"
+        )
     elif "confirm" in oi_label.lower():
         checks.append(f"OI supporting — {oi_label}")
     else:
-        warnings.append(f"OI unclear — {oi_label}")
+        checks.append(f"OI unclear — {oi_label}")
 
     move_pct = (
         (current_price - entry) / entry * 100
@@ -121,14 +211,31 @@ def check_trade_health(
         else (entry - current_price) / entry * 100
     )
 
-    if move_pct > 0:
-        checks.append(f"Price {move_pct:.2f}% in profit direction")
-    elif move_pct > -0.5:
-        checks.append(f"Price near entry ({move_pct:.2f}%) — normal fluctuation")
-    elif move_pct > -2.0:
-        warnings.append(f"Price {abs(move_pct):.2f}% against entry — monitor SL")
+    adverse_move = (
+        (entry - current_price) if is_long
+        else (current_price - entry)
+    )
+    adverse_atr = adverse_move / atr if atr > 0 else 0
+
+    if adverse_atr <= 0:
+        checks.append(
+            f"Price {move_pct:.2f}% in profit direction"
+        )
+    elif adverse_atr < 0.3:
+        checks.append(
+            f"Price {abs(move_pct):.2f}% adverse "
+            f"({adverse_atr:.1f}x ATR) — normal fluctuation"
+        )
+    elif adverse_atr < 0.7:
+        warnings.append(
+            f"Price {abs(move_pct):.2f}% adverse "
+            f"({adverse_atr:.1f}x ATR) — monitor SL"
+        )
     else:
-        warnings.append(f"Price {abs(move_pct):.2f}% against entry — approaching SL territory")
+        warnings.append(
+            f"Price {abs(move_pct):.2f}% adverse "
+            f"({adverse_atr:.1f}x ATR) — approaching SL territory"
+        )
 
     funding = oi_matrix.get("funding_warning", "")
     if funding:
@@ -141,7 +248,20 @@ def check_trade_health(
             else ob_data.get("nearest_bear")
         )
         if nearest and nearest.get("mitigated"):
-            failures.append("Entry order block mitigated — institutional zone used up")
+            struct_also_failed = (
+                struct_bias == "bear" if is_long
+                else struct_bias == "bull"
+            )
+            if struct_also_failed:
+                failures.append(
+                    "Entry OB mitigated AND structure failed "
+                    "— institutional zone used up, thesis invalidated"
+                )
+            else:
+                warnings.append(
+                    "Entry OB mitigated — zone used up, "
+                    "monitor structure for continuation"
+                )
         elif nearest and nearest.get("in_zone"):
             checks.append("Price still in OB zone")
         elif nearest and nearest.get("approaching"):
@@ -152,9 +272,11 @@ def check_trade_health(
 
     if failures:
         raw_state = INVALIDATED
-    elif len(major_warnings) >= 1:
+    elif len(major_warnings) >= 2:
         raw_state = WARNING
-    elif len(minor_warnings) >= 3:
+    elif len(major_warnings) == 1 and len(minor_warnings) >= 2:
+        raw_state = WARNING
+    elif len(minor_warnings) >= 4:
         raw_state = WARNING
     else:
         raw_state = HEALTHY
@@ -169,8 +291,13 @@ def check_trade_health(
         "major_warnings":  major_warnings,
         "minor_warnings":  minor_warnings,
         "failures":        failures,
-        "summary":         _build_summary(state, checks, warnings, failures, original_thesis),
+        "summary":         _build_summary(
+            state, checks, warnings,
+            failures, original_thesis
+        ),
         "move_pct":        round(move_pct, 2),
+        "adverse_atr":     round(adverse_atr, 2),
+        "atr_used":        round(atr, 6),
         "checked_at":      datetime.now(timezone.utc).isoformat(),
         "is_healthy":      state == HEALTHY,
         "is_warning":      state == WARNING,
@@ -214,7 +341,10 @@ def _build_summary(
             "Bot will NOT auto-close — your decision."
         )
     elif state == WARNING:
-        lines.append("\nThesis weakening — monitor closely.\nNo action required yet.")
+        lines.append(
+            "\nThesis weakening — monitor closely.\n"
+            "No action required yet."
+        )
     else:
         lines.append("\nThesis intact. Hold position.")
 
@@ -249,11 +379,22 @@ def format_health_alert(health: dict, coin: str) -> str:
         for c in health["checks"]:
             lines.append(f"✔ {c}")
 
-    lines.append(f"\nMove: `{health['move_pct']:+.2f}%` from entry")
+    lines.append(
+        f"\nMove: `{health['move_pct']:+.2f}%` from entry"
+    )
+
+    if health.get("adverse_atr", 0) > 0:
+        lines.append(
+            f"Adverse: `{health['adverse_atr']:.1f}x ATR` from entry"
+        )
 
     if state == INVALIDATED:
-        lines.append("\n_Thesis invalidated. Use /close if you want to exit._")
+        lines.append(
+            "\n_Thesis invalidated. Use /close if you want to exit._"
+        )
     elif state == WARNING:
-        lines.append("\n_Thesis weakening. Monitor position._")
+        lines.append(
+            "\n_Thesis weakening. Monitor position._"
+        )
 
     return "\n".join(lines)
