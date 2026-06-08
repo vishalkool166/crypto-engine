@@ -3,6 +3,8 @@ import time
 import logging
 import sys
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,8 +15,7 @@ log = logging.getLogger(__name__)
 POLL_INTERVAL = 30
 APP_PROCESS   = None
 NGROK_PROCESS = None
-NGROK_DOMAIN  = "small-salaried-study.ngrok-free.dev"
-
+NGROK_DOMAIN = os.getenv("DOMAIN", "").replace("https://", "").replace("http://", "")
 
 def get_local_commit():
     result = subprocess.run(
