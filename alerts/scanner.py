@@ -3,7 +3,7 @@ import logging
 import time
 from config import cfg
 from data.cache import cache
-from data.validator import validate_all_timeframes
+from engines.validator import validate_all_timeframes
 from database import get_session, Signal as SignalModel
 from engines.indicators import calculate_all
 from engines.regime import detect_regime, assess_btc_stability
