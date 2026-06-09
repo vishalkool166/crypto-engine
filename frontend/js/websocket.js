@@ -17,7 +17,6 @@ function startPriceSocket() {
 
     _priceSocket.onopen = () => {
         setWsStatus(true)
-        log.debug('Price WS connected')
         _pingTimer = setInterval(() => {
             if (_priceSocket?.readyState === WebSocket.OPEN) {
                 _priceSocket.send('ping')
@@ -34,7 +33,7 @@ function startPriceSocket() {
         }
     }
 
-    _priceSocket.onclose = (e) => {
+    _priceSocket.onclose = () => {
         _cleanupPrice()
         setWsStatus(false)
         if (S.data === null || S.data?.state !== 'idle') {
@@ -80,7 +79,7 @@ function startDashboardSocket() {
         try {
             const d = JSON.parse(event.data)
             if (d.type === 'dashboard') {
-                _applyDashboardPush(d)
+                applyAndRender(d)
             }
         } catch(e) {
             console.error('Dashboard WS parse error:', e)
@@ -111,28 +110,6 @@ function _cleanupDash() {
         _dashSocket.close()
         _dashSocket = null
     }
-}
-
-
-function _applyDashboardPush(data) {
-    const { stateChanged, tradeChanged, healthChanged } = applyDashboard(data)
-
-    renderHeader(data.header)
-    renderStatusBar(data)
-    renderRisk(data.risk)
-    renderTrade(data.trade, data.state)
-    syncConnectionMode(data.state)
-    renderRadar(data.radar)
-    renderSignalQueue(data.queue)
-    renderPerformance(data.performance)
-
-    if ((data.history?.length || 0) !== S.lastHistoryLen) {
-        S.lastHistoryLen = data.history?.length || 0
-        renderHistory(data.history)
-        renderCharts(data.history)
-    }
-
-    setApiStatus(true)
 }
 
 

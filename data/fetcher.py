@@ -32,18 +32,50 @@ TF_LIMITS = {
     "15m": 200
 }
 
+_api_fail_count   = 0
+_api_fail_alerted = False
+
+
+async def _alert_api_failure(coin: str, error: str):
+    global _api_fail_count, _api_fail_alerted
+    _api_fail_count += 1
+    if _api_fail_count >= 3 and not _api_fail_alerted:
+        _api_fail_alerted = True
+        try:
+            from alerts.telegram import send
+            await send(
+                f"🚨 *Binance API Failures*\n\n"
+                f"Repeated failures fetching data.\n"
+                f"Last coin: `{coin}`\n"
+                f"Error: `{error}`\n\n"
+                f"Check API keys and connectivity."
+            )
+        except Exception:
+            pass
+
+
+def _reset_api_fail():
+    global _api_fail_count, _api_fail_alerted
+    _api_fail_count   = 0
+    _api_fail_alerted = False
+
 
 async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
     sym     = f"{coin}/USDT"
     limit   = limit or TF_LIMITS.get(tf, 1000)
     last_ts = get_last_timestamp(coin, tf)
 
-    if last_ts is None:
-        log.info(f"First fetch: {coin} {tf} — downloading {limit} candles")
-        raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], limit=limit)
-    else:
-        log.debug(f"Incremental fetch: {coin} {tf} since {last_ts}")
-        raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], since=last_ts, limit=100)
+    try:
+        if last_ts is None:
+            log.info(f"First fetch: {coin} {tf} — downloading {limit} candles")
+            raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], limit=limit)
+        else:
+            log.debug(f"Incremental fetch: {coin} {tf} since {last_ts}")
+            raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], since=last_ts, limit=100)
+        _reset_api_fail()
+    except Exception as e:
+        await _alert_api_failure(coin, str(e))
+        raise
 
     if raw:
         df_new = pd.DataFrame(
@@ -158,7 +190,7 @@ async def get_news_filter() -> dict:
 
         high_impact = [e for e in events if e.get("impact") == "high"]
         if not high_impact:
-            return {"clear": True, "blocked": False, "warning": False, "alerts": []}
+            return {"clear": True, "blocked": False, "warning": False, "alerts": [], "finnhub_ok": True}
 
         now     = datetime.now(timezone.utc)
         alerts  = []
@@ -192,20 +224,30 @@ async def get_news_filter() -> dict:
                 continue
 
         return {
-            "clear":   not blocked and not warning,
-            "blocked": blocked,
-            "warning": warning,
-            "alerts":  alerts
+            "clear":       not blocked and not warning,
+            "blocked":     blocked,
+            "warning":     warning,
+            "alerts":      alerts,
+            "finnhub_ok":  True
         }
 
     except Exception as e:
         log.warning(f"Finnhub failed: {e}")
-        return {"clear": True, "blocked": False, "warning": False, "alerts": []}
+        try:
+            from alerts.telegram import send
+            await send(
+                f"⚠️ *Finnhub Unavailable*\n\n"
+                f"News filter degraded — treating all times as news-clear.\n"
+                f"Error: `{str(e)[:100]}`"
+            )
+        except Exception:
+            pass
+        return {"clear": True, "blocked": False, "warning": False, "alerts": [], "finnhub_ok": False}
 
 
 async def get_15m_data(coin: str) -> pd.DataFrame:
     cache_key = f"15m_{coin}"
-    cached    = cache.get(cache_key)
+    cached    = cache.get_raw(cache_key)
     if cached is not None:
         return cached
     try:
@@ -218,7 +260,7 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
 
 
 async def get_all_data(coin: str) -> dict:
-    news_filter = cache.get("news_filter")
+    news_filter = cache.get_raw("news_filter")
 
     if news_filter:
         ticker, funding, oi, oi_chg, ls = await asyncio.gather(

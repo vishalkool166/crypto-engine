@@ -3,6 +3,7 @@ import logging
 import time
 import json
 import os
+import shutil
 from datetime import datetime
 from config import cfg
 
@@ -25,7 +26,8 @@ TAKER_FEE = 0.0006
 
 class PaperOrderStore:
 
-    STORE_FILE = "database/paper_orders.json"
+    STORE_FILE  = "database/paper_orders.json"
+    BACKUP_FILE = "database/paper_orders.backup.json"
 
     def __init__(self):
         self._orders:  dict = {}
@@ -40,22 +42,37 @@ class PaperOrderStore:
                     self._orders  = data.get("orders", {})
                     self._counter = data.get("counter", 1000)
                 log.info(f"Paper orders loaded: {len(self._orders)} orders")
-            else:
-                log.info("No paper orders file found — starting fresh")
+                return
         except Exception as e:
-            log.error(f"Paper store load error: {e}")
-            self._orders  = {}
-            self._counter = 1000
+            log.error(f"Paper store load error: {e} — attempting backup restore")
+
+        try:
+            if os.path.exists(self.BACKUP_FILE):
+                with open(self.BACKUP_FILE, "r") as f:
+                    data = json.load(f)
+                    self._orders  = data.get("orders", {})
+                    self._counter = data.get("counter", 1000)
+                log.info(f"Paper orders restored from backup: {len(self._orders)} orders")
+                self._save()
+                return
+        except Exception as e:
+            log.error(f"Backup restore failed: {e}")
+
+        log.info("No paper orders file found — starting fresh")
+        self._orders  = {}
+        self._counter = 1000
 
     def _save(self):
         try:
             os.makedirs("database", exist_ok=True)
+            data = {"orders": self._orders, "counter": self._counter}
             with open(self.STORE_FILE, "w") as f:
-                json.dump({"orders": self._orders, "counter": self._counter}, f, indent=2)
+                json.dump(data, f, indent=2)
+            shutil.copy2(self.STORE_FILE, self.BACKUP_FILE)
         except Exception as e:
             log.error(f"Paper store save error: {e}")
 
-    def create_order(
+    def _place_order(
         self,
         coin:       str,
         order_type: str,
@@ -92,6 +109,18 @@ class PaperOrderStore:
         )
         return order
 
+    def create_order(
+        self,
+        coin:       str,
+        order_type: str,
+        side:       str,
+        quantity:   float,
+        price:      float = None,
+        stop_price: float = None,
+        label:      str   = ""
+    ) -> dict:
+        return self._place_order(coin, order_type, side, quantity, price, stop_price, label)
+
     def get_order(self, order_id: str) -> dict:
         return self._orders.get(str(order_id))
 
@@ -120,7 +149,7 @@ class PaperOrderStore:
         if not order or order["status"] != "open":
             return False
 
-        stop = order.get("stop_price")
+        stop  = order.get("stop_price")
         if not stop:
             return False
 
@@ -205,7 +234,7 @@ def place_market_order(coin: str, direction: str, quantity: float) -> dict:
 
 
 def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) -> dict:
-    side  = "sell" if direction == "LONG" else "buy"
+    side = "sell" if direction == "LONG" else "buy"
     order = paper_store.create_order(
         coin=coin, order_type="STOP_MARKET",
         side=side, quantity=quantity,
@@ -222,7 +251,7 @@ def place_tp_order(
     tp_price:  float,
     label:     str = "TP"
 ) -> dict:
-    side  = "sell" if direction == "LONG" else "buy"
+    side = "sell" if direction == "LONG" else "buy"
     order = paper_store.create_order(
         coin=coin, order_type="TAKE_PROFIT_MARKET",
         side=side, quantity=quantity,

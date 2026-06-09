@@ -1,6 +1,7 @@
 import httpx
 import logging
 import time
+import asyncio
 from collections import deque
 from datetime import datetime, timezone, timedelta
 from fastapi import Request
@@ -8,7 +9,11 @@ from config import cfg
 from database import SessionLocal, Trade, get_session
 from trade.state import state_manager
 from alerts.utils import now_ist, grade_accuracy_str, categorize_results
-from config import cfg
+from data.cache import cache
+from trade.risk import risk_guard
+from alerts.scanner import get_db_stats
+from engines.signal import get_session as get_trading_session
+from trade.orders import get_current_price
 
 log = logging.getLogger(__name__)
 
@@ -53,15 +58,13 @@ def _next_dt(hour: int, minute: int = 0) -> datetime:
     return dt
 
 
-def _active_trade_guard(msg: str = "⚠️ No active trade.") -> Trade | None:
+def _active_trade_guard() -> Trade | None:
     if state_manager.is_idle:
         return None
     return state_manager.current_trade
 
 
 def _get_current_and_upnl(trade) -> tuple[float, float]:
-    from trade.orders import get_current_price
-    from trade.risk import risk_guard
     current = get_current_price(trade.coin)
     upnl    = risk_guard.calculate_unrealized_pnl(
         direction     = trade.direction,
@@ -74,6 +77,98 @@ def _get_current_and_upnl(trade) -> tuple[float, float]:
 
 def _pnl_str(pnl: float) -> str:
     return f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+
+
+def _health_emoji(state: str) -> str:
+    return {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state, "—")
+
+
+def _get_cached(coin: str) -> dict | None:
+    return cache.get_raw(f"signal_{coin}")
+
+
+def _all_cached_signals() -> list:
+    results = []
+    for coin in cfg.COINS:
+        cached = cache.get_raw(f"signal_{coin}")
+        if cached:
+            results.append(cached)
+    return results
+
+
+def _get_stats() -> tuple[dict, dict]:
+    return get_db_stats(), risk_guard.get_daily_stats()
+
+
+def _signal_keyboard(coin: str) -> list:
+    return [
+        [
+            {"text": "📊 Factors", "callback_data": f"factors:{coin}"},
+            {"text": "⚠️ Risks",   "callback_data": f"risks:{coin}"}
+        ],
+        [
+            {"text": "✅ Approve", "callback_data": f"approve:{coin}"},
+            {"text": "❌ Skip",    "callback_data": f"skip:{coin}"}
+        ]
+    ]
+
+
+def _grade_block(label: str, data: dict) -> str:
+    return (
+        f"*Grade {label}*\n"
+        f"Trades:   `{data.get('total', 0)}`\n"
+        f"Wins:     `{data.get('wins', 0)}`\n"
+        f"Losses:   `{data.get('losses', 0)}`\n"
+        f"Win Rate: `{data.get('win_rate', 0)}%`\n"
+        f"PnL:      `${data.get('total_pnl', 0)}`\n"
+    )
+
+
+def _build_pnl_message(stats: dict, risk_stats: dict) -> str:
+    return (
+        f"💰 *PnL Report*\n\n"
+        f"*Today*\n"
+        f"Trades:  `{risk_stats['trades_taken']}`\n"
+        f"{'📈' if risk_stats['total_pnl'] >= 0 else '📉'} PnL: `${risk_stats['total_pnl']}`\n"
+        f"Loss:    `${risk_stats['total_loss']}`\n"
+        f"Cap Hit: `{'YES 🚫' if risk_stats['cap_hit'] else 'NO ✅'}`\n\n"
+        f"*All Time*\n"
+        f"Total:   `{stats.get('closed', 0) + stats.get('pending', 0)}` signals\n"
+        f"Wins:    `{stats.get('wins', 0)}` · Losses: `{stats.get('losses', 0)}`\n"
+        f"WR:      `{stats.get('win_rate', 0)}%`\n"
+        f"PnL:     `${stats.get('total_pnl', 0)}`\n"
+    )
+
+
+def _build_risk_message(stats: dict) -> str:
+    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+    loss_pct  = abs(stats["total_loss"]) / daily_cap * 100 if daily_cap > 0 else 0
+    return (
+        f"🛡️ *Daily Risk State*\n\n"
+        f"Date:          `{stats['date']}`\n"
+        f"Trades taken:  `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
+        f"Trades left:   `{stats['remaining_trades']}`\n\n"
+        f"Loss today:    `${abs(stats['total_loss']):.4f}`\n"
+        f"Loss cap:      `${daily_cap:.4f}`\n"
+        f"Used:          `{loss_pct:.1f}%`\n"
+        f"Remaining:     `${stats['remaining_loss']:.4f}`\n\n"
+        f"PnL today:     `${stats['total_pnl']:.4f}`\n"
+        f"Cap status:    `{'🚫 HIT' if stats['cap_hit'] else '✅ ACTIVE'}`\n"
+        + (f"\n⚠️ *Approaching cap — {loss_pct:.0f}% used*" if stats.get("approaching_cap") else "")
+    )
+
+
+def _build_daily_message(stats: dict) -> str:
+    return (
+        f"📅 *Daily Summary*\n\n"
+        f"Date:      `{stats['date']}`\n"
+        f"Trades:    `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
+        f"PnL:       `${stats['total_pnl']}`\n"
+        f"Loss:      `${stats['total_loss']}`\n\n"
+        f"Remaining trades: `{stats['remaining_trades']}`\n"
+        f"Remaining loss:   `${stats['remaining_loss']}`\n"
+        f"Cap hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n"
+    )
 
 
 async def _post(endpoint: str, payload: dict):
@@ -127,6 +222,53 @@ async def register_webhook():
         log.error(f"Webhook register error: {e}")
 
 
+async def register_commands():
+    commands = [
+        {"command": "status",   "description": "Trade state + health"},
+        {"command": "thesis",   "description": "Why this trade exists"},
+        {"command": "health",   "description": "Full health engine output"},
+        {"command": "levels",   "description": "Price ladder + progress"},
+        {"command": "close",    "description": "Close trade with confirmation"},
+        {"command": "btc",      "description": "BTC analysis"},
+        {"command": "regime",   "description": "Regime across Tier1"},
+        {"command": "funding",  "description": "Funding rates"},
+        {"command": "fear",     "description": "Fear & greed index"},
+        {"command": "pnl",      "description": "Today + all time PnL"},
+        {"command": "history",  "description": "Last 5 closed trades"},
+        {"command": "stats",    "description": "Full all time stats"},
+        {"command": "streak",   "description": "Win/loss streak"},
+        {"command": "grade",    "description": "Grade accuracy"},
+        {"command": "risk",     "description": "Daily risk state"},
+        {"command": "session",  "description": "Current session"},
+        {"command": "daily",    "description": "Daily summary"},
+        {"command": "next",     "description": "Next scan + session times"},
+        {"command": "scan",     "description": "Trigger manual scan"},
+        {"command": "queue",    "description": "Best signal + approve/skip"},
+        {"command": "pause",    "description": "Pause auto-execution"},
+        {"command": "resume",   "description": "Resume auto-execution"},
+        {"command": "mode",     "description": "Current config"},
+        {"command": "brief",    "description": "Morning briefing now"},
+        {"command": "backtest", "description": "Backtest a coin"},
+        {"command": "factors",  "description": "Factor analysis"},
+        {"command": "debrief",  "description": "Last trade debrief"},
+        {"command": "help",     "description": "Full command list"},
+    ]
+    try:
+        async with httpx.AsyncClient() as client:
+            r    = await client.post(
+                f"{BASE}/setMyCommands",
+                json={"commands": commands},
+                timeout=10
+            )
+            data = r.json()
+            if data.get("ok"):
+                log.info("Telegram commands registered")
+            else:
+                log.error(f"Commands registration failed: {data}")
+    except Exception as e:
+        log.error(f"Commands register error: {e}")
+
+
 async def handle_webhook(request: Request):
     try:
         data = await request.json()
@@ -177,8 +319,7 @@ async def _handle_callback(callback: dict):
 
 
 async def _cb_show_factors(coin: str):
-    from data.cache import cache
-    cached = cache.get(f"signal_{coin}")
+    cached = _get_cached(coin)
     if not cached:
         await send(f"⚠️ No cached data for {coin}. Run /scan first.")
         return
@@ -205,8 +346,7 @@ async def _cb_show_factors(coin: str):
 
 
 async def _cb_show_risks(coin: str):
-    from data.cache import cache
-    cached = cache.get(f"signal_{coin}")
+    cached = _get_cached(coin)
     if not cached:
         await send(f"⚠️ No cached data for {coin}.")
         return
@@ -230,10 +370,9 @@ async def _cb_show_risks(coin: str):
 
 
 async def _cb_approve_signal(coin: str):
-    from data.cache import cache
     from trade.manager import trade_manager
 
-    cached = cache.get(f"signal_{coin}")
+    cached = _get_cached(coin)
     if not cached:
         await send(f"⚠️ Signal for {coin} expired. Run /scan for fresh data.")
         return
@@ -356,7 +495,6 @@ async def _cmd_status():
         return
 
     current, upnl = _get_current_and_upnl(trade)
-    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state_manager.health_state, "—")
 
     await send(
         f"📊 *Bot Status — IN TRADE*\n\n"
@@ -371,7 +509,7 @@ async def _cmd_status():
         f"TP2:     `{trade.tp2_price}`\n\n"
         f"{'📈' if upnl >= 0 else '📉'} uPnL: `${upnl}`\n"
         f"Risk:    `${trade.risk_amt}`\n"
-        f"{h_emoji} Health: `{state_manager.health_state}`\n"
+        f"{_health_emoji(state_manager.health_state)} Health: `{state_manager.health_state}`\n"
     )
 
 
@@ -391,9 +529,11 @@ async def _cmd_health():
     health  = state_manager.health_data
     state   = state_manager.health_state
     trade   = state_manager.current_trade
-    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state, "—")
 
-    lines = [f"{h_emoji} *Trade Health — {trade.coin if trade else '--'}*\n", f"Status: `{state}`\n"]
+    lines = [
+        f"{_health_emoji(state)} *Trade Health — {trade.coin if trade else '--'}*\n",
+        f"Status: `{state}`\n"
+    ]
 
     for label, items, icon in [
         ("*Invalidated:*", health.get("failures", []), "✘"),
@@ -476,8 +616,7 @@ async def _cmd_btc():
 
 
 async def _cmd_coin(coin: str):
-    from data.cache import cache
-    cached = cache.get(f"signal_{coin}")
+    cached = _get_cached(coin)
     if not cached:
         await send(f"No data for `{coin}`. Run /scan first.")
         return
@@ -526,33 +665,31 @@ async def _cmd_coin(coin: str):
     )
 
     if ob:
-        base += f"OB:      `{ob.get('label', '--')}`\n"
-        base += f"OB Score:`{ob.get('score', 0)}/10`\n"
+        base += (
+            f"OB:      `{ob.get('label', '--')}`\n"
+            f"OB Score:`{ob.get('score', 0)}/10`\n"
+        )
 
     await send(base)
 
 
 async def _cmd_regime():
-    from data.cache import cache
     lines = ["📈 *Market Regime — Tier 1*\n"]
     for coin in cfg.TIER1:
-        cached = cache.get(f"signal_{coin}")
+        cached = _get_cached(coin)
         if not cached:
             lines.append(f"`{coin}` — no data")
             continue
-        dir_   = cached.get("direction", "--")
-        em     = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
+        dir_ = cached.get("direction", "--")
+        em   = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
         lines.append(f"{em} `{coin}` — {cached.get('regime','--')} · Grade {cached.get('grade','F')}")
     await send("\n".join(lines))
 
 
 async def _cmd_funding():
-    from data.cache import cache
     lines = ["💸 *Funding Rates*\n"]
-    for coin in cfg.COINS:
-        cached = cache.get(f"signal_{coin}")
-        if not cached:
-            continue
+    for cached in _all_cached_signals():
+        coin    = cached.get("coin", "")
         funding = cached.get("market", {}).get("funding", 0) * 100
         flag    = "🚨" if abs(funding) > 0.08 else "⚠️" if abs(funding) > 0.05 else "✅"
         lines.append(f"{flag} `{coin}` — `{funding:.4f}%`")
@@ -580,30 +717,18 @@ async def _cmd_fear():
 
 
 async def _cmd_pnl():
-    from trade.risk import risk_guard
-    stats = risk_guard.get_daily_stats()
+    stats, risk_stats = _get_stats()
+    await send(_build_pnl_message(stats, risk_stats))
 
-    with get_session() as db:
-        all_trades = db.query(Trade).filter(Trade.outcome != "pending").all()
-        total_pnl  = sum(t.pnl or 0 for t in all_trades)
-        wins       = sum(1 for t in all_trades if t.outcome == "win")
-        losses     = sum(1 for t in all_trades if t.outcome == "loss")
-        total      = len(all_trades)
-        wr         = round(wins / total * 100, 1) if total else 0
 
-    await send(
-        f"💰 *PnL Report*\n\n"
-        f"*Today*\n"
-        f"Trades:  `{stats['trades_taken']}`\n"
-        f"{'📈' if stats['total_pnl'] >= 0 else '📉'} PnL: `${stats['total_pnl']}`\n"
-        f"Loss:    `${stats['total_loss']}`\n"
-        f"Cap Hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n\n"
-        f"*All Time*\n"
-        f"Total:   `{total}` trades\n"
-        f"Wins:    `{wins}` · Losses: `{losses}`\n"
-        f"WR:      `{wr}%`\n"
-        f"PnL:     `${round(total_pnl, 2)}`\n"
-    )
+async def _cmd_risk():
+    _, risk_stats = _get_stats()
+    await send(_build_risk_message(risk_stats))
+
+
+async def _cmd_daily():
+    _, risk_stats = _get_stats()
+    await send(_build_daily_message(risk_stats))
 
 
 async def _cmd_history():
@@ -629,8 +754,7 @@ async def _cmd_history():
 
 
 async def _cmd_stats():
-    from alerts.scanner import get_db_stats
-    stats = get_db_stats()
+    stats, _ = _get_stats()
     if not stats:
         await send("📊 No stats yet — no closed trades.")
         return
@@ -694,52 +818,18 @@ async def _cmd_streak():
 
 
 async def _cmd_grade():
-    from alerts.scanner import get_db_stats
-    stats = get_db_stats()
-    bg    = stats.get("by_grade", {}) if stats else {}
-    ap    = bg.get("A+", {})
-    a     = bg.get("A", {})
-
-    def grade_block(label, data):
-        return (
-            f"*Grade {label}*\n"
-            f"Trades:   `{data.get('total', 0)}`\n"
-            f"Wins:     `{data.get('wins', 0)}`\n"
-            f"Losses:   `{data.get('losses', 0)}`\n"
-            f"Win Rate: `{data.get('win_rate', 0)}%`\n"
-            f"PnL:      `${data.get('total_pnl', 0)}`\n"
-        )
+    stats, _ = _get_stats()
+    bg       = stats.get("by_grade", {}) if stats else {}
 
     await send(
         f"🏆 *Grade Accuracy*\n\n"
-        f"{grade_block('A+', ap)}\n"
-        f"{grade_block('A', a)}\n"
+        f"{_grade_block('A+', bg.get('A+', {}))}\n"
+        f"{_grade_block('A',  bg.get('A',  {}))}\n"
         f"_Minimum 50 trades for reliable data_"
     )
 
 
-async def _cmd_risk():
-    from trade.risk import risk_guard
-    stats     = risk_guard.get_daily_stats()
-    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
-    loss_pct  = abs(stats["total_loss"]) / daily_cap * 100 if daily_cap > 0 else 0
-
-    await send(
-        f"🛡️ *Daily Risk State*\n\n"
-        f"Date:          `{stats['date']}`\n"
-        f"Trades taken:  `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
-        f"Trades left:   `{stats['remaining_trades']}`\n\n"
-        f"Loss today:    `${abs(stats['total_loss']):.4f}`\n"
-        f"Loss cap:      `${daily_cap:.4f}`\n"
-        f"Used:          `{loss_pct:.1f}%`\n"
-        f"Remaining:     `${stats['remaining_loss']:.4f}`\n\n"
-        f"PnL today:     `${stats['total_pnl']:.4f}`\n"
-        f"Cap status:    `{'🚫 HIT' if stats['cap_hit'] else '✅ ACTIVE'}`\n"
-    )
-
-
 async def _cmd_session():
-    from engines.signal import get_session as get_trading_session
     session   = get_trading_session()
     hrs, mins = _mins_until(8)
     now       = datetime.now(timezone.utc)
@@ -756,24 +846,8 @@ async def _cmd_session():
     )
 
 
-async def _cmd_daily():
-    from trade.risk import risk_guard
-    stats = risk_guard.get_daily_stats()
-    await send(
-        f"📅 *Daily Summary*\n\n"
-        f"Date:      `{stats['date']}`\n"
-        f"Trades:    `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
-        f"PnL:       `${stats['total_pnl']}`\n"
-        f"Loss:      `${stats['total_loss']}`\n\n"
-        f"Remaining trades: `{stats['remaining_trades']}`\n"
-        f"Remaining loss:   `${stats['remaining_loss']}`\n"
-        f"Cap hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n"
-    )
-
-
 async def _cmd_next():
     from scheduler import get_next_scan_time
-    from engines.signal import get_session as get_trading_session
     session = get_trading_session()
     next_s  = get_next_scan_time()
     london  = _next_dt(8)
@@ -858,12 +932,14 @@ async def _cmd_factors():
     total    = result.get("total", 0)
     wr       = result.get("overall_wr", 0)
     rel_note = result.get("reliability", "")
+    source   = result.get("data_source", "proxy")
     top      = result.get("top_factors", [])
     weak     = result.get("weak_factors", [])
 
     lines = [
         f"🔬 *Factor Analysis*\n",
         f"Trades: `{total}` · WR: `{wr}%`\n",
+        f"Data: `{source}`\n",
         f"_{rel_note}_\n"
     ]
 
@@ -887,12 +963,16 @@ async def _cmd_backtest(coin: str):
     from backtest.engine import run_backtest
     await send(f"⏳ Running backtest for `{coin}`...")
     try:
-        result = run_backtest(coin=coin, capital=cfg.CAPITAL, leverage=cfg.LEVERAGE)
+        loop   = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, lambda: run_backtest(coin=coin, capital=cfg.CAPITAL, leverage=cfg.LEVERAGE)
+        )
         if "error" in result:
             await send(f"❌ Backtest failed: `{result['error']}`")
             return
 
         bg = result.get("by_grade", {})
+        pb = result.get("phase_breakdown", {})
         await send(
             f"📊 *Backtest — {coin}USDT*\n\n"
             f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
@@ -906,6 +986,8 @@ async def _cmd_backtest(coin: str):
             f"PF:       `{result.get('profit_factor', 0)}`\n"
             f"Max DD:   `{result.get('max_drawdown', 0)}%`\n"
             f"Expect:   `${result.get('expectancy', 0)}`\n\n"
+            f"*Phase Breakdown*\n"
+            f"TP1 hit: `{pb.get('tp1_hit_rate', 0)}%` · TP2 hit: `{pb.get('tp2_hit_rate', 0)}%`\n\n"
             f"*By Grade*\n"
             f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
             f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
@@ -960,20 +1042,17 @@ async def _cmd_scan():
 
 
 async def _cmd_queue():
-    from data.cache import cache
     best       = None
     best_score = 0
 
-    for coin in cfg.COINS:
-        if _is_skipped(coin):
+    for cached in _all_cached_signals():
+        if _is_skipped(cached.get("coin", "")):
             continue
-        cached = cache.get(f"signal_{coin}")
-        if cached:
-            score = cached.get("score", 0)
-            grade = cached.get("grade", "F")
-            if score > best_score and grade in ["A+", "A"]:
-                best       = cached
-                best_score = score
+        score = cached.get("score", 0)
+        grade = cached.get("grade", "F")
+        if score > best_score and grade in ["A+", "A"]:
+            best       = cached
+            best_score = score
 
     if not best:
         await send("📋 *Signal Queue*\n\nNo A/A+ signals in cache.\nUse /scan to scan now.")
@@ -996,16 +1075,7 @@ async def _cmd_queue():
             if not state_manager.is_idle else
             "Bot is idle — tap Approve to execute."
         ),
-        keyboard=[
-            [
-                {"text": "📊 Factors", "callback_data": f"factors:{coin}"},
-                {"text": "⚠️ Risks",   "callback_data": f"risks:{coin}"}
-            ],
-            [
-                {"text": "✅ Approve", "callback_data": f"approve:{coin}"},
-                {"text": "❌ Skip",    "callback_data": f"skip:{coin}"}
-            ]
-        ]
+        keyboard=_signal_keyboard(coin)
     )
 
 
@@ -1085,8 +1155,6 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         if state_manager.is_paused else ""
     )
 
-    from scheduler import get_next_scan_time
-
     await send_with_keyboard(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1106,16 +1174,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         f"Lev:     `{cfg.LEVERAGE}x`\n"
         f"{chr(10) + '*Why This Trade?*' + chr(10) + thesis + chr(10) if thesis else ''}"
         f"{paused_note}",
-        keyboard=[
-            [
-                {"text": "📊 Show Factors", "callback_data": f"factors:{coin}"},
-                {"text": "⚠️ Show Risks",   "callback_data": f"risks:{coin}"}
-            ],
-            [
-                {"text": "✅ Approve", "callback_data": f"approve:{coin}"},
-                {"text": "❌ Skip",    "callback_data": f"skip:{coin}"}
-            ]
-        ]
+        keyboard=_signal_keyboard(coin)
     )
 
 
@@ -1186,14 +1245,13 @@ async def send_progress_update(trade, current_price: float, milestone_pct: int):
     entry    = trade.entry_price
     tp1      = trade.tp1_price
     sl       = trade.sl_price
-    dist_tp1 = abs(tp1 - current_price) if tp1 else 0
 
     upnl = (
         (current_price - entry) / entry * trade.position_size
         if is_long else
         (entry - current_price) / entry * trade.position_size
     )
-    h_emoji = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(state_manager.health_state, "—")
+    dist_tp1 = abs(tp1 - current_price) if tp1 else 0
 
     await send(
         f"⚡ *{trade.coin}USDT — {milestone_pct}% to TP1*\n\n"
@@ -1202,14 +1260,13 @@ async def send_progress_update(trade, current_price: float, milestone_pct: int):
         f"TP1:     `{tp1}` — `${dist_tp1:,.4f}` away\n"
         f"SL:      `{sl}`\n\n"
         f"uPnL:    `{_pnl_str(upnl)}`\n"
-        f"{h_emoji} Health: `{state_manager.health_state}`\n\n"
+        f"{_health_emoji(state_manager.health_state)} Health: `{state_manager.health_state}`\n\n"
         f"Type /status for full details"
     )
 
 
 async def _show_active_thesis(coin: str):
-    from data.cache import cache
-    cached = cache.get(f"signal_{coin}")
+    cached = _get_cached(coin)
     if not cached:
         await send(f"No cached data for {coin}.")
         return

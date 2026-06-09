@@ -1,5 +1,6 @@
 import logging
 from database import SessionLocal, BacktestResult
+from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +21,7 @@ def build_report(
     timeouts = [t for t in trades if t["outcome"] == "timeout"]
 
     total    = len(trades)
-    win_rate = round(
-        len(wins) / total * 100, 1
-    ) if total else 0
+    win_rate = round(len(wins) / total * 100, 1) if total else 0
 
     pnls        = [t["pnl"] for t in trades]
     total_pnl   = round(sum(pnls), 4)
@@ -30,22 +29,13 @@ def build_report(
     worst_trade = round(min(pnls), 4)
     avg_trade   = round(sum(pnls) / len(pnls), 4)
 
-    max_dd = round(
-        max(
-            (t["drawdown"] for t in trades),
-            default=0
-        ), 2
-    )
+    max_dd = round(max((t["drawdown"] for t in trades), default=0), 2)
 
     aplus  = [t for t in trades if t["grade"] == "A+"]
     a_only = [t for t in trades if t["grade"] == "A"]
 
-    aplus_wins = [
-        t for t in aplus if t["outcome"] == "win"
-    ]
-    a_wins = [
-        t for t in a_only if t["outcome"] == "win"
-    ]
+    aplus_wins = [t for t in aplus  if t["outcome"] == "win"]
+    a_wins     = [t for t in a_only if t["outcome"] == "win"]
 
     period_start = trades[0]["date"]  if trades else "--"
     period_end   = trades[-1]["date"] if trades else "--"
@@ -55,36 +45,40 @@ def build_report(
 
     gross_profit  = sum(p for p in pnls if p > 0)
     gross_loss    = abs(sum(p for p in pnls if p < 0))
-    profit_factor = round(
-        gross_profit / gross_loss, 2
-    ) if gross_loss > 0 else 0
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0
 
-    # Expectancy per trade
     expectancy = round(
         (win_rate / 100 * avg_trade) -
         ((1 - win_rate / 100) * abs(worst_trade)),
         4
     )
 
+    tp1_trades  = [t for t in trades if t.get("tp1_hit")]
+    tp2_trades  = [t for t in trades if t.get("tp2_hit")]
+    be_trades   = [t for t in wins   if t.get("reason") == "TP1 + BE stop"]
+
+    phase_breakdown = {
+        "tp1_hit_count":  len(tp1_trades),
+        "tp2_hit_count":  len(tp2_trades),
+        "be_stop_count":  len(be_trades),
+        "tp1_hit_rate":   round(len(tp1_trades) / total * 100, 1) if total else 0,
+        "tp2_hit_rate":   round(len(tp2_trades) / total * 100, 1) if total else 0,
+        "be_stop_rate":   round(len(be_trades)  / total * 100, 1) if total else 0,
+    }
+
+    regime_breakdown  = _breakdown_by_field(trades, "regime")
+    session_breakdown = _breakdown_by_field(trades, "session")
+
     report = {
-        "coin":          coin,
-        "period_start":  period_start,
-        "period_end":    period_end,
-        "capital":       capital,
-        "final_equity":  round(final_equity, 4),
-        "total_return":  round(
-            (final_equity - capital) /
-            capital * 100, 2
-        ),
-        "total_signals": len(signals_log),
-        "aplus_signals": len(
-            [s for s in signals_log
-             if s["grade"] == "A+"]
-        ),
-        "a_signals": len(
-            [s for s in signals_log
-             if s["grade"] == "A"]
-        ),
+        "coin":               coin,
+        "period_start":       period_start,
+        "period_end":         period_end,
+        "capital":            capital,
+        "final_equity":       round(final_equity, 4),
+        "total_return":       round((final_equity - capital) / capital * 100, 2),
+        "total_signals":      len(signals_log),
+        "aplus_signals":      len([s for s in signals_log if s["grade"] == "A+"]),
+        "a_signals":          len([s for s in signals_log if s["grade"] == "A"]),
         "total_trades":       total,
         "wins":               len(wins),
         "losses":             len(losses),
@@ -99,28 +93,21 @@ def build_report(
         "expectancy":         expectancy,
         "max_consec_wins":    max_consec_wins,
         "max_consec_losses":  max_consec_losses,
+        "phase_breakdown":    phase_breakdown,
+        "regime_breakdown":   regime_breakdown,
+        "session_breakdown":  session_breakdown,
         "by_grade": {
             "A+": {
                 "trades":   len(aplus),
                 "wins":     len(aplus_wins),
-                "win_rate": round(
-                    len(aplus_wins) /
-                    len(aplus) * 100, 1
-                ) if aplus else 0,
-                "pnl": round(
-                    sum(t["pnl"] for t in aplus), 4
-                )
+                "win_rate": round(len(aplus_wins) / len(aplus) * 100, 1) if aplus else 0,
+                "pnl":      round(sum(t["pnl"] for t in aplus), 4)
             },
             "A": {
                 "trades":   len(a_only),
                 "wins":     len(a_wins),
-                "win_rate": round(
-                    len(a_wins) /
-                    len(a_only) * 100, 1
-                ) if a_only else 0,
-                "pnl": round(
-                    sum(t["pnl"] for t in a_only), 4
-                )
+                "win_rate": round(len(a_wins) / len(a_only) * 100, 1) if a_only else 0,
+                "pnl":      round(sum(t["pnl"] for t in a_only), 4)
             }
         },
         "trades": trades
@@ -129,20 +116,35 @@ def build_report(
     _save_to_db(report, coin)
 
     log.info(
-        f"Backtest: {coin} "
-        f"WR:{win_rate}% "
-        f"PnL:${total_pnl} "
-        f"PF:{profit_factor} "
-        f"Trades:{total}"
+        f"Backtest: {coin} WR:{win_rate}% "
+        f"PnL:${total_pnl} PF:{profit_factor} Trades:{total}"
     )
 
     return report
 
 
-def _max_consecutive(
-    trades: list,
-    outcome: str
-) -> int:
+def _breakdown_by_field(trades: list, field: str) -> dict:
+    breakdown = {}
+    for t in trades:
+        val = t.get(field, "unknown") or "unknown"
+        if val not in breakdown:
+            breakdown[val] = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+        breakdown[val]["trades"] += 1
+        if t["outcome"] == "win":
+            breakdown[val]["wins"] += 1
+        elif t["outcome"] == "loss":
+            breakdown[val]["losses"] += 1
+        breakdown[val]["pnl"] = round(breakdown[val]["pnl"] + t["pnl"], 4)
+
+    for val in breakdown:
+        t = breakdown[val]["trades"]
+        w = breakdown[val]["wins"]
+        breakdown[val]["win_rate"] = round(w / t * 100, 1) if t > 0 else 0
+
+    return breakdown
+
+
+def _max_consecutive(trades: list, outcome: str) -> int:
     max_c = 0
     cur_c = 0
     for t in trades:
@@ -176,7 +178,9 @@ def _save_to_db(report: dict, coin: str):
             notes         = (
                 f"PF:{report['profit_factor']} "
                 f"Return:{report['total_return']}% "
-                f"Expectancy:{report['expectancy']}"
+                f"Expectancy:{report['expectancy']} "
+                f"TP1rate:{report['phase_breakdown']['tp1_hit_rate']}% "
+                f"TP2rate:{report['phase_breakdown']['tp2_hit_rate']}%"
             )
         )
         db.add(row)

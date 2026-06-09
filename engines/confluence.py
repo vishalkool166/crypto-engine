@@ -30,7 +30,8 @@ def score_confluence(
     btc_instability, regime,
     sweep, displacement,
     retest, oi_matrix,
-    coin
+    coin,
+    btc_4h: dict = None
 ) -> dict:
 
     factors = []
@@ -172,21 +173,48 @@ def score_confluence(
             else btc_instability["warnings"][0]
         )
     elif btc_data:
-        btc_cls = btc_data["trend"]["cls"]
+        btc_1d_cls = btc_data["trend"]["cls"]
+        btc_4h_cls = btc_4h["trend"]["cls"] if btc_4h else None
+
+        if btc_4h_cls:
+            both_bull = btc_1d_cls == "bull" and btc_4h_cls == "bull"
+            both_bear = btc_1d_cls == "bear" and btc_4h_cls == "bear"
+            conflict  = (btc_1d_cls == "bull" and btc_4h_cls == "bear") or \
+                        (btc_1d_cls == "bear" and btc_4h_cls == "bull")
+
+            if both_bull or both_bear:
+                btc_aligned_cls = btc_1d_cls
+                alignment_mult  = 1.0
+                align_note      = f"BTC 1D+4H both {btc_1d_cls}"
+            elif conflict:
+                btc_aligned_cls = btc_1d_cls
+                alignment_mult  = 0.5
+                align_note      = f"BTC 1D {btc_1d_cls} but 4H {btc_4h_cls} — partial"
+            else:
+                btc_aligned_cls = btc_1d_cls
+                alignment_mult  = 0.75
+                align_note      = f"BTC 1D {btc_1d_cls}, 4H neutral"
+        else:
+            btc_aligned_cls = btc_1d_cls
+            alignment_mult  = 1.0
+            align_note      = f"BTC {btc_1d_cls}"
+
         ba      = (
-            (d1_cls == "bull" and btc_cls == "bull") or
-            (d1_cls == "bear" and btc_cls == "bear")
+            (d1_cls == "bull" and btc_aligned_cls == "bull") or
+            (d1_cls == "bear" and btc_aligned_cls == "bear")
         )
-        bn      = btc_cls == "neutral"
+        bn      = btc_aligned_cls == "neutral"
         penalty = len(btc_instability.get("warnings", [])) * 2
-        btc_score = (
-            max(0, W["btc_alignment"] - penalty) if ba else
-            max(0, 4 - penalty) if bn else 0
+
+        base_score = (
+            W["btc_alignment"] if ba else
+            4 if bn else 0
         )
+        btc_score  = max(0, round(base_score * alignment_mult) - penalty)
         btc_detail = (
-            f"BTC {btc_cls} — confirms" if ba else
+            f"{align_note} — confirms" if ba else
             "BTC neutral" if bn else
-            f"BTC {btc_cls} — conflicts"
+            f"{align_note} — conflicts"
         )
 
     add(
@@ -365,6 +393,9 @@ def score_confluence(
         (entry_earned / entry_max) * 100
     ) if entry_max > 0 else 0
 
+    btc_factor = next((f for f in factors if f["key"] == "btc_alignment"), None)
+    btc_score_val = btc_factor["earned"] if btc_factor else 0
+
     return {
         "factors":       factors,
         "total_earned":  total,
@@ -376,4 +407,5 @@ def score_confluence(
         "market_max":    market_max,
         "entry_earned":  entry_earned,
         "entry_max":     entry_max,
+        "btc_score":     btc_score_val,
     }

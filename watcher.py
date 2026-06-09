@@ -3,6 +3,7 @@ import time
 import logging
 import sys
 import os
+import httpx
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -12,10 +13,13 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-POLL_INTERVAL = 30
-APP_PROCESS   = None
-NGROK_PROCESS = None
-NGROK_DOMAIN = os.getenv("DOMAIN", "").replace("https://", "").replace("http://", "")
+POLL_INTERVAL   = 30
+TUNNEL_CHECK    = 300
+APP_PROCESS     = None
+NGROK_PROCESS   = None
+NGROK_DOMAIN    = os.getenv("DOMAIN", "").replace("https://", "").replace("http://", "")
+_last_tunnel_check = 0
+
 
 def get_local_commit():
     result = subprocess.run(
@@ -74,6 +78,26 @@ def stop_ngrok():
         log.info("Ngrok stopped")
 
 
+def restart_ngrok():
+    global NGROK_PROCESS
+    log.warning("Restarting ngrok tunnel...")
+    stop_ngrok()
+    time.sleep(2)
+    start_ngrok()
+
+
+def check_tunnel_health() -> bool:
+    if not NGROK_DOMAIN:
+        return True
+    try:
+        url = f"https://{NGROK_DOMAIN}/api/health"
+        r   = httpx.get(url, timeout=10)
+        return r.status_code == 200
+    except Exception as e:
+        log.warning(f"Tunnel health check failed: {e}")
+        return False
+
+
 def start_app():
     global APP_PROCESS
     log.info("Starting app...")
@@ -96,13 +120,19 @@ def stop_app():
 
 
 def main():
+    global _last_tunnel_check
+
     log.info("Watcher started")
     start_ngrok()
     install_requirements()
     start_app()
 
+    _last_tunnel_check = time.time()
+
     while True:
         time.sleep(POLL_INTERVAL)
+        now = time.time()
+
         try:
             local  = get_local_commit()
             remote = get_remote_commit()
@@ -118,6 +148,22 @@ def main():
 
         except Exception as e:
             log.error(f"Watcher error: {e}")
+
+        if now - _last_tunnel_check >= TUNNEL_CHECK:
+            _last_tunnel_check = now
+            try:
+                if not check_tunnel_health():
+                    log.warning("Tunnel unreachable — restarting ngrok")
+                    restart_ngrok()
+                    time.sleep(5)
+                    if check_tunnel_health():
+                        log.info("Tunnel restored")
+                    else:
+                        log.error("Tunnel still down after restart")
+                else:
+                    log.info("Tunnel healthy")
+            except Exception as e:
+                log.error(f"Tunnel check error: {e}")
 
 
 if __name__ == "__main__":

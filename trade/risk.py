@@ -17,13 +17,12 @@ class RiskGuard:
         leverage:   int   = cfg.LEVERAGE,
         confidence: float = 85.0
     ) -> dict:
-        sl_dist  = abs(entry - sl)
-        sl_pct   = sl_dist / entry
+        sl_dist = abs(entry - sl)
+        sl_pct  = sl_dist / entry
 
         if sl_pct == 0:
             return {"valid": False, "reason": "SL equals entry"}
 
-        # Dynamic risk scales with confidence score
         risk_pct = dynamic_risk_pct(confidence)
         risk_amt = capital * risk_pct
         pos_size = risk_amt / sl_pct
@@ -41,7 +40,6 @@ class RiskGuard:
                 "reason": f"Risk amount ${risk_amt:.2f} too small — fees will eat it"
             }
 
-        # Binance futures taker fee both sides
         fee_entry = pos_size * 0.0006
         fee_exit  = pos_size * 0.0006
         total_fee = fee_entry + fee_exit
@@ -99,7 +97,6 @@ class RiskGuard:
                 f"Extreme funding {funding:.4f}% — squeeze risk"
             )
 
-        # Pass confidence score for dynamic sizing
         confidence = signal.get("score", 85.0)
         sizing     = self.calculate_position(
             entry      = signal.get("entry", 0),
@@ -131,6 +128,8 @@ class RiskGuard:
                 DailyRisk.date == today
             ).first()
 
+            daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+
             if not risk:
                 return {
                     "date":             today,
@@ -139,10 +138,16 @@ class RiskGuard:
                     "total_loss":       0.0,
                     "cap_hit":          False,
                     "remaining_trades": cfg.MAX_TRADES_PER_DAY,
-                    "remaining_loss":   cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+                    "remaining_loss":   daily_cap,
+                    "approaching_cap":  False
                 }
 
-            daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+            loss_used_pct = abs(risk.total_loss) / daily_cap * 100 if daily_cap > 0 else 0
+            approaching   = loss_used_pct >= 80 and not risk.cap_hit
+
+            if approaching:
+                self._warn_approaching_cap(risk.total_loss, daily_cap)
+
             return {
                 "date":             today,
                 "trades_taken":     risk.trades_taken,
@@ -150,10 +155,33 @@ class RiskGuard:
                 "total_loss":       round(risk.total_loss, 4),
                 "cap_hit":          risk.cap_hit,
                 "remaining_trades": max(0, cfg.MAX_TRADES_PER_DAY - risk.trades_taken),
-                "remaining_loss":   round(max(0, daily_cap - abs(risk.total_loss)), 4)
+                "remaining_loss":   round(max(0, daily_cap - abs(risk.total_loss)), 4),
+                "approaching_cap":  approaching
             }
         finally:
             db.close()
+
+    def _warn_approaching_cap(self, total_loss: float, daily_cap: float):
+        try:
+            import asyncio
+            pct = abs(total_loss) / daily_cap * 100
+            asyncio.create_task(self._send_cap_warning(pct, total_loss, daily_cap))
+        except Exception:
+            pass
+
+    async def _send_cap_warning(self, pct: float, total_loss: float, daily_cap: float):
+        try:
+            from alerts.telegram import send
+            await send(
+                f"⚠️ *Daily Loss Cap Warning*\n\n"
+                f"Loss used: `{pct:.1f}%` of daily cap\n"
+                f"Lost today: `${abs(total_loss):.4f}`\n"
+                f"Cap limit:  `${daily_cap:.4f}`\n"
+                f"Remaining:  `${daily_cap - abs(total_loss):.4f}`\n\n"
+                f"_One more loss may hit the cap._"
+            )
+        except Exception:
+            pass
 
     def calculate_unrealized_pnl(
         self,

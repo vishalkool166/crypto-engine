@@ -11,12 +11,14 @@ from trade.orders import (
     get_current_price, close_position_market,
     calculate_quantity
 )
-from alerts.telegram import send, now_ist
+from alerts.telegram import send
+from alerts.utils import now_ist
 from config import cfg
 
 log = logging.getLogger(__name__)
 
-TAKER_FEE = 0.0006
+TAKER_FEE    = 0.0006
+ENTRY_TOL    = 0.003
 
 
 class TradeManager:
@@ -124,6 +126,16 @@ class TradeManager:
             log.info(f"Already in trade: {trade.coin if trade else 'unknown'}")
             return {"success": False, "reason": "Already in trade"}
 
+        current_price = get_current_price(signal.get("coin", ""))
+        if current_price and signal.get("entry"):
+            deviation = abs(current_price - signal["entry"]) / signal["entry"]
+            if deviation > ENTRY_TOL:
+                log.warning(
+                    f"Entry price stale at open_trade — "
+                    f"signal:{signal['entry']:.4f} current:{current_price:.4f}"
+                )
+                return {"success": False, "reason": f"Entry price moved {deviation*100:.2f}% — signal stale"}
+
         daily = state_manager.can_trade_today()
         if not daily["allowed"]:
             log.warning(f"Daily cap blocked: {daily['reason']}")
@@ -162,23 +174,37 @@ class TradeManager:
             )
             return {"success": False, "reason": "Quantity calculation failed"}
 
+        cached        = None
+        regime_label  = ""
+        session_label = ""
+        try:
+            from data.cache import cache
+            cached        = cache.get_raw(f"signal_{coin}")
+            regime_label  = cached.get("regime", "")  if cached else ""
+            session_label = cached.get("session", "") if cached else ""
+        except Exception:
+            pass
+
         with get_session() as db:
             trade = Trade(
-                signal_id     = signal_id,
-                coin          = coin,
-                direction     = direction,
-                grade         = signal["grade"],
-                state         = TradeState.ENTRY,
-                is_active     = True,
-                entry_price   = signal["entry"],
-                sl_price      = signal["sl"],
-                tp1_price     = signal["tp1"],
-                tp2_price     = signal["tp2"],
-                position_size = sizing["pos_size"],
-                margin_used   = sizing["margin"],
-                leverage      = cfg.LEVERAGE,
-                risk_amt      = sizing["risk_amt"],
-                trade_date    = str(datetime.now(timezone.utc).date())
+                signal_id        = signal_id,
+                coin             = coin,
+                direction        = direction,
+                grade            = signal["grade"],
+                state            = TradeState.ENTRY,
+                is_active        = True,
+                entry_price      = signal["entry"],
+                sl_price         = signal["sl"],
+                tp1_price        = signal["tp1"],
+                tp2_price        = signal["tp2"],
+                position_size    = sizing["pos_size"],
+                margin_used      = sizing["margin"],
+                leverage         = cfg.LEVERAGE,
+                risk_amt         = sizing["risk_amt"],
+                trade_date       = str(datetime.now(timezone.utc).date()),
+                regime_at_entry  = regime_label,
+                session_at_entry = session_label,
+                score_at_entry   = signal.get("score"),
             )
             db.add(trade)
             db.flush()
@@ -251,13 +277,83 @@ class TradeManager:
 
         return {"success": True, "trade_id": trade.id, "coin": coin, "direction": direction}
 
+    async def reconcile_orders(self, trade: Trade):
+        from trade.orders import paper_store
+        missing = []
+
+        if trade.sl_order_id:
+            o = paper_store.get_order(str(trade.sl_order_id))
+            if not o or o["status"] != "open":
+                missing.append("SL")
+        if trade.tp1_order_id and not state_manager.is_tp1_hit:
+            o = paper_store.get_order(str(trade.tp1_order_id))
+            if not o or o["status"] != "open":
+                missing.append("TP1")
+        if trade.tp2_order_id:
+            o = paper_store.get_order(str(trade.tp2_order_id))
+            if not o or o["status"] != "open":
+                missing.append("TP2")
+
+        if not missing:
+            return
+
+        log.warning(f"Reconcile: missing orders {missing} for {trade.coin} — recreating")
+
+        qty_tp1, qty_tp2 = self._parse_quantities(trade)
+        total_qty = qty_tp1 + qty_tp2
+
+        if "SL" in missing:
+            sl_qty = qty_tp2 if state_manager.is_tp1_hit else total_qty
+            new_sl = place_sl_order(
+                coin=trade.coin, direction=trade.direction,
+                quantity=sl_qty, sl_price=trade.sl_price
+            )
+            if new_sl:
+                with get_session() as db:
+                    t = db.query(Trade).filter(Trade.id == trade.id).first()
+                    if t:
+                        t.sl_order_id = str(new_sl["id"])
+                log.info(f"Reconcile: SL recreated id:{new_sl['id']}")
+
+        if "TP1" in missing and not state_manager.is_tp1_hit:
+            new_tp1 = place_tp_order(
+                coin=trade.coin, direction=trade.direction,
+                quantity=qty_tp1, tp_price=trade.tp1_price, label="TP1"
+            )
+            if new_tp1:
+                with get_session() as db:
+                    t = db.query(Trade).filter(Trade.id == trade.id).first()
+                    if t:
+                        t.tp1_order_id = str(new_tp1["id"])
+                log.info(f"Reconcile: TP1 recreated id:{new_tp1['id']}")
+
+        if "TP2" in missing:
+            new_tp2 = place_tp_order(
+                coin=trade.coin, direction=trade.direction,
+                quantity=qty_tp2, tp_price=trade.tp2_price, label="TP2"
+            )
+            if new_tp2:
+                with get_session() as db:
+                    t = db.query(Trade).filter(Trade.id == trade.id).first()
+                    if t:
+                        t.tp2_order_id = str(new_tp2["id"])
+                log.info(f"Reconcile: TP2 recreated id:{new_tp2['id']}")
+
+        await send(
+            f"🔧 *Order Reconciliation*\n\n"
+            f"Missing orders detected on restart: `{', '.join(missing)}`\n"
+            f"Coin: `{trade.coin}USDT {trade.direction}`\n"
+            f"Orders recreated successfully.\n"
+            f"Verify levels with /status"
+        )
+
     async def _run_health_check(self, trade_obj: Trade, current_price: float):
         try:
             from data.cache import cache
             from engines.health import check_trade_health, format_health_alert
 
             coin   = trade_obj.coin
-            cached = cache.get(f"signal_{coin}")
+            cached = cache.get_raw(f"signal_{coin}")
             if not cached:
                 return
 
@@ -266,7 +362,7 @@ class TradeManager:
                 current_price   = current_price,
                 d1d             = cached.get("d1d", {}),
                 d4h             = cached.get("d4h", {}),
-                btc_data        = cache.get("btc_1d_data"),
+                btc_data        = cache.get_raw("btc_1d_data"),
                 oi_matrix       = cached.get("oi_matrix", {}),
                 retest          = cached.get("retest", {}),
                 sweep           = cached.get("sweep", {}),
@@ -304,6 +400,7 @@ class TradeManager:
             t = db.query(Trade).filter(Trade.id == trade.id).first()
             t.sl_price     = trade.entry_price
             t.tp1_order_id = None
+            t.tp1_hit      = True
             if new_sl:
                 t.sl_order_id = str(new_sl["id"])
 
@@ -313,6 +410,12 @@ class TradeManager:
             tp1_pnl = (trade.entry_price - trade.tp1_price) / trade.entry_price * (trade.position_size * 0.70)
 
         tp1_pnl = round(tp1_pnl - (trade.position_size * 0.70) * TAKER_FEE * 2, 4)
+
+        with get_session() as db:
+            t = db.query(Trade).filter(Trade.id == trade.id).first()
+            if t:
+                t.partial_pnl = tp1_pnl
+
         state_manager.record_partial_pnl(tp1_pnl)
 
         log.info(f"TP1 hit: {trade.coin} partial_pnl:${tp1_pnl} BE SL @ {trade.entry_price}")
@@ -489,7 +592,6 @@ class TradeManager:
         risk_block   = f"\n*Risk Factors*\n{risk_thesis}\n" if risk_thesis else ""
         conf_block   = f"Confidence: `{conf_label}`\n" if conf_label else ""
 
-        from alerts.utils import now_ist
         await send(
             f"{emoji} *Grade {trade.grade} — TRADE OPENED*\n\n"
             f"{dir_emoji} *{trade.coin}USDT {trade.direction}*\n"
@@ -516,7 +618,6 @@ class TradeManager:
         pnl_emoji = "📈" if pnl >= 0 else "📉"
         tv_4h     = f"https://www.tradingview.com/chart/?symbol=BINANCE:{trade.coin}USDT&interval=240"
 
-        from alerts.utils import now_ist
         await send(
             f"{emoji} *Trade Closed — {close_reason}*\n\n"
             f"*{trade.coin}USDT {trade.direction}*\n"

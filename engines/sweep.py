@@ -13,12 +13,21 @@ def detect_sweep(
     vol_ma = float(df["volume"].rolling(10).mean().iloc[-1]) or 1
     results = []
 
+    atr_pct = (atr / price) if price > 0 else 0.015
+
     def relevance(candles_ago: int) -> dict:
-        if candles_ago <= 5:
+        if atr_pct > 0.02:
+            thresholds = (3, 6, 10)
+        elif atr_pct < 0.005:
+            thresholds = (7, 15, 25)
+        else:
+            thresholds = (5, 12, 20)
+
+        if candles_ago <= thresholds[0]:
             return {"label": "HIGH",    "pts": 12, "mult": 1.0}
-        if candles_ago <= 12:
+        if candles_ago <= thresholds[1]:
             return {"label": "MEDIUM",  "pts": 8,  "mult": 0.67}
-        if candles_ago <= 20:
+        if candles_ago <= thresholds[2]:
             return {"label": "LOW",     "pts": 4,  "mult": 0.33}
         return {"label": "EXPIRED", "pts": 0,  "mult": 0.0}
 
@@ -37,8 +46,6 @@ def detect_sweep(
                 vs         = c["volume"] / vol_ma
                 body_below = min(c["open"], c["close"]) < level
 
-                # Wick below level without body close below = clean sweep
-                # Body close below = potential breakdown not sweep
                 intensity = min(10,
                     (3 if mag > 0.5 else 1) +
                     (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
@@ -54,6 +61,7 @@ def detect_sweep(
                     "label":       label,
                     "level":       float(level),
                     "sweep_low":   float(c["low"]),
+                    "sweep_high":  None,
                     "magnitude":   round(mag, 2),
                     "vol_spike":   round(vs, 2),
                     "intensity":   intensity,
@@ -83,8 +91,6 @@ def detect_sweep(
                 vs         = c["volume"] / vol_ma
                 body_above = max(c["open"], c["close"]) > level
 
-                # Wick above level without body close above = clean sweep
-                # Body close above = potential breakout not sweep
                 intensity = min(10,
                     (3 if mag > 0.5 else 1) +
                     (3 if vs > 1.5 else 1 if vs > 1.0 else 0) +
@@ -99,6 +105,7 @@ def detect_sweep(
                     "type":        "bear",
                     "label":       label,
                     "level":       float(level),
+                    "sweep_low":   None,
                     "sweep_high":  float(c["high"]),
                     "magnitude":   round(mag, 2),
                     "vol_spike":   round(vs, 2),
@@ -115,12 +122,12 @@ def detect_sweep(
         return None
 
     checks = [
-        (check_below, key_levels.get("pdl"),                                    "PDL Sweep",        8),
-        (check_above, key_levels.get("pdh"),                                    "PDH Sweep",        8),
+        (check_below, key_levels.get("pdl"),                                         "PDL Sweep",        8),
+        (check_above, key_levels.get("pdh"),                                         "PDH Sweep",        8),
         (check_below, swings["last_low"]["price"]  if swings["last_low"]  else None, "Swing Low Sweep",  7),
         (check_above, swings["last_high"]["price"] if swings["last_high"] else None, "Swing High Sweep", 7),
-        (check_below, key_levels.get("pwl"),                                    "Weekly Low Sweep", 10),
-        (check_above, key_levels.get("pwh"),                                    "Weekly High Sweep",10),
+        (check_below, key_levels.get("pwl"),                                         "Weekly Low Sweep", 10),
+        (check_above, key_levels.get("pwh"),                                         "Weekly High Sweep",10),
     ]
 
     for fn, level, label, strength in checks:
@@ -130,12 +137,14 @@ def detect_sweep(
 
     if not results:
         return {
-            "detected":  False,
-            "confirmed": False,
-            "score":     0,
-            "items":     [],
-            "label":     "No sweep detected",
-            "desc":      "No confirmed liquidity grab on key levels"
+            "detected":   False,
+            "confirmed":  False,
+            "score":      0,
+            "items":      [],
+            "label":      "No sweep detected",
+            "desc":       "No confirmed liquidity grab on key levels",
+            "sweep_low":  None,
+            "sweep_high": None
         }
 
     results.sort(key=lambda x: x["score"], reverse=True)
@@ -155,5 +164,7 @@ def detect_sweep(
         "relevance":   best["relevance"],
         "score":       best["score"],
         "items":       results,
+        "sweep_low":   best.get("sweep_low"),
+        "sweep_high":  best.get("sweep_high"),
         "desc":        f"Level: {best['level']:.4f}"
     }

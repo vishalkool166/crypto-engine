@@ -35,9 +35,9 @@ def _simulate_trade_4h(
     max_candles: int = 120
 ) -> dict:
 
-    future   = df_4h[df_4h.index > current_ts].head(max_candles)
-    is_long  = direction == "LONG"
-    tp1_hit  = False
+    future  = df_4h[df_4h.index > current_ts].head(max_candles)
+    is_long = direction == "LONG"
+    tp1_hit = False
 
     if len(future) < 2:
         return {
@@ -45,7 +45,9 @@ def _simulate_trade_4h(
             "exit_price":  entry,
             "exit_candle": 0,
             "candles":     0,
-            "reason":      "Not enough future data"
+            "reason":      "Not enough future data",
+            "tp1_hit":     False,
+            "tp2_hit":     False
         }
 
     for j, (ts, c) in enumerate(future.iterrows()):
@@ -53,7 +55,7 @@ def _simulate_trade_4h(
         l = float(c["low"])
         o = float(c["open"])
 
-        sl_hit  = (l <= sl)  if is_long else (h >= sl)
+        sl_hit      = (l <= sl)  if is_long else (h >= sl)
         tp1_hit_now = (h >= tp1) if is_long else (l <= tp1)
         tp2_hit_now = (h >= tp2) if is_long else (l <= tp2)
 
@@ -67,7 +69,9 @@ def _simulate_trade_4h(
                     "exit_price":  sl,
                     "exit_candle": j,
                     "candles":     j + 1,
-                    "reason":      "SL gap" if gap_sl else "SL before TP1"
+                    "reason":      "SL gap" if gap_sl else "SL before TP1",
+                    "tp1_hit":     False,
+                    "tp2_hit":     False
                 }
 
             if sl_hit:
@@ -76,7 +80,9 @@ def _simulate_trade_4h(
                     "exit_price":  sl,
                     "exit_candle": j,
                     "candles":     j + 1,
-                    "reason":      "SL hit"
+                    "reason":      "SL hit",
+                    "tp1_hit":     False,
+                    "tp2_hit":     False
                 }
 
             if tp1_hit_now:
@@ -94,7 +100,8 @@ def _simulate_trade_4h(
                     "exit_candle": j,
                     "candles":     j + 1,
                     "reason":      "TP1 + BE stop",
-                    "tp1_hit":     True
+                    "tp1_hit":     True,
+                    "tp2_hit":     False
                 }
 
             if tp2_hit_now:
@@ -114,7 +121,9 @@ def _simulate_trade_4h(
         "exit_price":  last_close,
         "exit_candle": len(future),
         "candles":     len(future),
-        "reason":      f"Timeout {len(future)} candles"
+        "reason":      f"Timeout {len(future)} candles",
+        "tp1_hit":     tp1_hit,
+        "tp2_hit":     False
     }
 
 
@@ -262,7 +271,8 @@ def run_backtest(
                 d1d, d4h,
                 wconf, no_trade,
                 market, key_levels,
-                equity, leverage
+                equity, leverage,
+                d1w=d1w
             )
 
             grade     = signal.get("grade")
@@ -295,13 +305,13 @@ def run_backtest(
                     continue
 
             sim = _simulate_trade_4h(
-                df_4h      = df_4h,
-                current_ts = current_ts,
-                direction  = direction,
-                entry      = entry,
-                sl         = sl,
-                tp1        = tp1,
-                tp2        = tp2,
+                df_4h       = df_4h,
+                current_ts  = current_ts,
+                direction   = direction,
+                entry       = entry,
+                sl          = sl,
+                tp1         = tp1,
+                tp2         = tp2,
                 max_candles = 120
             )
 
@@ -323,9 +333,9 @@ def run_backtest(
                 outcome    = outcome
             )
 
-            equity     += pnl
-            peak_equity = max(peak_equity, equity)
-            drawdown    = round(
+            equity      += pnl
+            peak_equity  = max(peak_equity, equity)
+            drawdown     = round(
                 (peak_equity - equity) / peak_equity * 100, 2
             ) if peak_equity > 0 else 0
 
@@ -348,7 +358,9 @@ def run_backtest(
                 "candles":     sim.get("candles"),
                 "reason":      sim.get("reason", ""),
                 "tp1_hit":     sim.get("tp1_hit", False),
-                "tp2_hit":     sim.get("tp2_hit", False)
+                "tp2_hit":     sim.get("tp2_hit", False),
+                "regime":      regime.get("label", ""),
+                "session":     session.get("name", "")
             })
 
             log.debug(

@@ -3,31 +3,33 @@
 const API = window.location.origin + '/api'
 
 
+function applyAndRender(data) {
+    applyDashboard(data)
+    renderHeader(data.header)
+    renderStatusBar(data)
+    renderRisk(data.risk)
+    renderTrade(data.trade, data.state)
+    syncConnectionMode(data.state)
+    renderRadar(data.radar)
+    renderSignalQueue(data.queue)
+    renderPerformance(data.performance)
+
+    if ((data.history?.length || 0) !== S.lastHistoryLen) {
+        S.lastHistoryLen = data.history?.length || 0
+        renderHistory(data.history)
+        renderCharts(data.history)
+    }
+
+    setApiStatus(true)
+}
+
+
 async function fetchDashboard() {
     try {
         const res = await fetch(`${API}/dashboard`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
         const data = await res.json()
-        const { stateChanged, tradeChanged, healthChanged } = applyDashboard(data)
-
-        renderHeader(data.header)
-        renderStatusBar(data)
-        renderRisk(data.risk)
-        renderTrade(data.trade, data.state)
-        syncConnectionMode(data.state)
-        renderRadar(data.radar)
-        renderSignalQueue(data.queue)
-        renderPerformance(data.performance)
-
-        if ((data.history?.length || 0) !== S.lastHistoryLen) {
-            S.lastHistoryLen = data.history?.length || 0
-            renderHistory(data.history)
-            renderCharts(data.history)
-        }
-
-        setApiStatus(true)
-
+        applyAndRender(data)
     } catch(e) {
         console.error('Dashboard fetch error:', e)
         setApiStatus(false)

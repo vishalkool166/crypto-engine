@@ -50,7 +50,7 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
     return {**TIERS["F"], "label": "F"}
 
 
-def get_session() -> dict:
+def get_session(vol_ratio: float = 1.0) -> dict:
     now  = datetime.now(timezone.utc)
     hour = now.hour + now.minute / 60
 
@@ -58,45 +58,67 @@ def get_session() -> dict:
     ny     = 13 <= hour < 21
     asia   = 0  <= hour < 8
 
+    def _downgrade(session: dict) -> dict:
+        order = ["BEST", "GOOD", "CAUTION"]
+        quality_map = {
+            "BEST":    ("GOOD",    7),
+            "GOOD":    ("CAUTION", 2),
+            "CAUTION": ("CAUTION", 2)
+        }
+        q = session["quality"]
+        if q in quality_map:
+            new_q, new_score = quality_map[q]
+            session = {**session, "quality": new_q, "score": new_score}
+            if new_q == "CAUTION":
+                session["tradeable"] = False
+        return session
+
     if london and ny:
-        return {
+        s = {
             "name":      "London/NY Overlap",
             "quality":   "BEST",
             "score":     9,
             "tradeable": True,
             "desc":      "Highest volume. Best signal quality."
         }
-    if ny:
-        return {
+    elif ny:
+        s = {
             "name":      "New York Session",
             "quality":   "GOOD",
             "score":     7,
             "tradeable": True,
             "desc":      "High volume. Good for entries."
         }
-    if london:
-        return {
+    elif london:
+        s = {
             "name":      "London Session",
             "quality":   "GOOD",
             "score":     7,
             "tradeable": True,
             "desc":      "High volume. Trend initiation common."
         }
-    if asia:
-        return {
+    elif asia:
+        s = {
             "name":      "Asian Session",
             "quality":   "CAUTION",
             "score":     2,
             "tradeable": False,
             "desc":      "Low volume. Liquidity grabs frequently fake."
         }
-    return {
-        "name":      "Off Hours",
-        "quality":   "CAUTION",
-        "score":     2,
-        "tradeable": False,
-        "desc":      "Low volume. Wait for London open."
-    }
+    else:
+        s = {
+            "name":      "Off Hours",
+            "quality":   "CAUTION",
+            "score":     2,
+            "tradeable": False,
+            "desc":      "Low volume. Wait for London open."
+        }
+
+    if vol_ratio < 0.6:
+        s = _downgrade(s)
+        s["desc"] = s["desc"] + " — volume below 60% of average, quality downgraded."
+
+    return s
 
 
 def check_correlation(coin: str) -> dict:
@@ -156,6 +178,7 @@ def check_15m_entry(
     recent = df_15m.tail(10)
     last   = recent.iloc[-1]
     prev   = recent.iloc[-2]
+    prev2  = recent.iloc[-3] if len(recent) >= 3 else None
     price  = float(last["close"])
 
     try:
@@ -183,16 +206,21 @@ def check_15m_entry(
 
     pattern       = "None"
     pattern_score = 0
+    follow_through = True
 
     if direction == "LONG":
         if (prev_close < prev_open and last_close > last_open and
                 last_close > prev_open and last_open < prev_close and
                 last_body > last_range * 0.6):
             pattern, pattern_score = "Bullish Engulfing", 9
+            if prev2 is not None:
+                follow_through = float(prev2["close"]) >= last_open
         elif (last_range > 0 and
                 (min(last_open, last_close) - last_low) / last_range > 0.45 and
                 last_close > (last_high + last_low) / 2):
             pattern, pattern_score = "Hammer / Pin Bar", 7
+            if prev2 is not None:
+                follow_through = float(prev2["close"]) >= last_low
         elif (last_close > last_open and last_close > prev_high and
                 last_body > last_range * 0.5):
             pattern, pattern_score = "Bullish Break", 6
@@ -204,16 +232,23 @@ def check_15m_entry(
                 last_close < prev_open and last_open > prev_close and
                 last_body > last_range * 0.6):
             pattern, pattern_score = "Bearish Engulfing", 9
+            if prev2 is not None:
+                follow_through = float(prev2["close"]) <= last_open
         elif (last_range > 0 and
                 (last_high - max(last_open, last_close)) / last_range > 0.45 and
                 last_close < (last_high + last_low) / 2):
             pattern, pattern_score = "Shooting Star", 7
+            if prev2 is not None:
+                follow_through = float(prev2["close"]) <= last_high
         elif (last_close < last_open and last_close < prev_low and
                 last_body > last_range * 0.5):
             pattern, pattern_score = "Bearish Break", 6
         elif (last_high < prev_high and last_low < prev_low and
                 last_close < last_open):
             pattern, pattern_score = "Lower High/Low", 5
+
+    if not follow_through and pattern_score >= 7:
+        pattern_score = max(0, pattern_score - 3)
 
     ema_ok = False
     if ema20:
@@ -256,14 +291,14 @@ def check_15m_entry(
 
     micro_disp = False
     if len(recent) >= 3:
-        prev2      = recent.iloc[-3]
-        prev2_body = abs(float(prev2["close"]) - float(prev2["open"]))
-        prev2_rng  = float(prev2["high"]) - float(prev2["low"])
-        if prev2_rng > 0:
-            if direction == "LONG" and float(prev2["close"]) > float(prev2["open"]):
-                if prev2_body / prev2_rng > 0.6: micro_disp = True
-            elif direction == "SHORT" and float(prev2["close"]) < float(prev2["open"]):
-                if prev2_body / prev2_rng > 0.6: micro_disp = True
+        p2      = recent.iloc[-3]
+        p2_body = abs(float(p2["close"]) - float(p2["open"]))
+        p2_rng  = float(p2["high"]) - float(p2["low"])
+        if p2_rng > 0:
+            if direction == "LONG" and float(p2["close"]) > float(p2["open"]):
+                if p2_body / p2_rng > 0.6: micro_disp = True
+            elif direction == "SHORT" and float(p2["close"]) < float(p2["open"]):
+                if p2_body / p2_rng > 0.6: micro_disp = True
 
     score = pattern_score
     if vol_ok:      score += 1
@@ -275,8 +310,8 @@ def check_15m_entry(
 
     confirmed = (
         pattern_score >= 5 and
-        (ema_ok or struct_ok) and
-        (not micro_sweep or micro_sweep)
+        follow_through and
+        (ema_ok or struct_ok)
     )
 
     if micro_sweep and micro_disp and vol_ok:
@@ -286,31 +321,29 @@ def check_15m_entry(
             pattern_score = max(pattern_score, 7)
 
     desc_parts = [f"15m: {pattern}"]
-    if micro_sweep: desc_parts.append(micro_sweep_desc)
-    if micro_disp:  desc_parts.append("micro displacement")
+    if not follow_through:    desc_parts.append("no follow-through")
+    if micro_sweep:           desc_parts.append(micro_sweep_desc)
+    if micro_disp:            desc_parts.append("micro displacement")
     desc_parts.append(f"EMA:{'✅' if ema_ok else '❌'}")
     desc_parts.append(f"Vol:{'✅' if vol_ok else '❌'}")
 
     return {
-        "confirmed":   confirmed,
-        "score":       score,
-        "pattern":     pattern,
-        "entry_price": price,
-        "ema20":       ema20,
-        "ema_ok":      ema_ok,
-        "vol_ok":      vol_ok,
-        "struct_ok":   struct_ok,
-        "micro_sweep": micro_sweep,
-        "micro_disp":  micro_disp,
-        "desc":        " · ".join(desc_parts)
+        "confirmed":    confirmed,
+        "score":        score,
+        "pattern":      pattern,
+        "entry_price":  price,
+        "ema20":        ema20,
+        "ema_ok":       ema_ok,
+        "vol_ok":       vol_ok,
+        "struct_ok":    struct_ok,
+        "micro_sweep":  micro_sweep,
+        "micro_disp":   micro_disp,
+        "follow_through": follow_through,
+        "desc":         " · ".join(desc_parts)
     }
 
 
 def _determine_direction(d1d: dict, d4h: dict) -> str:
-    """
-    Determines intended trade direction from trend alignment.
-    Used when generating signal context even for blocked setups.
-    """
     d1_cls = d1d["trend"]["cls"]
     d4_cls = d4h["trend"]["cls"]
 
@@ -523,14 +556,8 @@ def run_no_trade_engine(
 
     all_reasons = market_blocks + entry_blocks + portfolio_blocks
 
-    hard_blocks = [
-        r for r in all_reasons
-        if r.get("severity") == "HARD"
-    ]
-    soft_blocks = [
-        r for r in market_blocks
-        if r.get("severity") == "SOFT"
-    ]
+    hard_blocks = [r for r in all_reasons if r.get("severity") == "HARD"]
+    soft_blocks = [r for r in market_blocks if r.get("severity") == "SOFT"]
 
     return {
         "reasons":           all_reasons,
@@ -563,7 +590,8 @@ def generate_signal(
     btc_inst:     dict = None,
     oi_matrix:    dict = None,
     regime:       dict = None,
-    session:      dict = None
+    session:      dict = None,
+    d1w:          dict = None
 ) -> dict:
 
     tier  = no_trade["final_tier"]
@@ -665,6 +693,7 @@ def generate_signal(
     is_long   = direction == "LONG"
     atr       = d1d.get("atr") or price * 0.015
     swings    = d1d.get("swings", {})
+    atr_mult  = (regime or {}).get("atr_multiplier", 2.0)
 
     entry_15m = check_15m_entry(
         df_15m    = df_15m,
@@ -683,31 +712,114 @@ def generate_signal(
         else price
     )
 
-    if is_long:
-        candidates = [
-            entry - atr * 1.5,
-            swings["last_low"]["price"] * 0.998 if swings.get("last_low") else 0,
-            key_levels.get("pdl", 0) * 0.998
-        ]
-        candidates = [c for c in candidates if 0 < c < entry]
-        sl = max(candidates) if candidates else entry * 0.985
-        if (entry - sl) / entry < 0.01:
-            sl = entry * 0.99
-    else:
-        candidates = [
-            entry + atr * 1.5,
-            swings["last_high"]["price"] * 1.002 if swings.get("last_high") else float("inf"),
-            key_levels.get("pdh", float("inf")) * 1.002
-        ]
-        candidates = [c for c in candidates if c > entry]
-        sl = min(candidates) if candidates else entry * 1.015
-        if (sl - entry) / entry < 0.01:
-            sl = entry * 1.01
+    retest_zone = retest.get("zone") if retest else None
 
-    sl_dist  = abs(entry - sl)
-    sl_pct   = sl_dist / entry * 100
-    tp1      = entry + sl_dist * 1.5 if is_long else entry - sl_dist * 1.5
-    tp2      = entry + sl_dist * 2.5 if is_long else entry - sl_dist * 2.5
+    if is_long:
+        sl_candidates = []
+
+        if retest_zone:
+            sl_candidates.append(retest_zone["bottom"] - atr * 0.15)
+
+        sweep_low = (sweep or {}).get("sweep_low")
+        if sweep_low:
+            sl_candidates.append(sweep_low - atr * 0.1)
+
+        if swings.get("last_low"):
+            sl_candidates.append(swings["last_low"]["price"] - atr * 0.1)
+
+        if key_levels.get("pdl"):
+            sl_candidates.append(key_levels["pdl"] - atr * 0.1)
+
+        sl_candidates = [c for c in sl_candidates if 0 < c < entry]
+        sl = max(sl_candidates) if sl_candidates else entry - atr * atr_mult
+
+        min_sl_dist = atr * atr_mult
+        if (entry - sl) < min_sl_dist:
+            sl = entry - min_sl_dist
+
+    else:
+        sl_candidates = []
+
+        if retest_zone:
+            sl_candidates.append(retest_zone["top"] + atr * 0.15)
+
+        sweep_high = (sweep or {}).get("sweep_high")
+        if sweep_high:
+            sl_candidates.append(sweep_high + atr * 0.1)
+
+        if swings.get("last_high"):
+            sl_candidates.append(swings["last_high"]["price"] + atr * 0.1)
+
+        if key_levels.get("pdh"):
+            sl_candidates.append(key_levels["pdh"] + atr * 0.1)
+
+        sl_candidates = [c for c in sl_candidates if c > entry]
+        sl = min(sl_candidates) if sl_candidates else entry + atr * atr_mult
+
+        min_sl_dist = atr * atr_mult
+        if (sl - entry) < min_sl_dist:
+            sl = entry + min_sl_dist
+
+    sl_dist = abs(entry - sl)
+    sl_pct  = sl_dist / entry * 100
+
+    if is_long:
+        tp1_candidates = []
+        tp2_candidates = []
+
+        if swings.get("last_high"):
+            tp1_candidates.append(swings["last_high"]["price"])
+        if key_levels.get("pdh"):
+            tp1_candidates.append(key_levels["pdh"])
+        vah = d1d.get("vah")
+        if vah and vah > entry:
+            tp1_candidates.append(vah)
+
+        tp1_candidates = [c for c in tp1_candidates if c > entry + sl_dist * 0.8]
+        tp1 = min(tp1_candidates) if tp1_candidates else entry + sl_dist * 1.5
+
+        if d1w:
+            pwh = key_levels.get("pwh")
+            if pwh and pwh > tp1:
+                tp2_candidates.append(pwh)
+        poc = d1d.get("poc")
+        if poc and poc > tp1:
+            tp2_candidates.append(poc)
+        if swings.get("prev_high"):
+            ph = swings["prev_high"]["price"]
+            if ph > tp1:
+                tp2_candidates.append(ph)
+
+        tp2 = min(tp2_candidates) if tp2_candidates else entry + sl_dist * 2.5
+
+    else:
+        tp1_candidates = []
+        tp2_candidates = []
+
+        if swings.get("last_low"):
+            tp1_candidates.append(swings["last_low"]["price"])
+        if key_levels.get("pdl"):
+            tp1_candidates.append(key_levels["pdl"])
+        val = d1d.get("val")
+        if val and val < entry:
+            tp1_candidates.append(val)
+
+        tp1_candidates = [c for c in tp1_candidates if c < entry - sl_dist * 0.8]
+        tp1 = max(tp1_candidates) if tp1_candidates else entry - sl_dist * 1.5
+
+        if d1w:
+            pwl = key_levels.get("pwl")
+            if pwl and pwl < tp1:
+                tp2_candidates.append(pwl)
+        poc = d1d.get("poc")
+        if poc and poc < tp1:
+            tp2_candidates.append(poc)
+        if swings.get("prev_low"):
+            pl = swings["prev_low"]["price"]
+            if pl < tp1:
+                tp2_candidates.append(pl)
+
+        tp2 = max(tp2_candidates) if tp2_candidates else entry - sl_dist * 2.5
 
     risk_pct = dynamic_risk_pct(score_15m)
     risk_amt = capital * risk_pct
@@ -726,13 +838,14 @@ def generate_signal(
         "tp1":         tp1,
         "tp2":         tp2,
         "sl_pct":      sl_pct,
-        "sl_method":   "ATR 1.5x",
+        "sl_method":   "Structure-aware",
         "risk_pct":    risk_pct * 100,
         "risk_amt":    risk_amt,
         "pos_size":    pos_size,
         "margin":      margin,
         "eff_lev":     leverage,
         "atr_used":    atr,
+        "atr_mult":    atr_mult,
         "funding":     market.get("funding", 0),
         "sweep_score": 0,
         "disp_score":  0,

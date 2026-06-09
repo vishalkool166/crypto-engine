@@ -38,7 +38,6 @@ def detect_retest(
 
     MIN_WIDTH_PCT = 0.003
 
-    # ── COLLECT FVGs FROM ALL TIMEFRAMES ──
     all_fvgs = []
     for fvg in d4h.get("fvgs", []):
         all_fvgs.append({**fvg, "timeframe": "4h", "priority": 1})
@@ -66,7 +65,6 @@ def detect_retest(
     valid_fvgs.sort(key=lambda x: x["dist"])
     matching_fvg = valid_fvgs[0] if valid_fvgs else None
 
-    # ── PREFER OB ZONE OVER FVG ZONE WHEN AVAILABLE ──
     zone      = None
     zone_type = ""
 
@@ -117,18 +115,29 @@ def detect_retest(
         zone      = {"top": ema50 * 1.01, "bottom": ema50 * 0.99, "mid": ema50}
         zone_type = "EMA50 Zone"
 
-    if not zone:
+    def _empty_zone_result(status, label, desc, score, failed=False):
+        fallback_price = price
         return {
-            "status":    "none",
-            "label":     "No retest zone",
-            "desc":      "No valid OB, FVG or EMA zone found",
-            "score":     0,
+            "status":    status,
+            "label":     label,
+            "desc":      desc,
+            "score":     score,
             "confirmed": False,
-            "failed":    False,
+            "failed":    failed,
             "zone_type": "",
-            "zone":      None,
+            "zone": {
+                "top":    fallback_price * 1.005,
+                "bottom": fallback_price * 0.995,
+                "mid":    fallback_price
+            },
             "trade_dir": trade_dir
         }
+
+    if not zone:
+        return _empty_zone_result(
+            "none", "No retest zone",
+            "No valid OB, FVG or EMA zone found", 0
+        )
 
     in_zone    = zone["bottom"] <= price <= zone["top"]
     above_zone = price > zone["top"]
@@ -138,7 +147,7 @@ def detect_retest(
 
     def failed_retest():
         if trade_dir == "bull":
-            entered     = any(
+            entered = any(
                 c["low"] <= zone["top"] and c["high"] >= zone["bottom"]
                 for _, c in recent.iterrows()
             )
@@ -148,7 +157,7 @@ def detect_retest(
             )
             return entered and closed_below
         else:
-            entered     = any(
+            entered = any(
                 c["high"] >= zone["bottom"] and c["low"] <= zone["top"]
                 for _, c in recent.iterrows()
             )

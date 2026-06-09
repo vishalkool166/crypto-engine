@@ -1,13 +1,14 @@
 import asyncio
-import uvicorn
-import logging
+import hashlib
 import json
+import logging
+import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from api.routes       import router
+from api.routes       import router, build_dashboard_payload
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
 from trade.state      import state_manager
@@ -26,10 +27,11 @@ logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 
 log = logging.getLogger(__name__)
 
-_ws_clients:           set   = set()
-_dashboard_clients:    set   = set()
-_last_dashboard_data:  dict  = {}
-_dashboard_push_task:  asyncio.Task = None
+_ws_clients:          set         = set()
+_dashboard_clients:   set         = set()
+_last_dashboard_data: dict        = {}
+_last_payload_hash:   str         = ""
+_dashboard_push_task: asyncio.Task = None
 
 
 async def broadcast_price(coin: str, price: float):
@@ -77,111 +79,29 @@ async def broadcast_price(coin: str, price: float):
     _ws_clients.difference_update(dead)
 
 
-async def _build_dashboard_payload() -> dict:
-    from datetime import datetime, timezone
-    from database import SessionLocal, Trade as TradeModel
-    from alerts.scanner import get_db_stats
-    from data.cache import cache
-    from scheduler import get_next_scan_epoch
-    from api.formatters import (
-        make_serializable, build_trade_data, build_risk_data,
-        build_performance_data, build_radar_data, build_signal_queue,
-        build_history_data, build_header_data
-    )
-    from trade.orders import get_current_price
-
-    try:
-        trade_state = "idle"
-        trade_data  = None
-
-        if not state_manager.is_idle:
-            state_manager.refresh()
-            trade = state_manager.current_trade
-            if trade and trade.is_active:
-                current     = get_current_price(trade.coin)
-                trade_state = trade.state
-                trade_data  = build_trade_data(trade, current)
-
-        risk_stats = risk_guard.get_daily_stats()
-        risk_data  = build_risk_data(risk_stats)
-        stats      = get_db_stats()
-
-        db = SessionLocal()
-        try:
-            trades_raw = db.query(TradeModel).filter(
-                TradeModel.is_active == False
-            ).order_by(TradeModel.closed_at.desc()).limit(10).all()
-
-            trades_list = [{
-                "coin":         t.coin,
-                "direction":    t.direction,
-                "grade":        t.grade,
-                "pnl":          t.pnl,
-                "outcome":      t.outcome,
-                "close_reason": t.close_reason,
-                "closed_at":    t.closed_at.isoformat() if t.closed_at else None
-            } for t in trades_raw]
-        finally:
-            db.close()
-
-        perf_data    = build_performance_data(stats, trades_list)
-        history_data = build_history_data(trades_list)
-
-        radar_data = []
-        queue_data = []
-        last_scan  = "--"
-
-        cached_results = []
-        for coin in cfg.COINS:
-            cached = cache.get(f"signal_{coin}")
-            if cached:
-                cached_results.append(cached)
-
-        if cached_results:
-            cached_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-            radar_data = build_radar_data(cached_results)
-            queue_data = build_signal_queue(cached_results)
-            last_scan  = "From cache"
-
-        header_data = build_header_data(risk_stats, stats)
-
-        return make_serializable({
-            "type":            "dashboard",
-            "state":           trade_state,
-            "trade":           trade_data,
-            "risk":            risk_data,
-            "performance":     perf_data,
-            "history":         history_data,
-            "radar":           radar_data,
-            "queue":           queue_data,
-            "header":          header_data,
-            "last_scan":       last_scan,
-            "next_scan_epoch": get_next_scan_epoch(),
-            "timestamp":       datetime.now(timezone.utc).isoformat()
-        })
-
-    except Exception as e:
-        log.error(f"Dashboard build error: {e}")
-        return {"type": "dashboard", "error": str(e)}
-
-
 async def push_dashboard():
-    global _last_dashboard_data
+    global _last_dashboard_data, _last_payload_hash
     if not _dashboard_clients:
         return
     try:
-        data    = await _build_dashboard_payload()
-        payload = json.dumps(data)
+        data        = await build_dashboard_payload()
+        payload_str = json.dumps(data)
+        payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
+
+        if payload_hash == _last_payload_hash:
+            return
+
+        _last_payload_hash   = payload_hash
+        _last_dashboard_data = data
 
         dead = set()
         for ws in _dashboard_clients:
             try:
-                await ws.send_text(payload)
+                await ws.send_text(payload_str)
             except Exception:
                 dead.add(ws)
         _dashboard_clients.difference_update(dead)
 
-        _last_dashboard_data = data
         log.debug(f"Dashboard pushed to {len(_dashboard_clients)} clients")
     except Exception as e:
         log.error(f"Dashboard push error: {e}")
@@ -206,6 +126,7 @@ async def lifespan(app: FastAPI):
         log.info(f"Resumed trade: {trade.coin} {trade.direction} {trade.state}")
         await asyncio.sleep(1)
         await price_feed.start(trade.coin)
+        await trade_manager.reconcile_orders(trade)
         await send(
             f"🔄 *Bot Restarted*\n\n"
             f"Resumed active trade:\n"
@@ -221,6 +142,9 @@ async def lifespan(app: FastAPI):
 
     start_scheduler()
     await register_webhook()
+
+    from alerts.telegram import register_commands
+    await register_commands()
 
     await send(
         f"✅ *Signal Engine v5 Started*\n\n"
@@ -270,11 +194,15 @@ app = FastAPI(
     lifespan    = lifespan
 )
 
+allowed_origins = [cfg.DOMAIN, "http://localhost:8000", "http://127.0.0.1:8000"]
+allowed_origins = [o for o in allowed_origins if o]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"]
+    allow_origins     = allowed_origins,
+    allow_methods     = ["*"],
+    allow_headers     = ["*"],
+    allow_credentials = True
 )
 
 
@@ -311,7 +239,7 @@ async def dashboard_websocket(websocket: WebSocket):
         if _last_dashboard_data:
             await websocket.send_text(json.dumps(_last_dashboard_data))
         else:
-            data = await _build_dashboard_payload()
+            data = await build_dashboard_payload()
             await websocket.send_text(json.dumps(data))
     except Exception as e:
         log.error(f"Dashboard WS initial push error: {e}")

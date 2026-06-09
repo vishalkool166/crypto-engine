@@ -1,11 +1,11 @@
 import os
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from sqlalchemy import (
     create_engine, Column, Integer,
-    String, Float, DateTime, Text, Boolean, BigInteger
+    String, Float, DateTime, Text, Boolean, BigInteger, event
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-from datetime import datetime
 
 os.makedirs("database", exist_ok=True)
 
@@ -14,6 +14,13 @@ engine = create_engine(
     "sqlite:///database/signals.db",
     connect_args={"check_same_thread": False}
 )
+
+@event.listens_for(engine, "connect")
+def set_wal_mode(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 
@@ -30,36 +37,49 @@ def get_session():
         db.close()
 
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 class Signal(Base):
     __tablename__ = "signals"
 
-    id           = Column(Integer, primary_key=True)
-    timestamp    = Column(DateTime, default=datetime.utcnow)
-    coin         = Column(String)
-    direction    = Column(String)
-    grade        = Column(String)
-    score        = Column(Float)
-    signal_type  = Column(String)
-    entry        = Column(Float)
-    sl           = Column(Float)
-    tp1          = Column(Float)
-    tp2          = Column(Float)
-    sl_pct       = Column(Float)
-    risk_amt     = Column(Float)
-    risk_pct     = Column(Float)
-    position     = Column(Float)
-    leverage     = Column(String)
-    regime       = Column(String)
-    session      = Column(String)
-    sweep_score  = Column(Float)
-    retest_score = Column(Float)
-    disp_score   = Column(Float)
-    funding      = Column(Float)
-    oi_signal    = Column(String)
-    outcome      = Column(String, default="pending")
-    exit_price   = Column(Float, nullable=True)
-    pnl          = Column(Float, nullable=True)
-    notes        = Column(Text, nullable=True)
+    id             = Column(Integer, primary_key=True)
+    timestamp      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    coin           = Column(String)
+    direction      = Column(String)
+    grade          = Column(String)
+    score          = Column(Float)
+    signal_type    = Column(String)
+    entry          = Column(Float)
+    sl             = Column(Float)
+    tp1            = Column(Float)
+    tp2            = Column(Float)
+    sl_pct         = Column(Float)
+    risk_amt       = Column(Float)
+    risk_pct       = Column(Float)
+    position       = Column(Float)
+    leverage       = Column(String)
+    regime         = Column(String)
+    session        = Column(String)
+    sweep_score    = Column(Float)
+    retest_score   = Column(Float)
+    disp_score     = Column(Float)
+    funding        = Column(Float)
+    oi_signal      = Column(String)
+    outcome        = Column(String, default="pending")
+    exit_price     = Column(Float, nullable=True)
+    pnl            = Column(Float, nullable=True)
+    notes          = Column(Text, nullable=True)
+    factor_scores  = Column(Text, nullable=True)
+    market_score   = Column(Float, nullable=True)
+    entry_score    = Column(Float, nullable=True)
+    atr_at_entry   = Column(Float, nullable=True)
+    btc_score      = Column(Float, nullable=True)
 
 
 class Trade(Base):
@@ -85,7 +105,7 @@ class Trade(Base):
     margin_used      = Column(Float)
     leverage         = Column(Integer)
     risk_amt         = Column(Float)
-    opened_at        = Column(DateTime, default=datetime.utcnow)
+    opened_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     closed_at        = Column(DateTime, nullable=True)
     outcome          = Column(String, default="pending")
     exit_price       = Column(Float, nullable=True)
@@ -94,6 +114,11 @@ class Trade(Base):
     trade_date       = Column(String)
     notes            = Column(Text, nullable=True)
     health_at_close  = Column(String, nullable=True)
+    tp1_hit          = Column(Boolean, default=False)
+    partial_pnl      = Column(Float, nullable=True)
+    regime_at_entry  = Column(String, nullable=True)
+    session_at_entry = Column(String, nullable=True)
+    score_at_entry   = Column(Float, nullable=True)
 
 
 class DailyRisk(Base):
@@ -125,7 +150,7 @@ class BacktestResult(Base):
     __tablename__ = "backtest_results"
 
     id            = Column(Integer, primary_key=True)
-    run_at        = Column(DateTime, default=datetime.utcnow)
+    run_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     coin          = Column(String)
     timeframe     = Column(String)
     period_start  = Column(String)
@@ -149,14 +174,6 @@ def init_db():
     Base.metadata.create_all(engine)
     import logging
     logging.getLogger(__name__).info("Database tables created")
-
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 init_db()

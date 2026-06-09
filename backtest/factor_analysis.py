@@ -1,19 +1,8 @@
-from database import SessionLocal, Trade, Signal as SignalModel
-from engines.confluence import score_confluence
-from data.store import load_candles
-from engines.indicators import calculate_all
+import json
 import logging
+from database import SessionLocal, Trade, Signal as SignalModel
 
 log = logging.getLogger(__name__)
-
-
-# ═══════════════════════════════════════════════════════
-# FACTOR ANALYSIS
-# Observes which confluence factors were present
-# on winning vs losing trades.
-# No optimization — pure observation.
-# Requires 200+ trades for meaningful results.
-# ═══════════════════════════════════════════════════════
 
 FACTOR_KEYS = [
     "liquidity_sweep",
@@ -34,15 +23,27 @@ FACTOR_KEYS = [
     "order_blocks"
 ]
 
+FACTOR_PASS_THRESHOLDS = {
+    "liquidity_sweep":     8,
+    "retest_confirmation": 9,
+    "displacement":        8,
+    "market_regime":       8,
+    "weekly_filter":       7,
+    "market_structure":    7,
+    "session_timing":      5,
+    "btc_alignment":       6,
+    "oi_behavior":         5,
+    "volume_expansion":    5,
+    "funding_extreme":     4,
+    "rsi_divergence":      3,
+    "atr_volatility":      2,
+    "rsi_context":         1,
+    "macd_histogram":      1,
+    "order_blocks":        2,
+}
+
 
 def run_factor_analysis() -> dict:
-    """
-    Reads all closed trades from DB.
-    For each trade reads its linked signal's
-    factor scores.
-    Builds win/loss breakdown per factor.
-    Returns observation table — no changes made.
-    """
     db = SessionLocal()
     try:
         trades = db.query(Trade).filter(
@@ -52,8 +53,8 @@ def run_factor_analysis() -> dict:
 
         if not trades:
             return {
-                "error":       "No closed trades yet",
-                "total":       0,
+                "error":        "No closed trades yet",
+                "total":        0,
                 "min_required": 200
             }
 
@@ -61,13 +62,8 @@ def run_factor_analysis() -> dict:
         wins   = [t for t in trades if t.outcome == "win"]
         losses = [t for t in trades if t.outcome == "loss"]
 
-        log.info(
-            f"Factor analysis: "
-            f"{total} trades — "
-            f"{len(wins)}W {len(losses)}L"
-        )
+        log.info(f"Factor analysis: {total} trades — {len(wins)}W {len(losses)}L")
 
-        # Per-factor counters
         factor_stats = {
             key: {
                 "win_present":  0,
@@ -78,8 +74,8 @@ def run_factor_analysis() -> dict:
             for key in FACTOR_KEYS
         }
 
-        # Grade counters
-        grade_stats = {}
+        grade_stats  = {}
+        has_real_data = False
 
         for trade in trades:
             sig = None
@@ -100,11 +96,9 @@ def run_factor_analysis() -> dict:
             if not sig:
                 continue
 
-            # Use signal scores as proxy for factor presence
-            # sweep_score >= 6 = sweep was present
-            # retest_score >= 6 = retest was present
-            # disp_score >= 6 = displacement was present
-            factor_presence = _infer_factor_presence(sig)
+            factor_presence = _get_factor_presence(sig)
+            if factor_presence.get("_source") == "actual":
+                has_real_data = True
 
             for key in FACTOR_KEYS:
                 present = factor_presence.get(key, False)
@@ -119,7 +113,6 @@ def run_factor_analysis() -> dict:
                     else:
                         factor_stats[key]["loss_absent"]  += 1
 
-        # Build observation table
         table = []
         for key in FACTOR_KEYS:
             s = factor_stats[key]
@@ -140,45 +133,33 @@ def run_factor_analysis() -> dict:
                 edge = round(win_rate_present - win_rate_absent, 1)
 
             table.append({
-                "factor":            key,
-                "present_total":     present_total,
-                "absent_total":      absent_total,
-                "win_rate_present":  win_rate_present,
-                "win_rate_absent":   win_rate_absent,
-                "edge":              edge,
-                "observation": _observation(
-                    edge, present_total, total
-                )
+                "factor":           key,
+                "present_total":    present_total,
+                "absent_total":     absent_total,
+                "win_rate_present": win_rate_present,
+                "win_rate_absent":  win_rate_absent,
+                "edge":             edge,
+                "observation":      _observation(edge, present_total, total)
             })
 
-        # Sort by edge descending
-        table.sort(
-            key=lambda x: x["edge"] or -999,
-            reverse=True
-        )
+        table.sort(key=lambda x: x["edge"] or -999, reverse=True)
 
-        overall_wr = round(len(wins) / total * 100, 1)
-
+        overall_wr  = round(len(wins) / total * 100, 1)
         reliability = _reliability_note(total)
 
         return {
-            "total":          total,
-            "wins":           len(wins),
-            "losses":         len(losses),
-            "overall_wr":     overall_wr,
-            "min_required":   200,
-            "reliable":       total >= 200,
-            "reliability":    reliability,
-            "table":          table,
-            "grade_stats":    _build_grade_stats(grade_stats),
-            "top_factors":    [
-                r for r in table
-                if r["edge"] and r["edge"] > 10
-            ][:5],
-            "weak_factors":   [
-                r for r in table
-                if r["edge"] is not None and r["edge"] < 5
-            ][:5]
+            "total":         total,
+            "wins":          len(wins),
+            "losses":        len(losses),
+            "overall_wr":    overall_wr,
+            "min_required":  200,
+            "reliable":      total >= 200,
+            "reliability":   reliability,
+            "data_source":   "actual" if has_real_data else "proxy",
+            "table":         table,
+            "grade_stats":   _build_grade_stats(grade_stats),
+            "top_factors":   [r for r in table if r["edge"] and r["edge"] > 10][:5],
+            "weak_factors":  [r for r in table if r["edge"] is not None and r["edge"] < 5][:5]
         }
 
     except Exception as e:
@@ -189,20 +170,26 @@ def run_factor_analysis() -> dict:
         db.close()
 
 
-def _infer_factor_presence(sig) -> dict:
-    """
-    Infers factor presence from signal scores.
-    Uses stored sweep/retest/disp scores as proxy.
-    Not perfect — but sufficient for observation.
-    """
+def _get_factor_presence(sig) -> dict:
+    if sig.factor_scores:
+        try:
+            scores = json.loads(sig.factor_scores)
+            result = {"_source": "actual"}
+            for key in FACTOR_KEYS:
+                earned    = scores.get(key, 0)
+                threshold = FACTOR_PASS_THRESHOLDS.get(key, 1)
+                result[key] = earned >= threshold
+            return result
+        except Exception:
+            pass
+
+    score     = sig.score or 0
     sweep_ok  = (sig.sweep_score  or 0) >= 6
     retest_ok = (sig.retest_score or 0) >= 6
     disp_ok   = (sig.disp_score   or 0) >= 6
 
-    # Score-based inference for remaining factors
-    score = sig.score or 0
-
     return {
+        "_source":             "proxy",
         "liquidity_sweep":     sweep_ok,
         "retest_confirmation": retest_ok,
         "displacement":        disp_ok,
@@ -222,11 +209,7 @@ def _infer_factor_presence(sig) -> dict:
     }
 
 
-def _observation(
-    edge:          float,
-    present_total: int,
-    total:         int
-) -> str:
+def _observation(edge: float, present_total: int, total: int) -> str:
     if present_total < 10:
         return "Insufficient data"
     if edge is None:

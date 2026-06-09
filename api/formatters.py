@@ -6,9 +6,6 @@ from trade.risk import risk_guard
 from trade.orders import get_current_price
 from data.cache import cache
 
-# ═══════════════════════════════════════════════════════
-# COLOR PALETTE — WCAG AA on white
-# ═══════════════════════════════════════════════════════
 C = {
     "green":       "#34c759",
     "green_dark":  "#248a3d",
@@ -29,9 +26,6 @@ C = {
 }
 
 
-# ═══════════════════════════════════════════════════════
-# SERIALIZER
-# ═══════════════════════════════════════════════════════
 def make_serializable(obj):
     if obj is None:
         return None
@@ -45,26 +39,9 @@ def make_serializable(obj):
         return obj
     if isinstance(obj, (int, str, bool)):
         return obj
-    try:
-        import numpy as np
-        if isinstance(obj, np.integer):  return int(obj)
-        if isinstance(obj, np.floating): return float(obj)
-        if isinstance(obj, np.ndarray):  return obj.tolist()
-    except Exception:
-        pass
-    try:
-        import pandas as pd
-        if isinstance(obj, pd.Series):    return obj.tolist()
-        if isinstance(obj, pd.DataFrame): return obj.to_dict()
-        if pd.isna(obj):                  return None
-    except Exception:
-        pass
     return str(obj)
 
 
-# ═══════════════════════════════════════════════════════
-# FORMAT HELPERS
-# ═══════════════════════════════════════════════════════
 def fmt_price(n) -> str:
     if n is None or n == 0:
         return "--"
@@ -122,39 +99,65 @@ def fmt_duration(opened_at) -> str:
         return "--"
 
 
-# ═══════════════════════════════════════════════════════
-# COLOR HELPERS
-# ═══════════════════════════════════════════════════════
+def get_color(type: str, value) -> str:
+    if type == "grade":
+        return {
+            "A+": C["green"],
+            "A":  C["blue"],
+            "B":  C["orange"],
+            "C":  C["yellow_dark"],
+            "F":  C["muted"]
+        }.get(str(value), C["muted"])
+
+    if type == "pnl":
+        try:
+            return C["green_dark"] if float(value) >= 0 else C["red_dark"]
+        except Exception:
+            return C["muted"]
+
+    if type == "progress":
+        try:
+            pct = float(value)
+            if pct >= 75: return C["green"]
+            if pct >= 50: return C["blue"]
+            if pct >= 25: return C["orange"]
+            return C["red"]
+        except Exception:
+            return C["muted"]
+
+    if type == "health":
+        return {
+            "HEALTHY":     C["green_dark"],
+            "WARNING":     C["orange"],
+            "INVALIDATED": C["red_dark"]
+        }.get(str(value), C["muted"])
+
+    if type == "winrate":
+        try:
+            wr = float(value)
+            if wr >= 55: return C["green_dark"]
+            if wr >= 45: return C["orange"]
+            return C["red_dark"]
+        except Exception:
+            return C["muted"]
+
+    return C["muted"]
+
+
 def grade_color(grade: str) -> str:
-    return {
-        "A+": C["green"],
-        "A":  C["blue"],
-        "B":  C["orange"],
-        "C":  C["yellow_dark"],
-        "F":  C["muted"]
-    }.get(grade, C["muted"])
+    return get_color("grade", grade)
 
 
 def pnl_color(n) -> str:
-    try:
-        return C["green_dark"] if float(n) >= 0 else C["red_dark"]
-    except Exception:
-        return C["muted"]
+    return get_color("pnl", n)
 
 
 def progress_color(pct: float) -> str:
-    if pct >= 75: return C["green"]
-    if pct >= 50: return C["blue"]
-    if pct >= 25: return C["orange"]
-    return C["red"]
+    return get_color("progress", pct)
 
 
 def health_color(state: str) -> str:
-    return {
-        "HEALTHY":     C["green_dark"],
-        "WARNING":     C["orange"],
-        "INVALIDATED": C["red_dark"]
-    }.get(state, C["muted"])
+    return get_color("health", state)
 
 
 def health_emoji(state: str) -> str:
@@ -165,10 +168,6 @@ def health_emoji(state: str) -> str:
     }.get(state, "—")
 
 
-# ═══════════════════════════════════════════════════════
-# TP1 HIT DETECTION
-# sl_price ≈ entry_price means TP1 was hit and SL moved to BE
-# ═══════════════════════════════════════════════════════
 def detect_tp1_hit(trade) -> bool:
     entry = trade.entry_price
     sl    = trade.sl_price
@@ -177,9 +176,6 @@ def detect_tp1_hit(trade) -> bool:
     return abs(sl - entry) / entry < 0.001
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD LADDER
-# ═══════════════════════════════════════════════════════
 def build_ladder(trade, current: float) -> list:
     entry   = trade.entry_price
     sl      = trade.sl_price
@@ -276,9 +272,6 @@ def build_ladder(trade, current: float) -> list:
     return levels
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD PROGRESS
-# ═══════════════════════════════════════════════════════
 def build_progress(trade, current: float) -> dict:
     entry   = trade.entry_price
     sl      = trade.sl_price
@@ -386,9 +379,6 @@ def build_progress(trade, current: float) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD TRADE DATA
-# ═══════════════════════════════════════════════════════
 def build_trade_data(trade, current: float) -> dict:
     is_long  = trade.direction == "LONG"
     tp1_hit  = detect_tp1_hit(trade)
@@ -453,72 +443,69 @@ def build_trade_data(trade, current: float) -> dict:
     health_data  = state_manager.health_data
 
     explanation = {}
-    cached = cache.get(f"signal_{trade.coin}")
+    cached = cache.get_raw(f"signal_{trade.coin}")
     if cached:
         explanation = cached.get("explanation", {})
 
     return {
-        "id":              trade.id,
-        "coin":            f"{trade.coin}USDT",
-        "direction":       trade.direction,
-        "dir_emoji":       "📈" if is_long else "📉",
-        "dir_color":       dir_color,
-        "dir_border":      dir_border,
-        "header_bg":       header_bg,
-        "grade":           trade.grade,
-        "grade_color":     grade_color(trade.grade),
-        "state":           trade.state,
-        "duration":        fmt_duration(trade.opened_at),
-        "opened_at":       trade.opened_at.isoformat() if trade.opened_at else None,
-        "phase_badge":     phase_badge,
-        "phase_color":     phase_color,
-        "tp1_hit":         tp1_hit,
-        "pnl":             fmt_pnl(upnl),
-        "pnl_color":       pnl_color(upnl),
-        "pnl_pct":         fmt_pct(pnl_pct) + " of capital",
-        "pnl_positive":    upnl >= 0,
-        "current_price":   fmt_price(current),
-        "current_color":   current_color,
-        "entry_price":     fmt_price(trade.entry_price),
-        "sl_price":        fmt_price(trade.sl_price),
-        "sl_label":        sl_label,
-        "sl_color":        sl_color,
-        "tp1_price":       fmt_price(trade.tp1_price),
-        "tp2_price":       fmt_price(trade.tp2_price),
-        "move_pct":        fmt_pct(move_pct),
-        "move_color":      pnl_color(move_pct),
-        "dist_to_sl":      f"{fmt_price(dist_sl)} ({dist_sl_p:.2f}%)",
-        "dist_to_tp1":     f"{fmt_price(dist_tp1)} ({dist_tp1p:.2f}%)",
-        "risk_amt":        f"${risk_amt:.4f}",
-        "tp1_reward":      f"${tp1_rew:.4f}",
-        "tp2_reward":      f"${tp2_rew:.4f}",
-        "position_size":   f"${pos_size:.2f}",
-        "margin_used":     f"${trade.margin_used:.2f}" if trade.margin_used else "--",
-        "leverage":        f"{trade.leverage}x",
-        "rr_ratio":        f"1:{rr}",
-        "progress":        prog,
-        "ladder":          build_ladder(trade, current),
-        "entry_order_id":  trade.entry_order_id,
-        "sl_order_id":     trade.sl_order_id,
-        "tp1_order_id":    trade.tp1_order_id,
-        "tp2_order_id":    trade.tp2_order_id,
-        "health_state":    health_state,
-        "health_color":    health_color(health_state),
-        "health_emoji":    health_emoji(health_state),
-        "health_warnings": health_data.get("warnings", []),
-        "health_failures": health_data.get("failures", []),
-        "health_checks":   health_data.get("checks", []),
-        "health_summary":  health_data.get("summary", ""),
-        "thesis":          explanation.get("thesis", ""),
-        "risk_thesis":     explanation.get("risk_thesis", ""),
-        "confidence":      explanation.get("confidence", 0),
-        "confidence_label":explanation.get("confidence_label", "")
+        "id":               trade.id,
+        "coin":             f"{trade.coin}USDT",
+        "direction":        trade.direction,
+        "dir_emoji":        "📈" if is_long else "📉",
+        "dir_color":        dir_color,
+        "dir_border":       dir_border,
+        "header_bg":        header_bg,
+        "grade":            trade.grade,
+        "grade_color":      grade_color(trade.grade),
+        "state":            trade.state,
+        "duration":         fmt_duration(trade.opened_at),
+        "opened_at":        trade.opened_at.isoformat() if trade.opened_at else None,
+        "phase_badge":      phase_badge,
+        "phase_color":      phase_color,
+        "tp1_hit":          tp1_hit,
+        "pnl":              fmt_pnl(upnl),
+        "pnl_color":        pnl_color(upnl),
+        "pnl_pct":          fmt_pct(pnl_pct) + " of capital",
+        "pnl_positive":     upnl >= 0,
+        "current_price":    fmt_price(current),
+        "current_color":    current_color,
+        "entry_price":      fmt_price(trade.entry_price),
+        "sl_price":         fmt_price(trade.sl_price),
+        "sl_label":         sl_label,
+        "sl_color":         sl_color,
+        "tp1_price":        fmt_price(trade.tp1_price),
+        "tp2_price":        fmt_price(trade.tp2_price),
+        "move_pct":         fmt_pct(move_pct),
+        "move_color":       pnl_color(move_pct),
+        "dist_to_sl":       f"{fmt_price(dist_sl)} ({dist_sl_p:.2f}%)",
+        "dist_to_tp1":      f"{fmt_price(dist_tp1)} ({dist_tp1p:.2f}%)",
+        "risk_amt":         f"${risk_amt:.4f}",
+        "tp1_reward":       f"${tp1_rew:.4f}",
+        "tp2_reward":       f"${tp2_rew:.4f}",
+        "position_size":    f"${pos_size:.2f}",
+        "margin_used":      f"${trade.margin_used:.2f}" if trade.margin_used else "--",
+        "leverage":         f"{trade.leverage}x",
+        "rr_ratio":         f"1:{rr}",
+        "progress":         prog,
+        "ladder":           build_ladder(trade, current),
+        "entry_order_id":   trade.entry_order_id,
+        "sl_order_id":      trade.sl_order_id,
+        "tp1_order_id":     trade.tp1_order_id,
+        "tp2_order_id":     trade.tp2_order_id,
+        "health_state":     health_state,
+        "health_color":     health_color(health_state),
+        "health_emoji":     health_emoji(health_state),
+        "health_warnings":  health_data.get("warnings", []),
+        "health_failures":  health_data.get("failures", []),
+        "health_checks":    health_data.get("checks", []),
+        "health_summary":   health_data.get("summary", ""),
+        "thesis":           explanation.get("thesis", ""),
+        "risk_thesis":      explanation.get("risk_thesis", ""),
+        "confidence":       explanation.get("confidence", 0),
+        "confidence_label": explanation.get("confidence_label", "")
     }
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD RISK DATA
-# ═══════════════════════════════════════════════════════
 def build_risk_data(risk) -> dict:
     daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
 
@@ -564,9 +551,6 @@ def build_risk_data(risk) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD PERFORMANCE DATA
-# ═══════════════════════════════════════════════════════
 def build_performance_data(stats: dict, trades: list) -> dict:
     empty = {
         "win_rate":       "--%",
@@ -624,7 +608,7 @@ def build_performance_data(stats: dict, trades: list) -> dict:
 
     return {
         "win_rate":       f"{wr}%",
-        "win_rate_color": C["green_dark"] if wr >= 55 else C["orange"] if wr >= 45 else C["red_dark"],
+        "win_rate_color": get_color("winrate", wr),
         "win_rate_sub":   f"{stats.get('closed', 0)} closed",
         "total_pnl":      fmt_pnl(tp),
         "pnl_color":      pnl_color(tp),
@@ -634,7 +618,7 @@ def build_performance_data(stats: dict, trades: list) -> dict:
         "best_trade":     fmt_pnl(best),
         "best_sub":       best_t.get("coin", "--") if best_t else "--",
         "max_drawdown":   f"{max_dd:.1f}%",
-        "dd_color":       C["green_dark"] if max_dd < 10 else C["orange"] if max_dd < 20 else C["red_dark"],
+        "dd_color":       get_color("health", "HEALTHY") if max_dd < 10 else get_color("health", "WARNING") if max_dd < 20 else get_color("health", "INVALIDATED"),
         "dd_sub":         f"peak: ${peak:.2f}",
         "aplus_wr":       f"{ap_wr}%",
         "aplus_bar":      ap_wr,
@@ -645,9 +629,6 @@ def build_performance_data(stats: dict, trades: list) -> dict:
     }
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD RADAR DATA
-# ═══════════════════════════════════════════════════════
 def build_radar_data(results: list) -> list:
     radar = []
     for r in results:
@@ -672,7 +653,7 @@ def build_radar_data(results: list) -> list:
             "score_pct":   min(100, score),
             "price":       fmt_price(price),
             "change":      fmt_pct(change),
-            "change_color":C["green_dark"] if change >= 0 else C["red_dark"],
+            "change_color":pnl_color(change),
             "tradeable":   grade in ["A+", "A"] and dir_ in ["LONG", "SHORT"],
             "confidence":  conf_label
         })
@@ -680,9 +661,6 @@ def build_radar_data(results: list) -> list:
     return radar
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD SIGNAL QUEUE
-# ═══════════════════════════════════════════════════════
 def build_signal_queue(results: list) -> list:
     tradeable = [
         r for r in results
@@ -724,9 +702,6 @@ def build_signal_queue(results: list) -> list:
     return queue
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD HISTORY DATA
-# ═══════════════════════════════════════════════════════
 def build_history_data(trades: list) -> list:
     result = []
     for t in trades[:10]:
@@ -758,9 +733,6 @@ def build_history_data(trades: list) -> list:
     return result
 
 
-# ═══════════════════════════════════════════════════════
-# BUILD HEADER DATA
-# ═══════════════════════════════════════════════════════
 def build_header_data(risk_stats: dict, stats: dict) -> dict:
     today_pnl   = risk_stats.get("total_pnl", 0)
     trades_left = risk_stats.get("remaining_trades", cfg.MAX_TRADES_PER_DAY)
@@ -774,7 +746,7 @@ def build_header_data(risk_stats: dict, stats: dict) -> dict:
         "trades_left":       str(trades_left),
         "trades_left_color": C["red_dark"] if trades_left == 0 else C["text"],
         "win_rate":          f"{wr}%",
-        "win_rate_color":    C["green_dark"] if wr >= 55 else C["orange"] if wr >= 45 else C["red_dark"],
+        "win_rate_color":    get_color("winrate", wr),
         "mode":              "PAPER" if cfg.PAPER_TRADING else "LIVE",
         "mode_color":        C["blue"] if cfg.PAPER_TRADING else C["red_dark"]
     }
