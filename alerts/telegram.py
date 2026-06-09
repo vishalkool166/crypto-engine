@@ -11,7 +11,6 @@ from trade.state import state_manager
 from alerts.utils import now_ist, grade_accuracy_str, categorize_results
 from data.cache import cache
 from trade.risk import risk_guard
-from alerts.scanner import get_db_stats
 from engines.signal import get_session as get_trading_session
 from trade.orders import get_current_price
 
@@ -97,6 +96,7 @@ def _all_cached_signals() -> list:
 
 
 def _get_stats() -> tuple[dict, dict]:
+    from alerts.scanner import get_db_stats
     return get_db_stats(), risk_guard.get_daily_stats()
 
 
