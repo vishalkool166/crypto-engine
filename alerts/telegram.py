@@ -1035,7 +1035,7 @@ async def _cmd_scan():
         if aplus:         summary += f"🏆 {len(aplus)} A+ found!\n"
         if a:             summary += f"✅ {len(a)} A found!\n"
         if not tradeable: summary += "😴 No tradeable signals found.\n"
-        summary += "\nNext auto scan at next :00/:15/:30/:45 UTC"
+        summary += f"\nNext auto scan at {get_next_scan_time()}"
         await send(summary)
     except Exception as e:
         await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
