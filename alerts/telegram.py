@@ -13,6 +13,7 @@ from data.cache import cache
 from trade.risk import risk_guard
 from engines.signal import get_session as get_trading_session
 from trade.orders import get_current_price
+from scheduler import get_next_scan_time
 
 log = logging.getLogger(__name__)
 
