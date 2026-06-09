@@ -525,4 +525,3 @@ Run paper trading for at least 3-6 months before evaluating edge.
 
 Signal Engine v5 — hobby project
 Built with Python, FastAPI, and a lot of market structure reading.
-```

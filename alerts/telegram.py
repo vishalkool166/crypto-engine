@@ -13,7 +13,6 @@ from data.cache import cache
 from trade.risk import risk_guard
 from engines.signal import get_session as get_trading_session
 from trade.orders import get_current_price
-from scheduler import get_next_scan_time
 
 log = logging.getLogger(__name__)
 
@@ -1026,6 +1025,7 @@ async def _cmd_scan():
         "You'll get alerts for any A/A+ signals."
     )
     try:
+        from scheduler import get_next_scan_time
         from alerts.scanner import scan_all_coins
         await scan_all_coins()
     except Exception as e:
