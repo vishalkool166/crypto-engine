@@ -1027,17 +1027,7 @@ async def _cmd_scan():
     )
     try:
         from alerts.scanner import scan_all_coins
-        results   = await scan_all_coins()
-        tradeable = [r for r in results if r.get("grade") in ["A+", "A"] and r.get("direction") in ["LONG", "SHORT"]]
-        aplus     = [r for r in tradeable if r.get("grade") == "A+"]
-        a         = [r for r in tradeable if r.get("grade") == "A"]
-
-        summary = f"✅ *Scan Complete*\n\nCoins scanned: `{len(results)}`\nA+ signals:    `{len(aplus)}`\nA signals:     `{len(a)}`\n\n"
-        if aplus:         summary += f"🏆 {len(aplus)} A+ found!\n"
-        if a:             summary += f"✅ {len(a)} A found!\n"
-        if not tradeable: summary += "😴 No tradeable signals found.\n"
-        summary += f"\nNext auto scan at `{get_next_scan_time()}`"
-        await send(summary)
+        await scan_all_coins()
     except Exception as e:
         await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
 
