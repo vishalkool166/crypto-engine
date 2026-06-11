@@ -6,35 +6,22 @@ log = logging.getLogger(__name__)
 
 _client = AsyncGroq(api_key=cfg.GROQ_API_KEY) if cfg.GROQ_API_KEY else None
 
-_APP_KEYWORDS = {
-    "trade", "signal", "grade", "long", "short", "sl", "stop", "tp1", "tp2",
-    "btc", "eth", "coin", "scan", "regime", "sweep", "displacement", "retest",
-    "confluence", "score", "health", "pnl", "profit", "loss", "risk", "capital",
-    "leverage", "funding", "oi", "fear", "greed", "session", "rsi", "macd",
-    "atr", "adx", "ema", "bot", "engine", "signal", "backtest", "factor",
-    "drawdown", "margin", "position", "order", "block", "fvg", "bos", "choch",
-    "daily", "cap", "paper", "live", "win", "rate", "streak", "briefing",
-    "why", "what", "how", "when", "explain", "status", "active", "idle",
-    "invalidated", "warning", "healthy", "thesis", "entry", "exit", "close",
-    "open", "paused", "resume", "mode", "queue", "approve", "skip",
-}
-
-_SYSTEM_PROMPT = """You are a trading teacher assistant for Signal Engine v5, an automated crypto futures trading bot.
+_SYSTEM_PROMPT = """You are a trading assistant for Signal Engine v5, an automated crypto futures trading bot.
 
 STRICT RULES:
+- ONLY answer questions about Signal Engine v5, its trades, signals, and trading concepts related to this app
+- Refuse ALL off-topic questions politely with: "I only answer questions about your Signal Engine trading app."
 - ALWAYS check live app data first before answering
 - ALWAYS mention actual values (prices, grades, scores, reasons) from live data
 - THEN explain what those values mean in simple terms
 - Never give generic explanations when live data is available
 - Example: Don't say "invalidated means conditions changed"
-- Say "Your BTCUSDT LONG is invalidated because: [actual reason from health failures]"
-- ONLY answer questions about Signal Engine v5 and its trading concepts
-- Refuse ALL off-topic questions politely with: "I only answer questions about your Signal Engine trading app."
+  Say "Your BTCUSDT LONG is invalidated because: [actual reason from health failures data]"
 - Explain everything in plain simple English for a complete beginner
 - Use analogies where helpful
 - Keep answers short (3-5 sentences) unless more detail is explicitly asked
 - Never use jargon without explaining it immediately after
-- Always refer to the live app data provided when answering about current state
+- If live data is not available for a specific question, say so clearly
 
 KEY CONCEPTS YOU KNOW:
 - LONG = betting price goes up. SHORT = betting price goes down.
@@ -61,12 +48,8 @@ KEY CONCEPTS YOU KNOW:
 - Order Block = price zone where institutions placed large orders
 - FVG = Fair Value Gap — imbalance in price that often gets filled
 - BOS = Break of Structure — confirms trend direction
-- CHoCH = Change of Character — early reversal signal"""
-
-
-def is_app_related(message: str) -> bool:
-    lower = message.lower()
-    return any(kw in lower for kw in _APP_KEYWORDS)
+- CHoCH = Change of Character — early reversal signal
+- Tradeable = conditions are good enough for the bot to enter a trade"""
 
 
 async def get_live_context() -> str:
@@ -75,6 +58,7 @@ async def get_live_context() -> str:
     try:
         from trade.state import state_manager
         from trade.risk import risk_guard
+        from trade.orders import get_current_price
         from data.cache import cache
         from alerts.scanner import get_db_stats
         from config import cfg
@@ -108,6 +92,20 @@ async def get_live_context() -> str:
             lines.append(f"TP1 hit: {state_manager.is_tp1_hit}")
             lines.append(f"Health: {state_manager.health_state}")
 
+            # Current live price
+            try:
+                current = get_current_price(t.coin)
+                if current:
+                    lines.append(f"Current price: {current}")
+                    is_long = t.direction == "LONG"
+                    if is_long:
+                        upnl = (current - t.entry_price) / t.entry_price * t.position_size
+                    else:
+                        upnl = (t.entry_price - current) / t.entry_price * t.position_size
+                    lines.append(f"Unrealized PnL: ${upnl:.4f}")
+            except Exception:
+                pass
+
             hd = state_manager.health_data
             if hd.get("failures"):
                 lines.append(f"Health failures: {'; '.join(hd['failures'][:3])}")
@@ -128,10 +126,12 @@ async def get_live_context() -> str:
 
         # Signal cache — all coins
         lines.append(f"\n=== CURRENT SIGNALS ===")
+        has_signals = False
         for coin in cfg.COINS:
             cached = cache.get_raw(f"signal_{coin}")
             if not cached:
                 continue
+            has_signals = True
             grade  = cached.get("grade", "F")
             dir_   = cached.get("direction", "--")
             score  = cached.get("score", 0)
@@ -156,6 +156,9 @@ async def get_live_context() -> str:
                 lines.append(f"  Hard blocks: {'; '.join(b['reason'] for b in hards[:2])}")
             if softs:
                 lines.append(f"  Soft blocks: {'; '.join(b['reason'] for b in softs[:2])}")
+
+        if not has_signals:
+            lines.append("No signal cache available — run /scan to get fresh signals")
 
         # All-time stats
         lines.append(f"\n=== ALL TIME STATS ===")
@@ -186,9 +189,6 @@ async def get_live_context() -> str:
 async def chat(user_message: str) -> str:
     if not _client:
         return "AI chatbot not configured. Add GROQ_API_KEY to .env and restart."
-
-    if not is_app_related(user_message):
-        return "I only answer questions about your Signal Engine trading app."
 
     try:
         context = await get_live_context()
