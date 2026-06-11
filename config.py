@@ -12,6 +12,8 @@ class Config:
 
     FINNHUB_KEY = os.getenv("FINNHUB_KEY")
 
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
     DOMAIN = os.getenv("DOMAIN")
 
     PORT = int(os.getenv("PORT", 8000))
