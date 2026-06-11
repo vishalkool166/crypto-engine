@@ -467,11 +467,22 @@ async def _handle_command(text: str):
         "/debrief": _cmd_debrief,
     }
 
-    handler = handlers.get(t)
-    if handler:
-        await handler()
-    else:
-        await send("🤖 Unknown command.\n\nType /help for full command list.")
+    if t.startswith("/"):
+        handler = handlers.get(t)
+        if handler:
+            await handler()
+        else:
+            await send("🤖 Unknown command.\n\nType /help for full command list.")
+        return
+
+    # Plain text — route to AI chatbot
+    try:
+        from chatbot import chat
+        response = await chat(text)
+        await send(response)
+    except Exception as e:
+        log.error(f"Chatbot error: {e}")
+        await send("AI is temporarily unavailable. Try /help for commands.")
 
 
 async def _cmd_status():
@@ -1025,7 +1036,6 @@ async def _cmd_scan():
         "You'll get alerts for any A/A+ signals."
     )
     try:
-        from scheduler import get_next_scan_time
         from alerts.scanner import scan_all_coins
         await scan_all_coins()
     except Exception as e:
