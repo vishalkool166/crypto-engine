@@ -347,9 +347,9 @@ def build_progress(trade, current: float) -> dict:
     if total == 0:
         pct = 0
     elif is_long:
-        pct = (current - sl) / total * 100
+        pct = (current - entry) / total * 100
     else:
-        pct = (sl - current) / total * 100
+        pct = (entry - current) / total * 100
     pct = max(0, min(100, pct))
 
     if is_long:
