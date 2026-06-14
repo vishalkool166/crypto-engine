@@ -100,15 +100,16 @@ class TradeManager:
                     continue
 
                 symbol    = pos.get("symbol", "")
-                if not symbol.endswith("/USDT"):
+                if not symbol.endswith("/USDT") and "USDT" not in symbol:
                     continue
+                coin = symbol.split("/")[0]
 
                 coin      = symbol.replace("/USDT", "")
                 side      = pos.get("side", "")
                 direction = "LONG" if side == "long" else "SHORT"
                 entry     = float(pos.get("entryPrice", 0) or 0)
                 actual_leverage = int(float(pos.get("leverage", tier["leverage"]) or tier["leverage"]))
-                size      = float(pos.get("notional", 0) or contracts * entry)
+                size      = abs(float(pos.get("notional", 0) or contracts * entry))
 
                 already_tracked = any(
                     t.coin == coin and t.direction == direction
