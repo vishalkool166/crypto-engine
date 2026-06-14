@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 CACHE_TTL       = 1500
 TRADE_MAX_AGE   = 300
 ENTRY_PRICE_TOL = 0.003
+MAX_ENTRY_DEVIATION = 0.01
 
 _scan_running   = False
 _scan_semaphore = asyncio.Semaphore(3)
@@ -94,10 +95,33 @@ def _is_cache_fresh_for_trade(cached: dict) -> bool:
 
 
 def _entry_price_valid(signal: dict, current_price: float) -> bool:
-    entry = signal.get("entry", 0)
+    entry     = signal.get("entry", 0)
+    direction = signal.get("direction", "")
     if not entry or not current_price:
         return False
-    return abs(current_price - entry) / entry <= ENTRY_PRICE_TOL
+
+    deviation = abs(current_price - entry) / entry
+
+    if deviation > MAX_ENTRY_DEVIATION:
+        log.warning(f"Entry too stale: {deviation*100:.2f}% drift — skipping")
+        return False
+
+    if direction == "SHORT" and current_price >= entry:
+        signal["entry"] = current_price
+        log.info(f"SHORT better entry: {entry} → {current_price}")
+        return True
+
+    if direction == "LONG" and current_price <= entry:
+        signal["entry"] = current_price
+        log.info(f"LONG better entry: {entry} → {current_price}")
+        return True
+
+    if deviation <= ENTRY_PRICE_TOL:
+        return True
+
+    signal["entry"] = current_price
+    log.info(f"Entry updated: {entry} → {current_price} ({deviation*100:.2f}% drift)")
+    return True
 
 
 def save_signal_to_db(signal, coin, regime, session, sweep,
