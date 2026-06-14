@@ -211,3 +211,22 @@ async function toggleCoin(coin, enabled) {
     toast('❌ Error', e.message, 'error')
   }
 }
+
+async function deleteCoin(coin) {
+  if (!confirm(`Remove ${coin} from coin universe? This cannot be undone.`)) return
+  try {
+    const res  = await fetch(`${API}/coins/${coin}`, {
+      method:  'DELETE',
+      headers: _authHeaders()
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`🗑️ ${coin} removed`, 'Coin removed from universe', 'info')
+      await fetchDashboard()
+    } else {
+      toast('❌ Failed', data.reason || 'Error', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}

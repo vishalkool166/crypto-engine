@@ -18,7 +18,7 @@ from data.fetcher import get_fear_greed, get_news_filter
 from trade.state import state_manager
 from trade.manager import trade_manager
 from trade.risk import risk_guard
-from trade.orders import get_current_price
+from trade.orders import get_current_price, exchange as sync_exchange
 from backtest.engine import run_backtest
 from backtest.factor_analysis import run_factor_analysis
 from scheduler import get_next_scan_epoch
@@ -29,6 +29,7 @@ from api.formatters import (
     build_risk_data, build_performance_data, build_radar_data,
     build_signal_queue, build_history_data, build_header_data
 )
+import runtime_state as rs
 
 log     = logging.getLogger(__name__)
 router  = APIRouter()
@@ -64,32 +65,32 @@ async def build_dashboard_payload() -> dict:
         ).order_by(TradeModel.closed_at.desc()).limit(10).all()
 
         trades_list = [{
-            "id":           t.id,
-            "coin":         t.coin,
-            "direction":    t.direction,
-            "grade":        t.grade,
-            "pnl":          t.pnl,
-            "pnl_raw":      t.pnl,
-            "outcome":      t.outcome,
-            "close_reason": t.close_reason,
-            "entry_price":  t.entry_price,
-            "exit_price":   t.exit_price,
-            "sl_price":     t.sl_price,
-            "tp1_price":    t.tp1_price,
-            "tp2_price":    t.tp2_price,
-            "risk_amt":     t.risk_amt,
-            "position_size":t.position_size,
-            "leverage":     t.leverage,
-            "tp1_hit":      t.tp1_hit,
-            "partial_pnl":  t.partial_pnl,
+            "id":               t.id,
+            "coin":             t.coin,
+            "direction":        t.direction,
+            "grade":            t.grade,
+            "pnl":              t.pnl,
+            "pnl_raw":          t.pnl,
+            "outcome":          t.outcome,
+            "close_reason":     t.close_reason,
+            "entry_price":      t.entry_price,
+            "exit_price":       t.exit_price,
+            "sl_price":         t.sl_price,
+            "tp1_price":        t.tp1_price,
+            "tp2_price":        t.tp2_price,
+            "risk_amt":         t.risk_amt,
+            "position_size":    t.position_size,
+            "leverage":         t.leverage,
+            "tp1_hit":          t.tp1_hit,
+            "partial_pnl":      t.partial_pnl,
             "regime_at_entry":  t.regime_at_entry,
             "session_at_entry": t.session_at_entry,
             "score_at_entry":   t.score_at_entry,
             "balance_at_open":  t.balance_at_open,
             "tier_at_open":     t.tier_at_open,
             "health_at_close":  t.health_at_close,
-            "opened_at":    t.opened_at.isoformat() if t.opened_at else None,
-            "closed_at":    t.closed_at.isoformat() if t.closed_at else None
+            "opened_at":        t.opened_at.isoformat() if t.opened_at else None,
+            "closed_at":        t.closed_at.isoformat() if t.closed_at else None
         } for t in trades_raw]
     finally:
         db.close()
@@ -113,7 +114,7 @@ async def build_dashboard_payload() -> dict:
         queue_data = build_signal_queue(cached_results)
         last_scan  = "From cache"
 
-    header_data  = build_header_data(risk_stats, stats)
+    header_data   = build_header_data(risk_stats, stats)
     coin_universe = build_coin_universe()
 
     return make_serializable({
@@ -144,12 +145,12 @@ def build_coin_universe() -> list:
 
         result = []
         for r in rows:
-            cached  = cache.get_raw(f"signal_{r.coin}")
-            grade   = cached.get("grade", "--")   if cached else "--"
-            score   = cached.get("score", 0)      if cached else 0
-            dir_    = cached.get("direction", "--") if cached else "--"
+            cached = cache.get_raw(f"signal_{r.coin}")
+            grade  = cached.get("grade", "--")    if cached else "--"
+            score  = cached.get("score", 0)       if cached else 0
+            dir_   = cached.get("direction", "--") if cached else "--"
 
-            from api.formatters import grade_color, pnl_color, C
+            from api.formatters import grade_color
             result.append({
                 "coin":       r.coin,
                 "enabled":    r.enabled,
@@ -591,14 +592,6 @@ async def toggle_coin(request: Request):
             row.enabled = enabled
             db.commit()
 
-        enabled_coins = []
-        with SessionLocal() as db:
-            rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
-            enabled_coins = [r.coin for r in rows]
-
-        if enabled_coins:
-            cfg.COINS = enabled_coins
-
         ip = request.client.host if request.client else ""
         audit("coin_toggle", "api", f"{coin} enabled:{enabled}", ip=ip)
         return JSONResponse(content={"success": True, "coin": coin, "enabled": enabled})
@@ -612,15 +605,42 @@ async def add_coin(request: Request):
     _auth(request)
     try:
         body = await request.json()
-        coin = body.get("coin", "").upper().replace("USDT", "")
+        coin = body.get("coin", "").upper().strip().replace("USDT", "").replace("/", "")
 
         if not coin:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Coin required"})
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Coin name required"})
+
+        if len(coin) > 10:
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Invalid coin name"})
+
+        try:
+            loop    = asyncio.get_running_loop()
+            markets = await loop.run_in_executor(None, sync_exchange.load_markets)
+            symbol  = f"{coin}/USDT"
+            if symbol not in markets:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": f"{coin} not found on Binance Futures — check the symbol"}
+                )
+            market_info = markets[symbol]
+            if not market_info.get("active", True):
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": f"{coin} exists but is not active on Binance"}
+                )
+        except Exception as e:
+            log.warning(f"Binance validation failed for {coin}: {e}")
+            return JSONResponse(
+                status_code = 500,
+                content     = {"success": False, "reason": f"Could not validate {coin} on Binance — try again"}
+            )
 
         with SessionLocal() as db:
             existing = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
             if existing:
                 existing.enabled = True
+                db.commit()
+                msg = f"{coin} re-enabled"
             else:
                 db.add(CoinConfig(
                     coin    = coin,
@@ -628,14 +648,16 @@ async def add_coin(request: Request):
                     tier    = 1,
                     source  = "manual"
                 ))
-            db.commit()
+                db.commit()
+                msg = f"{coin} added"
 
-        if coin not in cfg.COINS:
-            cfg.COINS.append(coin)
+        if coin not in cfg._FALLBACK_COINS:
+            cfg._FALLBACK_COINS.append(coin)
 
         ip = request.client.host if request.client else ""
-        audit("coin_add", "api", f"added:{coin}", ip=ip)
-        return JSONResponse(content={"success": True, "coin": coin})
+        audit("coin_add", "api", msg, ip=ip)
+        return JSONResponse(content={"success": True, "coin": coin, "message": msg})
+
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -646,17 +668,18 @@ async def remove_coin(request: Request, coin: str):
     _auth(request)
     try:
         coin = coin.upper()
+
         with SessionLocal() as db:
             row = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
             if row:
-                row.enabled = False
+                db.delete(row)
                 db.commit()
 
-        if coin in cfg.COINS:
-            cfg.COINS.remove(coin)
+        if coin in cfg._FALLBACK_COINS:
+            cfg._FALLBACK_COINS.remove(coin)
 
         ip = request.client.host if request.client else ""
-        audit("coin_remove", "api", f"removed:{coin}", ip=ip)
+        audit("coin_delete", "api", f"deleted:{coin}", ip=ip)
         return JSONResponse(content={"success": True, "coin": coin})
     except Exception as e:
         log.error(traceback.format_exc())
@@ -673,6 +696,25 @@ async def sync_coins(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-
-
-import runtime_state as rs
+    
+@router.get("/coins/validate/{coin}")
+async def validate_coin(request: Request, coin: str):
+    _auth(request)
+    coin = coin.upper().replace("USDT", "").replace("/", "")
+    try:
+        loop    = asyncio.get_running_loop()
+        markets = await loop.run_in_executor(None, sync_exchange.load_markets)
+        symbol  = f"{coin}/USDT"
+        if symbol not in markets:
+            return JSONResponse(content={"valid": False, "reason": f"{coin} not found on Binance Futures"})
+        market_info = markets[symbol]
+        if not market_info.get("active", True):
+            return JSONResponse(content={"valid": False, "reason": f"{coin} is not active on Binance"})
+        return JSONResponse(content={
+            "valid":  True,
+            "coin":   coin,
+            "symbol": symbol
+        })
+    except Exception as e:
+        log.error(f"Coin validate error: {e}")
+        raise HTTPException(500, str(e))

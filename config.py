@@ -25,7 +25,6 @@ class Config:
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
 
-    # ── Auth ────────────────────────────────────────────────────────
     TOTP_SECRET             = os.getenv("TOTP_SECRET", "")
     DASHBOARD_PASSWORD_HASH = os.getenv("DASHBOARD_PASSWORD_HASH", "")
     DASHBOARD_API_KEY       = os.getenv("DASHBOARD_API_KEY", "")
@@ -33,16 +32,14 @@ class Config:
     WEBHOOK_SECRET          = os.getenv("WEBHOOK_SECRET", "")
     JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
-    # ── Trading mode ────────────────────────────────────────────────
     TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
     PAPER_TRADING = TRADING_MODE != "live"
 
     MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 10))
 
-    # ── Coins ───────────────────────────────────────────────────────
     TIER1 = ["BTC", "ETH", "BNB", "SOL", "XRP"]
     TIER2 = ["ADA", "AVAX", "LINK", "DOT", "DOGE", "LTC", "ATOM", "POL"]
-    COINS = TIER1 + TIER2
+    _FALLBACK_COINS = TIER1 + TIER2
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
@@ -98,6 +95,22 @@ class Config:
 
     RISK_PCT_PER_TRADE = 0.10
 
+    @property
+    def COINS(self) -> list:
+        try:
+            from database import SessionLocal, CoinConfig
+            with SessionLocal() as db:
+                rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+                if rows:
+                    return [r.coin for r in rows]
+        except Exception:
+            pass
+        return self._FALLBACK_COINS
+
+    @COINS.setter
+    def COINS(self, value: list):
+        pass
+
 
 def _bootstrap_secrets():
     import logging
@@ -135,7 +148,6 @@ def _bootstrap_secrets():
     if not os.getenv("DASHBOARD_USERNAME"):
         _ensure("DASHBOARD_USERNAME", "admin")
         cfg.DASHBOARD_USERNAME = "admin"
-        log.info("[FIRST RUN] DASHBOARD_USERNAME defaulted to: admin")
         changed = True
 
     if changed:

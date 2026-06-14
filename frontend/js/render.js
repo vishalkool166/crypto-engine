@@ -428,22 +428,27 @@ function renderHistory(history) {
 }
 
 function showTradeDetail(h) {
-  const title = $id('modal-title')
-  const body  = $id('modal-body')
+  const title   = $id('modal-title')
+  const body    = $id('modal-body')
   const overlay = $id('modal-overlay')
 
-  const isLong      = h.direction === 'LONG'
-  const dirColor    = isLong ? '#248a3d' : '#c0392b'
+  const isLong       = h.direction === 'LONG'
+  const dirColor     = isLong ? '#248a3d' : '#c0392b'
   const outcomeColor = h.outcome === 'win' ? '#248a3d' : h.outcome === 'loss' ? '#c0392b' : '#6e6e73'
-  const pnlFloat    = parseFloat(h.pnl_raw || 0)
 
-  title.textContent = `${h.coin}USDT ${h.direction} — ${h.outcome?.toUpperCase() || '--'}`
+  title.textContent = `${h.coin}USDT ${h.direction} — ${(h.outcome || '--').toUpperCase()}`
 
   const fmt = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+
   const fmtDate = s => {
     if (!s) return '--'
-    try { return new Date(s).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) + ' IST' }
-    catch { return s }
+    try {
+      return new Date(s).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata', hour12: true,
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      }) + ' IST'
+    } catch { return s }
   }
 
   const duration = () => {
@@ -453,8 +458,8 @@ function showTradeDetail(h) {
       const mins = Math.floor(ms / 60000)
       const hrs  = Math.floor(mins / 60)
       const days = Math.floor(hrs / 24)
-      if (days > 0)  return `${days}d ${hrs % 24}h`
-      if (hrs > 0)   return `${hrs}h ${mins % 60}m`
+      if (days > 0) return `${days}d ${hrs % 24}h`
+      if (hrs > 0)  return `${hrs}h ${mins % 60}m`
       return `${mins}m`
     } catch { return '--' }
   }
@@ -464,8 +469,10 @@ function showTradeDetail(h) {
 
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Trade Info</div>
-        <div style="font-size:13px;font-weight:700;color:${dirColor};margin-bottom:4px">${h.dir_emoji || ''} ${h.coin}USDT ${h.direction}</div>
-        <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+        <div style="font-size:13px;font-weight:700;color:${dirColor};margin-bottom:6px">
+          ${h.dir_emoji || ''} ${h.coin}USDT ${h.direction}
+        </div>
+        <div style="font-size:11px;color:#6e6e73;line-height:2">
           <div>Grade: <strong style="color:#1d1d1f">${h.grade || '--'}</strong></div>
           <div>Score: <strong style="color:#1d1d1f">${h.score_at_entry || '--'}/100</strong></div>
           <div>Regime: <strong style="color:#1d1d1f">${h.regime_at_entry || '--'}</strong></div>
@@ -476,59 +483,53 @@ function showTradeDetail(h) {
 
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Outcome</div>
-        <div style="font-size:22px;font-weight:700;font-family:monospace;color:${h.pnl_color || outcomeColor};margin-bottom:4px">${h.pnl || '--'}</div>
-        <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+        <div style="font-size:22px;font-weight:700;font-family:monospace;color:${h.pnl_color || outcomeColor};margin-bottom:6px">
+          ${h.pnl || '--'}
+        </div>
+        <div style="font-size:11px;color:#6e6e73;line-height:2">
           <div>Result: <strong style="color:${outcomeColor}">${(h.outcome || '--').toUpperCase()}</strong></div>
           <div>Reason: <strong style="color:#1d1d1f">${h.close_reason || '--'}</strong></div>
           <div>TP1 Hit: <strong style="color:#1d1d1f">${h.tp1_hit ? '✅ Yes' : '❌ No'}</strong></div>
           ${h.partial_pnl ? `<div>Partial PnL: <strong style="color:#248a3d">+$${parseFloat(h.partial_pnl).toFixed(4)}</strong></div>` : ''}
-          <div>Health: <strong style="color:#1d1d1f">${h.health_at_close || '--'}</strong></div>
+          <div>Health at close: <strong style="color:#1d1d1f">${h.health_at_close || '--'}</strong></div>
         </div>
       </div>
 
     </div>
 
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
-      ${_detailCell('Entry',    fmt(h.entry_price),    '#0071e3')}
-      ${_detailCell('Exit',     fmt(h.exit_price),     h.pnl_color || outcomeColor)}
-      ${_detailCell('Stop',     fmt(h.sl_price),       '#ff3b30')}
-      ${_detailCell('TP1',      fmt(h.tp1_price),      '#34c759')}
-      ${_detailCell('TP2',      fmt(h.tp2_price),      '#34c759')}
-      ${_detailCell('Risk',     fmt(h.risk_amt),       '#ff3b30')}
-      ${_detailCell('Size',     fmt(h.position_size),  '#1d1d1f')}
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      ${_detailCell('Entry',    fmt(h.entry_price),   '#0071e3')}
+      ${_detailCell('Exit',     fmt(h.exit_price),    h.pnl_color || outcomeColor)}
+      ${_detailCell('Stop',     fmt(h.sl_price),      '#ff3b30')}
+      ${_detailCell('TP1',      fmt(h.tp1_price),     '#34c759')}
+      ${_detailCell('TP2',      fmt(h.tp2_price),     '#34c759')}
+      ${_detailCell('Risk',     fmt(h.risk_amt),      '#ff3b30')}
+      ${_detailCell('Size',     fmt(h.position_size), '#1d1d1f')}
       ${_detailCell('Leverage', (h.leverage || '--') + 'x', '#1d1d1f')}
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
       <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:12px">
-        <div class="section-label" style="margin-bottom:6px">Opened</div>
+        <div class="section-label" style="margin-bottom:4px">Opened</div>
         <div style="font-size:12px;color:#1d1d1f;font-weight:500">${fmtDate(h.opened_at)}</div>
       </div>
       <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:12px">
-        <div class="section-label" style="margin-bottom:6px">Closed</div>
+        <div class="section-label" style="margin-bottom:4px">Closed</div>
         <div style="font-size:12px;color:#1d1d1f;font-weight:500">${fmtDate(h.closed_at)}</div>
       </div>
     </div>
 
     ${(h.balance_at_open || h.tier_at_open) ? `
-    <div style="background:rgba(0,113,227,0.04);border:1px solid rgba(0,113,227,0.12);border-radius:10px;padding:12px;margin-bottom:16px">
+    <div style="background:rgba(0,113,227,0.04);border:1px solid rgba(0,113,227,0.12);border-radius:10px;padding:12px">
       <div class="section-label" style="margin-bottom:6px">Account at Open</div>
-      <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+      <div style="font-size:11px;color:#6e6e73;line-height:2">
         ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
         ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
       </div>
     </div>` : ''}
-
-    <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${h.coin}USDT&interval=240"
-       target="_blank"
-       style="display:block;text-align:center;padding:10px;background:rgba(0,113,227,0.06);border:1px solid rgba(0,113,227,0.15);border-radius:10px;color:#0071e3;font-size:13px;font-weight:600;text-decoration:none;transition:background 0.2s"
-       onmouseover="this.style.background='rgba(0,113,227,0.12)'"
-       onmouseout="this.style.background='rgba(0,113,227,0.06)'">
-      📊 View on TradingView (4H Chart)
-    </a>
   `
 
-  overlay.classList.remove('hidden')
+    overlay.classList.remove('hidden')
   overlay.classList.add('flex')
 }
 
@@ -564,18 +565,26 @@ function renderCoinUniverse(coins) {
     const opacity    = c.enabled ? '1' : '0.45'
 
     return `
-      <div style="opacity:${opacity};background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:10px 12px;position:relative">
+      <div style="opacity:${opacity};background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:10px 12px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <span style="font-weight:700;font-size:13px;color:#1d1d1f">${c.coin}</span>
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:#6e6e73;font-weight:500">
-            <input
-              type="checkbox"
-              ${c.enabled ? 'checked' : ''}
-              onchange="toggleCoin('${c.coin}', this.checked)"
-              style="width:14px;height:14px;cursor:pointer;accent-color:#0071e3"
-            >
-            ${c.enabled ? 'On' : 'Off'}
-          </label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:#6e6e73;font-weight:500;margin:0">
+              <input
+                type="checkbox"
+                ${c.enabled ? 'checked' : ''}
+                onchange="toggleCoin('${c.coin}', this.checked)"
+                style="width:13px;height:13px;cursor:pointer;accent-color:#0071e3"
+              >
+              ${c.enabled ? 'On' : 'Off'}
+            </label>
+            <button
+              onclick="deleteCoin('${c.coin}')"
+              style="width:20px;height:20px;border-radius:50%;border:none;background:rgba(255,59,48,0.1);color:#ff3b30;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1"
+              title="Remove ${c.coin}">
+              ✕
+            </button>
+          </div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
           <span style="font-size:10px;font-weight:700;color:${gradeColor}">${c.grade !== '--' ? 'Grade ' + c.grade : '--'}</span>
