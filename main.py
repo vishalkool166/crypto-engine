@@ -169,6 +169,7 @@ async def lifespan(app: FastAPI):
 
     price_feed.on_price(trade_manager.on_price_update)
     price_feed.on_price(broadcast_price)
+    state_manager.pause()
 
     if not state_manager.is_idle:
         for trade in state_manager.active_trades.values():
@@ -186,7 +187,10 @@ async def lifespan(app: FastAPI):
             f"Mode: `{'PAPER' if cfg.PAPER_TRADING else 'LIVE'}`"
         )
     else:
-        log.info("No active trades — idle")
+        log.info("No active trades in DB — checking Binance for open positions")
+
+    # Sync any untracked Binance positions on startup
+    await trade_manager.sync_binance_positions()
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
 

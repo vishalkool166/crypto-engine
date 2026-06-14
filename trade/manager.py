@@ -99,15 +99,19 @@ class TradeManager:
                 if contracts <= 0:
                     continue
 
-                symbol    = pos.get("symbol", "")
-                if not symbol.endswith("/USDT") and "USDT" not in symbol:
+                symbol = pos.get("symbol", "")
+                # Fix: single clean extraction
+                if "/" in symbol:
+                    coin = symbol.split("/")[0]
+                elif symbol.endswith("USDT"):
+                    coin = symbol[:-4]
+                else:
                     continue
-                coin = symbol.split("/")[0]
 
-                coin      = symbol.replace("/USDT", "")
                 side      = pos.get("side", "")
                 direction = "LONG" if side == "long" else "SHORT"
                 entry     = float(pos.get("entryPrice", 0) or 0)
+                tier      = get_current_tier()  # Fix: define tier before use
                 actual_leverage = int(float(pos.get("leverage", tier["leverage"]) or tier["leverage"]))
                 size      = abs(float(pos.get("notional", 0) or contracts * entry))
 
@@ -118,13 +122,24 @@ class TradeManager:
                 if already_tracked:
                     continue
 
-                log.info(f"[SYNC] Detected manual Binance position: {coin} {direction} @ {entry}")
+                log.info(f"[SYNC] Detected untracked Binance position: {coin} {direction} @ {entry}")
 
                 import runtime_state as rs
                 balance_now = rs.get_balance_cache().get("balance", cfg.CAPITAL)
-                tier        = get_current_tier()
 
                 with get_session() as db:
+                    # Check if already in DB as active
+                    existing = db.query(Trade).filter(
+                        Trade.coin      == coin,
+                        Trade.direction == direction,
+                        Trade.is_active == True
+                    ).first()
+
+                    if existing:
+                        state_manager.set_in_trade(existing)
+                        log.info(f"[SYNC] Re-linked existing DB trade: {coin} {direction}")
+                        continue
+
                     trade = Trade(
                         coin             = coin,
                         direction        = direction,
