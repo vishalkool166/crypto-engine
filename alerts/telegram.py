@@ -524,23 +524,23 @@ async def _handle_command(text: str, chat_id: str = ""):
         return
     
     if t.startswith("/setlevels"):
-    parts = t.split()
-    if len(parts) != 5:
-        await send(
-            "⚠️ Usage: `/setlevels COIN SL TP1 TP2`\n\n"
-            "Example:\n`/setlevels ALGO 0.0950 0.0850 0.0800`"
-        )
+        parts = t.split()
+        if len(parts) != 5:
+            await send(
+                "⚠️ Usage: `/setlevels COIN SL TP1 TP2`\n\n"
+                "Example:\n`/setlevels ALGO 0.0950 0.0850 0.0800`"
+            )
+            return
+        coin = parts[1].upper()
+        try:
+            sl  = float(parts[2])
+            tp1 = float(parts[3])
+            tp2 = float(parts[4])
+        except ValueError:
+            await send("⚠️ Invalid numbers. Use: `/setlevels ALGO 0.0950 0.0850 0.0800`")
+            return
+        await _cmd_setlevels(coin, sl, tp1, tp2)
         return
-    coin = parts[1].upper()
-    try:
-        sl  = float(parts[2])
-        tp1 = float(parts[3])
-        tp2 = float(parts[4])
-    except ValueError:
-        await send("⚠️ Invalid numbers. Use: `/setlevels ALGO 0.0950 0.0850 0.0800`")
-        return
-    await _cmd_setlevels(coin, sl, tp1, tp2)
-    return
 
     if t in TOTP_COMMANDS:
         needs_totp = await _require_totp(chat_id, t)
