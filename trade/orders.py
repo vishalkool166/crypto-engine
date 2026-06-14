@@ -1,10 +1,10 @@
 import ccxt
 import logging
-import time
 import json
 import os
 import threading
 from datetime import datetime
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -12,6 +12,13 @@ log = logging.getLogger(__name__)
 TAKER_FEE         = 0.0006
 _precision_cache: dict = {}
 _store_lock       = threading.Lock()
+
+_retry_policy = dict(
+    stop    = stop_after_attempt(3),
+    wait    = wait_exponential(multiplier=2, min=2, max=16),
+    retry   = retry_if_exception_type(ccxt.NetworkError),
+    reraise = True
+)
 
 
 def _get_live_executor():
@@ -153,23 +160,9 @@ def _get_exchange():
 exchange = _get_exchange()
 
 
-def with_retry(fn, retries=3, base_delay=2):
-    for attempt in range(1, retries + 1):
-        try:
-            return fn()
-        except ccxt.NetworkError as e:
-            log.warning(f"Network error attempt {attempt}/{retries}: {e}")
-            if attempt < retries:
-                time.sleep(base_delay * (2 ** (attempt - 1)))
-        except ccxt.ExchangeError as e:
-            log.error(f"Exchange error: {e}")
-            return None
-        except Exception as e:
-            log.error(f"Unexpected error attempt {attempt}: {e}")
-            if attempt < retries:
-                time.sleep(base_delay * (2 ** (attempt - 1)))
-    log.error(f"All {retries} attempts failed")
-    return None
+@retry(**_retry_policy)
+def _fetch_ticker(coin: str) -> dict:
+    return exchange.fetch_ticker(f"{coin}/USDT")
 
 
 def _get_precision_from_exchange(coin: str) -> tuple:
@@ -296,10 +289,12 @@ def get_order_status(coin: str, order_id: str) -> dict:
 
 
 def get_current_price(coin: str) -> float:
-    result = with_retry(lambda: exchange.fetch_ticker(f"{coin}/USDT"))
-    if result:
+    try:
+        result = _fetch_ticker(coin)
         return float(result["last"])
-    return 0.0
+    except Exception as e:
+        log.error(f"Price fetch failed {coin}: {e}")
+        return 0.0
 
 
 def close_position_market(coin: str, direction: str, quantity: float) -> dict:
