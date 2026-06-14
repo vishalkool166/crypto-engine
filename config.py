@@ -103,6 +103,7 @@ class Config:
                 rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
                 if rows:
                     return [r.coin for r in rows]
+                return []
         except Exception:
             pass
         return self._FALLBACK_COINS

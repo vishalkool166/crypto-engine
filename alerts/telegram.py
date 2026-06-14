@@ -494,10 +494,23 @@ async def _handle_command(text: str, chat_id: str = ""):
     if t.startswith("/coin"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else ""
-        if coin in cfg.COINS:
+        if not coin:
+            await send("⚠️ Usage: `/coin BTC`")
+            return
+        coins = cfg.COINS
+        if coin in coins:
             await _cmd_coin(coin)
+        elif not coins:
+            await send(
+                f"⚠️ Coin universe is empty.\n\n"
+                f"Add coins via the dashboard first."
+            )
         else:
-            await send(f"⚠️ Unknown coin: `{coin}`\nSupported: `{', '.join(cfg.COINS)}`")
+            await send(
+                f"⚠️ `{coin}` not in your universe.\n\n"
+                f"Your coins: `{', '.join(coins)}`\n\n"
+                f"Add it via dashboard → Coin Universe."
+            )
         return
 
     if t.startswith("/backtest"):

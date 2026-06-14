@@ -85,17 +85,19 @@ def get_qr_svg() -> str:
     try:
         uri = get_totp_uri()
         qr  = qrcode.QRCode(
-            version           = 1,
-            error_correction  = qrcode.constants.ERROR_CORRECT_L,
-            box_size          = 10,
-            border            = 4,
+            version          = 1,
+            error_correction = qrcode.constants.ERROR_CORRECT_L,
+            box_size         = 10,
+            border           = 4,
         )
         qr.add_data(uri)
         qr.make(fit=True)
         img = qr.make_image(image_factory=qrcode.image.svg.SvgImage)
         buf = BytesIO()
         img.save(buf)
-        return buf.getvalue().decode()
+        svg = buf.getvalue().decode()
+        svg = svg.replace("'", '"')
+        return svg
     except Exception as e:
         log.error(f"QR SVG generation error: {e}")
         return ""
