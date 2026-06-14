@@ -1,10 +1,16 @@
 from dotenv import load_dotenv, set_key
 import os
 import secrets
+import time
 
 load_dotenv()
 
 ENV_FILE = ".env"
+
+_coins_cache:      list  = []
+_coins_cache_time: float = 0.0
+_COINS_CACHE_TTL:  float = 30.0
+
 
 def _ensure(key: str, value: str):
     os.environ[key] = value
@@ -97,12 +103,17 @@ class Config:
 
     @property
     def COINS(self) -> list:
+        global _coins_cache, _coins_cache_time
+        if _coins_cache and (time.time() - _coins_cache_time) < _COINS_CACHE_TTL:
+            return _coins_cache
         try:
             from database import SessionLocal, CoinConfig
             with SessionLocal() as db:
                 rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
                 if rows:
-                    return [r.coin for r in rows]
+                    _coins_cache      = [r.coin for r in rows]
+                    _coins_cache_time = time.time()
+                    return _coins_cache
                 return []
         except Exception:
             pass
@@ -110,7 +121,9 @@ class Config:
 
     @COINS.setter
     def COINS(self, value: list):
-        pass
+        global _coins_cache, _coins_cache_time
+        _coins_cache      = []
+        _coins_cache_time = 0.0
 
 
 def _bootstrap_secrets():

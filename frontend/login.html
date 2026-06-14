@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Signal Engine v5 — Login</title>
 <style>
 * { -webkit-font-smoothing: antialiased; box-sizing: border-box; margin: 0; padding: 0; }
@@ -76,7 +77,16 @@ input[type="number"] {
   letter-spacing: 0.15em; font-size: 20px; text-align: center;
 }
 .totp-hint { font-size: 11px; color: #6e6e73; text-align: center; margin-top: 6px; }
-button {
+.tg-btn {
+  width: 100%; margin-top: 8px; padding: 10px;
+  border-radius: 10px; border: 1px solid rgba(0,113,227,0.2);
+  background: rgba(0,113,227,0.06); color: #0071e3;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: inherit; transition: background 0.2s;
+}
+.tg-btn:hover    { background: rgba(0,113,227,0.12); }
+.tg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+button.primary {
   width: 100%; padding: 15px;
   background: #0071e3; color: white;
   border: none; border-radius: 12px;
@@ -84,9 +94,9 @@ button {
   font-family: inherit; cursor: pointer;
   margin-top: 8px; transition: background 0.2s, transform 0.1s;
 }
-button:hover   { background: #0077ed; }
-button:active  { transform: scale(0.99); }
-button:disabled { background: rgba(0,0,0,0.12); color: rgba(0,0,0,0.3); cursor: not-allowed; transform: none; }
+button.primary:hover   { background: #0077ed; }
+button.primary:active  { transform: scale(0.99); }
+button.primary:disabled { background: rgba(0,0,0,0.12); color: rgba(0,0,0,0.3); cursor: not-allowed; transform: none; }
 .error {
   background: rgba(255,59,48,0.08);
   border: 1px solid rgba(255,59,48,0.2);
@@ -117,6 +127,47 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
 .emergency code {
   background: rgba(0,0,0,0.06); padding: 2px 6px;
   border-radius: 4px; font-size: 10px; word-break: break-all;
+}
+.mode-modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  align-items: center; justify-content: center;
+  padding: 20px; z-index: 100;
+}
+.mode-modal {
+  background: white; border-radius: 24px;
+  padding: 40px; max-width: 380px; width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+  text-align: center;
+}
+.mode-btn {
+  width: 100%; padding: 16px; border-radius: 14px;
+  font-size: 15px; font-weight: 700; cursor: pointer;
+  font-family: inherit; transition: all 0.2s; margin-bottom: 12px;
+}
+.mode-btn-paper {
+  border: 2px solid rgba(0,113,227,0.2);
+  background: rgba(0,113,227,0.06); color: #0071e3;
+}
+.mode-btn-paper:hover  { background: rgba(0,113,227,0.12); }
+.mode-btn-live {
+  border: 2px solid rgba(255,59,48,0.2);
+  background: rgba(255,59,48,0.06); color: #ff3b30;
+}
+.mode-btn-live:hover   { background: rgba(255,59,48,0.12); }
+.mode-btn-keep {
+  border: 1px solid rgba(0,0,0,0.1);
+  background: rgba(0,0,0,0.04); color: #6e6e73;
+  font-size: 13px;
+}
+.mode-btn-keep:hover   { background: rgba(0,0,0,0.08); }
+.mode-error {
+  background: rgba(255,59,48,0.08);
+  border: 1px solid rgba(255,59,48,0.2);
+  border-radius: 10px; padding: 10px 14px;
+  font-size: 12px; color: #c0392b;
+  margin-bottom: 12px; display: none;
 }
 </style>
 </head>
@@ -150,8 +201,11 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
         <label>Authenticator Code</label>
         <input type="number" id="totp" placeholder="000000" autocomplete="one-time-code" required>
         <div class="totp-hint">6-digit code from your authenticator app</div>
+        <button type="button" class="tg-btn" id="tg-totp-btn" onclick="requestTotpViaTelegram()">
+          📱 Send code to Telegram
+        </button>
       </div>
-      <button type="submit" id="login-btn">Sign In</button>
+      <button type="submit" class="primary" id="login-btn">Sign In</button>
       <div class="error" id="login-error"></div>
     </form>
     <div class="footer">
@@ -178,7 +232,7 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
         <label>Confirm Password</label>
         <input type="password" id="reset-pw2" placeholder="Confirm new password" autocomplete="new-password" required>
       </div>
-      <button type="submit" id="reset-btn">Reset Password</button>
+      <button type="submit" class="primary" id="reset-btn">Reset Password</button>
       <div class="error"       id="reset-error"></div>
       <div class="success-msg" id="reset-success"></div>
     </form>
@@ -188,7 +242,29 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
       <code>python -c "from auth import set_password; set_password('newpass')"</code>
     </div>
   </div>
+</div>
 
+<!-- MODE MODAL -->
+<div id="mode-modal" class="mode-modal-overlay">
+  <div class="mode-modal">
+    <div style="font-size:36px;margin-bottom:16px">⚡</div>
+    <h2 style="font-size:20px;font-weight:700;color:#1d1d1f;margin-bottom:8px">Select Trading Mode</h2>
+    <p style="font-size:13px;color:#6e6e73;margin-bottom:28px;line-height:1.6">
+      Choose how the bot should operate.<br>You can change this anytime from Telegram.
+    </p>
+    <div id="mode-error" class="mode-error"></div>
+    <button class="mode-btn mode-btn-paper" onclick="selectMode('paper')">
+      🔵 Paper Trading
+      <div style="font-size:11px;font-weight:400;margin-top:4px;color:#6e6e73">Simulated — no real orders</div>
+    </button>
+    <button class="mode-btn mode-btn-live" onclick="selectMode('live')">
+      🔴 Live Trading
+      <div style="font-size:11px;font-weight:400;margin-top:4px;color:#6e6e73">Real orders on Binance</div>
+    </button>
+    <button class="mode-btn mode-btn-keep" onclick="window.location.href='/'">
+      Keep current mode
+    </button>
+  </div>
 </div>
 
 <script>
@@ -223,7 +299,7 @@ async function handleLogin(e) {
     })
     const data = await res.json()
     if (data.success) {
-      window.location.href = '/'
+      showModeModal()
     } else {
       showErr('login-error', data.reason || 'Invalid credentials')
       btn.disabled  = false
@@ -233,6 +309,62 @@ async function handleLogin(e) {
     showErr('login-error', 'Connection error — try again')
     btn.disabled  = false
     btn.innerHTML = 'Sign In'
+  }
+}
+
+function showModeModal() {
+  const modal = document.getElementById('mode-modal')
+  modal.style.display = 'flex'
+}
+
+async function selectMode(mode) {
+  const errEl = document.getElementById('mode-error')
+  errEl.style.display = 'none'
+
+  try {
+    const res  = await fetch('/api/mode/set', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ mode })
+    })
+    const data = await res.json()
+    if (data.success) {
+      window.location.href = '/'
+    } else {
+      errEl.textContent   = '❌ ' + (data.reason || 'Failed to set mode')
+      errEl.style.display = 'block'
+    }
+  } catch(e) {
+    window.location.href = '/'
+  }
+}
+
+async function requestTotpViaTelegram() {
+  const btn = document.getElementById('tg-totp-btn')
+  btn.disabled    = true
+  btn.textContent = '⏳ Sending...'
+  try {
+    const res  = await fetch('/auth/request-totp', { method: 'POST' })
+    const data = await res.json()
+    if (data.success) {
+      btn.textContent = '✅ Code sent to Telegram!'
+      setTimeout(() => {
+        btn.disabled    = false
+        btn.textContent = '📱 Send code to Telegram'
+      }, 30000)
+    } else {
+      btn.textContent = '❌ ' + (data.reason || 'Failed')
+      setTimeout(() => {
+        btn.disabled    = false
+        btn.textContent = '📱 Send code to Telegram'
+      }, 3000)
+    }
+  } catch(e) {
+    btn.textContent = '❌ Connection error'
+    setTimeout(() => {
+      btn.disabled    = false
+      btn.textContent = '📱 Send code to Telegram'
+    }, 3000)
   }
 }
 

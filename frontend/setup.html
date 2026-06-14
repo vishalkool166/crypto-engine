@@ -61,6 +61,14 @@ h1 { font-size: 22px; font-weight: 700; color: #1d1d1f; margin-bottom: 6px; }
   border-radius: 4px; font-size: 11px;
   word-break: break-all;
 }
+.reveal-btn {
+  background: none; border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 8px; padding: 6px 12px;
+  font-size: 12px; color: #6e6e73;
+  cursor: pointer; margin-bottom: 12px;
+  font-family: inherit;
+}
+.reveal-btn:hover { background: rgba(0,0,0,0.04); }
 label {
   display: block; font-size: 11px; font-weight: 700;
   letter-spacing: 0.04em; text-transform: uppercase;
@@ -104,6 +112,15 @@ input:focus { border-color: #0071e3; }
   text-decoration: none;
 }
 .back-link:hover { text-decoration: underline; }
+.complete-banner {
+  background: rgba(52,199,89,0.08);
+  border: 1px solid rgba(52,199,89,0.2);
+  border-radius: 12px; padding: 16px;
+  text-align: center; margin-bottom: 24px;
+}
+.complete-banner .icon { font-size: 32px; margin-bottom: 8px; }
+.complete-banner h2 { font-size: 16px; font-weight: 700; color: #248a3d; margin-bottom: 4px; }
+.complete-banner p { font-size: 13px; color: #6e6e73; }
 .emergency {
   background: rgba(255,59,48,0.04);
   border: 1px solid rgba(255,59,48,0.15);
@@ -123,11 +140,18 @@ input:focus { border-color: #0071e3; }
 
   <div class="logo">⚡</div>
   <h1>Signal Engine v5 — Setup</h1>
-  <p class="subtitle">Configure your dashboard credentials and TOTP authenticator.<br>This page is only needed once.</p>
+  <p class="subtitle">Configure your dashboard credentials and TOTP authenticator.</p>
 
-  <!-- STATUS -->
+  {% if status.setup_complete %}
+  <div class="complete-banner">
+    <div class="icon">✅</div>
+    <h2>Setup Complete</h2>
+    <p>Your bot is fully configured and ready to trade.</p>
+  </div>
+  {% endif %}
+
   <div class="status-row {{ 'ok' if status.totp_secret_set else 'warn' }}">
-    {{ '✅' if status.totp_secret_set else '⚠️' }} TOTP Secret: {{ 'Generated' if status.totp_secret_set else 'Not generated' }}
+    {{ '✅' if status.totp_secret_set else '⚠️' }} TOTP: {{ 'Configured' if status.totp_secret_set else 'Not set' }}
   </div>
   <div class="status-row {{ 'ok' if status.password_set else 'warn' }}">
     {{ '✅' if status.password_set else '⚠️' }} Password: {{ 'Set' if status.password_set else 'Not set — fill form below' }}
@@ -136,11 +160,11 @@ input:focus { border-color: #0071e3; }
     ✅ Username: <strong>{{ status.username }}</strong>
   </div>
 
-  <!-- QR CODE -->
+  {% if not status.setup_complete %}
   <div class="section">
     <div class="section-title">📱 Authenticator Setup</div>
-    <p style="font-size:13px;color:#6e6e73;margin-bottom:12px">
-      Scan this QR code with Google Authenticator, Authy, or any TOTP app. Only needs to be done once — the secret never changes unless you regenerate it.
+    <p style="font-size:13px;color:#6e6e73;margin-bottom:12px;line-height:1.6">
+      Scan this QR code with Google Authenticator or Authy. Only needs to be done once.
     </p>
 
     {% if qr_svg %}
@@ -155,13 +179,10 @@ input:focus { border-color: #0071e3; }
 
     <div class="info-box">
       <div>TOTP Secret: <code>{{ totp_secret }}</code></div>
-      <div>Username: <code>{{ username }}</code></div>
-      <div>API Key: <code>{{ api_key }}</code></div>
       <div>TOTP URI: <code>{{ totp_uri }}</code></div>
     </div>
   </div>
 
-  <!-- SET CREDENTIALS -->
   <div class="section">
     <div class="section-title">🔑 Set Credentials</div>
 
@@ -178,24 +199,57 @@ input:focus { border-color: #0071e3; }
     <div class="msg" id="cred-msg"></div>
   </div>
 
-  <!-- REGENERATE TOTP -->
+  {% else %}
+
+  <div class="section">
+    <div class="section-title">🔑 Update Credentials</div>
+
+    <label>New Username <span style="font-weight:400;text-transform:none">(optional)</span></label>
+    <input type="text" id="new-username" placeholder="Leave blank to keep current">
+
+    <label>New Password <span style="font-weight:400;text-transform:none">(optional)</span></label>
+    <input type="password" id="pw" placeholder="Leave blank to keep current">
+
+    <label>Confirm Password</label>
+    <input type="password" id="pw2" placeholder="Confirm new password">
+
+    <button class="btn btn-primary" onclick="saveCredentials()">Update Credentials</button>
+    <div class="msg" id="cred-msg"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">📱 TOTP / API Key</div>
+    <button class="reveal-btn" onclick="toggleSecrets()">👁 Show Secrets</button>
+    <div id="secrets-box" style="display:none">
+      <div class="info-box">
+        <div>API Key: <code>{{ api_key }}</code></div>
+        <div>TOTP Secret: <code>{{ totp_secret }}</code></div>
+        <div>TOTP URI: <code>{{ totp_uri }}</code></div>
+      </div>
+      {% if qr_svg %}
+        <div class="qr-wrap">{{ qr_svg | safe }}</div>
+      {% elif qr_png_available %}
+        <div class="qr-wrap"><img src="/auth/qr.png" alt="QR Code"></div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% endif %}
+
   <div class="section">
     <div class="section-title">🔄 Regenerate TOTP</div>
     <p style="font-size:12px;color:#6e6e73;margin-bottom:12px;line-height:1.6">
-      Only do this if you lost access to your authenticator app. After regenerating you must re-scan the new QR code.
+      Only do this if you lost access to your authenticator app. You must re-scan after regenerating.
     </p>
     <button class="btn btn-danger" onclick="regenTotp()">⚠️ Regenerate TOTP Secret</button>
     <div class="msg" id="regen-msg"></div>
   </div>
 
-  <!-- EMERGENCY -->
   <div class="section">
     <div class="section-title">🆘 Emergency Recovery</div>
     <div class="emergency">
-      Lost access completely? Run directly on your server:<br>
-      <code>python -c "from auth import set_password; set_password('newpass')"</code><br><br>
-      To verify which TOTP entry in Authy is correct:<br>
-      <code>python -c "from config import cfg; import pyotp; print(pyotp.TOTP(cfg.TOTP_SECRET).now())"</code>
+      Lost access completely? Run on your server:<br>
+      <code>python -c "from auth import set_password; set_password('newpass')"</code>
     </div>
   </div>
 
@@ -204,6 +258,18 @@ input:focus { border-color: #0071e3; }
 </div>
 
 <script>
+function toggleSecrets() {
+  const box = document.getElementById('secrets-box')
+  const btn = document.querySelector('.reveal-btn')
+  if (box.style.display === 'none') {
+    box.style.display = 'block'
+    btn.textContent   = '🙈 Hide Secrets'
+  } else {
+    box.style.display = 'none'
+    btn.textContent   = '👁 Show Secrets'
+  }
+}
+
 async function saveCredentials() {
   const username = document.getElementById('new-username').value.trim()
   const pw       = document.getElementById('pw').value
@@ -220,14 +286,13 @@ async function saveCredentials() {
   })
   const data = await res.json()
   showMsg('cred-msg', data.success ? '✅ ' + data.message : '❌ ' + (data.reason || 'Failed'), data.success)
+  if (data.success) setTimeout(() => location.reload(), 1500)
 }
 
 async function regenTotp() {
   if (!confirm('Are you sure? You must re-scan the new QR code in your authenticator app.')) return
-
   const res  = await fetch('/auth/regenerate-totp', { method: 'POST' })
   const data = await res.json()
-
   if (data.success) {
     showMsg('regen-msg', '✅ New TOTP generated — reloading...', true)
     setTimeout(() => location.reload(), 1500)

@@ -292,14 +292,14 @@ async def auth_setup(request: Request):
             qr_png_available = bool(get_qr_png_bytes())
 
     return templates.TemplateResponse("setup.html", {
-        "request":         request,
-        "status":          status,
-        "qr_svg":          qr_svg,
-        "qr_png_available":qr_png_available,
-        "totp_secret":     cfg.TOTP_SECRET,
-        "totp_uri":        status["totp_uri"],
-        "username":        cfg.DASHBOARD_USERNAME,
-        "api_key":         cfg.DASHBOARD_API_KEY,
+        "request":          request,
+        "status":           status,
+        "qr_svg":           qr_svg,
+        "qr_png_available": qr_png_available,
+        "totp_secret":      cfg.TOTP_SECRET,
+        "totp_uri":         status["totp_uri"],
+        "username":         cfg.DASHBOARD_USERNAME,
+        "api_key":          cfg.DASHBOARD_API_KEY,
     })
 
 
@@ -346,6 +346,33 @@ async def auth_login(request: Request):
     except Exception as e:
         log.error(f"Login error: {e}")
         raise HTTPException(500, "Login failed")
+
+
+@app.post("/auth/request-totp")
+async def request_totp_via_telegram(request: Request):
+    try:
+        if not cfg.TOTP_SECRET:
+            return JSONResponse(
+                status_code = 400,
+                content     = {"success": False, "reason": "TOTP not configured"}
+            )
+        import pyotp
+        from alerts.telegram import send
+        code = pyotp.TOTP(cfg.TOTP_SECRET).now()
+        await send(
+            f"🔐 *Login Code Requested*\n\n"
+            f"Your current TOTP code:\n"
+            f"`{code}`\n\n"
+            f"_Valid for ~30 seconds._\n"
+            f"_If you didn't request this, ignore it._"
+        )
+        return JSONResponse(content={"success": True})
+    except Exception as e:
+        log.error(f"Request TOTP error: {e}")
+        return JSONResponse(
+            status_code = 500,
+            content     = {"success": False, "reason": "Failed to send"}
+        )
 
 
 @app.post("/auth/reset-password")

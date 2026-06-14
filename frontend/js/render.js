@@ -40,6 +40,7 @@ function renderStatusBar(d) {
   const sub  = $id('status-sub')
   const lst  = $id('last-scan-time')
   const ilst = $id('idle-last-scan')
+  const imt  = $id('idle-mode-text')
 
   if (S.scanning) {
     if (dot)  dot.style.background = '#0071e3'
@@ -51,15 +52,29 @@ function renderStatusBar(d) {
   if (!d) return
 
   const trades = d.trades || []
+  const mode   = d.header?.mode || 'PAPER'
+  const paused = d.header?.paused || false
+  const isLive = mode === 'LIVE'
 
   if (d.state === 'idle' || !trades.length) {
     if (dot)  dot.style.background = '#6e6e73'
     if (text) text.textContent = 'IDLE — Watching markets'
-    if (sub)  sub.textContent  = 'Auto-executes A/A+ signals'
+    if (sub)  sub.textContent  = isLive ? '🔴 Live mode' : '🔵 Paper mode'
+
+    if (imt) {
+      if (paused) {
+        imt.textContent = '⏸ Auto-execution paused'
+      } else if (isLive) {
+        imt.textContent = '🔴 Live — auto-executes A/A+ signals'
+      } else {
+        imt.textContent = '🔵 Paper — auto-executes A/A+ signals'
+      }
+    }
   } else {
     if (dot)  dot.style.background = '#34c759'
     if (text) text.textContent = `IN TRADE — ${trades.length} active`
     if (sub)  sub.textContent  = trades.map(t => `${t.coin} ${t.direction}`).join(' · ')
+    if (imt)  imt.textContent  = ''
   }
 
   if (d.last_scan && d.last_scan !== '--') {
@@ -519,11 +534,11 @@ function showTradeDetail(h) {
     ${(h.balance_at_open || h.tier_at_open) ? `
     <div style="background:rgba(0,113,227,0.04);border:1px solid rgba(0,113,227,0.12);border-radius:10px;padding:12px">
       <div class="section-label" style="margin-bottom:6px">Account at Open</div>
-      <div style="font-size:11px;color:#6e6e73;line-height:2">
-        ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
-        ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
-      </div>
-    </div>` : ''}
+          <div style="font-size:11px;color:#6e6e73;line-height:2">
+            ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
+            ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
+          </div>
+        </div>` : ''}
   `
 
   overlay.classList.remove('hidden')
@@ -547,7 +562,7 @@ function renderCoinUniverse(coins) {
     wrap.innerHTML = `
       <div style="color:#6e6e73;font-size:12px;padding:8px 0">
         No coins yet.
-        <button onclick="showSyncModal()" style="color:#0071e3;background:none;border:none;cursor:pointer;font-weight:600;font-size:12px">Sync from Binance</button>
+        <button onclick="addCoin()" style="color:#0071e3;background:none;border:none;cursor:pointer;font-weight:600;font-size:12px">Add a coin</button>
       </div>`
     return
   }
@@ -560,7 +575,7 @@ function renderCoinUniverse(coins) {
     const hasSignal  = c.has_signal
     const gradeLabel = c.grade !== '--' ? c.grade : ''
 
-    const bg     = enabled ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.04)'
+    const bg      = enabled ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.04)'
     const border  = enabled ? `1px solid ${gc}30` : '1px solid rgba(0,0,0,0.08)'
     const opacity = enabled ? '1' : '0.5'
     const dot     = hasSignal ? `<span style="width:5px;height:5px;border-radius:50%;background:${gc};display:inline-block;margin-left:3px;vertical-align:middle"></span>` : ''
@@ -595,7 +610,6 @@ function showCoinPillDetail(c) {
 
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Market</div>
         <div style="font-size:20px;font-weight:700;font-family:monospace;color:#1d1d1f;margin-bottom:4px">${c.price || '--'}</div>
@@ -605,7 +619,6 @@ function showCoinPillDetail(c) {
           <div>Funding: <strong style="color:${Math.abs(c.funding || 0) > 0.05 ? '#ff3b30' : '#1d1d1f'}">${c.funding !== undefined ? c.funding.toFixed(4) + '%' : '--'}</strong></div>
         </div>
       </div>
-
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Signal</div>
         ${c.has_signal ? `
@@ -620,7 +633,6 @@ function showCoinPillDetail(c) {
           <div>Tier: <strong style="color:#1d1d1f">${c.tier || 1}</strong></div>
         </div>
       </div>
-
     </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(0,0,0,0.04);border-radius:12px;margin-bottom:12px">
@@ -628,13 +640,10 @@ function showCoinPillDetail(c) {
         <div style="font-size:13px;font-weight:600;color:#1d1d1f">${c.enabled ? '✅ Enabled' : '⏸ Disabled'}</div>
         <div style="font-size:11px;color:#6e6e73;margin-top:2px">${c.enabled ? 'Coin is being scanned' : 'Coin is paused from scanning'}</div>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <span style="font-size:12px;color:#6e6e73">${c.enabled ? 'Disable' : 'Enable'}</span>
-        <div onclick="toggleCoin('${c.coin}', ${!c.enabled});closeModal()"
-             style="width:44px;height:24px;border-radius:100px;background:${c.enabled ? '#34c759' : 'rgba(0,0,0,0.15)'};cursor:pointer;position:relative;transition:background 0.2s">
-          <div style="position:absolute;top:2px;${c.enabled ? 'right:2px' : 'left:2px'};width:20px;height:20px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.2);transition:all 0.2s"></div>
-        </div>
-      </label>
+      <div onclick="toggleCoin('${c.coin}', ${!c.enabled});closeModal()"
+           style="width:44px;height:24px;border-radius:100px;background:${c.enabled ? '#34c759' : 'rgba(0,0,0,0.15)'};cursor:pointer;position:relative;transition:background 0.2s">
+        <div style="position:absolute;top:2px;${c.enabled ? 'right:2px' : 'left:2px'};width:20px;height:20px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.2);transition:all 0.2s"></div>
+      </div>
     </div>
 
     <div style="display:flex;gap:8px">

@@ -6,24 +6,13 @@ import os
 import threading
 from datetime import datetime
 from config import cfg
+from trade.live_executor import live_executor
 
 log = logging.getLogger(__name__)
 
-QUANTITY_PRECISION = {
-    "BTC":  3, "ETH":  3, "BNB":  2, "SOL":  2,
-    "XRP":  1, "ADA":  1, "AVAX": 2, "LINK": 2,
-    "DOT":  1, "DOGE": 1, "LTC":  3, "ATOM": 2, "POL": 1
-}
-
-MIN_NOTIONAL = {
-    "BTC":  5.0, "ETH":  5.0, "BNB":  5.0, "SOL":  5.0,
-    "XRP":  5.0, "ADA":  5.0, "AVAX": 5.0, "LINK": 5.0,
-    "DOT":  5.0, "DOGE": 5.0, "LTC":  5.0, "ATOM": 5.0, "POL": 5.0
-}
-
-TAKER_FEE = 0.0006
+TAKER_FEE         = 0.0006
 _precision_cache: dict = {}
-_store_lock = threading.Lock()
+_store_lock       = threading.Lock()
 
 
 class PaperOrderStore:
@@ -193,108 +182,114 @@ def _get_precision_from_exchange(coin: str) -> tuple:
             return qty_prec, min_not
     except Exception as e:
         log.warning(f"Precision fetch failed for {coin}: {e}")
-    default = (QUANTITY_PRECISION.get(coin, 2), MIN_NOTIONAL.get(coin, 5.0))
-    _precision_cache[coin] = default
-    return default
+    fallback = (2, 5.0)
+    _precision_cache[coin] = fallback
+    return fallback
 
 
 def set_leverage(coin: str, leverage: int) -> bool:
     if cfg.PAPER_TRADING:
         log.info(f"[PAPER] Leverage set: {coin} {leverage}x")
         return True
-    return with_retry(lambda: exchange.set_leverage(leverage, f"{coin}/USDT")) is not None
+    return live_executor.set_leverage(coin, leverage)
 
 
 def _ensure_isolated_margin(coin: str):
     if cfg.PAPER_TRADING:
         return
-    try:
-        exchange.set_margin_mode("isolated", f"{coin}/USDT")
-        log.info(f"Margin mode set ISOLATED: {coin}")
-    except Exception as e:
-        log.warning(f"Margin mode set failed {coin}: {e}")
+    live_executor.ensure_isolated(coin)
 
 
 def place_market_order(coin: str, direction: str, quantity: float) -> dict:
-    side    = "buy" if direction == "LONG" else "sell"
-    current = get_current_price(coin)
+    if cfg.PAPER_TRADING:
+        side    = "buy" if direction == "LONG" else "sell"
+        current = get_current_price(coin)
+        if not current:
+            log.error(f"[PAPER] Cannot get price: {coin}")
+            return None
+        order = paper_store.create_order(
+            coin=coin, order_type="MARKET",
+            side=side, quantity=quantity,
+            price=current, label="ENTRY"
+        )
+        paper_store.fill_order(order["id"], current)
+        order["fee"] = quantity * current * TAKER_FEE
+        return order
 
-    if not current:
-        log.error(f"[PAPER] Cannot get price: {coin}")
-        return None
-
-    notional  = quantity * current
-    entry_fee = notional * TAKER_FEE
-
-    order = paper_store.create_order(
-        coin=coin, order_type="MARKET",
-        side=side, quantity=quantity,
-        price=current, label="ENTRY"
-    )
-    paper_store.fill_order(order["id"], current)
-    order["fee"] = entry_fee
-    return order
+    return live_executor.place_market(coin, direction, quantity)
 
 
 def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) -> dict:
-    side  = "sell" if direction == "LONG" else "buy"
-    order = paper_store.create_order(
-        coin=coin, order_type="STOP_MARKET",
-        side=side, quantity=quantity,
-        stop_price=sl_price, label="SL"
-    )
-    log.info(f"[PAPER] SL placed: {coin} @ {sl_price} id:{order['id']}")
-    return order
+    if cfg.PAPER_TRADING:
+        side  = "sell" if direction == "LONG" else "buy"
+        order = paper_store.create_order(
+            coin=coin, order_type="STOP_MARKET",
+            side=side, quantity=quantity,
+            stop_price=sl_price, label="SL"
+        )
+        log.info(f"[PAPER] SL placed: {coin} @ {sl_price} id:{order['id']}")
+        return order
+
+    return live_executor.place_sl(coin, direction, quantity, sl_price)
 
 
 def place_tp_order(coin: str, direction: str, quantity: float,
                    tp_price: float, label: str = "TP") -> dict:
-    side  = "sell" if direction == "LONG" else "buy"
-    order = paper_store.create_order(
-        coin=coin, order_type="TAKE_PROFIT_MARKET",
-        side=side, quantity=quantity,
-        stop_price=tp_price, label=label
-    )
-    log.info(f"[PAPER] {label} placed: {coin} @ {tp_price} id:{order['id']}")
-    return order
+    if cfg.PAPER_TRADING:
+        side  = "sell" if direction == "LONG" else "buy"
+        order = paper_store.create_order(
+            coin=coin, order_type="TAKE_PROFIT_MARKET",
+            side=side, quantity=quantity,
+            stop_price=tp_price, label=label
+        )
+        log.info(f"[PAPER] {label} placed: {coin} @ {tp_price} id:{order['id']}")
+        return order
+
+    return live_executor.place_tp(coin, direction, quantity, tp_price, label)
 
 
 def cancel_order(coin: str, order_id: str) -> bool:
-    result = paper_store.cancel_order(str(order_id))
-    if result:
-        log.info(f"[PAPER] Order cancelled: {coin} {order_id}")
-    return result
+    paper_order = paper_store.get_order(str(order_id))
+    if paper_order:
+        result = paper_store.cancel_order(str(order_id))
+        if result:
+            log.info(f"[PAPER] Order cancelled: {coin} {order_id}")
+        return result
+
+    if cfg.PAPER_TRADING:
+        return False
+
+    return live_executor.cancel(coin, order_id)
 
 
 def get_order_status(coin: str, order_id: str) -> dict:
-    order = paper_store.get_order(str(order_id))
+    paper_order = paper_store.get_order(str(order_id))
+    if paper_order:
+        if paper_order["status"] == "closed":
+            return {"id": paper_order["id"], "status": "closed", "filled": paper_order["quantity"], "price": paper_order["average"]}
 
-    if not order:
+        if paper_order["status"] == "cancelled":
+            return {"id": paper_order["id"], "status": "cancelled", "filled": 0, "price": None}
+
+        current = get_current_price(coin)
+        if not current:
+            return {"id": paper_order["id"], "status": "open", "filled": 0, "price": None}
+
+        triggered = paper_store.check_trigger(str(order_id), current)
+        if triggered:
+            fill_price = paper_order["stop_price"]
+            paper_store.fill_order(str(order_id), fill_price)
+            log.info(f"[PAPER] Stop triggered: {coin} {paper_order.get('label','')} @ {fill_price}")
+            return {"id": paper_order["id"], "status": "closed", "filled": paper_order["quantity"], "price": fill_price}
+
+        return {"id": paper_order["id"], "status": "open", "filled": 0, "price": None}
+
+    if cfg.PAPER_TRADING:
         log.warning(f"[PAPER] Order not found: {order_id}")
         return None
 
-    if order["status"] == "closed":
-        return {"id": order["id"], "status": "closed", "filled": order["quantity"], "price": order["average"]}
-
-    if order["status"] == "cancelled":
-        return {"id": order["id"], "status": "cancelled", "filled": 0, "price": None}
-
-    current = get_current_price(coin)
-    if not current:
-        return {"id": order["id"], "status": "open", "filled": 0, "price": None}
-
-    triggered = paper_store.check_trigger(str(order_id), current)
-
-    if triggered:
-        fill_price = order["stop_price"]
-        notional   = order["quantity"] * fill_price
-        exit_fee   = notional * TAKER_FEE
-        paper_store.fill_order(str(order_id), fill_price)
-        order["fee"] = exit_fee
-        log.info(f"[PAPER] Stop triggered: {coin} {order.get('label','')} @ {fill_price}")
-        return {"id": order["id"], "status": "closed", "filled": order["quantity"], "price": fill_price, "fee": exit_fee}
-
-    return {"id": order["id"], "status": "open", "filled": 0, "price": None}
+    result = live_executor.get_status(coin, order_id)
+    return result
 
 
 def get_current_price(coin: str) -> float:
@@ -305,24 +300,22 @@ def get_current_price(coin: str) -> float:
 
 
 def close_position_market(coin: str, direction: str, quantity: float) -> dict:
-    side    = "sell" if direction == "LONG" else "buy"
-    current = get_current_price(coin)
+    if cfg.PAPER_TRADING:
+        side    = "sell" if direction == "LONG" else "buy"
+        current = get_current_price(coin)
+        if not current:
+            log.error(f"[PAPER] Cannot get price for close: {coin}")
+            return None
+        order = paper_store.create_order(
+            coin=coin, order_type="MARKET",
+            side=side, quantity=quantity,
+            price=current, label="CLOSE"
+        )
+        paper_store.fill_order(order["id"], current)
+        order["fee"] = quantity * current * TAKER_FEE
+        return order
 
-    if not current:
-        log.error(f"[PAPER] Cannot get price for close: {coin}")
-        return None
-
-    notional = quantity * current
-    exit_fee = notional * TAKER_FEE
-
-    order = paper_store.create_order(
-        coin=coin, order_type="MARKET",
-        side=side, quantity=quantity,
-        price=current, label="CLOSE"
-    )
-    paper_store.fill_order(order["id"], current)
-    order["fee"] = exit_fee
-    return order
+    return live_executor.place_market(coin, direction, quantity)
 
 
 def calculate_quantity(coin: str, pos_size: float, price: float) -> float:
@@ -331,9 +324,6 @@ def calculate_quantity(coin: str, pos_size: float, price: float) -> float:
         return 0.0
 
     precision, min_notional = _get_precision_from_exchange(coin)
-
-    if coin not in QUANTITY_PRECISION:
-        log.warning(f"Coin {coin} not in precision map — fetched from exchange: {precision}")
 
     qty      = round(pos_size / price, precision)
     notional = qty * price

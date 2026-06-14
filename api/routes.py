@@ -599,6 +599,8 @@ async def toggle_coin(request: Request):
             row.enabled = enabled
             db.commit()
 
+        cfg.COINS = []
+
         ip = request.client.host if request.client else ""
         audit("coin_toggle", "api", f"{coin} enabled:{enabled}", ip=ip)
         return JSONResponse(content={"success": True, "coin": coin, "enabled": enabled})
@@ -657,6 +659,8 @@ async def add_coin(request: Request):
                 db.commit()
                 msg = f"{coin} added"
 
+        cfg.COINS = []
+
         if coin not in cfg._FALLBACK_COINS:
             cfg._FALLBACK_COINS.append(coin)
 
@@ -680,6 +684,8 @@ async def remove_coin(request: Request, coin: str):
             if row:
                 db.delete(row)
                 db.commit()
+
+        cfg.COINS = []
 
         if coin in cfg._FALLBACK_COINS:
             cfg._FALLBACK_COINS.remove(coin)
@@ -707,4 +713,42 @@ async def validate_coin(request: Request, coin: str):
         return JSONResponse(content={"valid": True, "coin": coin, "symbol": symbol})
     except Exception as e:
         log.error(f"Coin validate error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/mode/set")
+async def set_mode(request: Request):
+    _auth(request)
+    try:
+        body = await request.json()
+        mode = body.get("mode", "paper")
+        if mode not in ["live", "paper"]:
+            raise HTTPException(400, "Invalid mode")
+
+        if mode == "live":
+            if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": "Binance API keys not configured"}
+                )
+            from data.fetcher import get_live_balance
+            balance = await get_live_balance()
+            if balance < cfg.MIN_BALANCE_LIVE:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": f"Balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE_LIVE}"}
+                )
+
+        rs.set_trading_mode(mode)
+        cfg.TRADING_MODE  = mode
+        cfg.PAPER_TRADING = mode != "live"
+
+        ip = request.client.host if request.client else ""
+        audit("mode_set", "dashboard", f"mode:{mode}", ip=ip)
+
+        return JSONResponse(content={"success": True, "mode": mode})
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
