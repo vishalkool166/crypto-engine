@@ -18,12 +18,12 @@ function renderAll() {
 
 function renderHeader(h) {
   if (!h) return
-  $set('h-capital',    { text: h.capital })
-  $set('h-tier',       { text: `T${h.tier}` })
-  $set('h-leverage',   { text: h.leverage })
-  $set('h-today-pnl',  { text: h.today_pnl,  color: h.today_pnl_color })
-  $set('h-slots',      { text: `${h.active_trades}/${h.max_trades}` })
-  $set('h-winrate',    { text: h.win_rate,    color: h.win_rate_color })
+  $set('h-capital',   { text: h.capital })
+  $set('h-tier',      { text: `T${h.tier}` })
+  $set('h-leverage',  { text: h.leverage })
+  $set('h-today-pnl', { text: h.today_pnl,  color: h.today_pnl_color })
+  $set('h-slots',     { text: `${h.active_trades}/${h.max_trades}` })
+  $set('h-winrate',   { text: h.win_rate,    color: h.win_rate_color })
 
   const badge = $id('mode-badge')
   if (badge) {
@@ -466,7 +466,6 @@ function showTradeDetail(h) {
 
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Trade Info</div>
         <div style="font-size:13px;font-weight:700;color:${dirColor};margin-bottom:6px">
@@ -480,7 +479,6 @@ function showTradeDetail(h) {
           <div>Duration: <strong style="color:#1d1d1f">${duration()}</strong></div>
         </div>
       </div>
-
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
         <div class="section-label" style="margin-bottom:8px">Outcome</div>
         <div style="font-size:22px;font-weight:700;font-family:monospace;color:${h.pnl_color || outcomeColor};margin-bottom:6px">
@@ -494,7 +492,6 @@ function showTradeDetail(h) {
           <div>Health at close: <strong style="color:#1d1d1f">${h.health_at_close || '--'}</strong></div>
         </div>
       </div>
-
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
@@ -529,7 +526,7 @@ function showTradeDetail(h) {
     </div>` : ''}
   `
 
-    overlay.classList.remove('hidden')
+  overlay.classList.remove('hidden')
   overlay.classList.add('flex')
 }
 
@@ -542,58 +539,117 @@ function _detailCell(label, value, color) {
 }
 
 function renderCoinUniverse(coins) {
-  const grid = $id('coin-universe-grid')
-  if (!grid) return
+  const wrap  = $id('coin-universe-pills')
+  const count = $id('coin-count')
+  if (!wrap) return
 
   if (!coins || !coins.length) {
-    grid.innerHTML = `
-      <div style="grid-column:1/-1;text-align:center;padding:32px 0;color:#6e6e73;font-size:12px">
-        No coins configured.<br>
-        <button onclick="syncCoins()" style="margin-top:8px;color:#0071e3;background:none;border:none;cursor:pointer;font-weight:600">Sync from Binance</button>
+    wrap.innerHTML = `
+      <div style="color:#6e6e73;font-size:12px;padding:8px 0">
+        No coins yet.
+        <button onclick="showSyncModal()" style="color:#0071e3;background:none;border:none;cursor:pointer;font-weight:600;font-size:12px">Sync from Binance</button>
       </div>`
     return
   }
 
-  grid.innerHTML = coins.map(c => {
-    const volStr = c.volume_24h
-      ? (c.volume_24h >= 1e9
-          ? '$' + (c.volume_24h / 1e9).toFixed(1) + 'B'
-          : '$' + (c.volume_24h / 1e6).toFixed(0) + 'M')
-      : '--'
+  if (count) count.textContent = `(${coins.length} coins)`
 
-    const gradeColor = c.grade_color || '#6e6e73'
-    const opacity    = c.enabled ? '1' : '0.45'
+  wrap.innerHTML = coins.map(c => {
+    const enabled    = c.enabled
+    const gc         = c.grade_color || '#6e6e73'
+    const hasSignal  = c.has_signal
+    const gradeLabel = c.grade !== '--' ? c.grade : ''
+
+    const bg     = enabled ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.04)'
+    const border  = enabled ? `1px solid ${gc}30` : '1px solid rgba(0,0,0,0.08)'
+    const opacity = enabled ? '1' : '0.5'
+    const dot     = hasSignal ? `<span style="width:5px;height:5px;border-radius:50%;background:${gc};display:inline-block;margin-left:3px;vertical-align:middle"></span>` : ''
 
     return `
-      <div style="opacity:${opacity};background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:10px 12px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-          <span style="font-weight:700;font-size:13px;color:#1d1d1f">${c.coin}</span>
-          <div style="display:flex;align-items:center;gap:6px">
-            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:#6e6e73;font-weight:500;margin:0">
-              <input
-                type="checkbox"
-                ${c.enabled ? 'checked' : ''}
-                onchange="toggleCoin('${c.coin}', this.checked)"
-                style="width:13px;height:13px;cursor:pointer;accent-color:#0071e3"
-              >
-              ${c.enabled ? 'On' : 'Off'}
-            </label>
-            <button
-              onclick="deleteCoin('${c.coin}')"
-              style="width:20px;height:20px;border-radius:50%;border:none;background:rgba(255,59,48,0.1);color:#ff3b30;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0;line-height:1"
-              title="Remove ${c.coin}">
-              ✕
-            </button>
-          </div>
-        </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:10px;font-weight:700;color:${gradeColor}">${c.grade !== '--' ? 'Grade ' + c.grade : '--'}</span>
-          <span style="font-size:10px;font-family:monospace;color:#6e6e73">${volStr}</span>
-        </div>
-        <div style="font-size:10px;color:#6e6e73;display:flex;align-items:center;justify-content:space-between">
-          <span style="background:rgba(0,0,0,0.05);padding:1px 6px;border-radius:4px">${c.source || 'manual'}</span>
-          ${c.has_signal ? `<span style="color:${gradeColor}">● signal</span>` : '<span style="color:#6e6e73">no signal</span>'}
-        </div>
-      </div>`
+      <button
+        onclick="showCoinPillDetail(${JSON.stringify(c).replace(/"/g, '&quot;')})"
+        style="opacity:${opacity};display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:100px;font-size:11px;font-weight:600;background:${bg};border:${border};cursor:pointer;transition:all 0.15s;color:#1d1d1f"
+        onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.1)'"
+        onmouseout="this.style.transform='';this.style.boxShadow=''">
+        ${c.coin}
+        ${gradeLabel ? `<span style="font-size:9px;color:${gc};font-weight:700">${gradeLabel}</span>` : ''}
+        ${dot}
+        ${!enabled ? '<span style="font-size:9px;color:#6e6e73">⏸</span>' : ''}
+      </button>`
   }).join('')
+}
+
+function showCoinPillDetail(c) {
+  const title   = $id('modal-title')
+  const body    = $id('modal-body')
+  const overlay = $id('modal-overlay')
+
+  const gc      = c.grade_color || '#6e6e73'
+  const volStr  = c.volume_24h
+    ? (c.volume_24h >= 1e9
+        ? '$' + (c.volume_24h / 1e9).toFixed(1) + 'B'
+        : '$' + (c.volume_24h / 1e6).toFixed(0) + 'M')
+    : '--'
+
+  title.textContent = `${c.coin}USDT — Coin Info`
+
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Market</div>
+        <div style="font-size:20px;font-weight:700;font-family:monospace;color:#1d1d1f;margin-bottom:4px">${c.price || '--'}</div>
+        <div style="font-size:12px;font-weight:600;color:${c.change_color || '#6e6e73'}">${c.change || '--'} 24h</div>
+        <div style="font-size:11px;color:#6e6e73;margin-top:6px;line-height:1.8">
+          <div>Volume 24h: <strong style="color:#1d1d1f">${volStr}</strong></div>
+          <div>Funding: <strong style="color:${Math.abs(c.funding || 0) > 0.05 ? '#ff3b30' : '#1d1d1f'}">${c.funding !== undefined ? c.funding.toFixed(4) + '%' : '--'}</strong></div>
+        </div>
+      </div>
+
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Signal</div>
+        ${c.has_signal ? `
+          <div style="font-size:16px;font-weight:700;color:${gc};margin-bottom:4px">Grade ${c.grade}</div>
+          <div style="font-size:12px;color:#6e6e73;margin-bottom:6px">${c.direction || '--'} · Score ${c.score}/100</div>
+        ` : `
+          <div style="font-size:13px;color:#6e6e73;margin-bottom:6px">No signal yet</div>
+          <div style="font-size:11px;color:#6e6e73">Run /scan to get signal</div>
+        `}
+        <div style="font-size:11px;color:#6e6e73;line-height:1.8;margin-top:6px">
+          <div>Source: <strong style="color:#1d1d1f">${c.source || 'manual'}</strong></div>
+          <div>Tier: <strong style="color:#1d1d1f">${c.tier || 1}</strong></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:rgba(0,0,0,0.04);border-radius:12px;margin-bottom:12px">
+      <div>
+        <div style="font-size:13px;font-weight:600;color:#1d1d1f">${c.enabled ? '✅ Enabled' : '⏸ Disabled'}</div>
+        <div style="font-size:11px;color:#6e6e73;margin-top:2px">${c.enabled ? 'Coin is being scanned' : 'Coin is paused from scanning'}</div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <span style="font-size:12px;color:#6e6e73">${c.enabled ? 'Disable' : 'Enable'}</span>
+        <div onclick="toggleCoin('${c.coin}', ${!c.enabled});closeModal()"
+             style="width:44px;height:24px;border-radius:100px;background:${c.enabled ? '#34c759' : 'rgba(0,0,0,0.15)'};cursor:pointer;position:relative;transition:background 0.2s">
+          <div style="position:absolute;top:2px;${c.enabled ? 'right:2px' : 'left:2px'};width:20px;height:20px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.2);transition:all 0.2s"></div>
+        </div>
+      </label>
+    </div>
+
+    <div style="display:flex;gap:8px">
+      ${c.has_signal ? `
+        <button onclick="closeModal();showCoinDetail('${c.coin}')"
+                style="flex:1;padding:10px;border-radius:10px;border:1px solid rgba(0,113,227,0.2);background:rgba(0,113,227,0.06);color:#0071e3;font-size:13px;font-weight:600;cursor:pointer">
+          📊 View Full Analysis
+        </button>` : ''}
+      <button onclick="closeModal();deleteCoin('${c.coin}')"
+              style="padding:10px 16px;border-radius:10px;border:1px solid rgba(255,59,48,0.2);background:rgba(255,59,48,0.06);color:#ff3b30;font-size:13px;font-weight:600;cursor:pointer">
+        🗑️ Remove
+      </button>
+    </div>
+  `
+
+  overlay.classList.remove('hidden')
+  overlay.classList.add('flex')
 }
