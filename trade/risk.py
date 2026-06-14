@@ -174,10 +174,10 @@ class RiskGuard:
         db    = SessionLocal()
         today = str(datetime.now(timezone.utc).date())
         try:
-            risk       = db.query(DailyRisk).filter(DailyRisk.date == today).first()
-            tier       = get_current_tier()
-            capital    = tier["balance"] or cfg.CAPITAL
-            daily_cap  = capital * cfg.DAILY_LOSS_CAP_PCT
+            risk      = db.query(DailyRisk).filter(DailyRisk.date == today).first()
+            tier      = get_current_tier()
+            capital   = tier["balance"] or cfg.CAPITAL
+            daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
             max_trades = tier["max_trades"]
 
             if not risk:
@@ -250,71 +250,23 @@ class RiskGuard:
             pnl = (entry_price - current_price) / entry_price * pos_size
         return round(pnl, 4)
 
-    def record_trade_open(self):
-        today = str(datetime.now(timezone.utc).date())
-        tier  = get_current_tier()
-        try:
-            with SessionLocal() as db:
-                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
-                if not risk:
-                    risk = DailyRisk(
-                        date         = today,
-                        trades_taken = 1,
-                        total_pnl    = 0.0,
-                        total_loss   = 0.0,
-                        cap_hit      = False,
-                        tier         = tier["tier"]
-                    )
-                    db.add(risk)
-                else:
-                    risk.trades_taken += 1
-        except Exception as e:
-            log.error(f"record_trade_open error: {e}")
 
-    def record_partial_pnl(self, pnl: float):
-        today = str(datetime.now(timezone.utc).date())
-        tier  = get_current_tier()
-        try:
-            with SessionLocal() as db:
-                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
-                if not risk:
-                    risk = DailyRisk(
-                        date         = today,
-                        trades_taken = 0,
-                        total_pnl    = 0.0,
-                        total_loss   = 0.0,
-                        cap_hit      = False,
-                        tier         = tier["tier"]
-                    )
-                    db.add(risk)
-                risk.total_pnl += pnl
-                if pnl < 0:
-                    risk.total_loss += pnl
-                    capital   = tier["balance"] or cfg.CAPITAL
-                    daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
-                    if abs(risk.total_loss) >= daily_cap:
-                        risk.cap_hit = True
-        except Exception as e:
-            log.error(f"record_partial_pnl error: {e}")
+risk_guard = RiskGuard()
+
 
     def record_trade_close(self, pnl: float):
         global _cap_warning_sent
         _cap_warning_sent = False
-
         today = str(datetime.now(timezone.utc).date())
-        tier  = get_current_tier()
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
         try:
-            with SessionLocal() as db:
+            with get_session() as db:
                 risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
                 if not risk:
-                    risk = DailyRisk(
-                        date         = today,
-                        trades_taken = 0,
-                        total_pnl    = 0.0,
-                        total_loss   = 0.0,
-                        cap_hit      = False,
-                        tier         = tier["tier"]
-                    )
+                    risk = DailyRisk(date=today, trades_taken=0,
+                                     total_pnl=0.0, total_loss=0.0,
+                                     cap_hit=False, tier=tier["tier"])
                     db.add(risk)
                 risk.total_pnl += pnl
                 if pnl < 0:
@@ -326,6 +278,3 @@ class RiskGuard:
                         log.warning(f"Daily loss cap hit: ${abs(risk.total_loss):.4f}")
         except Exception as e:
             log.error(f"record_trade_close error: {e}")
-
-
-risk_guard = RiskGuard()
