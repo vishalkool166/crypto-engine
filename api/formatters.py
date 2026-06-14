@@ -343,13 +343,13 @@ def build_progress(trade, current: float) -> dict:
             "tp2_hit":     False
         }
 
-    total = abs(tp1 - sl) if tp1 and sl else 0
+    total = abs(sl - tp1) if tp1 and sl else 0
     if total == 0:
         pct = 0
     elif is_long:
-        pct = (current - entry) / total * 100
+        pct = (current - sl) / total * 100
     else:
-        pct = (entry - current) / total * 100
+        pct = (sl - current) / total * 100
     pct = max(0, min(100, pct))
 
     if is_long:

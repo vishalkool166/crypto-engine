@@ -157,13 +157,13 @@ function applyPriceUpdate(d) {
 
 function _calcProgressPct(price, trade) {
   const clean  = s => parseFloat((s || '0').toString().replace(/[$,]/g, '')) || 0
-  const entry  = clean(trade.entry_price)
+  const sl     = clean(trade.sl_price)
   const tp1    = clean(trade.tp1_price)
   const isLong = trade.direction === 'LONG'
-  const total  = Math.abs(tp1 - entry)
+  const total  = Math.abs(sl - tp1)
   if (total === 0) return 0
   const pct = isLong
-    ? (price - entry) / total * 100
-    : (entry - price) / total * 100
+    ? (price - sl)  / total * 100
+    : (sl  - price) / total * 100
   return Math.max(0, Math.min(100, Math.round(pct)))
 }
