@@ -26,11 +26,6 @@ def _is_minor(warning: str) -> bool:
 
 
 def _debounce_state(new_state: str, current_state: str) -> str:
-    """
-    Prevents rapid state oscillation.
-    INVALIDATED is immediate — no debounce.
-    WARNING and HEALTHY require persistence.
-    """
     if new_state == INVALIDATED:
         _state_first_seen.clear()
         return INVALIDATED
@@ -78,17 +73,16 @@ def check_trade_health(
     if retest_zone:
         zone_top    = retest_zone.get("top", 0)
         zone_bottom = retest_zone.get("bottom", 0)
-
-        atr_buffer = atr * 0.3 if atr > 0 else zone_bottom * 0.005
+        atr_buffer  = atr * 0.3 if atr > 0 else zone_bottom * 0.005
 
         if is_long and current_price < zone_bottom - atr_buffer:
             failures.append(
-                "Retest zone broken — price closed below demand zone "
+                f"Retest zone broken — price closed below demand zone "
                 f"by more than {atr_buffer:.4f}"
             )
         elif not is_long and current_price > zone_top + atr_buffer:
             failures.append(
-                "Retest zone broken — price closed above supply zone "
+                f"Retest zone broken — price closed above supply zone "
                 f"by more than {atr_buffer:.4f}"
             )
         else:
@@ -98,7 +92,7 @@ def check_trade_health(
 
     structure_events = d1d.get("structure", {}).get("events", [])
 
-    bos_against_thesis  = False
+    bos_against_thesis   = False
     choch_against_thesis = False
 
     for event in structure_events:
@@ -148,7 +142,7 @@ def check_trade_health(
         elif d1_cls == "bear":
             warnings.append("Daily trend weakening — monitor closely")
         else:
-            checks.append("Structure intact")
+            checks.append("D1 structure intact")
     else:
         if struct_bias == "bull" and not bos_against_thesis:
             failures.append(
@@ -157,7 +151,25 @@ def check_trade_health(
         elif d1_cls == "bull":
             warnings.append("Daily trend weakening — monitor closely")
         else:
-            checks.append("Structure intact")
+            checks.append("D1 structure intact")
+
+    d4h_struct_bias = d4h.get("structure", {}).get("struct_bias", "neutral")
+    d4h_cls         = d4h.get("trend",     {}).get("cls",         "neutral")
+
+    if is_long:
+        if d4h_struct_bias == "bear":
+            warnings.append("4H structure bearish — conflicts with long thesis")
+        elif d4h_cls == "bear":
+            warnings.append("4H trend bearish — monitor for continuation")
+        else:
+            checks.append(f"4H structure aligned — {d4h_struct_bias}")
+    else:
+        if d4h_struct_bias == "bull":
+            warnings.append("4H structure bullish — conflicts with short thesis")
+        elif d4h_cls == "bull":
+            warnings.append("4H trend bullish — monitor for continuation")
+        else:
+            checks.append(f"4H structure aligned — {d4h_struct_bias}")
 
     if btc_data:
         btc_cls = btc_data.get("trend", {}).get("cls", "neutral")
@@ -174,7 +186,6 @@ def check_trade_health(
                     f"BTC bearish but weak trend (ADX {btc_adx:.0f}) "
                     f"— minor headwind"
                 )
-
         elif not is_long and btc_cls == "bull":
             if btc_adx > 25:
                 warnings.append(
@@ -186,10 +197,8 @@ def check_trade_health(
                     f"BTC bullish but weak trend (ADX {btc_adx:.0f}) "
                     f"— minor headwind"
                 )
-
         elif btc_cls == "neutral":
             checks.append("BTC neutral — no directional conflict")
-
         else:
             checks.append(f"BTC {btc_cls}ish — aligned with thesis")
     else:
@@ -218,9 +227,7 @@ def check_trade_health(
     adverse_atr = adverse_move / atr if atr > 0 else 0
 
     if adverse_atr <= 0:
-        checks.append(
-            f"Price {move_pct:.2f}% in profit direction"
-        )
+        checks.append(f"Price {move_pct:.2f}% in profit direction")
     elif adverse_atr < 0.3:
         checks.append(
             f"Price {abs(move_pct):.2f}% adverse "
@@ -379,22 +386,14 @@ def format_health_alert(health: dict, coin: str) -> str:
         for c in health["checks"]:
             lines.append(f"✔ {c}")
 
-    lines.append(
-        f"\nMove: `{health['move_pct']:+.2f}%` from entry"
-    )
+    lines.append(f"\nMove: `{health['move_pct']:+.2f}%` from entry")
 
     if health.get("adverse_atr", 0) > 0:
-        lines.append(
-            f"Adverse: `{health['adverse_atr']:.1f}x ATR` from entry"
-        )
+        lines.append(f"Adverse: `{health['adverse_atr']:.1f}x ATR` from entry")
 
     if state == INVALIDATED:
-        lines.append(
-            "\n_Thesis invalidated. Use /close if you want to exit._"
-        )
+        lines.append("\n_Thesis invalidated. Use /close if you want to exit._")
     elif state == WARNING:
-        lines.append(
-            "\n_Thesis weakening. Monitor position._"
-        )
+        lines.append("\n_Thesis weakening. Monitor position._")
 
     return "\n".join(lines)

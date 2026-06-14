@@ -440,9 +440,9 @@ def build_trade_data(trade, current: float) -> dict:
     dir_border = C["green"]      if is_long else C["red"]
 
     header_bg = (
-        "linear-gradient(135deg,rgba(52,199,89,0.06) 0%,rgba(255,255,255,0) 100%)"
+        "linear-gradient(135deg,rgba(52,199,89,0.15) 0%,rgba(255,255,255,0) 40%)"
         if is_long else
-        "linear-gradient(135deg,rgba(255,59,48,0.06) 0%,rgba(255,255,255,0) 100%)"
+        "linear-gradient(135deg,rgba(255,59,48,0.15) 0%,rgba(255,255,255,0) 40%)"
     )
 
     prog        = build_progress(trade, current)
