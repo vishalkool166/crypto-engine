@@ -43,9 +43,7 @@ class Config:
 
     MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 10))
 
-    TIER1 = ["BTC", "ETH", "BNB", "SOL", "XRP"]
-    TIER2 = ["ADA", "AVAX", "LINK", "DOT", "DOGE", "LTC", "ATOM", "POL"]
-    _FALLBACK_COINS = TIER1 + TIER2
+    _FALLBACK_COINS = []
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
@@ -93,7 +91,7 @@ class Config:
     REQUIRE_CANDLE_CLOSE          = True
 
     BALANCE_TIERS = [
-        {"min": 0,    "max": 50,   "risk_pct": 0.05, "max_trades": 1, "leverage": 5},
+        {"min": 0,    "max": 50,   "risk_pct": 0.10, "max_trades": 1, "leverage": 10},
         {"min": 50,   "max": 200,  "risk_pct": 0.08, "max_trades": 2, "leverage": 10},
         {"min": 200,  "max": 1000, "risk_pct": 0.10, "max_trades": 3, "leverage": 15},
         {"min": 1000, "max": None, "risk_pct": 0.12, "max_trades": 3, "leverage": 20},

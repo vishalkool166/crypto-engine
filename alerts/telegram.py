@@ -805,8 +805,9 @@ async def _cmd_coin(coin: str):
 
 
 async def _cmd_regime():
-    lines = ["📈 *Market Regime — Tier 1*\n"]
-    for coin in cfg.TIER1:
+    coins = cfg.COINS[:8]
+    lines = [f"📈 *Market Regime — Top {len(coins)} Coins*\n"]
+    for coin in coins:
         cached = _get_cached(coin)
         if not cached:
             lines.append(f"`{coin}` — no data")

@@ -1,10 +1,13 @@
 import math
+import logging
 from datetime import datetime, timezone
 from config import cfg
 from trade.state import state_manager
 from trade.risk import risk_guard, get_current_tier
-from trade.orders import get_current_price
+from trade.orders import get_current_price, exchange as sync_exchange
 from data.cache import cache
+
+log = logging.getLogger(__name__)
 
 C = {
     "green":       "#34c759",
@@ -173,6 +176,22 @@ def detect_tp1_hit(trade) -> bool:
     if not entry or not sl:
         return False
     return abs(sl - entry) / entry < 0.001
+
+
+def _get_live_upnl(coin: str) -> float | None:
+    if cfg.PAPER_TRADING:
+        return None
+    try:
+        positions = sync_exchange.fetch_positions([f"{coin}/USDT"])
+        for pos in positions:
+            if (pos.get("symbol") == f"{coin}/USDT" and
+                    float(pos.get("contracts", 0) or 0) > 0):
+                upnl = float(pos.get("unrealizedPnl", 0) or 0)
+                log.debug(f"[LIVE] Binance uPnL for {coin}: ${upnl:.4f}")
+                return upnl
+    except Exception as e:
+        log.warning(f"Binance position fetch failed for {coin}: {e}")
+    return None
 
 
 def build_ladder(trade, current: float) -> list:
@@ -383,12 +402,17 @@ def build_trade_data(trade, current: float) -> dict:
     tp1_hit  = detect_tp1_hit(trade)
     tier     = get_current_tier()
 
-    upnl     = risk_guard.calculate_unrealized_pnl(
-        direction     = trade.direction,
-        entry_price   = trade.entry_price,
-        current_price = current,
-        pos_size      = trade.position_size
-    )
+    live_upnl = _get_live_upnl(trade.coin)
+    if live_upnl is not None:
+        upnl = live_upnl
+    else:
+        upnl = risk_guard.calculate_unrealized_pnl(
+            direction     = trade.direction,
+            entry_price   = trade.entry_price,
+            current_price = current,
+            pos_size      = trade.position_size
+        )
+
     capital  = tier["balance"] or cfg.CAPITAL
     pnl_pct  = (upnl / capital * 100) if capital else 0
     move_amt = current - trade.entry_price
@@ -447,6 +471,8 @@ def build_trade_data(trade, current: float) -> dict:
     if cached:
         explanation = cached.get("explanation", {})
 
+    pnl_source = "binance" if live_upnl is not None else "calculated"
+
     return {
         "id":               trade.id,
         "coin":             f"{trade.coin}USDT",
@@ -467,6 +493,7 @@ def build_trade_data(trade, current: float) -> dict:
         "pnl_color":        pnl_color(upnl),
         "pnl_pct":          fmt_pct(pnl_pct) + " of capital",
         "pnl_positive":     upnl >= 0,
+        "pnl_source":       pnl_source,
         "current_price":    fmt_price(current),
         "current_color":    current_color,
         "entry_price":      fmt_price(trade.entry_price),
@@ -783,6 +810,7 @@ def build_header_data(risk_stats: dict, stats: dict) -> dict:
         "win_rate_color":    get_color("winrate", wr),
         "mode":              "LIVE" if mode == "live" else "PAPER",
         "mode_color":        C["red_dark"] if mode == "live" else C["blue"],
+        "paused":            state_manager.is_paused,
         "tier":              tier["tier"],
         "active_trades":     len(state_manager.active_trades),
         "max_trades":        tier["max_trades"]
