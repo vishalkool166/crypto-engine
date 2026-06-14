@@ -16,28 +16,26 @@ class TradeState:
 class StateManager:
 
     def __init__(self):
-        self._active_trade: Trade | None = None
-        self._health_state: str          = "HEALTHY"
-        self._health_data:  dict         = {}
-        self._paused:       bool         = False
-        self._load_active_trade()
+        self._active_trades: dict[int, Trade] = {}
+        self._health_states: dict[int, str]   = {}
+        self._health_data:   dict[int, dict]  = {}
+        self._paused:        bool             = False
+        self._load_active_trades()
 
-    def _load_active_trade(self):
+    def _load_active_trades(self):
         try:
             with get_session() as db:
-                trade = db.query(Trade).filter(Trade.is_active == True).first()
-                if trade:
-                    self._active_trade = trade
-                    log.info(
-                        f"Resumed active trade: {trade.coin} {trade.direction} "
-                        f"State: {trade.state} TP1 hit: {self._check_tp1_hit(trade)}"
-                    )
+                trades = db.query(Trade).filter(Trade.is_active == True).all()
+                for trade in trades:
+                    self._active_trades[trade.id] = trade
+                    self._health_states[trade.id] = "HEALTHY"
+                    self._health_data[trade.id]   = {}
+                if trades:
+                    log.info(f"Resumed {len(trades)} active trade(s)")
                 else:
-                    self._active_trade = None
-                    log.info("No active trade found — idle")
+                    log.info("No active trades — idle")
         except Exception as e:
-            log.warning(f"Could not load active trade: {e}")
-            self._active_trade = None
+            log.warning(f"Could not load active trades: {e}")
 
     def _check_tp1_hit(self, trade: Trade) -> bool:
         if not trade or not trade.sl_price or not trade.entry_price:
@@ -46,36 +44,56 @@ class StateManager:
 
     @property
     def is_idle(self) -> bool:
-        return self._active_trade is None
+        return len(self._active_trades) == 0
 
     @property
     def is_in_trade(self) -> bool:
-        return (
-            self._active_trade is not None and
-            self._active_trade.state == TradeState.IN_TRADE
-        )
+        return len(self._active_trades) > 0
+
+    @property
+    def active_trades(self) -> dict[int, Trade]:
+        return self._active_trades
 
     @property
     def current_trade(self) -> Trade | None:
-        return self._active_trade
+        if not self._active_trades:
+            return None
+        return next(iter(self._active_trades.values()))
 
     @property
     def current_state(self) -> str:
-        if self._active_trade is None:
+        if not self._active_trades:
             return TradeState.IDLE
-        return self._active_trade.state
+        return self.current_trade.state
 
     @property
     def is_tp1_hit(self) -> bool:
-        return self._check_tp1_hit(self._active_trade)
+        trade = self.current_trade
+        return self._check_tp1_hit(trade)
+
+    def is_tp1_hit_for(self, trade_id: int) -> bool:
+        trade = self._active_trades.get(trade_id)
+        return self._check_tp1_hit(trade)
 
     @property
     def health_state(self) -> str:
-        return self._health_state
+        trade = self.current_trade
+        if not trade:
+            return "HEALTHY"
+        return self._health_states.get(trade.id, "HEALTHY")
+
+    def health_state_for(self, trade_id: int) -> str:
+        return self._health_states.get(trade_id, "HEALTHY")
 
     @property
     def health_data(self) -> dict:
-        return self._health_data
+        trade = self.current_trade
+        if not trade:
+            return {}
+        return self._health_data.get(trade.id, {})
+
+    def health_data_for(self, trade_id: int) -> dict:
+        return self._health_data.get(trade_id, {})
 
     @property
     def is_paused(self) -> bool:
@@ -83,183 +101,186 @@ class StateManager:
 
     def pause(self):
         self._paused = True
-        log.info("Bot paused — auto-execution disabled")
+        log.info("Bot paused")
 
     def resume(self):
         self._paused = False
-        log.info("Bot resumed — auto-execution enabled")
+        log.info("Bot resumed")
 
-    def update_health(self, health: dict):
-        self._health_state = health.get("state", "HEALTHY")
-        self._health_data  = health
-        log.info(
-            f"Health updated: {self._health_state} "
-            f"warnings:{len(health.get('warnings', []))} "
-            f"failures:{len(health.get('failures', []))}"
-        )
+    def update_health(self, health: dict, trade_id: int = None):
+        if trade_id is None:
+            trade = self.current_trade
+            if trade:
+                trade_id = trade.id
+        if trade_id:
+            self._health_states[trade_id] = health.get("state", "HEALTHY")
+            self._health_data[trade_id]   = health
 
-    def reset_health(self):
-        self._health_state = "HEALTHY"
-        self._health_data  = {}
+    def reset_health(self, trade_id: int = None):
+        if trade_id is None:
+            trade = self.current_trade
+            if trade:
+                trade_id = trade.id
+        if trade_id:
+            self._health_states[trade_id] = "HEALTHY"
+            self._health_data[trade_id]   = {}
+
+    def can_open_trade(self) -> bool:
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
+        return len(self._active_trades) < tier["max_trades"]
 
     def refresh(self):
-        if self._active_trade is None:
-            return
-        try:
-            with get_session() as db:
-                trade = db.query(Trade).filter(Trade.id == self._active_trade.id).first()
-                if not trade or not trade.is_active:
-                    self._active_trade = None
-                    self.reset_health()
-                    log.info("Refresh: trade no longer active — idle")
-                else:
-                    self._active_trade = trade
-                    log.debug(
-                        f"Refresh: {trade.coin} sl:{trade.sl_price} "
-                        f"tp1_hit:{self._check_tp1_hit(trade)}"
-                    )
-        except Exception as e:
-            log.error(f"Refresh error: {e}")
+        to_remove = []
+        for tid, trade in list(self._active_trades.items()):
+            try:
+                with get_session() as db:
+                    t = db.query(Trade).filter(Trade.id == tid).first()
+                    if not t or not t.is_active:
+                        to_remove.append(tid)
+                    else:
+                        self._active_trades[tid] = t
+            except Exception as e:
+                log.error(f"Refresh error trade {tid}: {e}")
+        for tid in to_remove:
+            self._remove_trade(tid)
+
+    def _remove_trade(self, trade_id: int):
+        self._active_trades.pop(trade_id, None)
+        self._health_states.pop(trade_id, None)
+        self._health_data.pop(trade_id, None)
 
     def set_entry(self, trade: Trade):
-        self._active_trade = trade
-        self.reset_health()
+        self._active_trades[trade.id] = trade
+        self._health_states[trade.id] = "HEALTHY"
+        self._health_data[trade.id]   = {}
         self._update_state(trade, TradeState.ENTRY)
         log.info(f"State → ENTRY: {trade.coin} {trade.direction}")
 
     def set_in_trade(self, trade: Trade):
-        self._active_trade = trade
+        self._active_trades[trade.id] = trade
         self._update_state(trade, TradeState.IN_TRADE)
         log.info(f"State → IN_TRADE: {trade.coin} {trade.direction}")
 
-    def set_exit(self, trade: Trade):
-        self._update_state(trade, TradeState.EXIT)
-        log.info(f"State → EXIT: {trade.coin} {trade.direction}")
+    def set_idle(self, trade_id: int = None):
+        if trade_id:
+            self._remove_trade(trade_id)
+            log.info(f"Trade {trade_id} removed — active: {len(self._active_trades)}")
+        else:
+            self._active_trades.clear()
+            self._health_states.clear()
+            self._health_data.clear()
+            log.info("State → IDLE (all trades cleared)")
 
-    def set_idle(self):
-        self._active_trade = None
-        self.reset_health()
-        log.info("State → IDLE")
+    def undo_trade_open(self, trade_id: int):
+        self._remove_trade(trade_id)
+        self._undo_daily_open()
 
-    def can_trade_today(self) -> dict:
-        today = str(datetime.now(timezone.utc).date())
-        try:
-            with get_session() as db:
-                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
-
-                if not risk:
-                    return {
-                        "allowed":      True,
-                        "trades_taken": 0,
-                        "total_loss":   0.0,
-                        "reason":       None
-                    }
-
-                if risk.cap_hit:
-                    return {
-                        "allowed":      False,
-                        "trades_taken": risk.trades_taken,
-                        "total_loss":   risk.total_loss,
-                        "reason":       f"Daily loss cap hit — ${abs(risk.total_loss):.4f} lost today"
-                    }
-
-                if risk.trades_taken >= cfg.MAX_TRADES_PER_DAY:
-                    return {
-                        "allowed":      False,
-                        "trades_taken": risk.trades_taken,
-                        "total_loss":   risk.total_loss,
-                        "reason":       f"Max {cfg.MAX_TRADES_PER_DAY} trades reached today"
-                    }
-
-                daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
-                if abs(risk.total_loss) >= daily_cap:
-                    risk.cap_hit = True
-                    return {
-                        "allowed":      False,
-                        "trades_taken": risk.trades_taken,
-                        "total_loss":   risk.total_loss,
-                        "reason":       f"Daily loss cap ${daily_cap:.4f} reached"
-                    }
-
-                return {
-                    "allowed":      True,
-                    "trades_taken": risk.trades_taken,
-                    "total_loss":   risk.total_loss,
-                    "reason":       None
-                }
-        except Exception as e:
-            log.error(f"can_trade_today error: {e}")
-            return {"allowed": True, "trades_taken": 0, "total_loss": 0.0, "reason": None}
-
-    def record_trade_open(self):
-        today = str(datetime.now(timezone.utc).date())
-        try:
-            with get_session() as db:
-                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
-                if not risk:
-                    risk = DailyRisk(
-                        date=today, trades_taken=1,
-                        total_pnl=0.0, total_loss=0.0, cap_hit=False
-                    )
-                    db.add(risk)
-                else:
-                    risk.trades_taken += 1
-                log.info(f"Trade open recorded — trades today: {risk.trades_taken}")
-        except Exception as e:
-            log.error(f"record_trade_open error: {e}")
-
-    def undo_trade_open(self):
+    def _undo_daily_open(self):
         today = str(datetime.now(timezone.utc).date())
         try:
             with get_session() as db:
                 risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
                 if risk and risk.trades_taken > 0:
                     risk.trades_taken -= 1
-                    log.info(f"Trade open undone — trades today: {risk.trades_taken}")
         except Exception as e:
             log.error(f"undo_trade_open error: {e}")
 
-    def record_partial_pnl(self, pnl: float):
+    def can_trade_today(self) -> dict:
         today = str(datetime.now(timezone.utc).date())
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
+        try:
+            with get_session() as db:
+                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
+
+                if not risk:
+                    return {"allowed": True, "trades_taken": 0, "total_loss": 0.0, "reason": None}
+
+                capital   = tier["balance"] or cfg.CAPITAL
+                daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
+
+                if risk.cap_hit:
+                    return {"allowed": False, "trades_taken": risk.trades_taken,
+                            "total_loss": risk.total_loss,
+                            "reason": f"Daily loss cap hit — ${abs(risk.total_loss):.4f} lost today"}
+
+                if risk.trades_taken >= tier["max_trades"]:
+                    return {"allowed": False, "trades_taken": risk.trades_taken,
+                            "total_loss": risk.total_loss,
+                            "reason": f"Max {tier['max_trades']} trades reached today"}
+
+                if abs(risk.total_loss) >= daily_cap:
+                    risk.cap_hit = True
+                    return {"allowed": False, "trades_taken": risk.trades_taken,
+                            "total_loss": risk.total_loss,
+                            "reason": f"Daily loss cap ${daily_cap:.4f} reached"}
+
+                return {"allowed": True, "trades_taken": risk.trades_taken,
+                        "total_loss": risk.total_loss, "reason": None}
+        except Exception as e:
+            log.error(f"can_trade_today error: {e}")
+            return {"allowed": True, "trades_taken": 0, "total_loss": 0.0, "reason": None}
+
+    def record_trade_open(self):
+        today = str(datetime.now(timezone.utc).date())
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
         try:
             with get_session() as db:
                 risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
                 if not risk:
-                    risk = DailyRisk(
-                        date=today, trades_taken=0,
-                        total_pnl=0.0, total_loss=0.0, cap_hit=False
-                    )
+                    risk = DailyRisk(date=today, trades_taken=1,
+                                     total_pnl=0.0, total_loss=0.0,
+                                     cap_hit=False, tier=tier["tier"])
+                    db.add(risk)
+                else:
+                    risk.trades_taken += 1
+        except Exception as e:
+            log.error(f"record_trade_open error: {e}")
+
+    def record_partial_pnl(self, pnl: float):
+        today = str(datetime.now(timezone.utc).date())
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
+        try:
+            with get_session() as db:
+                risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
+                if not risk:
+                    risk = DailyRisk(date=today, trades_taken=0,
+                                     total_pnl=0.0, total_loss=0.0,
+                                     cap_hit=False, tier=tier["tier"])
                     db.add(risk)
                 risk.total_pnl += pnl
                 if pnl < 0:
                     risk.total_loss += pnl
-                    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+                    capital   = tier["balance"] or cfg.CAPITAL
+                    daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
                     if abs(risk.total_loss) >= daily_cap:
                         risk.cap_hit = True
-                        log.warning(f"Daily cap hit on partial: ${risk.total_loss:.4f}")
-                log.info(f"Partial PnL recorded: ${pnl:.4f} — total today: ${risk.total_pnl:.4f}")
         except Exception as e:
             log.error(f"record_partial_pnl error: {e}")
 
     def record_trade_close(self, pnl: float):
         today = str(datetime.now(timezone.utc).date())
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
         try:
             with get_session() as db:
                 risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
                 if not risk:
-                    risk = DailyRisk(
-                        date=today, trades_taken=0,
-                        total_pnl=0.0, total_loss=0.0, cap_hit=False
-                    )
+                    risk = DailyRisk(date=today, trades_taken=0,
+                                     total_pnl=0.0, total_loss=0.0,
+                                     cap_hit=False, tier=tier["tier"])
                     db.add(risk)
                 risk.total_pnl += pnl
                 if pnl < 0:
                     risk.total_loss += pnl
-                    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+                    capital   = tier["balance"] or cfg.CAPITAL
+                    daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
                     if abs(risk.total_loss) >= daily_cap:
                         risk.cap_hit = True
                         log.warning(f"Daily loss cap hit: ${abs(risk.total_loss):.4f}")
-                log.info(f"Trade close PnL recorded: ${pnl:.4f} — total today: ${risk.total_pnl:.4f}")
         except Exception as e:
             log.error(f"record_trade_close error: {e}")
 

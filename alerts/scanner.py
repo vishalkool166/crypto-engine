@@ -20,14 +20,16 @@ from alerts.telegram import send_signal, send_scan_summary
 from alerts.utils import categorize_results
 from trade.state import state_manager
 from trade.manager import trade_manager
+import runtime_state as rs
 
 log = logging.getLogger(__name__)
 
-CACHE_TTL        = 1500
-TRADE_MAX_AGE    = 300
-ENTRY_PRICE_TOL  = 0.003
-_last_signal_time = 0
-_scan_semaphore   = asyncio.Semaphore(3)
+CACHE_TTL       = 1500
+TRADE_MAX_AGE   = 300
+ENTRY_PRICE_TOL = 0.003
+
+_scan_running   = False
+_scan_semaphore = asyncio.Semaphore(3)
 
 
 def _interpret_oi(market: dict) -> dict:
@@ -88,31 +90,18 @@ def _extract_key_levels(d1d_df, d1w_df) -> dict:
 
 
 def _is_cache_fresh_for_trade(cached: dict) -> bool:
-    cached_at = cached.get("cached_at", 0)
-    age       = time.time() - cached_at
-    return age <= TRADE_MAX_AGE
+    return time.time() - cached.get("cached_at", 0) <= TRADE_MAX_AGE
 
 
 def _entry_price_valid(signal: dict, current_price: float) -> bool:
     entry = signal.get("entry", 0)
     if not entry or not current_price:
         return False
-    deviation = abs(current_price - entry) / entry
-    return deviation <= ENTRY_PRICE_TOL
+    return abs(current_price - entry) / entry <= ENTRY_PRICE_TOL
 
 
-def save_signal_to_db(
-    signal:  dict,
-    coin:    str,
-    regime:  str,
-    session: str,
-    sweep:   dict,
-    retest:  dict,
-    disp:    dict,
-    market:  dict,
-    wconf:   dict = None
-) -> int:
-
+def save_signal_to_db(signal, coin, regime, session, sweep,
+                      retest, disp, market, wconf=None) -> int:
     if signal.get("grade") not in ["A+", "A"]:
         return None
     if signal.get("direction") in ["NO TRADE", "WATCH", "SKIP"]:
@@ -166,46 +155,31 @@ def save_signal_to_db(
         return None
 
 
-async def _attempt_trade(signal: dict, coin: str):
+async def _attempt_trade(signal: dict, coin: str) -> bool:
     grade     = signal.get("grade")
     direction = signal.get("direction")
-    is_idle   = state_manager.is_idle
-
-    log.info(
-        f"_attempt_trade: {coin} grade:{grade} "
-        f"direction:{direction} idle:{is_idle} "
-        f"paused:{state_manager.is_paused}"
-    )
 
     if state_manager.is_paused:
-        log.info(f"Auto-execution paused — signal skipped: {coin}")
+        log.info(f"Auto-execution paused — skipped: {coin}")
         return False
 
     if grade not in cfg.MIN_GRADE_TO_TRADE:
-        log.info(f"Trade blocked — grade {grade} not in {cfg.MIN_GRADE_TO_TRADE}")
         return False
 
     if direction not in ["LONG", "SHORT"]:
-        log.info(f"Trade blocked — direction {direction} not LONG/SHORT")
         return False
 
-    if not is_idle:
-        trade = state_manager.current_trade
-        log.info(f"Trade blocked — already in trade: {trade.coin if trade else 'unknown'}")
+    if not state_manager.can_open_trade():
+        log.info(f"Max concurrent trades reached — skipped: {coin}")
         return False
 
     if signal.get("signal_type") == "PORTFOLIO_BLOCK":
-        log.info(f"Trade blocked — portfolio: {signal.get('portfolio_reason', 'unknown')}")
         return False
 
     from trade.orders import get_current_price
     current_price = get_current_price(coin)
     if not _entry_price_valid(signal, current_price):
-        entry = signal.get("entry", 0)
-        log.warning(
-            f"Entry price stale — signal:{entry:.4f} "
-            f"current:{current_price:.4f} — skipping {coin}"
-        )
+        log.warning(f"Entry price stale — skipping {coin}")
         cache.clear(f"signal_{coin}")
         return False
 
@@ -216,21 +190,24 @@ async def _attempt_trade(signal: dict, coin: str):
 
 async def analyze_coin(
     coin:     str,
-    capital:  float = cfg.CAPITAL,
-    leverage: int   = cfg.LEVERAGE
+    capital:  float = None,
+    leverage: int   = None
 ) -> dict:
-
     async with _scan_semaphore:
         return await _analyze_coin_inner(coin, capital, leverage)
 
 
 async def _analyze_coin_inner(
     coin:     str,
-    capital:  float = cfg.CAPITAL,
-    leverage: int   = cfg.LEVERAGE
+    capital:  float = None,
+    leverage: int   = None
 ) -> dict:
-
+    from trade.risk import get_current_tier
     from trade.orders import get_current_price
+
+    tier     = get_current_tier()
+    capital  = capital  or tier["balance"] or cfg.CAPITAL
+    leverage = leverage or tier["leverage"]
 
     cached = cache.get(f"signal_{coin}")
     if cached:
@@ -240,15 +217,11 @@ async def _analyze_coin_inner(
 
         if grade in cfg.MIN_GRADE_TO_TRADE and signal.get("direction") in ["LONG", "SHORT"]:
             if _is_cache_fresh_for_trade(cached) and _entry_price_valid(signal, current_price):
-                log.debug(f"Cache hit fresh: {coin}")
                 await _attempt_trade(signal, coin)
                 return cached
             else:
-                age = round(time.time() - cached.get("cached_at", 0))
-                log.info(f"Cache stale or price moved ({age}s old) — refetching: {coin}")
                 cache.clear(f"signal_{coin}")
         else:
-            log.debug(f"Cache hit: {coin}")
             return cached
 
     try:
@@ -263,17 +236,12 @@ async def _analyze_coin_inner(
     df_15m      = raw.get("klines_15m")
 
     validation = validate_all_timeframes(klines, coin)
-
     if not validation["valid"]:
         error_msg = " | ".join(validation["errors"])
         log.error(f"Data validation failed: {coin} — {error_msg}")
         return {"coin": coin, "error": f"Data quality failure: {error_msg}"}
 
     klines = validation["klines"]
-
-    for tf, report in validation["reports"].items():
-        if report.get("issues") and report.get("valid"):
-            log.info(f"Data cleaned: {coin} {tf} — {report['issues']}")
 
     d1w = calculate_all(klines["1w"])
     d1d = calculate_all(klines["1d"])
@@ -304,7 +272,6 @@ async def _analyze_coin_inner(
             except Exception:
                 btc_data    = None
                 btc_4h_data = None
-                log.warning("BTC data fetch failed")
 
         btc_inst = assess_btc_stability(btc_data)
 
@@ -328,16 +295,9 @@ async def _analyze_coin_inner(
     session    = get_trading_session(vol_ratio=vol_ratio)
     regime     = detect_regime(d1d, d4h)
 
-    sweep = detect_sweep(
-        klines["1d"], key_levels,
-        d1d.get("atr", 0), d1d["swings"]
-    )
-    disp = detect_displacement(klines["4h"], d4h.get("atr", 0))
-    retest = detect_retest(
-        klines["4h"], d4h,
-        sweep, disp,
-        d1h=d1h, d1d=d1d
-    )
+    sweep  = detect_sweep(klines["1d"], key_levels, d1d.get("atr", 0), d1d["swings"])
+    disp   = detect_displacement(klines["4h"], d4h.get("atr", 0))
+    retest = detect_retest(klines["4h"], d4h, sweep, disp, d1h=d1h, d1d=d1d)
 
     oi_matrix = _interpret_oi(market)
 
@@ -392,15 +352,10 @@ async def _analyze_coin_inner(
     signal["coin"]        = coin
 
     db_id = save_signal_to_db(
-        signal  = signal,
-        coin    = coin,
-        regime  = regime["label"],
-        session = session["name"],
-        sweep   = sweep,
-        retest  = retest,
-        disp    = disp,
-        market  = market,
-        wconf   = wconf
+        signal=signal, coin=coin,
+        regime=regime["label"], session=session["name"],
+        sweep=sweep, retest=retest, disp=disp,
+        market=market, wconf=wconf
     )
 
     if db_id:
@@ -457,61 +412,58 @@ async def _analyze_coin_inner(
 
 
 async def scan_all_coins() -> list:
-    global _last_signal_time
-    results = []
+    global _scan_running
 
-    if not state_manager.is_idle:
-        trade = state_manager.current_trade
-        log.info(f"Scan — active trade: {trade.coin} {trade.direction} {trade.state}")
-    else:
-        log.info("Scan — bot idle, looking for signals")
+    if _scan_running:
+        log.info("Scan already running — skipping")
+        return []
 
-    if state_manager.is_paused:
-        log.info("Scan — auto-execution paused, alerts only")
+    _scan_running = True
+    results       = []
 
-    btc_cached = cache.get_raw("btc_1d_data")
-    if not btc_cached:
-        try:
-            from data.fetcher import get_all_data
-            btc_raw        = await get_all_data("BTC")
-            btc_validation = validate_all_timeframes(btc_raw["klines"], "BTC")
-            if btc_validation["valid"]:
-                btc_data    = calculate_all(btc_validation["klines"]["1d"])
-                btc_4h_data = calculate_all(btc_validation["klines"]["4h"])
-                cache.set("btc_1d_data", btc_data,    ttl=900)
-                cache.set("btc_4h_data", btc_4h_data, ttl=900)
-                log.info("BTC data pre-fetched and validated")
-            else:
-                log.warning(f"BTC validation failed: {btc_validation['errors']}")
-        except Exception as e:
-            log.warning(f"BTC pre-fetch failed: {e}")
+    try:
+        log.info(f"Scan started — {len(cfg.COINS)} coins")
 
-    log.info(f"Scanning {len(cfg.COINS)} coins with Semaphore(3)")
+        btc_cached = cache.get_raw("btc_1d_data")
+        if not btc_cached:
+            try:
+                from data.fetcher import get_all_data
+                btc_raw        = await get_all_data("BTC")
+                btc_validation = validate_all_timeframes(btc_raw["klines"], "BTC")
+                if btc_validation["valid"]:
+                    btc_data    = calculate_all(btc_validation["klines"]["1d"])
+                    btc_4h_data = calculate_all(btc_validation["klines"]["4h"])
+                    cache.set("btc_1d_data", btc_data,    ttl=900)
+                    cache.set("btc_4h_data", btc_4h_data, ttl=900)
+            except Exception as e:
+                log.warning(f"BTC pre-fetch failed: {e}")
 
-    tasks = []
-    for coin in cfg.COINS:
-        tasks.append(_scan_coin_safe(coin))
+        tasks        = [_scan_coin_safe(coin) for coin in cfg.COINS]
+        scan_results = await asyncio.gather(*tasks)
 
-    scan_results = await asyncio.gather(*tasks)
+        for r in scan_results:
+            if r and "error" not in r:
+                results.append(r)
 
-    for r in scan_results:
-        if r and "error" not in r:
-            results.append(r)
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        tradeable = [
+            r for r in results
+            if r.get("grade") in ["A+", "A"] and
+            r.get("direction") in ["LONG", "SHORT"]
+        ]
 
-    tradeable = [
-        r for r in results
-        if r.get("grade") in ["A+", "A"] and
-        r.get("direction") in ["LONG", "SHORT"]
-    ]
-    if tradeable:
-        _last_signal_time = time.time()
-    else:
-        _check_heartbeat()
+        if tradeable:
+            rs.set_last_signal_time(time.time())
+        else:
+            _check_heartbeat()
 
-    await send_scan_summary(results)
-    log.info(f"Scan complete — {len(results)} coins analyzed")
+        await send_scan_summary(results)
+        log.info(f"Scan complete — {len(results)} coins")
+
+    finally:
+        _scan_running = False
+
     return results
 
 
@@ -526,13 +478,13 @@ async def _scan_coin_safe(coin: str) -> dict:
 
 
 def _check_heartbeat():
-    global _last_signal_time
-    if _last_signal_time == 0:
-        _last_signal_time = time.time()
+    last = rs.get_last_signal_time()
+    if last == 0:
+        rs.set_last_signal_time(time.time())
         return
-    hours_since = (time.time() - _last_signal_time) / 3600
+    hours_since = (time.time() - last) / 3600
     if hours_since >= 3:
-        _last_signal_time = time.time()
+        rs.set_last_signal_time(time.time())
         asyncio.create_task(_send_heartbeat(hours_since))
 
 
@@ -541,9 +493,8 @@ async def _send_heartbeat(hours: float):
         from alerts.telegram import send
         await send(
             f"💓 *Bot Heartbeat*\n\n"
-            f"No tradeable signals found in `{hours:.1f}h`.\n"
-            f"Bot is alive and scanning every 15 minutes.\n"
-            f"Markets may be ranging or conditions not met."
+            f"No tradeable signals in `{hours:.1f}h`.\n"
+            f"Bot alive and scanning every 15 minutes."
         )
     except Exception:
         pass

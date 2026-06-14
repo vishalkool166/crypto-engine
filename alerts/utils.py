@@ -46,6 +46,10 @@ def categorize_results(results: list) -> dict:
             if r.get("grade") == "B" and
             r.get("direction") in ["LONG", "SHORT"]
         ],
+        "skipped": [
+            r for r in results
+            if r.get("grade") == "B"
+        ],
         "building": [
             r for r in results
             if r.get("grade") == "C"

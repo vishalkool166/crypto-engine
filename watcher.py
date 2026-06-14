@@ -3,6 +3,7 @@ import time
 import logging
 import sys
 import os
+import json
 import httpx
 from dotenv import load_dotenv
 load_dotenv()
@@ -13,11 +14,12 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-POLL_INTERVAL   = 30
-TUNNEL_CHECK    = 300
-APP_PROCESS     = None
-NGROK_PROCESS   = None
-NGROK_DOMAIN    = os.getenv("DOMAIN", "").replace("https://", "").replace("http://", "")
+POLL_INTERVAL      = 30
+TUNNEL_CHECK       = 300
+APP_PROCESS        = None
+NGROK_PROCESS      = None
+NGROK_DOMAIN       = os.getenv("DOMAIN", "").replace("https://", "").replace("http://", "")
+STATE_FILE         = "runtime_state.json"
 _last_tunnel_check = 0
 
 
@@ -30,10 +32,7 @@ def get_local_commit():
 
 
 def get_remote_commit():
-    subprocess.run(
-        ["git", "fetch", "origin", "main"],
-        capture_output=True
-    )
+    subprocess.run(["git", "fetch", "origin", "main"], capture_output=True)
     result = subprocess.run(
         ["git", "rev-parse", "origin/main"],
         capture_output=True, text=True
@@ -58,6 +57,34 @@ def install_requirements():
         log.error(f"Requirements install failed:\n{result.stderr}")
 
 
+def _mark_crash_in_state():
+    try:
+        state = {}
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r") as f:
+                state = json.load(f)
+        state["crash_detected"] = True
+        state["last_shutdown"]  = "crash"
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, STATE_FILE)
+        log.warning("Crash marked in runtime_state.json")
+    except Exception as e:
+        log.error(f"Could not mark crash: {e}")
+
+
+def _get_last_mode() -> str:
+    try:
+        if os.path.exists(STATE_FILE):
+            with open(STATE_FILE, "r") as f:
+                state = json.load(f)
+            return state.get("trading_mode", "paper")
+    except Exception:
+        pass
+    return "paper"
+
+
 def start_ngrok():
     global NGROK_PROCESS
     log.info("Starting ngrok tunnel...")
@@ -79,7 +106,6 @@ def stop_ngrok():
 
 
 def restart_ngrok():
-    global NGROK_PROCESS
     log.warning("Restarting ngrok tunnel...")
     stop_ngrok()
     time.sleep(2)
@@ -90,8 +116,7 @@ def check_tunnel_health() -> bool:
     if not NGROK_DOMAIN:
         return True
     try:
-        url = f"https://{NGROK_DOMAIN}/api/health"
-        r   = httpx.get(url, timeout=10)
+        r = httpx.get(f"https://{NGROK_DOMAIN}/api/health", timeout=10)
         return r.status_code == 200
     except Exception as e:
         log.warning(f"Tunnel health check failed: {e}")
@@ -115,8 +140,18 @@ def stop_app():
     global APP_PROCESS
     if APP_PROCESS:
         APP_PROCESS.terminate()
-        APP_PROCESS.wait()
+        try:
+            APP_PROCESS.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            APP_PROCESS.kill()
+            APP_PROCESS.wait()
         log.info("App stopped")
+
+
+def _app_crashed() -> bool:
+    if APP_PROCESS is None:
+        return False
+    return APP_PROCESS.poll() is not None
 
 
 def main():
@@ -132,6 +167,16 @@ def main():
     while True:
         time.sleep(POLL_INTERVAL)
         now = time.time()
+
+        if _app_crashed():
+            exit_code = APP_PROCESS.returncode
+            log.error(f"App crashed with exit code {exit_code} — marking crash and restarting")
+            _mark_crash_in_state()
+            time.sleep(3)
+            install_requirements()
+            start_app()
+            _last_tunnel_check = now
+            continue
 
         try:
             local  = get_local_commit()

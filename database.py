@@ -12,7 +12,9 @@ os.makedirs("database", exist_ok=True)
 Base = declarative_base()
 engine = create_engine(
     "sqlite:///database/signals.db",
-    connect_args={"check_same_thread": False}
+    connect_args={"check_same_thread": False, "timeout": 30},
+    pool_size=5,
+    max_overflow=10
 )
 
 @event.listens_for(engine, "connect")
@@ -119,17 +121,24 @@ class Trade(Base):
     regime_at_entry  = Column(String, nullable=True)
     session_at_entry = Column(String, nullable=True)
     score_at_entry   = Column(Float, nullable=True)
+    # P2-25 additions
+    totp_confirmed   = Column(Boolean, default=False)
+    balance_at_open  = Column(Float, nullable=True)
+    tier_at_open     = Column(Integer, nullable=True)
 
 
 class DailyRisk(Base):
     __tablename__ = "daily_risk"
 
-    id           = Column(Integer, primary_key=True)
-    date         = Column(String, unique=True)
-    trades_taken = Column(Integer, default=0)
-    total_loss   = Column(Float, default=0.0)
-    total_pnl    = Column(Float, default=0.0)
-    cap_hit      = Column(Boolean, default=False)
+    id            = Column(Integer, primary_key=True)
+    date          = Column(String, unique=True)
+    trades_taken  = Column(Integer, default=0)
+    total_loss    = Column(Float, default=0.0)
+    total_pnl     = Column(Float, default=0.0)
+    cap_hit       = Column(Boolean, default=False)
+    balance_start = Column(Float, nullable=True)
+    balance_end   = Column(Float, nullable=True)
+    tier          = Column(Integer, nullable=True)
 
 
 class Candle(Base):
@@ -168,6 +177,31 @@ class BacktestResult(Base):
     worst_trade   = Column(Float)
     avg_trade     = Column(Float)
     notes         = Column(Text, nullable=True)
+
+
+class CoinConfig(Base):
+    __tablename__ = "coin_config"
+
+    id         = Column(Integer, primary_key=True)
+    coin       = Column(String, unique=True, nullable=False)
+    enabled    = Column(Boolean, default=True)
+    tier       = Column(Integer, default=1)
+    source     = Column(String, default="manual")
+    volume_24h = Column(Float, nullable=True)
+    added_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen  = Column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id        = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    action    = Column(String)
+    source    = Column(String)
+    detail    = Column(Text, nullable=True)
+    ip        = Column(String, nullable=True)
+    success   = Column(Boolean, default=True)
 
 
 def init_db():

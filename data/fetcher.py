@@ -35,6 +35,9 @@ TF_LIMITS = {
 _api_fail_count   = 0
 _api_fail_alerted = False
 
+# P2-22 — last known fear/greed cache
+_last_fg: dict = {"value": 50, "label": "Neutral", "stale": False}
+
 
 async def _alert_api_failure(coin: str, error: str):
     global _api_fail_count, _api_fail_alerted
@@ -93,10 +96,7 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
         raise Exception(f"No candle data available: {coin} {tf}")
 
     if tf == "1w" and len(df) < 200:
-        log.warning(
-            f"Weekly candles for {coin}: {len(df)} — "
-            f"EMA200 needs 200+. Weekly filter confidence reduced."
-        )
+        log.warning(f"Weekly candles for {coin}: {len(df)} — EMA200 needs 200+.")
 
     return df
 
@@ -161,6 +161,7 @@ async def get_ls_ratio(coin: str) -> dict:
 
 
 async def get_fear_greed() -> dict:
+    global _last_fg
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
@@ -168,13 +169,16 @@ async def get_fear_greed() -> dict:
                 timeout=5
             )
             d = r.json()
-            return {
+            _last_fg = {
                 "value": int(d["data"][0]["value"]),
-                "label": d["data"][0]["value_classification"]
+                "label": d["data"][0]["value_classification"],
+                "stale": False
             }
+            return _last_fg
     except Exception as e:
         log.warning(f"Fear greed failed: {e}")
-        return {"value": 50, "label": "Neutral"}
+        # P2-22 — return stale value
+        return {**_last_fg, "stale": True}
 
 
 async def get_news_filter() -> dict:
@@ -224,11 +228,11 @@ async def get_news_filter() -> dict:
                 continue
 
         return {
-            "clear":       not blocked and not warning,
-            "blocked":     blocked,
-            "warning":     warning,
-            "alerts":      alerts,
-            "finnhub_ok":  True
+            "clear":      not blocked and not warning,
+            "blocked":    blocked,
+            "warning":    warning,
+            "alerts":     alerts,
+            "finnhub_ok": True
         }
 
     except Exception as e:
@@ -237,7 +241,7 @@ async def get_news_filter() -> dict:
             from alerts.telegram import send
             await send(
                 f"⚠️ *Finnhub Unavailable*\n\n"
-                f"News filter degraded — treating all times as news-clear.\n"
+                f"News filter degraded.\n"
                 f"Error: `{str(e)[:100]}`"
             )
         except Exception:
@@ -257,6 +261,47 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"15m fetch failed {coin}: {e}")
         return None
+
+
+# P0-3 — live balance from Binance
+async def get_live_balance() -> float:
+    try:
+        data = await exchange.fetch_balance()
+        usdt = data.get("USDT", {})
+        bal  = float(usdt.get("free", 0) or usdt.get("total", 0) or 0)
+        log.info(f"Live balance fetched: ${bal:.2f}")
+        return bal
+    except Exception as e:
+        log.warning(f"Balance fetch failed: {e}")
+        return 0.0
+
+
+# 3.3 — top coins by 24h volume
+async def get_top_coins(n: int = 13) -> list:
+    try:
+        markets = await exchange.fetch_tickers()
+        usdt_perp = []
+        stables   = {"USDT", "BUSD", "USDC", "DAI", "TUSD", "FDUSD"}
+        lev_tokens = {"UP", "DOWN", "BULL", "BEAR"}
+
+        for symbol, t in markets.items():
+            if not symbol.endswith("/USDT"):
+                continue
+            base = symbol.replace("/USDT", "")
+            if base in stables:
+                continue
+            if any(tok in base for tok in lev_tokens):
+                continue
+            vol = float(t.get("quoteVolume") or 0)
+            if vol < 500_000_000:
+                continue
+            usdt_perp.append({"coin": base, "volume": vol})
+
+        usdt_perp.sort(key=lambda x: x["volume"], reverse=True)
+        return [c["coin"] for c in usdt_perp[:n]]
+    except Exception as e:
+        log.warning(f"get_top_coins failed: {e}")
+        return []
 
 
 async def get_all_data(coin: str) -> dict:

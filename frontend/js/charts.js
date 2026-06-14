@@ -63,9 +63,9 @@ function _renderEquityChart(sorted) {
   })
 
   if (_chartEquity) {
-    _chartEquity.data.labels              = labels
-    _chartEquity.data.datasets[0].data   = values
-    _chartEquity.data.datasets[0].pointBackgroundColor = ptColors
+    _chartEquity.data.labels                              = labels
+    _chartEquity.data.datasets[0].data                   = values
+    _chartEquity.data.datasets[0].pointBackgroundColor   = ptColors
     _chartEquity.update('none')
     return
   }
@@ -98,7 +98,7 @@ function _renderEquityChart(sorted) {
           callbacks: { label: ctx => ' Equity: $' + ctx.parsed.y.toFixed(4) }
         }
       },
-      scales: _scaleDefaults,
+      scales:    _scaleDefaults,
       animation: false
     }
   })
@@ -123,10 +123,10 @@ function _renderDailyChart(sorted) {
   const borders = values.map(v => v >= 0 ? '#34c759' : '#ff3b30')
 
   if (_chartDaily) {
-    _chartDaily.data.labels                          = labels
-    _chartDaily.data.datasets[0].data               = values
-    _chartDaily.data.datasets[0].backgroundColor    = colors
-    _chartDaily.data.datasets[0].borderColor        = borders
+    _chartDaily.data.labels                       = labels
+    _chartDaily.data.datasets[0].data             = values
+    _chartDaily.data.datasets[0].backgroundColor  = colors
+    _chartDaily.data.datasets[0].borderColor      = borders
     _chartDaily.update('none')
     return
   }

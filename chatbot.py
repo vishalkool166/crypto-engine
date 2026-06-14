@@ -27,7 +27,7 @@ KEY CONCEPTS YOU KNOW:
 - LONG = betting price goes up. SHORT = betting price goes down.
 - SL (Stop Loss) = the price where the bot exits to limit your loss
 - TP1/TP2 = Take Profit levels — where the bot locks in gains
-- Grade A+/A = strong signal, B = watching, C = building, F = blocked
+- Grade A+/A = strong signal, B = skipped, C = building, F = blocked
 - Confluence Score /100 = how many conditions align for a trade
 - Regime = overall market condition (trending, ranging, choppy)
 - Sweep = smart money hunting stop losses before the real move
@@ -49,138 +49,78 @@ KEY CONCEPTS YOU KNOW:
 - FVG = Fair Value Gap — imbalance in price that often gets filled
 - BOS = Break of Structure — confirms trend direction
 - CHoCH = Change of Character — early reversal signal
-- Tradeable = conditions are good enough for the bot to enter a trade"""
+- Tier = account size bracket that controls risk%, leverage, max trades
+- Balance Tiers: Tier1 <$50 (5% risk, 1 trade, 5x), Tier2 $50-200 (8%, 2 trades, 10x), Tier3 $200-1000 (10%, 3 trades, 15x), Tier4 >$1000 (12%, 3 trades, 20x)"""
 
 
-async def get_live_context() -> str:
+def _detect_intent(message: str) -> str:
+    m = message.lower()
+    if any(w in m for w in ["trade", "position", "entry", "sl", "tp", "pnl", "profit", "loss", "close"]):
+        return "trade"
+    if any(w in m for w in ["coin", "btc", "eth", "signal", "grade", "score", "regime", "session"]):
+        return "signal"
+    if any(w in m for w in ["balance", "capital", "tier", "risk", "leverage", "daily"]):
+        return "risk"
+    return "general"
+
+
+async def _get_context_for_intent(intent: str) -> str:
     lines = []
-
     try:
         from trade.state import state_manager
-        from trade.risk import risk_guard
-        from trade.orders import get_current_price
+        from trade.risk import risk_guard, get_current_tier
         from data.cache import cache
-        from alerts.scanner import get_db_stats
         from config import cfg
+        import runtime_state as rs
 
-        # Bot config
-        lines.append(f"=== BOT CONFIG ===")
-        lines.append(f"Mode: {'PAPER' if cfg.PAPER_TRADING else 'LIVE'}")
-        lines.append(f"Capital: ${cfg.CAPITAL}")
-        lines.append(f"Leverage: {cfg.LEVERAGE}x")
-        lines.append(f"Min grade to trade: {', '.join(cfg.MIN_GRADE_TO_TRADE)}")
-        lines.append(f"Max trades/day: {cfg.MAX_TRADES_PER_DAY}")
-        lines.append(f"Daily loss cap: {cfg.DAILY_LOSS_CAP_PCT * 100:.0f}% (${cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT:.2f})")
-        lines.append(f"Coins watched: {', '.join(cfg.COINS)}")
+        tier = get_current_tier()
+        mode = rs.get_trading_mode()
 
-        # Trade state
-        lines.append(f"\n=== CURRENT TRADE ===")
-        if state_manager.is_idle:
-            lines.append("State: IDLE — no active trade")
-            lines.append(f"Auto-execution: {'PAUSED' if state_manager.is_paused else 'ACTIVE'}")
-        else:
-            t = state_manager.current_trade
-            lines.append(f"State: IN TRADE")
-            lines.append(f"Coin: {t.coin}USDT {t.direction}")
-            lines.append(f"Grade: {t.grade}")
-            lines.append(f"Entry: {t.entry_price}")
-            lines.append(f"Stop Loss: {t.sl_price}")
-            lines.append(f"TP1: {t.tp1_price}")
-            lines.append(f"TP2: {t.tp2_price}")
-            lines.append(f"Position size: ${t.position_size:.2f}")
-            lines.append(f"Risk amount: ${t.risk_amt:.4f}")
-            lines.append(f"TP1 hit: {state_manager.is_tp1_hit}")
-            lines.append(f"Health: {state_manager.health_state}")
+        lines.append(f"Mode: {'LIVE' if mode == 'live' else 'PAPER'}")
+        lines.append(f"Tier: {tier['tier']} | Balance: ${tier['balance']:.2f} | Leverage: {tier['leverage']}x | Max trades: {tier['max_trades']}")
 
-            # Current live price
-            try:
-                current = get_current_price(t.coin)
-                if current:
-                    lines.append(f"Current price: {current}")
-                    is_long = t.direction == "LONG"
-                    if is_long:
-                        upnl = (current - t.entry_price) / t.entry_price * t.position_size
-                    else:
-                        upnl = (t.entry_price - current) / t.entry_price * t.position_size
-                    lines.append(f"Unrealized PnL: ${upnl:.4f}")
-            except Exception:
-                pass
+        if intent in ("trade", "general"):
+            if state_manager.is_idle:
+                lines.append("State: IDLE — no active trades")
+            else:
+                for trade in state_manager.active_trades.values():
+                    health = state_manager.health_state_for(trade.id)
+                    hd     = state_manager.health_data_for(trade.id)
+                    lines.append(f"TRADE: {trade.coin}USDT {trade.direction} Grade:{trade.grade}")
+                    lines.append(f"Entry:{trade.entry_price} SL:{trade.sl_price} TP1:{trade.tp1_price} TP2:{trade.tp2_price}")
+                    lines.append(f"Size:${trade.position_size:.2f} Risk:${trade.risk_amt:.4f}")
+                    lines.append(f"Health:{health}")
+                    if hd.get("failures"):
+                        lines.append(f"Failures: {'; '.join(hd['failures'][:3])}")
+                    if hd.get("warnings"):
+                        lines.append(f"Warnings: {'; '.join(hd['warnings'][:3])}")
 
-            hd = state_manager.health_data
-            if hd.get("failures"):
-                lines.append(f"Health failures: {'; '.join(hd['failures'][:3])}")
-            if hd.get("warnings"):
-                lines.append(f"Health warnings: {'; '.join(hd['warnings'][:3])}")
-            if hd.get("checks"):
-                lines.append(f"Health checks OK: {'; '.join(hd['checks'][:3])}")
+        if intent in ("risk", "general"):
+            risk = risk_guard.get_daily_stats()
+            lines.append(f"Today: {risk['trades_taken']} trades | PnL:${risk['total_pnl']:.4f} | Loss:${abs(risk['total_loss']):.4f} | Cap hit:{risk['cap_hit']}")
+            lines.append(f"Remaining trades:{risk['remaining_trades']} | Loss cap left:${risk['remaining_loss']:.4f}")
 
-        # Daily risk
-        lines.append(f"\n=== DAILY RISK ===")
-        risk = risk_guard.get_daily_stats()
-        lines.append(f"Trades taken today: {risk['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}")
-        lines.append(f"Trades remaining: {risk['remaining_trades']}")
-        lines.append(f"PnL today: ${risk['total_pnl']:.4f}")
-        lines.append(f"Loss today: ${abs(risk['total_loss']):.4f}")
-        lines.append(f"Loss cap remaining: ${risk['remaining_loss']:.4f}")
-        lines.append(f"Cap hit: {risk['cap_hit']}")
+        if intent in ("signal", "general"):
+            has_signals = False
+            for coin in cfg.COINS[:8]:
+                cached = cache.get_raw(f"signal_{coin}")
+                if not cached:
+                    continue
+                has_signals = True
+                grade  = cached.get("grade", "F")
+                dir_   = cached.get("direction", "--")
+                score  = cached.get("score", 0)
+                lines.append(f"{coin}: Grade {grade} | {dir_} | Score {score}/100")
+            if not has_signals:
+                lines.append("No signal cache — run /scan")
 
-        # Signal cache — all coins
-        lines.append(f"\n=== CURRENT SIGNALS ===")
-        has_signals = False
-        for coin in cfg.COINS:
-            cached = cache.get_raw(f"signal_{coin}")
-            if not cached:
-                continue
-            has_signals = True
-            grade  = cached.get("grade", "F")
-            dir_   = cached.get("direction", "--")
-            score  = cached.get("score", 0)
-            regime = cached.get("regime", "--")
-            sess   = cached.get("session", "--")
-            expl   = cached.get("explanation", {})
-            conf   = expl.get("confidence_label", "")
-            no_trade = cached.get("no_trade", {}) or {}
-            hards  = no_trade.get("hard_blocks", [])
-            softs  = no_trade.get("soft_blocks", [])
-
-            line = f"{coin}: Grade {grade} | {dir_} | Score {score}/100 | {regime} | {sess}"
-            if conf:
-                line += f" | Confidence: {conf}"
-            lines.append(line)
-
-            if expl.get("thesis"):
-                lines.append(f"  Thesis: {expl['thesis'][:200]}")
-            if expl.get("no_trade_reason"):
-                lines.append(f"  No-trade reason: {expl['no_trade_reason'][:200]}")
-            if hards:
-                lines.append(f"  Hard blocks: {'; '.join(b['reason'] for b in hards[:2])}")
-            if softs:
-                lines.append(f"  Soft blocks: {'; '.join(b['reason'] for b in softs[:2])}")
-
-        if not has_signals:
-            lines.append("No signal cache available — run /scan to get fresh signals")
-
-        # All-time stats
-        lines.append(f"\n=== ALL TIME STATS ===")
-        try:
-            stats = get_db_stats()
-            if stats:
-                lines.append(f"Total closed trades: {stats.get('closed', 0)}")
-                lines.append(f"Win rate: {stats.get('win_rate', 0)}%")
-                lines.append(f"Total PnL: ${stats.get('total_pnl', 0)}")
-                bg = stats.get("by_grade", {})
-                for g in ["A+", "A"]:
-                    gd = bg.get(g, {})
-                    if gd.get("total", 0) > 0:
-                        lines.append(
-                            f"Grade {g}: {gd['total']} trades | "
-                            f"{gd['win_rate']}% WR | ${gd['total_pnl']} PnL"
-                        )
-        except Exception:
-            pass
+        from alerts.scanner import get_db_stats
+        stats = get_db_stats()
+        if stats:
+            lines.append(f"All-time: {stats.get('closed',0)} trades | WR:{stats.get('win_rate',0)}% | PnL:${stats.get('total_pnl',0)}")
 
     except Exception as e:
-        log.error(f"get_live_context error: {e}")
+        log.error(f"Context error: {e}")
         lines.append("(Live context partially unavailable)")
 
     return "\n".join(lines)
@@ -191,19 +131,14 @@ async def chat(user_message: str) -> str:
         return "AI chatbot not configured. Add GROQ_API_KEY to .env and restart."
 
     try:
-        context = await get_live_context()
+        intent  = _detect_intent(user_message)
+        context = await _get_context_for_intent(intent)
 
         messages = [
-            {
-                "role": "system",
-                "content": _SYSTEM_PROMPT
-            },
+            {"role": "system", "content": _SYSTEM_PROMPT},
             {
                 "role": "user",
-                "content": (
-                    f"LIVE APP DATA:\n{context}\n\n"
-                    f"USER QUESTION: {user_message}"
-                )
+                "content": f"LIVE APP DATA:\n{context}\n\nUSER QUESTION: {user_message}"
             }
         ]
 

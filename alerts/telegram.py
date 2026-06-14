@@ -13,6 +13,7 @@ from data.cache import cache
 from trade.risk import risk_guard
 from engines.signal import get_session as get_trading_session
 from trade.orders import get_current_price
+import runtime_state as rs
 
 log = logging.getLogger(__name__)
 
@@ -22,6 +23,8 @@ DOMAIN = cfg.DOMAIN
 _sent_signals: deque = deque(maxlen=100)
 _skip_reasons: dict  = {}
 _SKIP_TTL             = 3600
+
+TOTP_COMMANDS = {"/close", "/pause", "/resume", "/golive", "/gopaper"}
 
 
 def _is_skipped(coin: str) -> bool:
@@ -141,12 +144,15 @@ def _build_pnl_message(stats: dict, risk_stats: dict) -> str:
 
 
 def _build_risk_message(stats: dict) -> str:
-    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+    from trade.risk import get_current_tier
+    tier      = get_current_tier()
+    capital   = tier["balance"] or cfg.CAPITAL
+    daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
     loss_pct  = abs(stats["total_loss"]) / daily_cap * 100 if daily_cap > 0 else 0
     return (
         f"🛡️ *Daily Risk State*\n\n"
         f"Date:          `{stats['date']}`\n"
-        f"Trades taken:  `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
+        f"Trades taken:  `{stats['trades_taken']}/{tier['max_trades']}`\n"
         f"Trades left:   `{stats['remaining_trades']}`\n\n"
         f"Loss today:    `${abs(stats['total_loss']):.4f}`\n"
         f"Loss cap:      `${daily_cap:.4f}`\n"
@@ -154,20 +160,8 @@ def _build_risk_message(stats: dict) -> str:
         f"Remaining:     `${stats['remaining_loss']:.4f}`\n\n"
         f"PnL today:     `${stats['total_pnl']:.4f}`\n"
         f"Cap status:    `{'🚫 HIT' if stats['cap_hit'] else '✅ ACTIVE'}`\n"
+        f"Tier:          `{tier['tier']}` · Balance: `${tier['balance']:.2f}`\n"
         + (f"\n⚠️ *Approaching cap — {loss_pct:.0f}% used*" if stats.get("approaching_cap") else "")
-    )
-
-
-def _build_daily_message(stats: dict) -> str:
-    return (
-        f"📅 *Daily Summary*\n\n"
-        f"Date:      `{stats['date']}`\n"
-        f"Trades:    `{stats['trades_taken']}/{cfg.MAX_TRADES_PER_DAY}`\n"
-        f"PnL:       `${stats['total_pnl']}`\n"
-        f"Loss:      `${stats['total_loss']}`\n\n"
-        f"Remaining trades: `{stats['remaining_trades']}`\n"
-        f"Remaining loss:   `${stats['remaining_loss']}`\n"
-        f"Cap hit: `{'YES 🚫' if stats['cap_hit'] else 'NO ✅'}`\n"
     )
 
 
@@ -185,11 +179,29 @@ async def _post(endpoint: str, payload: dict):
 
 
 async def send(message: str):
-    await _post("sendMessage", {
-        "chat_id":    cfg.TELEGRAM_CHAT_ID,
-        "text":       message,
-        "parse_mode": "Markdown"
-    })
+    chunks = _split_message(message)
+    for chunk in chunks:
+        await _post("sendMessage", {
+            "chat_id":    cfg.TELEGRAM_CHAT_ID,
+            "text":       chunk,
+            "parse_mode": "Markdown"
+        })
+
+
+def _split_message(text: str, limit: int = 4000) -> list[str]:
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        split_at = text.rfind("\n", 0, limit)
+        if split_at == -1:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
 
 
 async def send_with_keyboard(message: str, keyboard: list):
@@ -212,7 +224,14 @@ async def register_webhook():
     webhook_url = f"{DOMAIN}/webhook/telegram"
     try:
         async with httpx.AsyncClient() as client:
-            r    = await client.post(f"{BASE}/setWebhook", json={"url": webhook_url}, timeout=10)
+            r = await client.post(
+                f"{BASE}/setWebhook",
+                json={
+                    "url":          webhook_url,
+                    "secret_token": cfg.WEBHOOK_SECRET
+                },
+                timeout=10
+            )
             data = r.json()
             if data.get("ok"):
                 log.info(f"Webhook registered: {webhook_url}")
@@ -228,7 +247,7 @@ async def register_commands():
         {"command": "thesis",   "description": "Why this trade exists"},
         {"command": "health",   "description": "Full health engine output"},
         {"command": "levels",   "description": "Price ladder + progress"},
-        {"command": "close",    "description": "Close trade with confirmation"},
+        {"command": "close",    "description": "Close trade (TOTP required)"},
         {"command": "btc",      "description": "BTC analysis"},
         {"command": "regime",   "description": "Regime across Tier1"},
         {"command": "funding",  "description": "Funding rates"},
@@ -244,32 +263,35 @@ async def register_commands():
         {"command": "next",     "description": "Next scan + session times"},
         {"command": "scan",     "description": "Trigger manual scan"},
         {"command": "queue",    "description": "Best signal + approve/skip"},
-        {"command": "pause",    "description": "Pause auto-execution"},
-        {"command": "resume",   "description": "Resume auto-execution"},
+        {"command": "pause",    "description": "Pause auto-execution (TOTP)"},
+        {"command": "resume",   "description": "Resume auto-execution (TOTP)"},
+        {"command": "golive",   "description": "Switch to live trading (TOTP)"},
+        {"command": "gopaper",  "description": "Switch to paper trading (TOTP)"},
         {"command": "mode",     "description": "Current config"},
         {"command": "brief",    "description": "Morning briefing now"},
         {"command": "backtest", "description": "Backtest a coin"},
         {"command": "factors",  "description": "Factor analysis"},
         {"command": "debrief",  "description": "Last trade debrief"},
+        {"command": "trades",   "description": "All active trades"},
         {"command": "help",     "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
-            r    = await client.post(
-                f"{BASE}/setMyCommands",
-                json={"commands": commands},
-                timeout=10
-            )
+            r    = await client.post(f"{BASE}/setMyCommands",
+                                     json={"commands": commands}, timeout=10)
             data = r.json()
             if data.get("ok"):
                 log.info("Telegram commands registered")
-            else:
-                log.error(f"Commands registration failed: {data}")
     except Exception as e:
         log.error(f"Commands register error: {e}")
 
 
 async def handle_webhook(request: Request):
+    secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if cfg.WEBHOOK_SECRET and secret != cfg.WEBHOOK_SECRET:
+        log.warning("Webhook secret mismatch — rejected")
+        return
+
     try:
         data = await request.json()
 
@@ -284,7 +306,7 @@ async def handle_webhook(request: Request):
         if chat_id != str(cfg.TELEGRAM_CHAT_ID):
             return
 
-        await _handle_command(text)
+        await _handle_command(text, chat_id)
 
     except Exception as e:
         log.error(f"Webhook handler error: {e}")
@@ -387,9 +409,8 @@ async def _cb_approve_signal(coin: str):
     if dir_ not in ["LONG", "SHORT"]:
         await send(f"⚠️ Signal direction invalid: {dir_}")
         return
-    if not state_manager.is_idle:
-        trade = state_manager.current_trade
-        await send(f"⚠️ Already in trade: `{trade.coin}USDT {trade.direction}`\nClose current trade first.")
+    if not state_manager.can_open_trade():
+        await send(f"⚠️ Max concurrent trades reached.")
         return
 
     await send(f"✅ *Approved* — Opening `{coin}USDT {dir_}`...")
@@ -401,8 +422,7 @@ async def _cb_approve_signal(coin: str):
 
 async def _cb_skip_signal(coin: str):
     _skip_reasons[coin] = time.time()
-    await send(f"⏭ *{coin} signal skipped*\n\nSignal expires in 1 hour.\nUse /scan to get fresh signals.")
-    log.info(f"Signal skipped via Telegram: {coin}")
+    await send(f"⏭ *{coin} signal skipped*\n\nExpires in 1 hour.")
 
 
 async def _cb_confirm_close():
@@ -416,8 +436,60 @@ async def _cb_confirm_close():
     await send("✅ Trade closed manually." if result["success"] else f"❌ Close failed: `{result['reason']}`")
 
 
-async def _handle_command(text: str):
+async def _require_totp(chat_id: str, command: str) -> bool:
+    from auth import verify_totp, audit
+    pending = rs.get_totp_pending(chat_id)
+
+    if pending and pending["action"] == command:
+        return True
+
+    rs.set_totp_pending(chat_id, command, time.time() + 60)
+    await send(
+        f"🔐 *TOTP Required*\n\n"
+        f"Command: `{command}`\n"
+        f"Send your 6-digit authenticator code within 60 seconds."
+    )
+    return False
+
+
+async def _handle_totp_code(chat_id: str, code: str):
+    from auth import verify_totp, audit
+    pending = rs.get_totp_pending(chat_id)
+
+    if not pending:
+        await send("⚠️ No pending TOTP request. Send the command first.")
+        return
+
+    if not verify_totp(code):
+        rs.clear_totp_pending(chat_id)
+        audit("totp_failed", "telegram", f"chat:{chat_id} action:{pending['action']}", success=False)
+        await send("❌ Invalid TOTP code. Request expired.")
+        return
+
+    action = pending["action"]
+    rs.clear_totp_pending(chat_id)
+    audit("totp_success", "telegram", f"chat:{chat_id} action:{action}", success=True)
+
+    handlers = {
+        "/close":   _cmd_close_confirmed,
+        "/pause":   _cmd_pause_confirmed,
+        "/resume":  _cmd_resume_confirmed,
+        "/golive":  _cmd_golive_confirmed,
+        "/gopaper": _cmd_gopaper_confirmed,
+    }
+    fn = handlers.get(action)
+    if fn:
+        await fn()
+    else:
+        await send(f"✅ TOTP verified for `{action}`")
+
+
+async def _handle_command(text: str, chat_id: str = ""):
     t = text.lower().strip()
+
+    if t.isdigit() and len(t) == 6:
+        await _handle_totp_code(chat_id, t)
+        return
 
     if t.startswith("/coin"):
         parts = t.split()
@@ -434,13 +506,28 @@ async def _handle_command(text: str):
         if coin in cfg.COINS:
             await _cmd_backtest(coin)
         else:
-            await send(f"⚠️ Usage: `/backtest BTC`\nSupported: `{', '.join(cfg.TIER1)}`")
+            await send(f"⚠️ Usage: `/backtest BTC`")
+        return
+
+    if t in TOTP_COMMANDS:
+        needs_totp = await _require_totp(chat_id, t)
+        if not needs_totp:
+            return
+        handlers = {
+            "/close":   _cmd_close_confirmed,
+            "/pause":   _cmd_pause_confirmed,
+            "/resume":  _cmd_resume_confirmed,
+            "/golive":  _cmd_golive_confirmed,
+            "/gopaper": _cmd_gopaper_confirmed,
+        }
+        fn = handlers.get(t)
+        if fn:
+            await fn()
         return
 
     handlers = {
         "/status":  _cmd_status,
         "/pnl":     _cmd_pnl,
-        "/close":   _cmd_close,
         "/queue":   _cmd_queue,
         "/daily":   _cmd_daily,
         "/scan":    _cmd_scan,
@@ -459,12 +546,11 @@ async def _handle_command(text: str):
         "/risk":    _cmd_risk,
         "/session": _cmd_session,
         "/next":    _cmd_next,
-        "/pause":   _cmd_pause,
-        "/resume":  _cmd_resume,
         "/mode":    _cmd_mode,
         "/brief":   _cmd_brief,
         "/factors": _cmd_factors,
         "/debrief": _cmd_debrief,
+        "/trades":  _cmd_trades,
     }
 
     if t.startswith("/"):
@@ -475,7 +561,6 @@ async def _handle_command(text: str):
             await send("🤖 Unknown command.\n\nType /help for full command list.")
         return
 
-    # Plain text — route to AI chatbot
     try:
         from chatbot import chat
         response = await chat(text)
@@ -488,46 +573,42 @@ async def _handle_command(text: str):
 async def _cmd_status():
     if state_manager.is_idle:
         paused_note = (
-            "\n⏸ Auto-execution is *PAUSED*\nUse /resume to re-enable."
+            "\n⏸ Auto-execution is *PAUSED*"
             if state_manager.is_paused else ""
         )
         await send(
             f"📊 *Bot Status*\n\n"
             f"State: `IDLE`\n"
-            f"No active trade.\n"
-            f"Scanning every 15 minutes.{paused_note}\n\n"
+            f"No active trade.{paused_note}\n\n"
             f"Use /scan to trigger manual scan."
         )
         return
 
-    trade = state_manager.current_trade
-    if not trade:
-        await send("📊 *Status*\nNo active trade.")
+    lines = [f"📊 *Bot Status — {len(state_manager.active_trades)} Active Trade(s)*\n"]
+    for trade in state_manager.active_trades.values():
+        current, upnl = _get_current_and_upnl(trade)
+        health        = state_manager.health_state_for(trade.id)
+        lines.append(
+            f"*{trade.coin}USDT {trade.direction}* Grade `{trade.grade}`\n"
+            f"Entry: `{trade.entry_price}` · Current: `{current}`\n"
+            f"SL: `{trade.sl_price}` · TP1: `{trade.tp1_price}`\n"
+            f"{'📈' if upnl >= 0 else '📉'} uPnL: `${upnl}`\n"
+            f"{_health_emoji(health)} Health: `{health}`\n"
+        )
+    await send("\n".join(lines))
+
+
+async def _cmd_trades():
+    if state_manager.is_idle:
+        await send("📊 No active trades.")
         return
-
-    current, upnl = _get_current_and_upnl(trade)
-
-    await send(
-        f"📊 *Bot Status — IN TRADE*\n\n"
-        f"Coin:    `{trade.coin}USDT`\n"
-        f"Dir:     `{trade.direction}`\n"
-        f"Grade:   `{trade.grade}`\n"
-        f"State:   `{trade.state}`\n\n"
-        f"Entry:   `{trade.entry_price}`\n"
-        f"Current: `{current}`\n"
-        f"SL:      `{trade.sl_price}`\n"
-        f"TP1:     `{trade.tp1_price}`\n"
-        f"TP2:     `{trade.tp2_price}`\n\n"
-        f"{'📈' if upnl >= 0 else '📉'} uPnL: `${upnl}`\n"
-        f"Risk:    `${trade.risk_amt}`\n"
-        f"{_health_emoji(state_manager.health_state)} Health: `{state_manager.health_state}`\n"
-    )
+    await _cmd_status()
 
 
 async def _cmd_thesis():
     trade = _active_trade_guard()
     if not trade:
-        await send("⚠️ No active trade.\nUse /queue to see pending signals.")
+        await send("⚠️ No active trade.")
         return
     await _show_active_thesis(trade.coin)
 
@@ -537,50 +618,34 @@ async def _cmd_health():
         await send("⚠️ No active trade — no health data.")
         return
 
-    health  = state_manager.health_data
-    state   = state_manager.health_state
-    trade   = state_manager.current_trade
+    for trade in state_manager.active_trades.values():
+        health = state_manager.health_data_for(trade.id)
+        state  = state_manager.health_state_for(trade.id)
 
-    lines = [
-        f"{_health_emoji(state)} *Trade Health — {trade.coin if trade else '--'}*\n",
-        f"Status: `{state}`\n"
-    ]
+        lines = [f"{_health_emoji(state)} *Trade Health — {trade.coin}*\n", f"Status: `{state}`\n"]
 
-    for label, items, icon in [
-        ("*Invalidated:*", health.get("failures", []), "✘"),
-        ("\n*Warnings:*",  health.get("warnings", []), "⚠"),
-    ]:
-        if items:
-            lines.append(label)
-            lines.extend(f"{icon} {i}" for i in items)
+        for label, items, icon in [
+            ("*Invalidated:*", health.get("failures", []), "✘"),
+            ("\n*Warnings:*",  health.get("warnings", []), "⚠"),
+        ]:
+            if items:
+                lines.append(label)
+                lines.extend(f"{icon} {i}" for i in items)
 
-    if health.get("checks") and state == "HEALTHY":
-        lines.append("\n*Healthy:*")
-        lines.extend(f"✔ {c}" for c in health["checks"])
-
-    lines.append(
-        "\n_Thesis invalidated. Use /close if you want to exit._" if state == "INVALIDATED" else
-        "\n_Thesis weakening. Monitor position._"                 if state == "WARNING"     else
-        "\n_Thesis intact. Hold position._"
-    )
-
-    await send("\n".join(lines))
+        await send("\n".join(lines))
 
 
 async def _cmd_levels():
     trade = _active_trade_guard()
     if not trade:
-        await send("⚠️ No active trade — no levels to show.")
+        await send("⚠️ No active trade.")
         return
 
     from trade.price_feed import price_feed
     current, upnl = _get_current_and_upnl(trade)
     current       = price_feed.get_price(trade.coin) or current
     is_long       = trade.direction == "LONG"
-    tp1_hit       = (
-        abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.002
-        if trade.sl_price and trade.entry_price else False
-    )
+    tp1_hit       = state_manager.is_tp1_hit_for(trade.id)
 
     total    = abs(trade.tp1_price - trade.entry_price) if trade.tp1_price and trade.entry_price else 0
     progress = 0
@@ -600,26 +665,75 @@ async def _cmd_levels():
     )
 
 
-async def _cmd_close():
+async def _cmd_close_confirmed():
     trade = _active_trade_guard()
     if not trade:
         await send("⚠️ No active trade to close.")
         return
-
     current, upnl = _get_current_and_upnl(trade)
-
     await send_with_keyboard(
         f"⚠️ *Close {trade.coin}USDT {trade.direction}?*\n\n"
         f"Entry:   `{trade.entry_price}`\n"
         f"Current: `{current}`\n"
-        f"uPnL:    `{_pnl_str(upnl)}`\n"
-        f"Health:  `{state_manager.health_state}`\n\n"
+        f"uPnL:    `{_pnl_str(upnl)}`\n\n"
         f"This cancels all SL/TP orders.",
         keyboard=[[
             {"text": "✅ Yes, Close", "callback_data": "confirm_close"},
             {"text": "❌ Cancel",     "callback_data": "cancel_close"}
         ]]
     )
+
+
+async def _cmd_pause_confirmed():
+    if state_manager.is_paused:
+        await send("⏸ Already paused.")
+        return
+    state_manager.pause()
+    await send("⏸ *Auto-Execution Paused*\n\nBot will NOT auto-open trades.\nUse /resume to re-enable.")
+
+
+async def _cmd_resume_confirmed():
+    if not state_manager.is_paused:
+        await send("▶️ Already running.")
+        return
+    state_manager.resume()
+    await send("▶️ *Auto-Execution Resumed*\n\nNext A+ signal will execute automatically.")
+
+
+async def _cmd_golive_confirmed():
+    from auth import audit
+    from data.fetcher import get_live_balance
+
+    balance = await get_live_balance()
+    if balance < cfg.MIN_BALANCE_LIVE:
+        await send(f"❌ Balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE_LIVE}")
+        audit("golive_blocked", "telegram", f"balance:{balance}")
+        return
+
+    if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
+        await send("❌ Binance API keys not configured.")
+        return
+
+    rs.set_trading_mode("live")
+    cfg.TRADING_MODE  = "live"
+    cfg.PAPER_TRADING = False
+    audit("golive", "telegram", f"balance:{balance}", success=True)
+
+    await send(
+        f"🔴 *LIVE TRADING ENABLED*\n\n"
+        f"Balance: `${balance:.2f}`\n"
+        f"Real orders will be placed on Binance.\n"
+        f"Use /gopaper to switch back."
+    )
+
+
+async def _cmd_gopaper_confirmed():
+    from auth import audit
+    rs.set_trading_mode("paper")
+    cfg.TRADING_MODE  = "paper"
+    cfg.PAPER_TRADING = True
+    audit("gopaper", "telegram", success=True)
+    await send("🔵 *PAPER TRADING ENABLED*\n\nNo real orders will be placed.")
 
 
 async def _cmd_btc():
@@ -650,7 +764,6 @@ async def _cmd_coin(coin: str):
     em      = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
     rsi     = d1d.get("rsi")
     adx     = d1d.get("adx")
-    ob      = d4h.get("order_blocks", {})
 
     base = (
         f"📊 *{coin}USDT Analysis*\n\n"
@@ -674,12 +787,6 @@ async def _cmd_coin(coin: str):
         f"Disp:    `{'✅' if disp.get('confirmed') else '❌'} {disp.get('score',0)}/11`\n"
         f"Retest:  `{'✅' if retest.get('confirmed') else '❌'} {retest.get('score',0)}/12`\n"
     )
-
-    if ob:
-        base += (
-            f"OB:      `{ob.get('label', '--')}`\n"
-            f"OB Score:`{ob.get('score', 0)}/10`\n"
-        )
 
     await send(base)
 
@@ -715,13 +822,13 @@ async def _cmd_fear():
         fg    = await get_fear_greed()
         val   = fg.get("value", 50)
         label = fg.get("label", "Neutral")
+        stale = fg.get("stale", False)
         emoji = "🟢" if val >= 60 else "🔴" if val <= 30 else "🟡"
         await send(
             f"{emoji} *Fear & Greed Index*\n\n"
             f"Value: `{val}/100`\n"
-            f"Label: `{label}`\n\n"
-            f"_Above 75 = Extreme Greed — caution_\n"
-            f"_Below 25 = Extreme Fear — opportunity_"
+            f"Label: `{label}`\n"
+            f"{'⚠️ _Stale data — API unavailable_' if stale else ''}"
         )
     except Exception as e:
         await send(f"❌ Fear & Greed fetch failed: `{e}`")
@@ -738,8 +845,20 @@ async def _cmd_risk():
 
 
 async def _cmd_daily():
+    from trade.risk import get_current_tier
     _, risk_stats = _get_stats()
-    await send(_build_daily_message(risk_stats))
+    tier = get_current_tier()
+    await send(
+        f"📅 *Daily Summary*\n\n"
+        f"Date:      `{risk_stats['date']}`\n"
+        f"Trades:    `{risk_stats['trades_taken']}/{tier['max_trades']}`\n"
+        f"PnL:       `${risk_stats['total_pnl']}`\n"
+        f"Loss:      `${risk_stats['total_loss']}`\n\n"
+        f"Remaining trades: `{risk_stats['remaining_trades']}`\n"
+        f"Remaining loss:   `${risk_stats['remaining_loss']}`\n"
+        f"Cap hit: `{'YES 🚫' if risk_stats['cap_hit'] else 'NO ✅'}`\n"
+        f"Tier: `{tier['tier']}` · Balance: `${tier['balance']:.2f}`\n"
+    )
 
 
 async def _cmd_history():
@@ -767,7 +886,7 @@ async def _cmd_history():
 async def _cmd_stats():
     stats, _ = _get_stats()
     if not stats:
-        await send("📊 No stats yet — no closed trades.")
+        await send("📊 No stats yet.")
         return
 
     bg = stats.get("by_grade", {})
@@ -778,7 +897,6 @@ async def _cmd_stats():
         f"📊 *All Time Stats*\n\n"
         f"Total signals: `{stats.get('total', 0)}`\n"
         f"Closed:        `{stats.get('closed', 0)}`\n"
-        f"Pending:       `{stats.get('pending', 0)}`\n\n"
         f"Wins:    `{stats.get('wins', 0)}`\n"
         f"Losses:  `{stats.get('losses', 0)}`\n"
         f"WR:      `{stats.get('win_rate', 0)}%`\n"
@@ -822,7 +940,6 @@ async def _cmd_streak():
     await send(
         f"🔢 *Streak Report*\n\n"
         f"Current: {emoji} `{current_streak} {current_type}s`\n\n"
-        f"All Time:\n"
         f"Max wins:   `{max_wins} in a row`\n"
         f"Max losses: `{max_losses} in a row`\n"
     )
@@ -831,7 +948,6 @@ async def _cmd_streak():
 async def _cmd_grade():
     stats, _ = _get_stats()
     bg       = stats.get("by_grade", {}) if stats else {}
-
     await send(
         f"🏆 *Grade Accuracy*\n\n"
         f"{_grade_block('A+', bg.get('A+', {}))}\n"
@@ -844,7 +960,6 @@ async def _cmd_session():
     session   = get_trading_session()
     hrs, mins = _mins_until(8)
     now       = datetime.now(timezone.utc)
-
     await send(
         f"🕐 *Session Status*\n\n"
         f"Current:   `{session['name']}`\n"
@@ -863,7 +978,6 @@ async def _cmd_next():
     next_s  = get_next_scan_time()
     london  = _next_dt(8)
     ny      = _next_dt(13)
-
     await send(
         f"⏱ *Next Events*\n\n"
         f"Next scan:      `{next_s}`\n"
@@ -874,50 +988,24 @@ async def _cmd_next():
     )
 
 
-async def _cmd_pause():
-    if state_manager.is_paused:
-        await send("⏸ Bot is already paused.\nUse /resume to re-enable auto-execution.")
-        return
-    state_manager.pause()
-    await send(
-        "⏸ *Auto-Execution Paused*\n\n"
-        "Scanning continues every 15 minutes.\n"
-        "Signals will alert you as normal.\n"
-        "Bot will NOT auto-open trades.\n\n"
-        "Use ✅ Approve on any signal to enter manually.\n"
-        "Use /resume to re-enable auto-execution."
-    )
-
-
-async def _cmd_resume():
-    if not state_manager.is_paused:
-        await send("▶️ Bot is already running.\nAuto-execution is active.")
-        return
-    state_manager.resume()
-    await send(
-        "▶️ *Auto-Execution Resumed*\n\n"
-        "Next A+ signal will execute automatically.\n"
-        "Scanning every 15 minutes."
-    )
-
-
 async def _cmd_mode():
+    from trade.risk import get_current_tier
+    tier       = get_current_tier()
     paused_str = "⏸ PAUSED" if state_manager.is_paused else "▶️ AUTO"
-    trade_str  = "IN TRADE" if not state_manager.is_idle else "IDLE"
+    mode       = rs.get_trading_mode()
     await send(
         f"⚙️ *Bot Configuration*\n\n"
-        f"Mode:        `{'PAPER' if cfg.PAPER_TRADING else 'LIVE'}`\n"
+        f"Mode:        `{'🔴 LIVE' if mode == 'live' else '🔵 PAPER'}`\n"
         f"Execution:   `{paused_str}`\n"
-        f"State:       `{trade_str}`\n\n"
-        f"Capital:     `${cfg.CAPITAL}`\n"
-        f"Leverage:    `{cfg.LEVERAGE}x`\n"
+        f"Active trades: `{len(state_manager.active_trades)}/{tier['max_trades']}`\n\n"
+        f"Balance:     `${tier['balance']:.2f}`\n"
+        f"Tier:        `{tier['tier']}`\n"
+        f"Leverage:    `{tier['leverage']}x`\n"
+        f"Risk/trade:  `{tier['risk_pct']*100:.0f}%`\n"
+        f"Max trades:  `{tier['max_trades']}/day`\n"
+        f"Daily cap:   `{cfg.DAILY_LOSS_CAP_PCT*100:.0f}%`\n\n"
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
-        f"Max trades:  `{cfg.MAX_TRADES_PER_DAY}/day`\n"
-        f"Daily cap:   `${cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT:.4f}`\n"
-        f"Risk/trade:  `{cfg.RISK_PCT_PER_TRADE * 100:.0f}%`\n\n"
         f"Coins:       `{len(cfg.COINS)} coins`\n"
-        f"Tier 1:      `{', '.join(cfg.TIER1)}`\n"
-        f"Tier 2:      `{', '.join(cfg.TIER2)}`\n"
     )
 
 
@@ -933,50 +1021,45 @@ async def _cmd_factors():
     result = run_factor_analysis()
 
     if "error" in result:
-        await send(
-            f"⚠️ *Factor Analysis*\n\n"
-            f"{result['error']}\n\n"
-            f"Need `{result.get('min_required', 200)}` closed trades minimum."
-        )
+        await send(f"⚠️ *Factor Analysis*\n\n{result['error']}")
         return
 
-    total    = result.get("total", 0)
-    wr       = result.get("overall_wr", 0)
-    rel_note = result.get("reliability", "")
-    source   = result.get("data_source", "proxy")
-    top      = result.get("top_factors", [])
-    weak     = result.get("weak_factors", [])
+    total = result.get("total", 0)
+    wr    = result.get("overall_wr", 0)
+    top   = result.get("top_factors", [])
+    weak  = result.get("weak_factors", [])
 
-    lines = [
-        f"🔬 *Factor Analysis*\n",
-        f"Trades: `{total}` · WR: `{wr}%`\n",
-        f"Data: `{source}`\n",
-        f"_{rel_note}_\n"
-    ]
+    lines = [f"🔬 *Factor Analysis*\n", f"Trades: `{total}` · WR: `{wr}%`\n"]
 
     if top:
         lines.append("*Strong Edge:*")
         for f in top[:3]:
-            lines.append(f"✅ `{f['factor']}` — edge: `+{f['edge']}%` ({f['present_total']} trades)")
+            lines.append(f"✅ `{f['factor']}` — edge: `+{f['edge']}%`")
 
     if weak:
         lines.append("\n*Weak/No Edge:*")
         for f in weak[:3]:
             lines.append(f"⚠️ `{f['factor']}` — edge: `{f['edge']}%`")
 
-    if not result.get("reliable"):
-        lines.append(f"\n_Need {200 - total} more trades for reliable conclusions_")
-
     await send("\n".join(lines))
 
 
 async def _cmd_backtest(coin: str):
     from backtest.engine import run_backtest
+    from trade.risk import get_current_tier
+    tier = get_current_tier()
     await send(f"⏳ Running backtest for `{coin}`...")
     try:
-        loop   = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None, lambda: run_backtest(coin=coin, capital=cfg.CAPITAL, leverage=cfg.LEVERAGE)
+        loop   = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: run_backtest(
+                    coin=coin,
+                    capital=tier["balance"] or cfg.CAPITAL,
+                    leverage=tier["leverage"]
+                )
+            ),
+            timeout=120.0
         )
         if "error" in result:
             await send(f"❌ Backtest failed: `{result['error']}`")
@@ -989,20 +1072,15 @@ async def _cmd_backtest(coin: str):
             f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
             f"Signals:  `{result.get('total_signals', 0)}`\n"
             f"Trades:   `{result.get('total_trades', 0)}`\n"
-            f"Wins:     `{result.get('wins', 0)}`\n"
-            f"Losses:   `{result.get('losses', 0)}`\n"
-            f"Win Rate: `{result.get('win_rate', 0)}%`\n\n"
+            f"Win Rate: `{result.get('win_rate', 0)}%`\n"
             f"PnL:      `${result.get('total_pnl', 0)}`\n"
-            f"Return:   `{result.get('total_return', 0)}%`\n"
-            f"PF:       `{result.get('profit_factor', 0)}`\n"
-            f"Max DD:   `{result.get('max_drawdown', 0)}%`\n"
-            f"Expect:   `${result.get('expectancy', 0)}`\n\n"
-            f"*Phase Breakdown*\n"
+            f"Max DD:   `{result.get('max_drawdown', 0)}%`\n\n"
             f"TP1 hit: `{pb.get('tp1_hit_rate', 0)}%` · TP2 hit: `{pb.get('tp2_hit_rate', 0)}%`\n\n"
-            f"*By Grade*\n"
             f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
             f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
         )
+    except asyncio.TimeoutError:
+        await send(f"❌ Backtest timed out after 120s")
     except Exception as e:
         await send(f"❌ Backtest error: `{str(e)}`")
 
@@ -1020,21 +1098,14 @@ async def _cmd_debrief():
 
     from alerts.briefing import send_post_trade_debrief
     await send_post_trade_debrief(
-        trade           = trade,
-        outcome         = trade.outcome,
-        pnl             = trade.pnl or 0,
-        close_reason    = trade.close_reason or "--",
-        health_at_close = trade.health_at_close or "UNKNOWN"
+        trade=trade, outcome=trade.outcome,
+        pnl=trade.pnl or 0, close_reason=trade.close_reason or "--",
+        health_at_close=trade.health_at_close or "UNKNOWN"
     )
 
 
 async def _cmd_scan():
-    await send(
-        "🔍 *Manual Scan Started*\n\n"
-        "Scanning all coins...\n"
-        "This takes 1-2 minutes.\n"
-        "You'll get alerts for any A/A+ signals."
-    )
+    await send("🔍 *Manual Scan Started*\n\nScanning all coins...\nThis takes 1-2 minutes.")
     try:
         from alerts.scanner import scan_all_coins
         await scan_all_coins()
@@ -1072,8 +1143,8 @@ async def _cmd_queue():
         f"TP1:   `{sig.get('tp1', '--')}`\n"
         f"TP2:   `{sig.get('tp2', '--')}`\n\n" +
         (
-            "Waiting for current trade to close."
-            if not state_manager.is_idle else
+            "Max concurrent trades reached."
+            if not state_manager.can_open_trade() else
             "Bot is idle — tap Approve to execute."
         ),
         keyboard=_signal_keyboard(coin)
@@ -1084,11 +1155,12 @@ async def _cmd_help():
     await send(
         "🤖 *Signal Engine v5 — Commands*\n\n"
         "*TRADE*\n"
-        "/status  — trade state + health\n"
+        "/status  — all active trades\n"
+        "/trades  — same as status\n"
         "/thesis  — why this trade exists\n"
-        "/health  — full health engine output\n"
-        "/levels  — price ladder + progress\n"
-        "/close   — close with confirmation\n\n"
+        "/health  — health engine output\n"
+        "/levels  — price ladder\n"
+        "/close   — close trade (TOTP)\n\n"
         "*MARKET*\n"
         "/btc         — BTC analysis\n"
         "/coin ETH    — any coin analysis\n"
@@ -1109,10 +1181,12 @@ async def _cmd_help():
         "*BOT CONTROL*\n"
         "/scan    — trigger manual scan\n"
         "/queue   — best signal + approve/skip\n"
-        "/pause   — pause auto-execution\n"
-        "/resume  — resume auto-execution\n"
+        "/pause   — pause auto-execution (TOTP)\n"
+        "/resume  — resume auto-execution (TOTP)\n"
+        "/golive  — enable live trading (TOTP)\n"
+        "/gopaper — enable paper trading (TOTP)\n"
         "/mode    — current config\n"
-        "/brief   — morning briefing now\n\n"
+        "/brief   — morning briefing\n\n"
         "*ANALYSIS*\n"
         "/backtest BTC — backtest a coin\n"
         "/factors      — factor analysis\n"
@@ -1151,9 +1225,16 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
     thesis      = explanation.get("thesis", "")
     conf_label  = explanation.get("confidence_label", "")
 
+    from trade.risk import get_current_tier
+    tier        = get_current_tier()
     paused_note = (
         "\n⏸ _Auto-execution paused — tap Approve to enter_\n"
         if state_manager.is_paused else ""
+    )
+    slots_note = (
+        f"\n⚡ Slot `{len(state_manager.active_trades)+1}/{tier['max_trades']}` available\n"
+        if state_manager.can_open_trade() else
+        "\n🚫 _All trade slots full_\n"
     )
 
     await send_with_keyboard(
@@ -1172,9 +1253,9 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Risk:    `${risk_amt:.2f}`\n"
         f"Size:    `${pos_size:.2f}`\n"
-        f"Lev:     `{cfg.LEVERAGE}x`\n"
-        f"{chr(10) + '*Why This Trade?*' + chr(10) + thesis + chr(10) if thesis else ''}"
-        f"{paused_note}",
+        f"Lev:     `{tier['leverage']}x`\n"
+        f"{chr(10) + '*Why:* ' + thesis + chr(10) if thesis else ''}"
+        f"{paused_note}{slots_note}",
         keyboard=_signal_keyboard(coin)
     )
 
@@ -1206,15 +1287,11 @@ async def send_scan_summary(results: list):
                 f"{dir_emoji} {direction}\n"
             )
 
-        if not state_manager.is_idle:
-            trade = state_manager.current_trade
-            lines.append(f"\n⚡ Active trade: {trade.coin} {trade.direction}")
-        else:
-            lines.append(
-                f"\n💤 Bot {'PAUSED' if state_manager.is_paused else 'idle'} — "
-                f"{'tap Approve to enter' if state_manager.is_paused else 'will execute best signal'}"
-            )
-
+        from trade.risk import get_current_tier
+        tier = get_current_tier()
+        lines.append(
+            f"\nActive: `{len(state_manager.active_trades)}/{tier['max_trades']}` slots"
+        )
         lines.append(f"\nNext scan: `{next_scan}`")
         await send("\n".join(lines))
         return
@@ -1235,7 +1312,7 @@ async def send_scan_summary(results: list):
         for r in building[:2]:
             lines.append(f"👁 `{r['coin']}` — C ({r.get('score',0)}/100)")
     else:
-        lines.append("No setups building across all coins.")
+        lines.append("No setups building.")
 
     lines.append(f"\nNext scan: `{next_scan}`")
     await send("\n".join(lines))
@@ -1261,7 +1338,7 @@ async def send_progress_update(trade, current_price: float, milestone_pct: int):
         f"TP1:     `{tp1}` — `${dist_tp1:,.4f}` away\n"
         f"SL:      `{sl}`\n\n"
         f"uPnL:    `{_pnl_str(upnl)}`\n"
-        f"{_health_emoji(state_manager.health_state)} Health: `{state_manager.health_state}`\n\n"
+        f"{_health_emoji(state_manager.health_state_for(trade.id))} Health: `{state_manager.health_state_for(trade.id)}`\n\n"
         f"Type /status for full details"
     )
 

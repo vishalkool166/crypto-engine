@@ -1,7 +1,15 @@
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 import os
+import secrets
 
 load_dotenv()
+
+ENV_FILE = ".env"
+
+def _ensure(key: str, value: str):
+    os.environ[key] = value
+    set_key(ENV_FILE, key, value)
+
 
 class Config:
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
@@ -10,26 +18,39 @@ class Config:
     TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-    FINNHUB_KEY = os.getenv("FINNHUB_KEY")
-
+    FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-    DOMAIN = os.getenv("DOMAIN")
+    DOMAIN       = os.getenv("DOMAIN")
 
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
 
+    # ── Auth ────────────────────────────────────────────────────────
+    TOTP_SECRET              = os.getenv("TOTP_SECRET", "")
+    DASHBOARD_PASSWORD_HASH  = os.getenv("DASHBOARD_PASSWORD_HASH", "")
+    DASHBOARD_API_KEY        = os.getenv("DASHBOARD_API_KEY", "")
+    WEBHOOK_SECRET           = os.getenv("WEBHOOK_SECRET", "")
+    JWT_SECRET               = os.getenv("JWT_SECRET", "")
+
+    # ── Trading mode ────────────────────────────────────────────────
+    TRADING_MODE   = os.getenv("TRADING_MODE", "paper")
+    PAPER_TRADING  = TRADING_MODE != "live"
+
+    MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 10))
+
+    # ── Coins ───────────────────────────────────────────────────────
     TIER1 = ["BTC", "ETH", "BNB", "SOL", "XRP"]
     TIER2 = ["ADA", "AVAX", "LINK", "DOT", "DOGE", "LTC", "ATOM", "POL"]
     COINS = TIER1 + TIER2
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
-    CAPITAL    = float(os.getenv("CAPITAL", 10))
-    LEVERAGE   = 10
+
+    # ── Capital (removed hardcoded — now live from Binance) ─────────
+    CAPITAL  = float(os.getenv("CAPITAL", 16))
+    LEVERAGE = 10
 
     MIN_GRADE_TO_TRADE = ["A+", "A"]
 
-    RISK_PCT_PER_TRADE = 0.10
     DAILY_LOSS_CAP_PCT = 0.20
     MAX_TRADES_PER_DAY = 3
 
@@ -67,6 +88,55 @@ class Config:
 
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
-    PAPER_TRADING                 = True
+
+    # ── Balance tiers ───────────────────────────────────────────────
+    BALANCE_TIERS = [
+        {"min": 0,    "max": 50,   "risk_pct": 0.05, "max_trades": 1, "leverage": 5},
+        {"min": 50,   "max": 200,  "risk_pct": 0.08, "max_trades": 2, "leverage": 10},
+        {"min": 200,  "max": 1000, "risk_pct": 0.10, "max_trades": 3, "leverage": 15},
+        {"min": 1000, "max": None, "risk_pct": 0.12, "max_trades": 3, "leverage": 20},
+    ]
+
+    # kept for legacy callers — overridden by live tier
+    RISK_PCT_PER_TRADE = 0.10
+
+
+def _bootstrap_secrets():
+    import logging
+    log = logging.getLogger(__name__)
+
+    changed = False
+
+    if not os.getenv("TOTP_SECRET"):
+        import pyotp
+        secret = pyotp.random_base32()
+        _ensure("TOTP_SECRET", secret)
+        cfg.TOTP_SECRET = secret
+        log.info(f"[FIRST RUN] TOTP_SECRET generated: {secret}")
+        changed = True
+
+    if not os.getenv("DASHBOARD_API_KEY"):
+        key = secrets.token_hex(32)
+        _ensure("DASHBOARD_API_KEY", key)
+        cfg.DASHBOARD_API_KEY = key
+        log.info(f"[FIRST RUN] DASHBOARD_API_KEY generated: {key}")
+        changed = True
+
+    if not os.getenv("WEBHOOK_SECRET"):
+        ws = secrets.token_hex(16)
+        _ensure("WEBHOOK_SECRET", ws)
+        cfg.WEBHOOK_SECRET = ws
+        log.info(f"[FIRST RUN] WEBHOOK_SECRET generated: {ws}")
+        changed = True
+
+    if not os.getenv("JWT_SECRET"):
+        js = secrets.token_hex(32)
+        _ensure("JWT_SECRET", js)
+        cfg.JWT_SECRET = js
+        changed = True
+
+    if changed:
+        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete TOTP setup")
+
 
 cfg = Config()

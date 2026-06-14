@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal Engine v5 — Login</title>
+<style>
+* { -webkit-font-smoothing: antialiased; box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif;
+  background: #f5f5f7;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.card {
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(40px);
+  -webkit-backdrop-filter: blur(40px);
+  border: 1px solid rgba(255,255,255,0.6);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+  border-radius: 24px;
+  padding: 48px 40px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.logo {
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, #0071e3, #0051a8);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 24px;
+  box-shadow: 0 4px 16px rgba(0,113,227,0.3);
+}
+
+h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1d1d1f;
+  text-align: center;
+  margin-bottom: 6px;
+}
+
+.subtitle {
+  font-size: 14px;
+  color: #6e6e73;
+  text-align: center;
+  margin-bottom: 36px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6e6e73;
+  margin-bottom: 8px;
+}
+
+input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1.5px solid rgba(0,0,0,0.1);
+  border-radius: 12px;
+  font-size: 15px;
+  font-family: inherit;
+  background: rgba(255,255,255,0.8);
+  color: #1d1d1f;
+  transition: border-color 0.2s;
+  outline: none;
+}
+
+input:focus {
+  border-color: #0071e3;
+  background: white;
+}
+
+input[type="number"] {
+  font-family: 'SF Mono', 'JetBrains Mono', monospace;
+  letter-spacing: 0.15em;
+  font-size: 20px;
+  text-align: center;
+}
+
+.totp-hint {
+  font-size: 11px;
+  color: #6e6e73;
+  text-align: center;
+  margin-top: 6px;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  background: #0071e3;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: background 0.2s, transform 0.1s;
+}
+
+button:hover   { background: #0077ed; }
+button:active  { transform: scale(0.99); }
+button:disabled {
+  background: rgba(0,0,0,0.12);
+  color: rgba(0,0,0,0.3);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.error {
+  background: rgba(255,59,48,0.08);
+  border: 1px solid rgba(255,59,48,0.2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: #c0392b;
+  margin-top: 16px;
+  text-align: center;
+  display: none;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.mode-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(0,113,227,0.1);
+  color: #0071e3;
+  border: 1px solid rgba(0,113,227,0.2);
+  margin-top: 4px;
+}
+
+.footer {
+  text-align: center;
+  margin-top: 24px;
+  font-size: 11px;
+  color: #6e6e73;
+}
+
+.setup-link {
+  color: #0071e3;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.setup-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">⚡</div>
+  <h1>Signal Engine</h1>
+  <p class="subtitle">
+    v5 · Binance Futures
+    <br>
+    <span class="mode-badge" id="mode-badge">PAPER</span>
+  </p>
+
+  <form onsubmit="handleLogin(event)">
+
+    <div class="field">
+      <label>Password</label>
+      <input
+        type="password"
+        id="password"
+        placeholder="Dashboard password"
+        autocomplete="current-password"
+        required
+      >
+    </div>
+
+    <div class="field">
+      <label>Authenticator Code</label>
+      <input
+        type="number"
+        id="totp"
+        placeholder="000000"
+        maxlength="6"
+        autocomplete="one-time-code"
+        required
+      >
+      <div class="totp-hint">6-digit code from your authenticator app</div>
+    </div>
+
+    <button type="submit" id="login-btn">Sign In</button>
+
+    <div class="error" id="error-msg"></div>
+
+  </form>
+
+  <div class="footer">
+    First time? <a href="/auth/setup" class="setup-link">Setup TOTP & password</a>
+  </div>
+</div>
+
+<script>
+'use strict'
+
+async function checkMode() {
+  try {
+    const res  = await fetch('/api/health')
+    const data = await res.json()
+    const badge = document.getElementById('mode-badge')
+    if (data.trading_mode === 'live') {
+      badge.textContent    = 'LIVE'
+      badge.style.background  = 'rgba(255,59,48,0.1)'
+      badge.style.color       = '#ff3b30'
+      badge.style.borderColor = 'rgba(255,59,48,0.2)'
+    }
+  } catch(e) {}
+}
+
+async function handleLogin(e) {
+  e.preventDefault()
+
+  const password = document.getElementById('password').value
+  const totp     = document.getElementById('totp').value
+  const btn      = document.getElementById('login-btn')
+  const errEl    = document.getElementById('error-msg')
+
+  if (totp.length !== 6) {
+    showError('Enter your 6-digit authenticator code')
+    return
+  }
+
+  btn.disabled    = true
+  btn.innerHTML   = '<span class="spinner"></span>Signing in...'
+  errEl.style.display = 'none'
+
+  try {
+    const res  = await fetch('/auth/login', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ password, totp_code: totp })
+    })
+    const data = await res.json()
+
+    if (data.success) {
+      window.location.href = '/'
+    } else {
+      showError(data.reason || 'Invalid credentials')
+      btn.disabled  = false
+      btn.innerHTML = 'Sign In'
+    }
+  } catch(e) {
+    showError('Connection error — try again')
+    btn.disabled  = false
+    btn.innerHTML = 'Sign In'
+  }
+}
+
+function showError(msg) {
+  const el = document.getElementById('error-msg')
+  el.textContent    = '❌ ' + msg
+  el.style.display  = 'block'
+}
+
+document.getElementById('totp').addEventListener('input', function() {
+  if (this.value.length > 6) this.value = this.value.slice(0, 6)
+})
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const form = document.querySelector('form')
+    if (form) form.dispatchEvent(new Event('submit'))
+  }
+})
+
+checkMode()
+</script>
+
+</body>
+</html>

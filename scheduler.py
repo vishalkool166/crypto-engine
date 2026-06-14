@@ -37,6 +37,63 @@ async def job_morning_briefing():
         log.error(f"Morning briefing error: {e}")
 
 
+async def job_refresh_balance():
+    try:
+        from data.fetcher import get_live_balance
+        from trade.risk import get_tier_config
+        import runtime_state as rs
+        from config import cfg
+
+        balance = await get_live_balance()
+        if balance > 0:
+            rs.set_balance_cache(balance)
+            tier = get_tier_config(balance)
+            rs.set_tier_config(tier)
+            cfg.CAPITAL = balance
+            log.info(f"Balance refreshed: ${balance:.2f} Tier:{tier['tier']}")
+    except Exception as e:
+        log.error(f"Balance refresh error: {e}")
+
+
+async def job_refresh_coins():
+    try:
+        from data.fetcher import get_top_coins
+        from database import get_session, CoinConfig
+        from datetime import datetime, timezone
+        from config import cfg
+
+        n     = 10 + (3 * 2)
+        coins = await get_top_coins(n=n)
+        if not coins:
+            return
+
+        with get_session() as db:
+            for coin in coins:
+                existing = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
+                if existing:
+                    existing.last_seen = datetime.now(timezone.utc)
+                else:
+                    db.add(CoinConfig(
+                        coin       = coin,
+                        enabled    = True,
+                        tier       = 1,
+                        source     = "binance_auto",
+                        last_seen  = datetime.now(timezone.utc)
+                    ))
+
+        enabled = []
+        with get_session() as db:
+            rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+            enabled = [r.coin for r in rows]
+
+        if enabled:
+            cfg.COINS = enabled
+            log.info(f"Coins refreshed: {len(enabled)} coins")
+
+    except Exception as e:
+        log.error(f"Coin refresh error: {e}")
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -48,7 +105,6 @@ def get_next_scan_time() -> str:
             next_ist = next_utc.astimezone(IST)
             return next_ist.strftime("%I:%M %p IST")
 
-    # next hour
     next_utc = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     next_ist = next_utc.astimezone(IST)
     return next_ist.strftime("%I:%M %p IST")
@@ -66,9 +122,7 @@ def get_next_scan_epoch() -> int:
 
     next_hour = now.replace(
         hour=(now.hour + 1) % 24,
-        minute=0,
-        second=0,
-        microsecond=0
+        minute=0, second=0, microsecond=0
     )
     return int(next_hour.timestamp() * 1000)
 
@@ -76,10 +130,7 @@ def get_next_scan_epoch() -> int:
 def start_scheduler():
     scheduler.add_job(
         job_scan,
-        trigger=CronTrigger(
-            minute="0,15,30,45",
-            timezone="UTC"
-        ),
+        trigger=CronTrigger(minute="0,15,30,45", timezone="UTC"),
         id="scan",
         replace_existing=True
     )
@@ -93,21 +144,30 @@ def start_scheduler():
 
     scheduler.add_job(
         job_morning_briefing,
-        trigger=CronTrigger(
-            hour=2, minute=30,
-            timezone="UTC"
-        ),
+        trigger=CronTrigger(hour=2, minute=30, timezone="UTC"),
         id="morning_briefing",
+        replace_existing=True
+    )
+
+    scheduler.add_job(
+        job_refresh_balance,
+        trigger=IntervalTrigger(minutes=15),
+        id="balance_refresh",
+        replace_existing=True
+    )
+
+    scheduler.add_job(
+        job_refresh_coins,
+        trigger=CronTrigger(hour=0, minute=0, timezone="UTC"),
+        id="coin_refresh",
         replace_existing=True
     )
 
     scheduler.start()
     log.info(
-        f"Scheduler started — UTC — "
-        f"scan: :00/:15/:30/:45 — "
-        f"monitor: 1m — "
-        f"briefing: 08:00 IST — "
-        f"next scan: {get_next_scan_time()}"
+        f"Scheduler started — scan::00/:15/:30/:45 — "
+        f"monitor:1m — balance:15m — coins:daily — "
+        f"next scan:{get_next_scan_time()}"
     )
 
 

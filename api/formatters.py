@@ -2,7 +2,7 @@ import math
 from datetime import datetime, timezone
 from config import cfg
 from trade.state import state_manager
-from trade.risk import risk_guard
+from trade.risk import risk_guard, get_current_tier
 from trade.orders import get_current_price
 from data.cache import cache
 
@@ -83,11 +83,8 @@ def fmt_duration(opened_at) -> str:
         return "--"
     try:
         if isinstance(opened_at, str):
-            opened_at = datetime.fromisoformat(
-                opened_at.replace("Z", "+00:00")
-            )
-        diff       = datetime.now(timezone.utc) - \
-                     opened_at.replace(tzinfo=timezone.utc)
+            opened_at = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
+        diff       = datetime.now(timezone.utc) - opened_at.replace(tzinfo=timezone.utc)
         total_mins = int(diff.total_seconds() / 60)
         hrs        = total_mins // 60
         mins       = total_mins % 60
@@ -169,6 +166,8 @@ def health_emoji(state: str) -> str:
 
 
 def detect_tp1_hit(trade) -> bool:
+    if trade.tp1_hit is not None:
+        return trade.tp1_hit
     entry = trade.entry_price
     sl    = trade.sl_price
     if not entry or not sl:
@@ -308,7 +307,7 @@ def build_progress(trade, current: float) -> dict:
             pct = (entry - current) / total * 100
         pct       = max(0, min(100, pct))
         remaining = abs(tp2 - current) if tp2 and current else 0
-        label = (
+        label     = (
             f"{'📈' if is_long else '📉'} {pct:.0f}% to TP2 — "
             f"Risk Free ✅ ({fmt_price(remaining)} remaining)"
         )
@@ -382,6 +381,7 @@ def build_progress(trade, current: float) -> dict:
 def build_trade_data(trade, current: float) -> dict:
     is_long  = trade.direction == "LONG"
     tp1_hit  = detect_tp1_hit(trade)
+    tier     = get_current_tier()
 
     upnl     = risk_guard.calculate_unrealized_pnl(
         direction     = trade.direction,
@@ -389,7 +389,7 @@ def build_trade_data(trade, current: float) -> dict:
         current_price = current,
         pos_size      = trade.position_size
     )
-    capital  = cfg.CAPITAL
+    capital  = tier["balance"] or cfg.CAPITAL
     pnl_pct  = (upnl / capital * 100) if capital else 0
     move_amt = current - trade.entry_price
     move_pct = (move_amt / trade.entry_price * 100) if trade.entry_price else 0
@@ -439,8 +439,8 @@ def build_trade_data(trade, current: float) -> dict:
     )
     current_color = C["green_dark"] if in_profit else C["red_dark"]
 
-    health_state = state_manager.health_state
-    health_data  = state_manager.health_data
+    health_state = state_manager.health_state_for(trade.id)
+    health_data  = state_manager.health_data_for(trade.id)
 
     explanation = {}
     cached = cache.get_raw(f"signal_{trade.coin}")
@@ -502,16 +502,28 @@ def build_trade_data(trade, current: float) -> dict:
         "thesis":           explanation.get("thesis", ""),
         "risk_thesis":      explanation.get("risk_thesis", ""),
         "confidence":       explanation.get("confidence", 0),
-        "confidence_label": explanation.get("confidence_label", "")
+        "confidence_label": explanation.get("confidence_label", ""),
+        "tier":             tier["tier"],
+        "balance":          f"${tier['balance']:.2f}"
     }
 
 
+def build_all_trades_data(current_prices: dict = None) -> list:
+    trades = []
+    for trade in state_manager.active_trades.values():
+        current = (current_prices or {}).get(trade.coin) or get_current_price(trade.coin)
+        trades.append(build_trade_data(trade, current))
+    return trades
+
+
 def build_risk_data(risk) -> dict:
-    daily_cap = cfg.CAPITAL * cfg.DAILY_LOSS_CAP_PCT
+    tier      = get_current_tier()
+    capital   = tier["balance"] or cfg.CAPITAL
+    daily_cap = capital * cfg.DAILY_LOSS_CAP_PCT
 
     if not risk:
         return {
-            "trades_label":     "0/3",
+            "trades_label":     f"0/{tier['max_trades']}",
             "trades_bar_pct":   0,
             "trades_bar_color": C["blue"],
             "loss_label":       "$0.0000",
@@ -520,10 +532,12 @@ def build_risk_data(risk) -> dict:
             "pnl_label":        "$0.0000",
             "pnl_color":        C["green_dark"],
             "pnl_bar_pct":      0,
-            "remaining_trades": cfg.MAX_TRADES_PER_DAY,
+            "remaining_trades": tier["max_trades"],
             "remaining_loss":   f"${daily_cap:.4f}",
             "cap_status":       "✅ Active",
-            "cap_color":        C["green_dark"]
+            "cap_color":        C["green_dark"],
+            "tier":             tier["tier"],
+            "balance":          f"${capital:.2f}"
         }
 
     trades_taken = risk.get("trades_taken", 0)
@@ -535,19 +549,21 @@ def build_risk_data(risk) -> dict:
     pnl_bar_pct = min(100, abs(total_pnl)  / daily_cap * 100) if daily_cap > 0 else 0
 
     return {
-        "trades_label":     f"{trades_taken}/3",
-        "trades_bar_pct":   round(trades_taken / cfg.MAX_TRADES_PER_DAY * 100),
-        "trades_bar_color": C["red"] if trades_taken >= cfg.MAX_TRADES_PER_DAY else C["blue"],
+        "trades_label":     f"{trades_taken}/{tier['max_trades']}",
+        "trades_bar_pct":   round(trades_taken / tier["max_trades"] * 100),
+        "trades_bar_color": C["red"] if trades_taken >= tier["max_trades"] else C["blue"],
         "loss_label":       f"${abs(total_loss):.4f}",
         "loss_bar_pct":     round(loss_pct),
         "loss_bar_color":   C["red"] if loss_pct >= 80 else C["orange"] if loss_pct >= 50 else C["green"],
         "pnl_label":        fmt_pnl(total_pnl),
         "pnl_color":        pnl_color(total_pnl),
         "pnl_bar_pct":      round(pnl_bar_pct),
-        "remaining_trades": risk.get("remaining_trades", cfg.MAX_TRADES_PER_DAY),
+        "remaining_trades": risk.get("remaining_trades", tier["max_trades"]),
         "remaining_loss":   f"${risk.get('remaining_loss', daily_cap):.4f}",
         "cap_status":       "🚫 Cap Hit" if cap_hit else "✅ Active",
-        "cap_color":        C["red_dark"] if cap_hit else C["green_dark"]
+        "cap_color":        C["red_dark"] if cap_hit else C["green_dark"],
+        "tier":             tier["tier"],
+        "balance":          f"${capital:.2f}"
     }
 
 
@@ -638,9 +654,7 @@ def build_radar_data(results: list) -> list:
         market = r.get("market", {})
         price  = market.get("price", 0)
         change = market.get("change24", 0)
-
-        explanation = r.get("explanation", {})
-        conf_label  = explanation.get("confidence_label", "")
+        expl   = r.get("explanation", {})
 
         radar.append({
             "coin":        r.get("coin", "--"),
@@ -655,7 +669,7 @@ def build_radar_data(results: list) -> list:
             "change":      fmt_pct(change),
             "change_color":pnl_color(change),
             "tradeable":   grade in ["A+", "A"] and dir_ in ["LONG", "SHORT"],
-            "confidence":  conf_label
+            "confidence":  expl.get("confidence_label", "")
         })
 
     return radar
@@ -674,8 +688,7 @@ def build_signal_queue(results: list) -> list:
         grade   = r.get("grade", "?")
         dir_    = r.get("direction", "?")
         is_long = dir_ == "LONG"
-
-        explanation = r.get("explanation", {})
+        expl    = r.get("explanation", {})
 
         queue.append({
             "coin":             r.get("coin", "--"),
@@ -693,10 +706,10 @@ def build_signal_queue(results: list) -> list:
             "sl_pct":           f"{sig.get('sl_pct', 0):.2f}%",
             "regime":           r.get("regime", "--"),
             "session":          r.get("session", "--"),
-            "thesis":           explanation.get("thesis", ""),
-            "risk_thesis":      explanation.get("risk_thesis", ""),
-            "confidence_label": explanation.get("confidence_label", ""),
-            "no_trade_reason":  explanation.get("no_trade_reason", "")
+            "thesis":           expl.get("thesis", ""),
+            "risk_thesis":      expl.get("risk_thesis", ""),
+            "confidence_label": expl.get("confidence_label", ""),
+            "no_trade_reason":  expl.get("no_trade_reason", "")
         })
 
     return queue
@@ -734,19 +747,25 @@ def build_history_data(trades: list) -> list:
 
 
 def build_header_data(risk_stats: dict, stats: dict) -> dict:
+    tier        = get_current_tier()
     today_pnl   = risk_stats.get("total_pnl", 0)
-    trades_left = risk_stats.get("remaining_trades", cfg.MAX_TRADES_PER_DAY)
+    trades_left = risk_stats.get("remaining_trades", tier["max_trades"])
     wr          = stats.get("win_rate", 0) if stats else 0
+    import runtime_state as rs
+    mode        = rs.get_trading_mode()
 
     return {
-        "capital":           f"${cfg.CAPITAL}",
-        "leverage":          f"{cfg.LEVERAGE}x",
+        "capital":           f"${tier['balance']:.2f}",
+        "leverage":          f"{tier['leverage']}x",
         "today_pnl":         fmt_pnl(today_pnl),
         "today_pnl_color":   pnl_color(today_pnl),
         "trades_left":       str(trades_left),
         "trades_left_color": C["red_dark"] if trades_left == 0 else C["text"],
         "win_rate":          f"{wr}%",
         "win_rate_color":    get_color("winrate", wr),
-        "mode":              "PAPER" if cfg.PAPER_TRADING else "LIVE",
-        "mode_color":        C["blue"] if cfg.PAPER_TRADING else C["red_dark"]
+        "mode":              "LIVE" if mode == "live" else "PAPER",
+        "mode_color":        C["red_dark"] if mode == "live" else C["blue"],
+        "tier":              tier["tier"],
+        "active_trades":     len(state_manager.active_trades),
+        "max_trades":        tier["max_trades"]
     }

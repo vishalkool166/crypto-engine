@@ -165,6 +165,40 @@ body {
   white-space: pre-line;
 }
 
+.trade-card {
+  transition: box-shadow 0.2s ease;
+}
+.trade-card:hover {
+  box-shadow: 0 12px 40px rgba(0,0,0,0.14);
+}
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(255,59,48,0.1);
+  color: #ff3b30;
+  border: 1px solid rgba(255,59,48,0.2);
+}
+
+.live-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ff3b30;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+
 .ws-dot {
   width: 6px;
   height: 6px;
@@ -206,4 +240,25 @@ body {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   display: inline-block;
+}
+
+.totp-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.totp-modal {
+  background: rgba(255,255,255,0.95);
+  border-radius: 20px;
+  padding: 32px;
+  max-width: 360px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.2);
 }

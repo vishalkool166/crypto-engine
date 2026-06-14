@@ -25,6 +25,7 @@ function showCoinDetail(coin) {
 
   fetchCoinDetail(coin)
     .then(data => {
+      if (!data) return
       _modalCache[coin] = { data, ts: Date.now() }
       _renderModalData(coin, data, title, body)
     })
@@ -42,14 +43,23 @@ function closeModal() {
   overlay.classList.remove('flex')
 }
 
-function showConfirmClose() {
+function showConfirmClose(tradeId = null) {
   const d = S.data
   if (!d || d.state === 'idle') {
     toast('⚠️ No active trade', '', 'warning')
     return
   }
 
-  const t       = d.trade
+  const trades = d.trades || []
+  const t      = tradeId
+    ? trades.find(tr => tr.id === tradeId)
+    : trades[0]
+
+  if (!t) {
+    toast('⚠️ Trade not found', '', 'warning')
+    return
+  }
+
   const title   = $id('modal-title')
   const body    = $id('modal-body')
   const overlay = $id('modal-overlay')
@@ -84,7 +94,7 @@ function showConfirmClose() {
                 style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(0,0,0,0.1);background:rgba(0,0,0,0.04);font-weight:600;font-size:13px;cursor:pointer">
           Cancel
         </button>
-        <button onclick="closeModal();closeTrade()"
+        <button onclick="closeModal();closeTrade(${tradeId || ''})"
                 class="btn-danger"
                 style="flex:1">
           ✅ Yes, Close

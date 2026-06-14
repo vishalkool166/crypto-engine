@@ -3,7 +3,7 @@ import logging
 import time
 import json
 import os
-import shutil
+import threading
 from datetime import datetime
 from config import cfg
 
@@ -22,6 +22,8 @@ MIN_NOTIONAL = {
 }
 
 TAKER_FEE = 0.0006
+_precision_cache: dict = {}
+_store_lock = threading.Lock()
 
 
 class PaperOrderStore:
@@ -58,33 +60,27 @@ class PaperOrderStore:
         except Exception as e:
             log.error(f"Backup restore failed: {e}")
 
-        log.info("No paper orders file found — starting fresh")
         self._orders  = {}
         self._counter = 1000
 
     def _save(self):
-        try:
-            os.makedirs("database", exist_ok=True)
-            data = {"orders": self._orders, "counter": self._counter}
-            with open(self.STORE_FILE, "w") as f:
-                json.dump(data, f, indent=2)
-            shutil.copy2(self.STORE_FILE, self.BACKUP_FILE)
-        except Exception as e:
-            log.error(f"Paper store save error: {e}")
+        with _store_lock:
+            try:
+                os.makedirs("database", exist_ok=True)
+                data = {"orders": self._orders, "counter": self._counter}
+                tmp  = self.STORE_FILE + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp, self.STORE_FILE)
+                import shutil
+                shutil.copy2(self.STORE_FILE, self.BACKUP_FILE)
+            except Exception as e:
+                log.error(f"Paper store save error: {e}")
 
-    def _place_order(
-        self,
-        coin:       str,
-        order_type: str,
-        side:       str,
-        quantity:   float,
-        price:      float = None,
-        stop_price: float = None,
-        label:      str   = ""
-    ) -> dict:
+    def _place_order(self, coin, order_type, side, quantity,
+                     price=None, stop_price=None, label="") -> dict:
         order_id      = str(self._counter)
         self._counter += 1
-
         order = {
             "id":         order_id,
             "coin":       coin,
@@ -99,26 +95,13 @@ class PaperOrderStore:
             "label":      label,
             "created_at": datetime.utcnow().isoformat()
         }
-
         self._orders[order_id] = order
         self._save()
-        log.info(
-            f"[PAPER] Order created: id:{order_id} {coin} "
-            f"{order_type} {side} qty:{quantity} "
-            f"stop:{stop_price} {label}"
-        )
+        log.info(f"[PAPER] Order: id:{order_id} {coin} {order_type} {side} qty:{quantity} stop:{stop_price} {label}")
         return order
 
-    def create_order(
-        self,
-        coin:       str,
-        order_type: str,
-        side:       str,
-        quantity:   float,
-        price:      float = None,
-        stop_price: float = None,
-        label:      str   = ""
-    ) -> dict:
+    def create_order(self, coin, order_type, side, quantity,
+                     price=None, stop_price=None, label="") -> dict:
         return self._place_order(coin, order_type, side, quantity, price, stop_price, label)
 
     def get_order(self, order_id: str) -> dict:
@@ -129,7 +112,6 @@ class PaperOrderStore:
         if order:
             order["status"] = "cancelled"
             self._save()
-            log.info(f"[PAPER] Order cancelled: {order_id}")
             return True
         return False
 
@@ -140,7 +122,6 @@ class PaperOrderStore:
             order["filled"]  = order["quantity"]
             order["average"] = fill_price
             self._save()
-            log.info(f"[PAPER] Order filled: {order_id} @ {fill_price}")
             return True
         return False
 
@@ -148,19 +129,15 @@ class PaperOrderStore:
         order = self._orders.get(str(order_id))
         if not order or order["status"] != "open":
             return False
-
         stop  = order.get("stop_price")
         if not stop:
             return False
-
         side  = order["side"]
         label = order.get("label", "")
-
         if side == "sell":
             return current_price <= stop if ("SL" in label or "STOP" in label) else current_price >= stop
         elif side == "buy":
             return current_price >= stop if ("SL" in label or "STOP" in label) else current_price <= stop
-
         return False
 
     def get_all_open(self) -> list:
@@ -183,28 +160,59 @@ def _get_exchange():
 exchange = _get_exchange()
 
 
-def with_retry(fn, retries=3, delay=2):
+def with_retry(fn, retries=3, base_delay=2):
     for attempt in range(1, retries + 1):
         try:
             return fn()
         except ccxt.NetworkError as e:
             log.warning(f"Network error attempt {attempt}/{retries}: {e}")
             if attempt < retries:
-                time.sleep(delay)
+                time.sleep(base_delay * (2 ** (attempt - 1)))
         except ccxt.ExchangeError as e:
             log.error(f"Exchange error: {e}")
             return None
         except Exception as e:
             log.error(f"Unexpected error attempt {attempt}: {e}")
             if attempt < retries:
-                time.sleep(delay)
+                time.sleep(base_delay * (2 ** (attempt - 1)))
     log.error(f"All {retries} attempts failed")
     return None
 
 
+def _get_precision_from_exchange(coin: str) -> tuple:
+    if coin in _precision_cache:
+        return _precision_cache[coin]
+    try:
+        markets = exchange.load_markets()
+        symbol  = f"{coin}/USDT"
+        if symbol in markets:
+            m        = markets[symbol]
+            qty_prec = int(m.get("precision", {}).get("amount", 2) or 2)
+            min_not  = float(m.get("limits", {}).get("cost", {}).get("min", 5.0) or 5.0)
+            _precision_cache[coin] = (qty_prec, min_not)
+            return qty_prec, min_not
+    except Exception as e:
+        log.warning(f"Precision fetch failed for {coin}: {e}")
+    default = (QUANTITY_PRECISION.get(coin, 2), MIN_NOTIONAL.get(coin, 5.0))
+    _precision_cache[coin] = default
+    return default
+
+
 def set_leverage(coin: str, leverage: int) -> bool:
-    log.info(f"[PAPER] Leverage set: {coin} {leverage}x")
-    return True
+    if cfg.PAPER_TRADING:
+        log.info(f"[PAPER] Leverage set: {coin} {leverage}x")
+        return True
+    return with_retry(lambda: exchange.set_leverage(leverage, f"{coin}/USDT")) is not None
+
+
+def _ensure_isolated_margin(coin: str):
+    if cfg.PAPER_TRADING:
+        return
+    try:
+        exchange.set_margin_mode("isolated", f"{coin}/USDT")
+        log.info(f"Margin mode set ISOLATED: {coin}")
+    except Exception as e:
+        log.warning(f"Margin mode set failed {coin}: {e}")
 
 
 def place_market_order(coin: str, direction: str, quantity: float) -> dict:
@@ -225,16 +233,11 @@ def place_market_order(coin: str, direction: str, quantity: float) -> dict:
     )
     paper_store.fill_order(order["id"], current)
     order["fee"] = entry_fee
-
-    log.info(
-        f"[PAPER] Market order filled: {coin} {side} "
-        f"qty:{quantity} @ {current} fee:${entry_fee:.4f}"
-    )
     return order
 
 
 def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) -> dict:
-    side = "sell" if direction == "LONG" else "buy"
+    side  = "sell" if direction == "LONG" else "buy"
     order = paper_store.create_order(
         coin=coin, order_type="STOP_MARKET",
         side=side, quantity=quantity,
@@ -244,14 +247,9 @@ def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) 
     return order
 
 
-def place_tp_order(
-    coin:      str,
-    direction: str,
-    quantity:  float,
-    tp_price:  float,
-    label:     str = "TP"
-) -> dict:
-    side = "sell" if direction == "LONG" else "buy"
+def place_tp_order(coin: str, direction: str, quantity: float,
+                   tp_price: float, label: str = "TP") -> dict:
+    side  = "sell" if direction == "LONG" else "buy"
     order = paper_store.create_order(
         coin=coin, order_type="TAKE_PROFIT_MARKET",
         side=side, quantity=quantity,
@@ -291,14 +289,9 @@ def get_order_status(coin: str, order_id: str) -> dict:
         fill_price = order["stop_price"]
         notional   = order["quantity"] * fill_price
         exit_fee   = notional * TAKER_FEE
-
         paper_store.fill_order(str(order_id), fill_price)
         order["fee"] = exit_fee
-
-        log.info(
-            f"[PAPER] Stop triggered: {coin} {order.get('label', '')} "
-            f"@ {fill_price} fee:${exit_fee:.4f} (current: {current})"
-        )
+        log.info(f"[PAPER] Stop triggered: {coin} {order.get('label','')} @ {fill_price}")
         return {"id": order["id"], "status": "closed", "filled": order["quantity"], "price": fill_price, "fee": exit_fee}
 
     return {"id": order["id"], "status": "open", "filled": 0, "price": None}
@@ -329,11 +322,6 @@ def close_position_market(coin: str, direction: str, quantity: float) -> dict:
     )
     paper_store.fill_order(order["id"], current)
     order["fee"] = exit_fee
-
-    log.info(
-        f"[PAPER] Position closed: {coin} {side} "
-        f"qty:{quantity} @ {current} fee:${exit_fee:.4f}"
-    )
     return order
 
 
@@ -342,30 +330,23 @@ def calculate_quantity(coin: str, pos_size: float, price: float) -> float:
         log.error(f"Invalid price for {coin}: {price}")
         return 0.0
 
-    precision    = QUANTITY_PRECISION.get(coin, 2)
-    min_notional = MIN_NOTIONAL.get(coin, 5.0)
+    precision, min_notional = _get_precision_from_exchange(coin)
+
+    if coin not in QUANTITY_PRECISION:
+        log.warning(f"Coin {coin} not in precision map — fetched from exchange: {precision}")
 
     qty      = round(pos_size / price, precision)
     notional = qty * price
 
     if notional < min_notional:
-        log.warning(
-            f"Notional ${notional:.4f} below minimum "
-            f"${min_notional} for {coin} — adjusting"
-        )
         qty      = round(min_notional / price, precision)
         notional = qty * price
-        log.info(f"Adjusted qty: {qty} notional: ${notional:.4f}")
+        log.info(f"Adjusted qty for min notional: {coin} qty:{qty} notional:${notional:.4f}")
 
     if qty <= 0:
         log.error(f"Quantity zero after adjustment: {coin}")
         return 0.0
 
-    log.info(
-        f"[PAPER] Quantity: {coin} size:${pos_size:.4f} "
-        f"price:{price} qty:{qty} "
-        f"notional:${notional:.4f} precision:{precision}"
-    )
     return qty
 
 

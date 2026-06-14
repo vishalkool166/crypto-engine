@@ -47,16 +47,13 @@ tailwind.config = {
 </head>
 <body class="text-apple-text text-sm font-sans">
 
-<!-- TOAST CONTAINER -->
 <div id="toasts" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none"></div>
 
-<!-- API ERROR BANNER -->
 <div id="api-error-banner"
      style="display:none;position:fixed;top:0;left:0;right:0;z-index:60;background:rgba(255,59,48,0.95);color:#fff;padding:8px 16px;font-size:12px;font-weight:600;align-items:center;justify-content:center;gap:8px">
   ⚠️ API connection lost — retrying...
 </div>
 
-<!-- COIN DETAIL MODAL -->
 <div id="modal-overlay"
      class="modal-overlay fixed inset-0 z-40 hidden items-center justify-center p-4"
      onclick="closeModal()">
@@ -66,23 +63,18 @@ tailwind.config = {
     <div class="flex items-center justify-between px-6 py-4 border-b divider sticky top-0 glass-strong z-10 rounded-t-apple">
       <h3 id="modal-title" class="font-semibold text-base text-apple-text"></h3>
       <button onclick="closeModal()"
-              class="w-7 h-7 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center text-apple-secondary transition-colors text-sm">
-        ✕
-      </button>
+              class="w-7 h-7 rounded-full bg-black/5 hover:bg-black/10 flex items-center justify-center text-apple-secondary transition-colors text-sm">✕</button>
     </div>
     <div id="modal-body" class="p-6"></div>
   </div>
 </div>
 
-<!-- APP -->
 <div class="max-w-[1360px] mx-auto px-4 py-4 space-y-3">
 
   <!-- HEADER -->
   <header class="glass rounded-apple px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
     <div class="flex items-center gap-3">
-      <div class="w-9 h-9 rounded-apple-sm bg-gradient-to-br from-apple-blue to-blue-600 flex items-center justify-center text-white text-base shadow-apple">
-        ⚡
-      </div>
+      <div class="w-9 h-9 rounded-apple-sm bg-gradient-to-br from-apple-blue to-blue-600 flex items-center justify-center text-white text-base shadow-apple">⚡</div>
       <div>
         <div class="font-semibold text-[15px] text-apple-text leading-tight">Signal Engine</div>
         <div class="text-apple-secondary text-[11px]">v5 · Binance Futures</div>
@@ -91,13 +83,18 @@ tailwind.config = {
 
     <div class="flex items-center gap-5 flex-wrap">
       <div class="text-center">
-        <div class="section-label mb-0.5">Capital</div>
-        <div id="h-capital" class="num font-semibold text-sm text-apple-text">$10</div>
+        <div class="section-label mb-0.5">Balance</div>
+        <div id="h-capital" class="num font-semibold text-sm text-apple-text">$--</div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">Tier</div>
+        <div id="h-tier" class="num font-semibold text-sm text-apple-text">--</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
         <div class="section-label mb-0.5">Leverage</div>
-        <div class="num font-semibold text-sm text-apple-text">10x</div>
+        <div id="h-leverage" class="num font-semibold text-sm text-apple-text">--x</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
@@ -106,8 +103,8 @@ tailwind.config = {
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
-        <div class="section-label mb-0.5">Trades Left</div>
-        <div id="h-trades-left" class="num font-semibold text-sm text-apple-text">3</div>
+        <div class="section-label mb-0.5">Slots</div>
+        <div id="h-slots" class="num font-semibold text-sm text-apple-text">--</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
@@ -117,9 +114,7 @@ tailwind.config = {
     </div>
 
     <div class="flex items-center gap-3">
-      <span id="mode-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-apple-blue/10 text-apple-blue border border-apple-blue/20">
-        PAPER
-      </span>
+      <span id="mode-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-apple-blue/10 text-apple-blue border border-apple-blue/20">PAPER</span>
       <div id="ws-status" class="flex items-center text-[10px] text-apple-secondary">
         <span class="ws-dot"></span>
         <span id="ws-status-text">connecting</span>
@@ -130,6 +125,9 @@ tailwind.config = {
           Next: <span id="countdown-val" class="text-apple-blue font-semibold">--:--</span>
         </div>
       </div>
+      <button onclick="handleLogout()" class="text-[11px] text-apple-secondary hover:text-apple-red transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
+        Logout
+      </button>
     </div>
   </header>
 
@@ -143,9 +141,7 @@ tailwind.config = {
       </div>
     </div>
     <div class="flex items-center gap-2">
-      <span class="text-xs text-apple-secondary">
-        Last scan: <span id="last-scan-time" class="text-apple-text font-medium">--</span>
-      </span>
+      <span class="text-xs text-apple-secondary">Last scan: <span id="last-scan-time" class="text-apple-text font-medium">--</span></span>
       <button id="scan-btn" onclick="triggerScan()" class="btn-apple">🔍 Scan Now</button>
     </div>
   </div>
@@ -156,14 +152,13 @@ tailwind.config = {
     <!-- LEFT -->
     <div class="space-y-3">
 
-      <!-- ACTIVE TRADE -->
+      <!-- ACTIVE TRADES -->
       <section id="trade-section">
 
-        <!-- IDLE -->
         <div id="trade-idle" class="glass rounded-apple p-5 flex items-center gap-4">
           <div class="w-12 h-12 rounded-apple-sm bg-black/5 flex items-center justify-center text-2xl">⚪</div>
           <div>
-            <div class="font-semibold text-base text-apple-secondary">No Active Trade</div>
+            <div class="font-semibold text-base text-apple-secondary">No Active Trades</div>
             <div class="text-apple-secondary text-xs mt-0.5">Scanning at :00/:15/:30/:45 UTC · A/A+ signals auto-execute</div>
           </div>
           <div class="ml-auto text-right hidden sm:block">
@@ -172,116 +167,8 @@ tailwind.config = {
           </div>
         </div>
 
-        <!-- ACTIVE -->
-        <div id="trade-active" class="hidden glass-strong rounded-apple overflow-hidden">
+        <div id="trades-grid" class="hidden space-y-3"></div>
 
-          <div id="trade-header" class="px-5 py-4 flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <div class="flex items-center gap-2 flex-wrap">
-                <h2 id="trade-coin" class="text-2xl font-bold tracking-tight">--</h2>
-                <span id="trade-dir-badge"      class="px-3 py-1 rounded-full text-sm font-semibold border">--</span>
-                <span id="trade-grade-badge"    class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-phase-badge"    class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-health-badge"   class="px-2.5 py-1 rounded-full text-xs font-semibold border">--</span>
-                <span id="trade-duration-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-black/5 text-apple-secondary">--</span>
-              </div>
-              <div id="trade-state-label" class="text-xs text-apple-secondary mt-1.5">--</div>
-            </div>
-            <div class="text-right">
-              <div id="trade-pnl" class="text-3xl font-bold tracking-tight num">--</div>
-              <div class="text-xs text-apple-secondary mt-0.5">unrealized PnL</div>
-              <div id="trade-pnl-pct" class="text-xs mt-0.5 num text-apple-secondary">--</div>
-            </div>
-          </div>
-
-          <!-- PROGRESS BAR -->
-          <div class="px-5 pb-4 border-t divider pt-4">
-            <div class="flex justify-between text-[10px] text-apple-secondary num mb-2">
-              <span id="prog-sl-label">SL</span>
-              <span id="prog-mid-label">Entry</span>
-              <span id="prog-tp1-label">TP1</span>
-            </div>
-            <div class="progress-track h-2">
-              <div id="prog-fill" class="h-full rounded-full bar" style="width:0%;background:#0071e3"></div>
-            </div>
-            <div class="flex items-center justify-between mt-2">
-              <div id="prog-status" class="text-xs font-semibold num">--</div>
-              <div id="prog-phase"  class="text-[10px] text-apple-secondary">Phase 1</div>
-            </div>
-          </div>
-
-          <!-- STATS GRID -->
-          <div class="grid grid-cols-4 border-t divider divide-x divide-black/6">
-            <div class="p-3">
-              <div class="section-label mb-1">Current</div>
-              <div id="ts-current" class="font-semibold num text-sm">--</div>
-              <div id="ts-move"    class="text-[10px] mt-0.5 text-apple-secondary num">--</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Entry</div>
-              <div id="ts-entry" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">filled at</div>
-            </div>
-            <div class="p-3">
-              <div id="ts-sl-label" class="section-label mb-1">To SL</div>
-              <div id="ts-to-sl"   class="font-semibold num text-sm text-apple-red">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">distance</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">To TP1</div>
-              <div id="ts-to-tp1" class="font-semibold num text-sm text-apple-green">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">distance</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Risk</div>
-              <div id="ts-risk" class="font-semibold num text-sm text-apple-red">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">max loss</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">TP1 Reward</div>
-              <div id="ts-tp1-rew" class="font-semibold num text-sm text-apple-green">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">if TP1 hit</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">Position</div>
-              <div id="ts-pos" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">notional</div>
-            </div>
-            <div class="p-3">
-              <div class="section-label mb-1">R:R</div>
-              <div id="ts-rr" class="font-semibold num text-sm text-apple-text">--</div>
-              <div class="text-[10px] mt-0.5 text-apple-secondary">risk reward</div>
-            </div>
-          </div>
-
-          <!-- THESIS -->
-          <div id="trade-thesis-section" class="px-5 py-4 border-t divider hidden">
-            <div class="section-label mb-2">Why This Trade</div>
-            <div id="trade-thesis-text" class="thesis-block"></div>
-            <div class="section-label mb-2 mt-3">Risk Factors</div>
-            <div id="trade-risk-text" class="risk-block"></div>
-          </div>
-
-          <!-- HEALTH -->
-          <div id="trade-health-section" class="px-5 py-4 border-t divider hidden">
-            <div class="section-label mb-2">Trade Health</div>
-            <div id="trade-health-detail" class="text-xs text-apple-secondary leading-relaxed"></div>
-          </div>
-
-          <!-- LADDER -->
-          <div class="px-5 py-4 border-t divider">
-            <div class="section-label mb-3">Price Ladder</div>
-            <div id="ladder-rows" class="space-y-1.5"></div>
-          </div>
-
-          <!-- CLOSE BUTTON -->
-          <div class="px-5 pb-5 pt-2">
-            <button onclick="showConfirmClose()" id="close-trade-btn" class="btn-danger">
-              🔴 Close Trade at Market
-            </button>
-          </div>
-
-        </div>
       </section>
 
       <!-- MARKET RADAR -->
@@ -333,16 +220,13 @@ tailwind.config = {
 
       <!-- BOTTOM GRID -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
             <h2 class="section-label">📈 Equity Curve</h2>
             <span class="text-[10px] text-apple-secondary">cumulative PnL</span>
           </div>
           <div class="p-4">
-            <div class="relative h-44">
-              <canvas id="chart-equity"></canvas>
-            </div>
+            <div class="relative h-44"><canvas id="chart-equity"></canvas></div>
           </div>
         </section>
 
@@ -355,7 +239,6 @@ tailwind.config = {
             <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
           </div>
         </section>
-
       </div>
     </div>
 
@@ -369,9 +252,7 @@ tailwind.config = {
           <span class="text-[10px] text-apple-secondary">A/A+ only</span>
         </div>
         <div class="p-3 space-y-2" id="signal-queue">
-          <div class="text-center py-8 text-apple-secondary text-xs">
-            No A/A+ signals yet.<br>Waiting for next scan.
-          </div>
+          <div class="text-center py-8 text-apple-secondary text-xs">No A/A+ signals yet.<br>Waiting for next scan.</div>
         </div>
       </section>
 
@@ -382,7 +263,6 @@ tailwind.config = {
           <span id="risk-cap-status" class="text-xs font-semibold text-apple-green">✅ Active</span>
         </div>
         <div class="p-4 space-y-3">
-
           <div class="flex items-center gap-3">
             <span class="text-xs text-apple-secondary w-24 shrink-0">Trades Today</span>
             <div class="flex-1 progress-track h-1.5">
@@ -390,7 +270,6 @@ tailwind.config = {
             </div>
             <span id="risk-trades-val" class="num text-xs font-semibold w-8 text-right text-apple-text">0/3</span>
           </div>
-
           <div class="flex items-center gap-3">
             <span class="text-xs text-apple-secondary w-24 shrink-0">Daily Loss</span>
             <div class="flex-1 progress-track h-1.5">
@@ -398,7 +277,6 @@ tailwind.config = {
             </div>
             <span id="risk-loss-val" class="num text-xs font-semibold w-14 text-right text-apple-text">$0.00</span>
           </div>
-
           <div class="flex items-center gap-3">
             <span class="text-xs text-apple-secondary w-24 shrink-0">Today PnL</span>
             <div class="flex-1 progress-track h-1.5">
@@ -406,18 +284,26 @@ tailwind.config = {
             </div>
             <span id="risk-pnl-val" class="num text-xs font-semibold w-14 text-right">$0.00</span>
           </div>
-
           <div class="grid grid-cols-2 gap-2 pt-1">
             <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Trades Left</div>
+              <div class="section-label mb-1">Slots Left</div>
               <div id="risk-remaining-trades" class="num font-bold text-2xl text-apple-text">3</div>
             </div>
             <div class="bg-black/4 rounded-apple-sm p-3">
               <div class="section-label mb-1">Loss Cap Left</div>
-              <div id="risk-remaining-loss" class="num font-bold text-2xl text-apple-text">$2.00</div>
+              <div id="risk-remaining-loss" class="num font-bold text-2xl text-apple-text">$--</div>
             </div>
           </div>
-
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Tier</div>
+              <div id="risk-tier" class="num font-bold text-xl text-apple-text">--</div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Balance</div>
+              <div id="risk-balance" class="num font-bold text-xl text-apple-text">$--</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -427,7 +313,6 @@ tailwind.config = {
           <h2 class="section-label">🏆 Grade Breakdown</h2>
         </div>
         <div class="p-4 space-y-4">
-
           <div>
             <div class="flex justify-between items-center mb-2">
               <span class="text-xs font-semibold text-apple-green">Grade A+</span>
@@ -438,7 +323,6 @@ tailwind.config = {
             </div>
             <div id="aplus-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades</div>
           </div>
-
           <div>
             <div class="flex justify-between items-center mb-2">
               <span class="text-xs font-semibold text-apple-blue">Grade A</span>
@@ -449,20 +333,16 @@ tailwind.config = {
             </div>
             <div id="a-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades</div>
           </div>
-
           <div class="relative h-28 mt-1">
             <canvas id="chart-daily"></canvas>
           </div>
-
         </div>
       </section>
 
     </div>
-
   </div>
 </div>
 
-<!-- JS — order matters -->
 <script src="/js/ui.js"></script>
 <script src="/js/state.js"></script>
 <script src="/js/websocket.js"></script>
@@ -473,12 +353,33 @@ tailwind.config = {
 
 <script>
 'use strict'
+
+async function checkAuth() {
+  try {
+    const res = await fetch('/api/health')
+    if (res.status === 401) {
+      window.location.href = '/login.html'
+      return false
+    }
+    return true
+  } catch(e) {
+    return true
+  }
+}
+
+async function handleLogout() {
+  await fetch('/auth/logout')
+  window.location.href = '/login.html'
+}
+
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal()
   if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') triggerScan()
 })
 
 async function init() {
+  const authed = await checkAuth()
+  if (!authed) return
   startClock()
   startCountdown()
   startDashboardSocket()
