@@ -41,7 +41,7 @@ class Config:
     TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
     PAPER_TRADING = TRADING_MODE != "live"
 
-    MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 10))
+    MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 0.00))
 
     _FALLBACK_COINS = []
 
