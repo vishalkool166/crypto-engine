@@ -38,9 +38,16 @@ h1 { font-size: 24px; font-weight: 700; color: #1d1d1f; text-align: center; marg
   display: inline-block; padding: 3px 10px;
   border-radius: 100px; font-size: 11px; font-weight: 600;
   margin-top: 4px;
-  background: {{ 'rgba(255,59,48,0.1)' if mode == 'live' else 'rgba(0,113,227,0.1)' }};
-  color: {{ '#ff3b30' if mode == 'live' else '#0071e3' }};
-  border: 1px solid {{ 'rgba(255,59,48,0.2)' if mode == 'live' else 'rgba(0,113,227,0.2)' }};
+}
+.mode-badge.live {
+  background: rgba(255,59,48,0.1);
+  color: #ff3b30;
+  border: 1px solid rgba(255,59,48,0.2);
+}
+.mode-badge.paper {
+  background: rgba(0,113,227,0.1);
+  color: #0071e3;
+  border: 1px solid rgba(0,113,227,0.2);
 }
 .tab-bar {
   display: flex; gap: 4px;
@@ -178,7 +185,7 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
   <h1>Signal Engine</h1>
   <p class="subtitle">
     v5 · Binance Futures<br>
-    <span class="mode-badge">{{ mode | upper }}</span>
+    <span class="mode-badge {{ mode }}">{{ mode | upper }}</span>
   </p>
 
   <div class="tab-bar">
@@ -199,7 +206,7 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
       </div>
       <div class="field">
         <label>Authenticator Code</label>
-        <input type="number" id="totp" placeholder="000000" autocomplete="one-time-code" required>
+        <input type="number" id="totp" placeholder="000000" autocomplete="one-time-code" maxlength="6" required>
         <div class="totp-hint">6-digit code from your authenticator app</div>
         <button type="button" class="tg-btn" id="tg-totp-btn" onclick="requestTotpViaTelegram()">
           📱 Send code to Telegram
@@ -209,7 +216,7 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
       <div class="error" id="login-error"></div>
     </form>
     <div class="footer">
-      First time? <a href="/auth/setup" class="setup-link">Setup TOTP & password</a>
+      First time? <a href="/auth/setup" class="setup-link">Setup TOTP &amp; password</a>
     </div>
   </div>
 
@@ -222,7 +229,7 @@ hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
     <form onsubmit="handleReset(event)">
       <div class="field">
         <label>Authenticator Code</label>
-        <input type="number" id="reset-totp" placeholder="000000" autocomplete="one-time-code" required>
+        <input type="number" id="reset-totp" placeholder="000000" autocomplete="one-time-code" maxlength="6" required>
       </div>
       <div class="field">
         <label>New Password</label>
@@ -305,7 +312,7 @@ async function handleLogin(e) {
       btn.disabled  = false
       btn.innerHTML = 'Sign In'
     }
-  } catch(e) {
+  } catch(err) {
     showErr('login-error', 'Connection error — try again')
     btn.disabled  = false
     btn.innerHTML = 'Sign In'
@@ -334,7 +341,7 @@ async function selectMode(mode) {
       errEl.textContent   = '❌ ' + (data.reason || 'Failed to set mode')
       errEl.style.display = 'block'
     }
-  } catch(e) {
+  } catch(err) {
     window.location.href = '/'
   }
 }
@@ -359,7 +366,7 @@ async function requestTotpViaTelegram() {
         btn.textContent = '📱 Send code to Telegram'
       }, 3000)
     }
-  } catch(e) {
+  } catch(err) {
     btn.textContent = '❌ Connection error'
     setTimeout(() => {
       btn.disabled    = false
@@ -403,7 +410,7 @@ async function handleReset(e) {
     } else {
       showErr('reset-error', data.reason || 'Reset failed')
     }
-  } catch(e) {
+  } catch(err) {
     showErr('reset-error', 'Connection error — try again')
   } finally {
     btn.disabled  = false
