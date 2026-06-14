@@ -91,7 +91,7 @@ class Config:
     REQUIRE_CANDLE_CLOSE          = True
 
     BALANCE_TIERS = [
-        {"min": 0,    "max": 50,   "risk_pct": 0.10, "max_trades": 1, "leverage": 10},
+        {"min": 0,    "max": 50,   "risk_pct": 0.10, "max_trades": 2, "leverage": 10},
         {"min": 50,   "max": 200,  "risk_pct": 0.08, "max_trades": 2, "leverage": 10},
         {"min": 200,  "max": 1000, "risk_pct": 0.10, "max_trades": 3, "leverage": 15},
         {"min": 1000, "max": None, "risk_pct": 0.12, "max_trades": 3, "leverage": 20},
