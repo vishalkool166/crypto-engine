@@ -343,14 +343,16 @@ def build_progress(trade, current: float) -> dict:
             "tp2_hit":     False
         }
 
-    total = abs(tp1 - entry) if tp1 and entry else 0
+    total = abs(entry - sl) if entry and sl else 0
     if total == 0:
         pct = 0
     elif is_long:
-        pct = (current - entry) / total * 100
+        pct = (current - entry) / total * 100  # positive = right of center
     else:
         pct = (entry - current) / total * 100
-    pct = max(0, min(100, pct))
+
+    in_profit = pct > 0
+    pct = max(0, min(100, abs(pct)))
 
     if is_long:
         if tp1 and current >= tp1:
@@ -387,9 +389,11 @@ def build_progress(trade, current: float) -> dict:
         "pct":         round(pct),
         "color":       progress_color(pct),
         "label":       label,
-        "left_label":  fmt_price(tp1)   if not is_long else fmt_price(sl),
+        "left_label":  fmt_price(sl),
         "mid_label":   fmt_price(entry),
-        "right_label": fmt_price(sl)    if not is_long else fmt_price(tp1),
+        "right_label": fmt_price(tp1),
+        "pct":         round(pct),
+        "color":       C["green"] if in_profit else C["red"],
         "phase":       1,
         "phase_label": "Phase 1 — To TP1",
         "tp1_hit":     False,

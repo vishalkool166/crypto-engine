@@ -156,33 +156,20 @@ function applyPriceUpdate(d) {
 
 
 function _calcProgressPct(priceRaw, trade) {
-  const clean = s => parseFloat(String(s || '0').replace(/[$,]/g, '')) || 0
-
+  const clean  = s => parseFloat(String(s || '0').replace(/[$,]/g, '')) || 0
   const entry  = clean(trade.entry_price)
-  const tp1    = clean(trade.tp1_price)
-  const tp2    = clean(trade.tp2_price)
+  const sl     = clean(trade.sl_price)
   const isLong = trade.direction === 'LONG'
-  const tp1Hit = trade.tp1_hit || false
 
-  if (tp1Hit && tp2 && entry) {
-    const total = Math.abs(tp2 - entry)
-    if (total === 0) return { pct: 100, color: C.green }
-    const pct = isLong
-      ? (priceRaw - entry) / total * 100
-      : (entry - priceRaw) / total * 100
-    return { pct: Math.max(0, Math.min(100, Math.round(pct))), color: C.green }
-  }
-
-  const total = Math.abs(tp1 - entry)
+  const total = Math.abs(entry - sl)
   if (total === 0) return { pct: 0, color: C.red }
 
-  const pct = isLong
+  const diff = isLong
     ? (priceRaw - entry) / total * 100
     : (entry - priceRaw) / total * 100
 
-  const clamped = Math.max(0, Math.min(100, Math.round(pct)))
-  return {
-    pct:   clamped,
-    color: clamped >= 75 ? C.green : clamped >= 50 ? C.blue : clamped >= 25 ? C.orange : C.red
-  }
+  const inProfit = diff > 0
+  const clamped  = Math.max(0, Math.min(100, Math.round(Math.abs(diff))))
+
+  return { pct: clamped, color: inProfit ? C.green : C.red }
 }
