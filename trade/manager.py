@@ -107,6 +107,7 @@ class TradeManager:
                 side      = pos.get("side", "")
                 direction = "LONG" if side == "long" else "SHORT"
                 entry     = float(pos.get("entryPrice", 0) or 0)
+                actual_leverage = int(float(pos.get("leverage", tier["leverage"]) or tier["leverage"]))
                 size      = float(pos.get("notional", 0) or contracts * entry)
 
                 already_tracked = any(
@@ -134,8 +135,8 @@ class TradeManager:
                         tp1_price        = None,
                         tp2_price        = None,
                         position_size    = size,
-                        margin_used      = size / tier["leverage"],
-                        leverage         = tier["leverage"],
+                        margin_used      = size / actual_leverage,
+                        leverage         = actual_leverage,
                         risk_amt         = 0,
                         trade_date       = str(datetime.now(timezone.utc).date()),
                         balance_at_open  = balance_now,
