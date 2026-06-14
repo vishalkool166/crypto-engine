@@ -180,7 +180,6 @@ async def _attempt_trade(signal: dict, coin: str) -> bool:
     current_price = get_current_price(coin)
     if not _entry_price_valid(signal, current_price):
         log.warning(f"Entry price stale — skipping {coin}")
-        cache.clear(f"signal_{coin}")
         return False
 
     log.info(f"All gates passed — opening trade: {coin} {direction} Grade:{grade}")
