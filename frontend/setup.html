@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Engine v5 — Setup</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif;
+  background: #f5f5f7;
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 20px;
+}
+.card {
+  background: white;
+  border-radius: 20px;
+  padding: 40px;
+  max-width: 540px;
+  width: 100%;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+}
+.logo {
+  width: 48px; height: 48px;
+  background: linear-gradient(135deg, #0071e3, #0051a8);
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; margin-bottom: 16px;
+}
+h1 { font-size: 22px; font-weight: 700; color: #1d1d1f; margin-bottom: 6px; }
+.subtitle { font-size: 14px; color: #6e6e73; margin-bottom: 28px; line-height: 1.5; }
+.section {
+  border-top: 1px solid rgba(0,0,0,0.08);
+  padding-top: 24px;
+  margin-top: 24px;
+}
+.section-title { font-size: 15px; font-weight: 700; color: #1d1d1f; margin-bottom: 12px; }
+.status-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: 8px;
+  font-size: 13px; margin-bottom: 6px;
+}
+.ok   { background: rgba(52,199,89,0.08);  color: #248a3d; }
+.warn { background: rgba(255,149,0,0.08);  color: #e8820c; }
+.qr-wrap {
+  text-align: center; padding: 24px;
+  background: #f5f5f7; border-radius: 14px;
+  margin: 16px 0;
+}
+.qr-wrap svg, .qr-wrap img { max-width: 180px; border-radius: 8px; }
+.info-box {
+  background: #f5f5f7; border-radius: 12px;
+  padding: 14px 16px; font-size: 12px;
+  line-height: 2; margin-bottom: 16px;
+}
+.info-box code {
+  background: #e8e8ed; padding: 2px 6px;
+  border-radius: 4px; font-size: 11px;
+  word-break: break-all;
+}
+label {
+  display: block; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+  color: #6e6e73; margin-bottom: 6px; margin-top: 14px;
+}
+input {
+  width: 100%; padding: 12px 14px;
+  border: 1.5px solid rgba(0,0,0,0.1);
+  border-radius: 10px; font-size: 14px;
+  font-family: inherit; outline: none;
+  background: white; color: #1d1d1f;
+  transition: border-color 0.2s;
+}
+input:focus { border-color: #0071e3; }
+.btn {
+  width: 100%; padding: 13px;
+  border: none; border-radius: 10px;
+  font-size: 14px; font-weight: 600;
+  font-family: inherit; cursor: pointer;
+  margin-top: 12px; transition: background 0.2s;
+}
+.btn-primary { background: #0071e3; color: white; }
+.btn-primary:hover { background: #0077ed; }
+.btn-danger {
+  background: rgba(255,59,48,0.08);
+  color: #ff3b30;
+  border: 1px solid rgba(255,59,48,0.2);
+}
+.btn-danger:hover { background: rgba(255,59,48,0.14); }
+.msg {
+  margin-top: 10px; padding: 10px 14px;
+  border-radius: 8px; font-size: 13px;
+  text-align: center; display: none;
+}
+.msg-ok  { background: rgba(52,199,89,0.1);  color: #248a3d; }
+.msg-err { background: rgba(255,59,48,0.1);  color: #c0392b; }
+.back-link {
+  display: block; text-align: center;
+  margin-top: 28px; color: #0071e3;
+  font-size: 13px; font-weight: 600;
+  text-decoration: none;
+}
+.back-link:hover { text-decoration: underline; }
+.emergency {
+  background: rgba(255,59,48,0.04);
+  border: 1px solid rgba(255,59,48,0.15);
+  border-radius: 10px; padding: 14px;
+  font-size: 12px; color: #6e6e73;
+  line-height: 1.8;
+}
+.emergency code {
+  background: rgba(0,0,0,0.06);
+  padding: 2px 6px; border-radius: 4px;
+  font-size: 11px; word-break: break-all;
+}
+</style>
+</head>
+<body>
+<div class="card">
+
+  <div class="logo">⚡</div>
+  <h1>Signal Engine v5 — Setup</h1>
+  <p class="subtitle">Configure your dashboard credentials and TOTP authenticator.<br>This page is only needed once.</p>
+
+  <!-- STATUS -->
+  <div class="status-row {{ 'ok' if status.totp_secret_set else 'warn' }}">
+    {{ '✅' if status.totp_secret_set else '⚠️' }} TOTP Secret: {{ 'Generated' if status.totp_secret_set else 'Not generated' }}
+  </div>
+  <div class="status-row {{ 'ok' if status.password_set else 'warn' }}">
+    {{ '✅' if status.password_set else '⚠️' }} Password: {{ 'Set' if status.password_set else 'Not set — fill form below' }}
+  </div>
+  <div class="status-row ok">
+    ✅ Username: <strong>{{ status.username }}</strong>
+  </div>
+
+  <!-- QR CODE -->
+  <div class="section">
+    <div class="section-title">📱 Authenticator Setup</div>
+    <p style="font-size:13px;color:#6e6e73;margin-bottom:12px">
+      Scan this QR code with Google Authenticator, Authy, or any TOTP app. Only needs to be done once — the secret never changes unless you regenerate it.
+    </p>
+
+    {% if qr_svg %}
+      <div class="qr-wrap">{{ qr_svg | safe }}</div>
+    {% elif qr_png_available %}
+      <div class="qr-wrap"><img src="/auth/qr.png" alt="QR Code"></div>
+    {% else %}
+      <div class="qr-wrap" style="color:#ff3b30;font-size:13px">
+        ⚠️ QR generation failed — use the secret below to add manually
+      </div>
+    {% endif %}
+
+    <div class="info-box">
+      <div>TOTP Secret: <code>{{ totp_secret }}</code></div>
+      <div>Username: <code>{{ username }}</code></div>
+      <div>API Key: <code>{{ api_key }}</code></div>
+      <div>TOTP URI: <code>{{ totp_uri }}</code></div>
+    </div>
+  </div>
+
+  <!-- SET CREDENTIALS -->
+  <div class="section">
+    <div class="section-title">🔑 Set Credentials</div>
+
+    <label>Username <span style="font-weight:400;text-transform:none">(current: {{ username }})</span></label>
+    <input type="text" id="new-username" placeholder="Change username (optional)">
+
+    <label>New Password</label>
+    <input type="password" id="pw" placeholder="Min 8 characters">
+
+    <label>Confirm Password</label>
+    <input type="password" id="pw2" placeholder="Confirm password">
+
+    <button class="btn btn-primary" onclick="saveCredentials()">Save Credentials</button>
+    <div class="msg" id="cred-msg"></div>
+  </div>
+
+  <!-- REGENERATE TOTP -->
+  <div class="section">
+    <div class="section-title">🔄 Regenerate TOTP</div>
+    <p style="font-size:12px;color:#6e6e73;margin-bottom:12px;line-height:1.6">
+      Only do this if you lost access to your authenticator app. After regenerating you must re-scan the new QR code.
+    </p>
+    <button class="btn btn-danger" onclick="regenTotp()">⚠️ Regenerate TOTP Secret</button>
+    <div class="msg" id="regen-msg"></div>
+  </div>
+
+  <!-- EMERGENCY -->
+  <div class="section">
+    <div class="section-title">🆘 Emergency Recovery</div>
+    <div class="emergency">
+      Lost access completely? Run directly on your server:<br>
+      <code>python -c "from auth import set_password; set_password('newpass')"</code><br><br>
+      To verify which TOTP entry in Authy is correct:<br>
+      <code>python -c "from config import cfg; import pyotp; print(pyotp.TOTP(cfg.TOTP_SECRET).now())"</code>
+    </div>
+  </div>
+
+  <a href="/login.html" class="back-link">← Back to Login</a>
+
+</div>
+
+<script>
+async function saveCredentials() {
+  const username = document.getElementById('new-username').value.trim()
+  const pw       = document.getElementById('pw').value
+  const pw2      = document.getElementById('pw2').value
+
+  if (!pw && !username) { showMsg('cred-msg', 'Enter a password or new username', false); return }
+  if (pw && pw.length < 8) { showMsg('cred-msg', 'Password must be at least 8 characters', false); return }
+  if (pw && pw !== pw2)    { showMsg('cred-msg', 'Passwords do not match', false); return }
+
+  const res  = await fetch('/auth/set-credentials', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ password: pw || null, username: username || null })
+  })
+  const data = await res.json()
+  showMsg('cred-msg', data.success ? '✅ ' + data.message : '❌ ' + (data.reason || 'Failed'), data.success)
+}
+
+async function regenTotp() {
+  if (!confirm('Are you sure? You must re-scan the new QR code in your authenticator app.')) return
+
+  const res  = await fetch('/auth/regenerate-totp', { method: 'POST' })
+  const data = await res.json()
+
+  if (data.success) {
+    showMsg('regen-msg', '✅ New TOTP generated — reloading...', true)
+    setTimeout(() => location.reload(), 1500)
+  } else {
+    showMsg('regen-msg', '❌ ' + (data.reason || 'Failed'), false)
+  }
+}
+
+function showMsg(id, text, ok) {
+  const el = document.getElementById(id)
+  el.textContent   = text
+  el.className     = 'msg ' + (ok ? 'msg-ok' : 'msg-err')
+  el.style.display = 'block'
+}
+</script>
+</body>
+</html>

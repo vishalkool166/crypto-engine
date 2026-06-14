@@ -19,6 +19,7 @@ function applyAndRender(data) {
   renderRadar(data.radar)
   renderSignalQueue(data.queue)
   renderPerformance(data.performance)
+  renderCoinUniverse(data.coin_universe)
 
   if ((data.history?.length || 0) !== S.lastHistoryLen) {
     S.lastHistoryLen = data.history?.length || 0
@@ -143,4 +144,70 @@ async function fetchCoinDetail(coin) {
   if (res.status === 401) { window.location.href = '/login.html'; return null }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return await res.json()
+}
+
+
+async function addCoin() {
+  const inp  = document.getElementById('coin-add-input')
+  if (!inp) return
+  const coin = inp.value.trim().toUpperCase().replace('USDT', '')
+  if (!coin) return
+
+  try {
+    const res  = await fetch(`${API}/coins/add`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body:    JSON.stringify({ coin })
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`✅ ${coin} added`, 'Coin added to universe', 'success')
+      inp.value = ''
+      await fetchDashboard()
+    } else {
+      toast('❌ Failed', data.reason || 'Error', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}
+
+
+async function syncCoins() {
+  toast('🔄 Syncing coins...', 'Fetching top coins from Binance', 'info', 3000)
+  try {
+    const res  = await fetch(`${API}/coins/sync`, {
+      method:  'POST',
+      headers: _authHeaders()
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`✅ Synced`, `${data.coins?.length || 0} coins active`, 'success')
+      await fetchDashboard()
+    } else {
+      toast('❌ Sync failed', '', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}
+
+
+async function toggleCoin(coin, enabled) {
+  try {
+    const res  = await fetch(`${API}/coins/toggle`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body:    JSON.stringify({ coin, enabled })
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`${enabled ? '✅' : '⏸'} ${coin}`, enabled ? 'Enabled' : 'Disabled', 'info')
+      await fetchDashboard()
+    } else {
+      toast('❌ Failed', data.reason || 'Error', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
 }

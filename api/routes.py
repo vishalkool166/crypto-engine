@@ -10,7 +10,7 @@ from slowapi.util import get_remote_address
 from database import (
     get_db, Signal as SignalModel,
     Trade as TradeModel, BacktestResult,
-    SessionLocal
+    CoinConfig, SessionLocal
 )
 from alerts.scanner import analyze_coin, scan_all_coins, get_db_stats
 from data.cache import cache
@@ -64,12 +64,31 @@ async def build_dashboard_payload() -> dict:
         ).order_by(TradeModel.closed_at.desc()).limit(10).all()
 
         trades_list = [{
+            "id":           t.id,
             "coin":         t.coin,
             "direction":    t.direction,
             "grade":        t.grade,
             "pnl":          t.pnl,
+            "pnl_raw":      t.pnl,
             "outcome":      t.outcome,
             "close_reason": t.close_reason,
+            "entry_price":  t.entry_price,
+            "exit_price":   t.exit_price,
+            "sl_price":     t.sl_price,
+            "tp1_price":    t.tp1_price,
+            "tp2_price":    t.tp2_price,
+            "risk_amt":     t.risk_amt,
+            "position_size":t.position_size,
+            "leverage":     t.leverage,
+            "tp1_hit":      t.tp1_hit,
+            "partial_pnl":  t.partial_pnl,
+            "regime_at_entry":  t.regime_at_entry,
+            "session_at_entry": t.session_at_entry,
+            "score_at_entry":   t.score_at_entry,
+            "balance_at_open":  t.balance_at_open,
+            "tier_at_open":     t.tier_at_open,
+            "health_at_close":  t.health_at_close,
+            "opened_at":    t.opened_at.isoformat() if t.opened_at else None,
             "closed_at":    t.closed_at.isoformat() if t.closed_at else None
         } for t in trades_raw]
     finally:
@@ -94,7 +113,8 @@ async def build_dashboard_payload() -> dict:
         queue_data = build_signal_queue(cached_results)
         last_scan  = "From cache"
 
-    header_data = build_header_data(risk_stats, stats)
+    header_data  = build_header_data(risk_stats, stats)
+    coin_universe = build_coin_universe()
 
     return make_serializable({
         "type":            "dashboard",
@@ -107,10 +127,47 @@ async def build_dashboard_payload() -> dict:
         "radar":           radar_data,
         "queue":           queue_data,
         "header":          header_data,
+        "coin_universe":   coin_universe,
         "last_scan":       last_scan,
         "next_scan_epoch": get_next_scan_epoch(),
         "timestamp":       datetime.now(timezone.utc).isoformat()
     })
+
+
+def build_coin_universe() -> list:
+    try:
+        with SessionLocal() as db:
+            rows = db.query(CoinConfig).order_by(
+                CoinConfig.enabled.desc(),
+                CoinConfig.volume_24h.desc()
+            ).all()
+
+        result = []
+        for r in rows:
+            cached  = cache.get_raw(f"signal_{r.coin}")
+            grade   = cached.get("grade", "--")   if cached else "--"
+            score   = cached.get("score", 0)      if cached else 0
+            dir_    = cached.get("direction", "--") if cached else "--"
+
+            from api.formatters import grade_color, pnl_color, C
+            result.append({
+                "coin":       r.coin,
+                "enabled":    r.enabled,
+                "tier":       r.tier,
+                "source":     r.source,
+                "volume_24h": r.volume_24h,
+                "added_at":   r.added_at.isoformat() if r.added_at else None,
+                "last_seen":  r.last_seen.isoformat() if r.last_seen else None,
+                "grade":      grade,
+                "grade_color":grade_color(grade),
+                "score":      score,
+                "direction":  dir_,
+                "has_signal": cached is not None
+            })
+        return result
+    except Exception as e:
+        log.error(f"build_coin_universe error: {e}")
+        return []
 
 
 @router.get("/dashboard")
@@ -161,10 +218,10 @@ async def scan(request: Request):
 
 @router.get("/signals")
 async def get_signals(
-    request:  Request,
-    limit:    int = 50,
-    grade:    str = None,
-    coin:     str = None,
+    request: Request,
+    limit:   int = 50,
+    grade:   str = None,
+    coin:    str = None,
     db: Session = Depends(get_db)
 ):
     _auth(request)
@@ -242,7 +299,9 @@ async def trade_status(request: Request):
 async def close_trade(request: Request):
     _auth(request)
     try:
-        body     = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        body     = {}
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
         trade_id = body.get("trade_id")
         result   = await trade_manager.manual_close(trade_id=trade_id)
         if not result["success"]:
@@ -293,6 +352,7 @@ async def trade_history(
             "score_at_entry":   t.score_at_entry,
             "balance_at_open":  t.balance_at_open,
             "tier_at_open":     t.tier_at_open,
+            "health_at_close":  t.health_at_close,
             "opened_at":        t.opened_at.isoformat() if t.opened_at else None,
             "closed_at":        t.closed_at.isoformat() if t.closed_at else None
         } for t in trades]
@@ -354,9 +414,9 @@ async def backtest(request: Request, coin: str):
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: run_backtest(
-                    coin=coin,
-                    capital=tier["balance"] or cfg.CAPITAL,
-                    leverage=tier["leverage"]
+                    coin     = coin,
+                    capital  = tier["balance"] or cfg.CAPITAL,
+                    leverage = tier["leverage"]
                 )
             ),
             timeout=120.0
@@ -386,9 +446,9 @@ async def backtest_all(request: Request):
             r = await asyncio.wait_for(
                 loop.run_in_executor(
                     None, lambda c=coin: run_backtest(
-                        coin=c,
-                        capital=tier["balance"] or cfg.CAPITAL,
-                        leverage=tier["leverage"]
+                        coin     = c,
+                        capital  = tier["balance"] or cfg.CAPITAL,
+                        leverage = tier["leverage"]
                     )
                 ),
                 timeout=120.0
@@ -439,7 +499,6 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
 @router.get("/health")
 async def health(request: Request):
     trade = state_manager.current_trade
-    import runtime_state as rs
     return JSONResponse(content={
         "status":        "ok",
         "timestamp":     datetime.now(timezone.utc).isoformat(),
@@ -492,7 +551,6 @@ async def audit_log(request: Request, limit: int = 50, db: Session = Depends(get
 async def tier_status(request: Request):
     _auth(request)
     from trade.risk import get_current_tier
-    import runtime_state as rs
     tier    = get_current_tier()
     balance = rs.get_balance_cache()
     return JSONResponse(content={
@@ -503,3 +561,118 @@ async def tier_status(request: Request):
         "leverage":      tier["leverage"],
         "balance_cache": balance
     })
+
+
+@router.get("/coins")
+async def get_coins(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(build_coin_universe()))
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.post("/coins/toggle")
+async def toggle_coin(request: Request):
+    _auth(request)
+    try:
+        body    = await request.json()
+        coin    = body.get("coin", "").upper()
+        enabled = body.get("enabled", True)
+
+        with SessionLocal() as db:
+            row = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
+            if not row:
+                return JSONResponse(
+                    status_code = 404,
+                    content     = {"success": False, "reason": f"{coin} not found"}
+                )
+            row.enabled = enabled
+            db.commit()
+
+        enabled_coins = []
+        with SessionLocal() as db:
+            rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+            enabled_coins = [r.coin for r in rows]
+
+        if enabled_coins:
+            cfg.COINS = enabled_coins
+
+        ip = request.client.host if request.client else ""
+        audit("coin_toggle", "api", f"{coin} enabled:{enabled}", ip=ip)
+        return JSONResponse(content={"success": True, "coin": coin, "enabled": enabled})
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.post("/coins/add")
+async def add_coin(request: Request):
+    _auth(request)
+    try:
+        body = await request.json()
+        coin = body.get("coin", "").upper().replace("USDT", "")
+
+        if not coin:
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Coin required"})
+
+        with SessionLocal() as db:
+            existing = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
+            if existing:
+                existing.enabled = True
+            else:
+                db.add(CoinConfig(
+                    coin    = coin,
+                    enabled = True,
+                    tier    = 1,
+                    source  = "manual"
+                ))
+            db.commit()
+
+        if coin not in cfg.COINS:
+            cfg.COINS.append(coin)
+
+        ip = request.client.host if request.client else ""
+        audit("coin_add", "api", f"added:{coin}", ip=ip)
+        return JSONResponse(content={"success": True, "coin": coin})
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.delete("/coins/{coin}")
+async def remove_coin(request: Request, coin: str):
+    _auth(request)
+    try:
+        coin = coin.upper()
+        with SessionLocal() as db:
+            row = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
+            if row:
+                row.enabled = False
+                db.commit()
+
+        if coin in cfg.COINS:
+            cfg.COINS.remove(coin)
+
+        ip = request.client.host if request.client else ""
+        audit("coin_remove", "api", f"removed:{coin}", ip=ip)
+        return JSONResponse(content={"success": True, "coin": coin})
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.post("/coins/sync")
+async def sync_coins(request: Request):
+    _auth(request)
+    try:
+        from scheduler import job_refresh_coins
+        await job_refresh_coins()
+        return JSONResponse(content={"success": True, "coins": cfg.COINS})
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+import runtime_state as rs

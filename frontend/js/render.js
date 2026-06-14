@@ -11,6 +11,7 @@ function renderAll() {
   renderRisk(d.risk)
   renderPerformance(d.performance)
   renderHistory(d.history)
+  renderCoinUniverse(d.coin_universe)
   renderCharts(d.history)
   syncConnectionMode(d.state)
 }
@@ -113,7 +114,6 @@ function _createTradeCard(t) {
 
 function _updateTradeCard(el, t) {
   el.style.background = t.header_bg || ''
-
   el.innerHTML = `
     <div style="padding:16px 20px;border-bottom:1px solid rgba(0,0,0,0.06)">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -207,7 +207,7 @@ function _updateTradeCard(el, t) {
       <div style="font-size:11px;color:#6e6e73;line-height:1.8">
         ${(t.health_failures || []).map(f => `<div>✘ <span style="color:#ff3b30;font-weight:600">${f}</span></div>`).join('')}
         ${(t.health_warnings || []).map(w => `<div>⚠ <span style="color:#e8820c">${w}</span></div>`).join('')}
-        ${(t.health_checks || []).map(c => `<div>✔ <span style="color:#248a3d">${c}</span></div>`).join('')}
+        ${(t.health_checks   || []).map(c => `<div>✔ <span style="color:#248a3d">${c}</span></div>`).join('')}
       </div>
     </div>` : ''}
 
@@ -414,7 +414,10 @@ function renderHistory(history) {
   }
 
   list.innerHTML = history.map(h => `
-    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.03);border-left:2px solid ${h.border_color}">
+    <div onclick="showTradeDetail(${JSON.stringify(h).replace(/"/g, '&quot;')})"
+         style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.03);border-left:2px solid ${h.border_color};cursor:pointer;transition:background 0.15s"
+         onmouseover="this.style.background='rgba(0,0,0,0.06)'"
+         onmouseout="this.style.background='rgba(0,0,0,0.03)'">
       <span style="font-weight:600;font-size:12px;color:#1d1d1f;width:48px;flex-shrink:0">${h.coin}</span>
       <span style="font-size:12px;font-weight:600;width:40px;flex-shrink:0;color:${h.dir_color}">${h.dir_emoji} ${h.direction}</span>
       <span style="flex:1;font-size:10px;color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.close_reason || '--'} · Grade ${h.grade}</span>
@@ -422,4 +425,166 @@ function renderHistory(history) {
       <span style="font-size:12px;flex-shrink:0">${h.outcome_emoji}</span>
     </div>
   `).join('')
+}
+
+function showTradeDetail(h) {
+  const title = $id('modal-title')
+  const body  = $id('modal-body')
+  const overlay = $id('modal-overlay')
+
+  const isLong      = h.direction === 'LONG'
+  const dirColor    = isLong ? '#248a3d' : '#c0392b'
+  const outcomeColor = h.outcome === 'win' ? '#248a3d' : h.outcome === 'loss' ? '#c0392b' : '#6e6e73'
+  const pnlFloat    = parseFloat(h.pnl_raw || 0)
+
+  title.textContent = `${h.coin}USDT ${h.direction} — ${h.outcome?.toUpperCase() || '--'}`
+
+  const fmt = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+  const fmtDate = s => {
+    if (!s) return '--'
+    try { return new Date(s).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true }) + ' IST' }
+    catch { return s }
+  }
+
+  const duration = () => {
+    if (!h.opened_at || !h.closed_at) return '--'
+    try {
+      const ms   = new Date(h.closed_at) - new Date(h.opened_at)
+      const mins = Math.floor(ms / 60000)
+      const hrs  = Math.floor(mins / 60)
+      const days = Math.floor(hrs / 24)
+      if (days > 0)  return `${days}d ${hrs % 24}h`
+      if (hrs > 0)   return `${hrs}h ${mins % 60}m`
+      return `${mins}m`
+    } catch { return '--' }
+  }
+
+  body.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Trade Info</div>
+        <div style="font-size:13px;font-weight:700;color:${dirColor};margin-bottom:4px">${h.dir_emoji || ''} ${h.coin}USDT ${h.direction}</div>
+        <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+          <div>Grade: <strong style="color:#1d1d1f">${h.grade || '--'}</strong></div>
+          <div>Score: <strong style="color:#1d1d1f">${h.score_at_entry || '--'}/100</strong></div>
+          <div>Regime: <strong style="color:#1d1d1f">${h.regime_at_entry || '--'}</strong></div>
+          <div>Session: <strong style="color:#1d1d1f">${h.session_at_entry || '--'}</strong></div>
+          <div>Duration: <strong style="color:#1d1d1f">${duration()}</strong></div>
+        </div>
+      </div>
+
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Outcome</div>
+        <div style="font-size:22px;font-weight:700;font-family:monospace;color:${h.pnl_color || outcomeColor};margin-bottom:4px">${h.pnl || '--'}</div>
+        <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+          <div>Result: <strong style="color:${outcomeColor}">${(h.outcome || '--').toUpperCase()}</strong></div>
+          <div>Reason: <strong style="color:#1d1d1f">${h.close_reason || '--'}</strong></div>
+          <div>TP1 Hit: <strong style="color:#1d1d1f">${h.tp1_hit ? '✅ Yes' : '❌ No'}</strong></div>
+          ${h.partial_pnl ? `<div>Partial PnL: <strong style="color:#248a3d">+$${parseFloat(h.partial_pnl).toFixed(4)}</strong></div>` : ''}
+          <div>Health: <strong style="color:#1d1d1f">${h.health_at_close || '--'}</strong></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      ${_detailCell('Entry',    fmt(h.entry_price),    '#0071e3')}
+      ${_detailCell('Exit',     fmt(h.exit_price),     h.pnl_color || outcomeColor)}
+      ${_detailCell('Stop',     fmt(h.sl_price),       '#ff3b30')}
+      ${_detailCell('TP1',      fmt(h.tp1_price),      '#34c759')}
+      ${_detailCell('TP2',      fmt(h.tp2_price),      '#34c759')}
+      ${_detailCell('Risk',     fmt(h.risk_amt),       '#ff3b30')}
+      ${_detailCell('Size',     fmt(h.position_size),  '#1d1d1f')}
+      ${_detailCell('Leverage', (h.leverage || '--') + 'x', '#1d1d1f')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:12px">
+        <div class="section-label" style="margin-bottom:6px">Opened</div>
+        <div style="font-size:12px;color:#1d1d1f;font-weight:500">${fmtDate(h.opened_at)}</div>
+      </div>
+      <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:12px">
+        <div class="section-label" style="margin-bottom:6px">Closed</div>
+        <div style="font-size:12px;color:#1d1d1f;font-weight:500">${fmtDate(h.closed_at)}</div>
+      </div>
+    </div>
+
+    ${(h.balance_at_open || h.tier_at_open) ? `
+    <div style="background:rgba(0,113,227,0.04);border:1px solid rgba(0,113,227,0.12);border-radius:10px;padding:12px;margin-bottom:16px">
+      <div class="section-label" style="margin-bottom:6px">Account at Open</div>
+      <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+        ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
+        ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
+      </div>
+    </div>` : ''}
+
+    <a href="https://www.tradingview.com/chart/?symbol=BINANCE:${h.coin}USDT&interval=240"
+       target="_blank"
+       style="display:block;text-align:center;padding:10px;background:rgba(0,113,227,0.06);border:1px solid rgba(0,113,227,0.15);border-radius:10px;color:#0071e3;font-size:13px;font-weight:600;text-decoration:none;transition:background 0.2s"
+       onmouseover="this.style.background='rgba(0,113,227,0.12)'"
+       onmouseout="this.style.background='rgba(0,113,227,0.06)'">
+      📊 View on TradingView (4H Chart)
+    </a>
+  `
+
+  overlay.classList.remove('hidden')
+  overlay.classList.add('flex')
+}
+
+function _detailCell(label, value, color) {
+  return `
+    <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:10px 12px">
+      <div class="section-label" style="margin-bottom:4px">${label}</div>
+      <div style="font-family:monospace;font-weight:600;font-size:13px;color:${color}">${value}</div>
+    </div>`
+}
+
+function renderCoinUniverse(coins) {
+  const grid = $id('coin-universe-grid')
+  if (!grid) return
+
+  if (!coins || !coins.length) {
+    grid.innerHTML = `
+      <div style="grid-column:1/-1;text-align:center;padding:32px 0;color:#6e6e73;font-size:12px">
+        No coins configured.<br>
+        <button onclick="syncCoins()" style="margin-top:8px;color:#0071e3;background:none;border:none;cursor:pointer;font-weight:600">Sync from Binance</button>
+      </div>`
+    return
+  }
+
+  grid.innerHTML = coins.map(c => {
+    const volStr = c.volume_24h
+      ? (c.volume_24h >= 1e9
+          ? '$' + (c.volume_24h / 1e9).toFixed(1) + 'B'
+          : '$' + (c.volume_24h / 1e6).toFixed(0) + 'M')
+      : '--'
+
+    const gradeColor = c.grade_color || '#6e6e73'
+    const opacity    = c.enabled ? '1' : '0.45'
+
+    return `
+      <div style="opacity:${opacity};background:rgba(255,255,255,0.6);border:1px solid rgba(0,0,0,0.08);border-radius:12px;padding:10px 12px;position:relative">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <span style="font-weight:700;font-size:13px;color:#1d1d1f">${c.coin}</span>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:#6e6e73;font-weight:500">
+            <input
+              type="checkbox"
+              ${c.enabled ? 'checked' : ''}
+              onchange="toggleCoin('${c.coin}', this.checked)"
+              style="width:14px;height:14px;cursor:pointer;accent-color:#0071e3"
+            >
+            ${c.enabled ? 'On' : 'Off'}
+          </label>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:10px;font-weight:700;color:${gradeColor}">${c.grade !== '--' ? 'Grade ' + c.grade : '--'}</span>
+          <span style="font-size:10px;font-family:monospace;color:#6e6e73">${volStr}</span>
+        </div>
+        <div style="font-size:10px;color:#6e6e73;display:flex;align-items:center;justify-content:space-between">
+          <span style="background:rgba(0,0,0,0.05);padding:1px 6px;border-radius:4px">${c.source || 'manual'}</span>
+          ${c.has_signal ? `<span style="color:${gradeColor}">● signal</span>` : '<span style="color:#6e6e73">no signal</span>'}
+        </div>
+      </div>`
+  }).join('')
 }

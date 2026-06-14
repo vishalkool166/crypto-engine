@@ -16,3 +16,4 @@ bcrypt
 python-jose[cryptography]
 slowapi
 qrcode[pil]
+jinja2

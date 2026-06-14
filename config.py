@@ -26,15 +26,16 @@ class Config:
     ENV  = os.getenv("ENV", "development")
 
     # ── Auth ────────────────────────────────────────────────────────
-    TOTP_SECRET              = os.getenv("TOTP_SECRET", "")
-    DASHBOARD_PASSWORD_HASH  = os.getenv("DASHBOARD_PASSWORD_HASH", "")
-    DASHBOARD_API_KEY        = os.getenv("DASHBOARD_API_KEY", "")
-    WEBHOOK_SECRET           = os.getenv("WEBHOOK_SECRET", "")
-    JWT_SECRET               = os.getenv("JWT_SECRET", "")
+    TOTP_SECRET             = os.getenv("TOTP_SECRET", "")
+    DASHBOARD_PASSWORD_HASH = os.getenv("DASHBOARD_PASSWORD_HASH", "")
+    DASHBOARD_API_KEY       = os.getenv("DASHBOARD_API_KEY", "")
+    DASHBOARD_USERNAME      = os.getenv("DASHBOARD_USERNAME", "admin")
+    WEBHOOK_SECRET          = os.getenv("WEBHOOK_SECRET", "")
+    JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
     # ── Trading mode ────────────────────────────────────────────────
-    TRADING_MODE   = os.getenv("TRADING_MODE", "paper")
-    PAPER_TRADING  = TRADING_MODE != "live"
+    TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
+    PAPER_TRADING = TRADING_MODE != "live"
 
     MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 10))
 
@@ -45,7 +46,6 @@ class Config:
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
-    # ── Capital (removed hardcoded — now live from Binance) ─────────
     CAPITAL  = float(os.getenv("CAPITAL", 16))
     LEVERAGE = 10
 
@@ -89,7 +89,6 @@ class Config:
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
 
-    # ── Balance tiers ───────────────────────────────────────────────
     BALANCE_TIERS = [
         {"min": 0,    "max": 50,   "risk_pct": 0.05, "max_trades": 1, "leverage": 5},
         {"min": 50,   "max": 200,  "risk_pct": 0.08, "max_trades": 2, "leverage": 10},
@@ -97,7 +96,6 @@ class Config:
         {"min": 1000, "max": None, "risk_pct": 0.12, "max_trades": 3, "leverage": 20},
     ]
 
-    # kept for legacy callers — overridden by live tier
     RISK_PCT_PER_TRADE = 0.10
 
 
@@ -126,7 +124,6 @@ def _bootstrap_secrets():
         ws = secrets.token_hex(16)
         _ensure("WEBHOOK_SECRET", ws)
         cfg.WEBHOOK_SECRET = ws
-        log.info(f"[FIRST RUN] WEBHOOK_SECRET generated: {ws}")
         changed = True
 
     if not os.getenv("JWT_SECRET"):
@@ -135,8 +132,14 @@ def _bootstrap_secrets():
         cfg.JWT_SECRET = js
         changed = True
 
+    if not os.getenv("DASHBOARD_USERNAME"):
+        _ensure("DASHBOARD_USERNAME", "admin")
+        cfg.DASHBOARD_USERNAME = "admin"
+        log.info("[FIRST RUN] DASHBOARD_USERNAME defaulted to: admin")
+        changed = True
+
     if changed:
-        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete TOTP setup")
+        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete setup")
 
 
 cfg = Config()

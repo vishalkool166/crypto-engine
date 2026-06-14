@@ -154,7 +154,6 @@ tailwind.config = {
 
       <!-- ACTIVE TRADES -->
       <section id="trade-section">
-
         <div id="trade-idle" class="glass rounded-apple p-5 flex items-center gap-4">
           <div class="w-12 h-12 rounded-apple-sm bg-black/5 flex items-center justify-center text-2xl">⚪</div>
           <div>
@@ -166,9 +165,7 @@ tailwind.config = {
             <div id="idle-last-scan" class="text-xs text-apple-text num font-medium">--</div>
           </div>
         </div>
-
         <div id="trades-grid" class="hidden space-y-3"></div>
-
       </section>
 
       <!-- MARKET RADAR -->
@@ -218,6 +215,34 @@ tailwind.config = {
         </div>
       </section>
 
+      <!-- COIN UNIVERSE -->
+      <section class="glass rounded-apple overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b divider flex-wrap gap-2">
+          <h2 class="section-label">🌐 Coin Universe</h2>
+          <div class="flex items-center gap-2">
+            <input
+              id="coin-add-input"
+              type="text"
+              placeholder="Add coin (e.g. SOL)"
+              class="text-xs px-3 py-1.5 rounded-full border border-black/10 bg-white/80 outline-none focus:border-apple-blue"
+              style="width:160px"
+              onkeydown="if(event.key==='Enter') addCoin()"
+            >
+            <button onclick="addCoin()" class="btn-apple" style="padding:6px 12px;font-size:11px">+ Add</button>
+            <button onclick="syncCoins()" class="text-[11px] text-apple-blue font-semibold px-3 py-1.5 rounded-full border border-apple-blue/20 bg-apple-blue/5 hover:bg-apple-blue/10 transition-colors">
+              🔄 Sync
+            </button>
+          </div>
+        </div>
+        <div class="p-3">
+          <div id="coin-universe-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-3 2xl:grid-cols-4 gap-2">
+            <div class="shimmer h-16 rounded-apple-sm"></div>
+            <div class="shimmer h-16 rounded-apple-sm"></div>
+            <div class="shimmer h-16 rounded-apple-sm"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- BOTTOM GRID -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <section class="glass rounded-apple overflow-hidden">
@@ -233,7 +258,7 @@ tailwind.config = {
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
             <h2 class="section-label">💼 Recent Trades</h2>
-            <span class="text-[10px] text-apple-secondary">last 10</span>
+            <span class="text-[10px] text-apple-secondary">click for details</span>
           </div>
           <div class="p-3 max-h-48 overflow-y-auto space-y-1.5" id="history-list">
             <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
@@ -370,6 +395,66 @@ async function checkAuth() {
 async function handleLogout() {
   await fetch('/auth/logout')
   window.location.href = '/login.html'
+}
+
+async function addCoin() {
+  const inp  = $id('coin-add-input')
+  const coin = inp.value.trim().toUpperCase().replace('USDT','')
+  if (!coin) return
+
+  try {
+    const res  = await fetch('/api/coins/add', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body:    JSON.stringify({ coin })
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`✅ ${coin} added`, 'Coin added to universe', 'success')
+      inp.value = ''
+      await fetchDashboard()
+    } else {
+      toast(`❌ Failed`, data.reason || 'Error', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}
+
+async function syncCoins() {
+  toast('🔄 Syncing coins...', 'Fetching top coins from Binance', 'info', 3000)
+  try {
+    const res  = await fetch('/api/coins/sync', {
+      method:  'POST',
+      headers: _authHeaders()
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`✅ Synced`, `${data.coins?.length || 0} coins active`, 'success')
+      await fetchDashboard()
+    } else {
+      toast('❌ Sync failed', '', 'error')
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}
+
+async function toggleCoin(coin, enabled) {
+  try {
+    const res  = await fetch('/api/coins/toggle', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body:    JSON.stringify({ coin, enabled })
+    })
+    const data = await res.json()
+    if (data.success) {
+      toast(`${enabled ? '✅' : '⏸'} ${coin}`, enabled ? 'Enabled' : 'Disabled', 'info')
+      await fetchDashboard()
+    }
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
 }
 
 document.addEventListener('keydown', e => {

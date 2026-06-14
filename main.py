@@ -6,7 +6,8 @@ import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, HTMLResponse, Response
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, Response
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -29,7 +30,8 @@ logging.basicConfig(
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 
-log = logging.getLogger(__name__)
+log       = logging.getLogger(__name__)
+templates = Jinja2Templates(directory="frontend")
 
 _ws_clients:          set          = set()
 _dashboard_clients:   set          = set()
@@ -132,21 +134,20 @@ async def lifespan(app: FastAPI):
     global _dashboard_push_task
 
     rs.load()
-
     _bootstrap_secrets()
 
     from auth import setup_status
     status = setup_status()
     if not status["setup_complete"]:
         log.warning("=" * 60)
-        log.warning("FIRST RUN — Dashboard password not set!")
-        log.warning("Visit /auth/setup to complete setup")
+        log.warning("FIRST RUN — visit /auth/setup to complete setup")
         log.warning(f"TOTP URI: {status['totp_uri']}")
         log.warning(f"API Key:  {status['api_key']}")
+        log.warning(f"Username: {status['username']}")
         log.warning("=" * 60)
 
     if rs.was_crash():
-        log.warning("Crash detected on last run — forcing paper mode")
+        log.warning("Crash detected — forcing paper mode")
         rs.set_trading_mode("paper")
         cfg.TRADING_MODE  = "paper"
         cfg.PAPER_TRADING = True
@@ -162,7 +163,6 @@ async def lifespan(app: FastAPI):
         cfg.CAPITAL = balance
         log.info(f"Balance loaded: ${balance:.2f} Tier:{tier['tier']}")
     else:
-        log.warning("Balance fetch failed — using cached/default")
         cached_bal = rs.get_balance_cache().get("balance", 0)
         if cached_bal > 0:
             cfg.CAPITAL = cached_bal
@@ -278,19 +278,57 @@ async def no_cache_js(request: Request, call_next):
     return response
 
 
+@app.get("/auth/setup")
+async def auth_setup(request: Request):
+    from auth import setup_status, get_qr_svg, get_qr_png_bytes
+    status = setup_status()
+
+    qr_svg           = ""
+    qr_png_available = False
+
+    if cfg.TOTP_SECRET:
+        qr_svg = get_qr_svg()
+        if not qr_svg:
+            qr_png_available = bool(get_qr_png_bytes())
+
+    return templates.TemplateResponse("setup.html", {
+        "request":         request,
+        "status":          status,
+        "qr_svg":          qr_svg,
+        "qr_png_available":qr_png_available,
+        "totp_secret":     cfg.TOTP_SECRET,
+        "totp_uri":        status["totp_uri"],
+        "username":        cfg.DASHBOARD_USERNAME,
+        "api_key":         cfg.DASHBOARD_API_KEY,
+    })
+
+
+@app.get("/login.html")
+async def login_page(request: Request):
+    mode = rs.get_trading_mode()
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "mode":    mode
+    })
+
+
 @app.post("/auth/login")
 async def auth_login(request: Request):
     try:
         body     = await request.json()
+        username = body.get("username", "").strip()
         password = body.get("password", "")
         totp     = body.get("totp_code", "")
         ip       = request.client.host if request.client else ""
 
         from auth import validate_login
-        result = validate_login(password, totp, ip)
+        result = validate_login(username, password, totp, ip)
 
         if result["success"]:
-            response = JSONResponse(content={"success": True})
+            response = JSONResponse(content={
+                "success":  True,
+                "username": result.get("username", "")
+            })
             response.set_cookie(
                 key      = "se_token",
                 value    = result["token"],
@@ -310,6 +348,22 @@ async def auth_login(request: Request):
         raise HTTPException(500, "Login failed")
 
 
+@app.post("/auth/reset-password")
+async def auth_reset_password(request: Request):
+    try:
+        body         = await request.json()
+        totp_code    = body.get("totp_code", "")
+        new_password = body.get("new_password", "")
+        ip           = request.client.host if request.client else ""
+
+        from auth import reset_password_with_totp
+        result = reset_password_with_totp(totp_code, new_password, ip)
+        return JSONResponse(content=result)
+    except Exception as e:
+        log.error(f"Reset password error: {e}")
+        raise HTTPException(500, "Reset failed")
+
+
 @app.get("/auth/logout")
 async def auth_logout():
     response = JSONResponse(content={"success": True})
@@ -317,116 +371,44 @@ async def auth_logout():
     return response
 
 
-@app.get("/auth/setup")
-async def auth_setup(request: Request):
-    from auth import setup_status, get_qr_svg
-    status = setup_status()
-
-    qr_svg = ""
-    if cfg.TOTP_SECRET:
-        try:
-            qr_svg = get_qr_svg()
-        except Exception as e:
-            log.error(f"QR generation error: {e}")
-
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-<title>Signal Engine v5 — Setup</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body {{ font-family: -apple-system, sans-serif; background: #f5f5f7; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }}
-  .card {{ background: white; border-radius: 18px; padding: 40px; max-width: 480px; width: 100%; box-shadow: 0 8px 32px rgba(0,0,0,0.12); }}
-  h1 {{ font-size: 22px; margin-bottom: 8px; }}
-  p {{ color: #6e6e73; font-size: 14px; margin-bottom: 24px; }}
-  .qr {{ text-align: center; margin: 24px 0; }}
-  .info {{ background: #f5f5f7; border-radius: 12px; padding: 16px; margin-bottom: 16px; font-size: 13px; }}
-  .info code {{ background: #e8e8ed; padding: 2px 6px; border-radius: 4px; font-size: 12px; word-break: break-all; }}
-  label {{ font-size: 13px; font-weight: 600; display: block; margin-bottom: 6px; }}
-  input {{ width: 100%; padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-size: 14px; box-sizing: border-box; margin-bottom: 16px; }}
-  button {{ width: 100%; padding: 14px; background: #0071e3; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; }}
-  button:hover {{ background: #0077ed; }}
-  .status {{ font-size: 12px; margin-top: 8px; padding: 8px 12px; border-radius: 8px; }}
-  .ok {{ background: rgba(52,199,89,0.1); color: #248a3d; }}
-  .warn {{ background: rgba(255,149,0,0.1); color: #e8820c; }}
-  #msg {{ margin-top: 16px; font-size: 13px; text-align: center; }}
-</style>
-</head>
-<body>
-<div class="card">
-  <h1>⚡ Signal Engine v5</h1>
-  <p>First run setup — configure your dashboard password and TOTP authenticator.</p>
-
-  <div class="info">
-    <div>TOTP Secret: <code>{cfg.TOTP_SECRET}</code></div>
-    <div style="margin-top:8px">API Key: <code>{cfg.DASHBOARD_API_KEY}</code></div>
-  </div>
-
-  {'<div class="qr">' + qr_svg + '</div>' if qr_svg else '<p style="color:#ff3b30">QR generation failed — use secret above manually</p>'}
-
-  <div class="info">
-    <div>Scan the QR code with Google Authenticator, Authy, or any TOTP app.</div>
-    <div style="margin-top:8px">TOTP URI: <code>{status['totp_uri']}</code></div>
-  </div>
-
-  <div class="status {'ok' if status['password_set'] else 'warn'}">
-    Password: {'✅ Set' if status['password_set'] else '⚠️ Not set — fill form below'}
-  </div>
-  <div class="status {'ok' if status['totp_secret_set'] else 'warn'}" style="margin-top:8px">
-    TOTP: {'✅ Secret generated' if status['totp_secret_set'] else '⚠️ Not configured'}
-  </div>
-
-  <div style="margin-top:24px">
-    <label>Set Dashboard Password</label>
-    <input type="password" id="pw" placeholder="Choose a strong password">
-    <label>Confirm Password</label>
-    <input type="password" id="pw2" placeholder="Confirm password">
-    <button onclick="setPassword()">Set Password</button>
-    <div id="msg"></div>
-  </div>
-</div>
-
-<script>
-async function setPassword() {{
-  const pw  = document.getElementById('pw').value
-  const pw2 = document.getElementById('pw2').value
-  const msg = document.getElementById('msg')
-
-  if (!pw || pw.length < 8) {{ msg.textContent = '❌ Password must be at least 8 characters'; msg.style.color='#ff3b30'; return }}
-  if (pw !== pw2) {{ msg.textContent = '❌ Passwords do not match'; msg.style.color='#ff3b30'; return }}
-
-  const res  = await fetch('/auth/set-password', {{
-    method: 'POST',
-    headers: {{'Content-Type': 'application/json'}},
-    body: JSON.stringify({{password: pw}})
-  }})
-  const data = await res.json()
-
-  if (data.success) {{
-    msg.textContent = '✅ Password set! You can now login at /'
-    msg.style.color = '#248a3d'
-  }} else {{
-    msg.textContent = '❌ ' + (data.reason || 'Failed')
-    msg.style.color = '#ff3b30'
-  }}
-}}
-</script>
-</body>
-</html>"""
-    return HTMLResponse(content=html)
-
-
-@app.post("/auth/set-password")
-async def auth_set_password(request: Request):
+@app.post("/auth/set-credentials")
+async def auth_set_credentials(request: Request):
     try:
         body     = await request.json()
-        password = body.get("password", "")
-        if len(password) < 8:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Password too short"})
-        from auth import set_password
-        set_password(password)
-        log.info("Dashboard password set via /auth/setup")
-        return JSONResponse(content={"success": True})
+        password = body.get("password")
+        username = body.get("username")
+        messages = []
+
+        if username:
+            from auth import set_username
+            set_username(username)
+            messages.append(f"Username updated to '{username}'")
+
+        if password:
+            if len(password) < 8:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": "Password too short"}
+                )
+            from auth import set_password
+            set_password(password)
+            messages.append("Password updated")
+
+        if not messages:
+            return JSONResponse(content={"success": False, "reason": "Nothing to update"})
+
+        return JSONResponse(content={"success": True, "message": " · ".join(messages)})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/auth/regenerate-totp")
+async def auth_regenerate_totp():
+    try:
+        from auth import regenerate_totp
+        new_secret = regenerate_totp()
+        log.info("TOTP secret regenerated")
+        return JSONResponse(content={"success": True, "secret": new_secret})
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -436,6 +418,8 @@ async def auth_qr_png():
     from auth import get_qr_png_bytes
     try:
         png = get_qr_png_bytes()
+        if not png:
+            raise HTTPException(500, "QR generation failed")
         return Response(content=png, media_type="image/png")
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -445,7 +429,6 @@ async def auth_qr_png():
 async def price_websocket(websocket: WebSocket):
     await websocket.accept()
     _ws_clients.add(websocket)
-    log.info(f"Price WS connected — clients: {len(_ws_clients)}")
     try:
         while True:
             await websocket.receive_text()
@@ -457,7 +440,6 @@ async def price_websocket(websocket: WebSocket):
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
     _dashboard_clients.add(websocket)
-    log.info(f"Dashboard WS connected — clients: {len(_dashboard_clients)}")
 
     try:
         if _last_dashboard_data:
