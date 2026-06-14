@@ -584,6 +584,7 @@ async def _handle_command(text: str, chat_id: str = ""):
         "/factors": _cmd_factors,
         "/debrief": _cmd_debrief,
         "/trades":  _cmd_trades,
+        "/setlevels": _cmd_setlevels,
     }
 
     if t.startswith("/"):
