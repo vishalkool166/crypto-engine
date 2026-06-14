@@ -581,88 +581,6 @@ async def get_coins(request: Request):
         raise HTTPException(500, str(e))
 
 
-@router.get("/coins/all-binance")
-async def get_all_binance_coins(request: Request):
-    _auth(request)
-    try:
-        loop    = asyncio.get_running_loop()
-        markets = await loop.run_in_executor(None, sync_exchange.load_markets)
-
-        stables    = {"USDT","BUSD","USDC","DAI","TUSD","FDUSD"}
-        lev_tokens = {"UP","DOWN","BULL","BEAR"}
-
-        coins = []
-        for symbol, m in markets.items():
-            if not symbol.endswith("/USDT"):
-                continue
-            if not m.get("active", True):
-                continue
-            base = symbol.replace("/USDT", "")
-            if base in stables:
-                continue
-            if any(t in base for t in lev_tokens):
-                continue
-            coins.append({
-                "coin":   base,
-                "symbol": symbol,
-                "volume": float(m.get("info", {}).get("volume", 0) or 0)
-            })
-
-        coins.sort(key=lambda x: x["volume"], reverse=True)
-
-        existing = set(cfg.COINS)
-        for c in coins:
-            c["in_universe"] = c["coin"] in existing
-
-        return JSONResponse(content={"coins": coins})
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-@router.get("/coins/suggest-sync")
-async def suggest_sync_coins(request: Request):
-    _auth(request)
-    try:
-        from data.fetcher import get_top_coins
-        from trade.risk import get_current_tier
-
-        tier      = get_current_tier()
-        n         = 10 + (tier["tier"] * 3)
-        top_coins = await get_top_coins(n=n + 20)
-
-        with SessionLocal() as db:
-            existing_rows = db.query(CoinConfig).all()
-            existing      = set(r.coin for r in existing_rows)
-
-        is_empty  = len(existing) == 0
-        suggested = top_coins if is_empty else [c for c in top_coins if c not in existing]
-        suggested = suggested[:20]
-
-        loop    = asyncio.get_running_loop()
-        markets = await loop.run_in_executor(None, sync_exchange.load_markets)
-
-        result = []
-        for coin in suggested:
-            m      = markets.get(f"{coin}/USDT", {})
-            vol    = float(m.get("info", {}).get("volume", 0) or 0)
-            result.append({
-                "coin":    coin,
-                "volume":  vol,
-                "vol_str": (
-                    f"${vol/1e9:.1f}B" if vol >= 1e9 else
-                    f"${vol/1e6:.0f}M" if vol >= 1e6 else "--"
-                )
-            })
-
-        return JSONResponse(content={
-            "suggested": result,
-            "is_empty":  is_empty
-        })
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
 @router.post("/coins/toggle")
 async def toggle_coin(request: Request):
     _auth(request)
@@ -751,39 +669,6 @@ async def add_coin(request: Request):
         raise HTTPException(500, str(e))
 
 
-@router.post("/coins/add-bulk")
-async def add_coins_bulk(request: Request):
-    _auth(request)
-    try:
-        body  = await request.json()
-        coins = [c.upper().strip() for c in body.get("coins", [])]
-
-        added = []
-        for coin in coins:
-            with SessionLocal() as db:
-                existing = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
-                if existing:
-                    existing.enabled = True
-                else:
-                    db.add(CoinConfig(
-                        coin    = coin,
-                        enabled = True,
-                        tier    = 1,
-                        source  = "binance_auto"
-                    ))
-                db.commit()
-            if coin not in cfg._FALLBACK_COINS:
-                cfg._FALLBACK_COINS.append(coin)
-            added.append(coin)
-
-        ip = request.client.host if request.client else ""
-        audit("coin_add_bulk", "api", f"added:{','.join(added)}", ip=ip)
-        return JSONResponse(content={"success": True, "added": added})
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
 @router.delete("/coins/{coin}")
 async def remove_coin(request: Request, coin: str):
     _auth(request)
@@ -802,18 +687,6 @@ async def remove_coin(request: Request, coin: str):
         ip = request.client.host if request.client else ""
         audit("coin_delete", "api", f"deleted:{coin}", ip=ip)
         return JSONResponse(content={"success": True, "coin": coin})
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
-@router.post("/coins/sync")
-async def sync_coins(request: Request):
-    _auth(request)
-    try:
-        from scheduler import job_refresh_coins
-        await job_refresh_coins()
-        return JSONResponse(content={"success": True, "coins": cfg.COINS})
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))

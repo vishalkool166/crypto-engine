@@ -220,28 +220,16 @@ tailwind.config = {
         <div class="flex items-center justify-between px-5 py-3 border-b divider flex-wrap gap-2">
           <h2 class="section-label">🌐 Coin Universe <span id="coin-count" class="text-apple-secondary font-normal normal-case tracking-normal text-[10px]"></span></h2>
           <div class="flex items-center gap-2">
-
-            <!-- AUTOCOMPLETE SEARCH -->
-            <div style="position:relative">
-              <input
-                id="coin-add-input"
-                type="text"
-                placeholder="Search & add coin..."
-                autocomplete="off"
-                class="text-xs px-3 py-1.5 rounded-full border border-black/10 bg-white/80 outline-none focus:border-apple-blue"
-                style="width:180px"
-                oninput="onCoinSearch(this.value)"
-                onkeydown="onCoinInputKey(event)"
-                onfocus="loadBinanceCoins()"
-              >
-              <div id="coin-suggestions"
-                   style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:white;border:1px solid rgba(0,0,0,0.1);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:100;max-height:200px;overflow-y:auto">
-              </div>
-            </div>
-
-            <button onclick="showSyncModal()" class="text-[11px] text-apple-blue font-semibold px-3 py-1.5 rounded-full border border-apple-blue/20 bg-apple-blue/5 hover:bg-apple-blue/10 transition-colors">
-              🔄 Sync
-            </button>
+            <input
+              id="coin-add-input"
+              type="text"
+              placeholder="Add coin (e.g. BTC)"
+              autocomplete="off"
+              class="text-xs px-3 py-1.5 rounded-full border border-black/10 bg-white/80 outline-none focus:border-apple-blue"
+              style="width:160px"
+              onkeydown="if(event.key==='Enter') addCoin()"
+            >
+            <button onclick="addCoin()" class="btn-apple">+ Add</button>
           </div>
         </div>
         <div class="px-4 py-3">

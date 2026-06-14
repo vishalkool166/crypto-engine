@@ -276,34 +276,6 @@ async def get_live_balance() -> float:
         return 0.0
 
 
-# 3.3 — top coins by 24h volume
-async def get_top_coins(n: int = 13) -> list:
-    try:
-        markets = await exchange.fetch_tickers()
-        usdt_perp = []
-        stables   = {"USDT", "BUSD", "USDC", "DAI", "TUSD", "FDUSD"}
-        lev_tokens = {"UP", "DOWN", "BULL", "BEAR"}
-
-        for symbol, t in markets.items():
-            if not symbol.endswith("/USDT"):
-                continue
-            base = symbol.replace("/USDT", "")
-            if base in stables:
-                continue
-            if any(tok in base for tok in lev_tokens):
-                continue
-            vol = float(t.get("quoteVolume") or 0)
-            if vol < 500_000_000:
-                continue
-            usdt_perp.append({"coin": base, "volume": vol})
-
-        usdt_perp.sort(key=lambda x: x["volume"], reverse=True)
-        return [c["coin"] for c in usdt_perp[:n]]
-    except Exception as e:
-        log.warning(f"get_top_coins failed: {e}")
-        return []
-
-
 async def get_all_data(coin: str) -> dict:
     news_filter = cache.get_raw("news_filter")
 

@@ -97,6 +97,9 @@ def get_qr_svg() -> str:
         img.save(buf)
         svg = buf.getvalue().decode()
         svg = svg.replace("'", '"')
+        svg = svg.replace("svg:rect", "rect")
+        svg = svg.replace("svg:svg", "svg")
+        svg = svg.replace('xmlns:svg="http://www.w3.org/2000/svg"', '')
         return svg
     except Exception as e:
         log.error(f"QR SVG generation error: {e}")
