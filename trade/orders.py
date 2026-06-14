@@ -6,13 +6,17 @@ import os
 import threading
 from datetime import datetime
 from config import cfg
-from trade.live_executor import live_executor
 
 log = logging.getLogger(__name__)
 
 TAKER_FEE         = 0.0006
 _precision_cache: dict = {}
 _store_lock       = threading.Lock()
+
+
+def _get_live_executor():
+    from trade.live_executor import live_executor
+    return live_executor
 
 
 class PaperOrderStore:
@@ -191,13 +195,13 @@ def set_leverage(coin: str, leverage: int) -> bool:
     if cfg.PAPER_TRADING:
         log.info(f"[PAPER] Leverage set: {coin} {leverage}x")
         return True
-    return live_executor.set_leverage(coin, leverage)
+    return _get_live_executor().set_leverage(coin, leverage)
 
 
 def _ensure_isolated_margin(coin: str):
     if cfg.PAPER_TRADING:
         return
-    live_executor.ensure_isolated(coin)
+    _get_live_executor().ensure_isolated(coin)
 
 
 def place_market_order(coin: str, direction: str, quantity: float) -> dict:
@@ -216,7 +220,7 @@ def place_market_order(coin: str, direction: str, quantity: float) -> dict:
         order["fee"] = quantity * current * TAKER_FEE
         return order
 
-    return live_executor.place_market(coin, direction, quantity)
+    return _get_live_executor().place_market(coin, direction, quantity)
 
 
 def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) -> dict:
@@ -230,7 +234,7 @@ def place_sl_order(coin: str, direction: str, quantity: float, sl_price: float) 
         log.info(f"[PAPER] SL placed: {coin} @ {sl_price} id:{order['id']}")
         return order
 
-    return live_executor.place_sl(coin, direction, quantity, sl_price)
+    return _get_live_executor().place_sl(coin, direction, quantity, sl_price)
 
 
 def place_tp_order(coin: str, direction: str, quantity: float,
@@ -245,7 +249,7 @@ def place_tp_order(coin: str, direction: str, quantity: float,
         log.info(f"[PAPER] {label} placed: {coin} @ {tp_price} id:{order['id']}")
         return order
 
-    return live_executor.place_tp(coin, direction, quantity, tp_price, label)
+    return _get_live_executor().place_tp(coin, direction, quantity, tp_price, label)
 
 
 def cancel_order(coin: str, order_id: str) -> bool:
@@ -259,7 +263,7 @@ def cancel_order(coin: str, order_id: str) -> bool:
     if cfg.PAPER_TRADING:
         return False
 
-    return live_executor.cancel(coin, order_id)
+    return _get_live_executor().cancel(coin, order_id)
 
 
 def get_order_status(coin: str, order_id: str) -> dict:
@@ -288,8 +292,7 @@ def get_order_status(coin: str, order_id: str) -> dict:
         log.warning(f"[PAPER] Order not found: {order_id}")
         return None
 
-    result = live_executor.get_status(coin, order_id)
-    return result
+    return _get_live_executor().get_status(coin, order_id)
 
 
 def get_current_price(coin: str) -> float:
@@ -315,7 +318,7 @@ def close_position_market(coin: str, direction: str, quantity: float) -> dict:
         order["fee"] = quantity * current * TAKER_FEE
         return order
 
-    return live_executor.place_market(coin, direction, quantity)
+    return _get_live_executor().place_market(coin, direction, quantity)
 
 
 def calculate_quantity(coin: str, pos_size: float, price: float) -> float:

@@ -1,19 +1,42 @@
 import logging
 import time
+import ccxt
 from config import cfg
-from trade.orders import with_retry, _get_exchange, _ensure_isolated_margin
 from database import get_session, AuditLog
 
 log = logging.getLogger(__name__)
 
-exchange = _get_exchange()
+exchange = ccxt.binance({
+    "apiKey": cfg.BINANCE_API_KEY,
+    "secret": cfg.BINANCE_SECRET,
+    "options": {"defaultType": "future"}
+})
+
+
+def _retry(fn, retries=3, base_delay=2):
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except ccxt.NetworkError as e:
+            log.warning(f"Network error attempt {attempt}/{retries}: {e}")
+            if attempt < retries:
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+        except ccxt.ExchangeError as e:
+            log.error(f"Exchange error: {e}")
+            return None
+        except Exception as e:
+            log.error(f"Unexpected error attempt {attempt}: {e}")
+            if attempt < retries:
+                time.sleep(base_delay * (2 ** (attempt - 1)))
+    log.error(f"All {retries} attempts failed")
+    return None
 
 
 class LiveOrderExecutor:
 
     def place_market(self, coin: str, direction: str, quantity: float) -> dict:
-        side = "buy" if direction == "LONG" else "sell"
-        result = with_retry(
+        side   = "buy" if direction == "LONG" else "sell"
+        result = _retry(
             lambda: exchange.create_order(
                 f"{coin}/USDT", "market", side, quantity,
                 params={"reduceOnly": False}
@@ -35,8 +58,8 @@ class LiveOrderExecutor:
         return result
 
     def place_sl(self, coin: str, direction: str, quantity: float, sl_price: float) -> dict:
-        side = "sell" if direction == "LONG" else "buy"
-        result = with_retry(
+        side   = "sell" if direction == "LONG" else "buy"
+        result = _retry(
             lambda: exchange.create_order(
                 f"{coin}/USDT", "stop_market", side, quantity,
                 params={"stopPrice": sl_price, "reduceOnly": True, "closePosition": False}
@@ -52,8 +75,8 @@ class LiveOrderExecutor:
 
     def place_tp(self, coin: str, direction: str, quantity: float,
                  tp_price: float, label: str = "TP") -> dict:
-        side = "sell" if direction == "LONG" else "buy"
-        result = with_retry(
+        side   = "sell" if direction == "LONG" else "buy"
+        result = _retry(
             lambda: exchange.create_order(
                 f"{coin}/USDT", "take_profit_market", side, quantity,
                 params={"stopPrice": tp_price, "reduceOnly": True, "closePosition": False}
@@ -68,7 +91,7 @@ class LiveOrderExecutor:
         return result
 
     def cancel(self, coin: str, order_id: str) -> bool:
-        result = with_retry(
+        result = _retry(
             lambda: exchange.cancel_order(order_id, f"{coin}/USDT"),
             retries=3, base_delay=2
         )
@@ -79,7 +102,7 @@ class LiveOrderExecutor:
         return False
 
     def get_status(self, coin: str, order_id: str) -> dict:
-        result = with_retry(
+        result = _retry(
             lambda: exchange.fetch_order(order_id, f"{coin}/USDT"),
             retries=3, base_delay=2
         )
@@ -94,7 +117,7 @@ class LiveOrderExecutor:
         }
 
     def set_leverage(self, coin: str, leverage: int) -> bool:
-        result = with_retry(
+        result = _retry(
             lambda: exchange.set_leverage(leverage, f"{coin}/USDT"),
             retries=3, base_delay=2
         )
@@ -105,7 +128,11 @@ class LiveOrderExecutor:
         return False
 
     def ensure_isolated(self, coin: str):
-        _ensure_isolated_margin(coin)
+        try:
+            exchange.set_margin_mode("isolated", f"{coin}/USDT")
+            log.info(f"[LIVE] Margin mode set ISOLATED: {coin}")
+        except Exception as e:
+            log.warning(f"Margin mode set failed {coin}: {e}")
 
     def _handle_partial_fill(self, coin: str, order: dict, filled: float, expected: float):
         try:
