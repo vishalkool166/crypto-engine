@@ -262,6 +262,8 @@ class StateManager:
             log.error(f"record_partial_pnl error: {e}")
 
     def record_trade_close(self, pnl: float):
+        import trade.risk as risk_module
+        risk_module._cap_warning_sent = False
         today = str(datetime.now(timezone.utc).date())
         from trade.risk import get_current_tier
         tier = get_current_tier()
