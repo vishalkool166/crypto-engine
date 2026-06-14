@@ -289,6 +289,7 @@ async function showSyncModal() {
     const res  = await fetch(`${API}/coins/suggest-sync`, { headers: _authHeaders() })
     const data = await res.json()
     const suggested = data.suggested || []
+    const isEmpty   = data.is_empty  || false
 
     if (!suggested.length) {
       body.innerHTML = `
@@ -311,10 +312,12 @@ async function showSyncModal() {
       </label>`
     ).join('')
 
+    const headerText = isEmpty
+      ? 'Your coin universe is empty. Select coins to add from top Binance volume:'
+      : 'These are the top volume coins not yet in your universe. Select which ones to add:'
+
     body.innerHTML = `
-      <p style="font-size:13px;color:#6e6e73;margin-bottom:16px;line-height:1.6">
-        These are the top volume coins not yet in your universe. Select which ones to add:
-      </p>
+      <p style="font-size:13px;color:#6e6e73;margin-bottom:16px;line-height:1.6">${headerText}</p>
       <div style="margin-bottom:16px;max-height:300px;overflow-y:auto">
         ${checkboxes}
       </div>
