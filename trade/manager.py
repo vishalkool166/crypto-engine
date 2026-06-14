@@ -47,8 +47,8 @@ class TradeManager:
             await self._check_sl_tp(trade, price)
 
     async def _check_sl_tp(self, trade: Trade, current_price: float):
-        trade_id    = trade.id
-        tp1_hit     = state_manager.is_tp1_hit_for(trade_id)
+        trade_id = trade.id
+        tp1_hit  = state_manager.is_tp1_hit_for(trade_id)
 
         def fresh():
             with get_session() as db:
@@ -87,6 +87,105 @@ class TradeManager:
                 t = db.query(Trade).filter(Trade.id == trade_id).first()
             if t:
                 await self._run_health_check(t, current)
+
+    async def sync_binance_positions(self):
+        if cfg.PAPER_TRADING:
+            return
+        try:
+            from trade.orders import exchange
+            positions = exchange.fetch_positions()
+            for pos in positions:
+                contracts = float(pos.get("contracts", 0) or 0)
+                if contracts <= 0:
+                    continue
+
+                symbol    = pos.get("symbol", "")
+                if not symbol.endswith("/USDT"):
+                    continue
+
+                coin      = symbol.replace("/USDT", "")
+                side      = pos.get("side", "")
+                direction = "LONG" if side == "long" else "SHORT"
+                entry     = float(pos.get("entryPrice", 0) or 0)
+                size      = float(pos.get("notional", 0) or contracts * entry)
+
+                already_tracked = any(
+                    t.coin == coin and t.direction == direction
+                    for t in state_manager.active_trades.values()
+                )
+                if already_tracked:
+                    continue
+
+                log.info(f"[SYNC] Detected manual Binance position: {coin} {direction} @ {entry}")
+
+                import runtime_state as rs
+                balance_now = rs.get_balance_cache().get("balance", cfg.CAPITAL)
+                tier        = get_current_tier()
+
+                with get_session() as db:
+                    trade = Trade(
+                        coin             = coin,
+                        direction        = direction,
+                        grade            = "M",
+                        state            = TradeState.IN_TRADE,
+                        is_active        = True,
+                        entry_price      = entry,
+                        sl_price         = None,
+                        tp1_price        = None,
+                        tp2_price        = None,
+                        position_size    = size,
+                        margin_used      = size / tier["leverage"],
+                        leverage         = tier["leverage"],
+                        risk_amt         = 0,
+                        trade_date       = str(datetime.now(timezone.utc).date()),
+                        balance_at_open  = balance_now,
+                        tier_at_open     = tier["tier"],
+                        notes            = "manual_import:binance_sync"
+                    )
+                    db.add(trade)
+                    db.flush()
+                    db.refresh(trade)
+
+                state_manager.set_in_trade(trade)
+
+                from trade.price_feed import price_feed
+                await price_feed.start(coin)
+
+                await send(
+                    f"📥 *Manual Trade Detected*\n\n"
+                    f"{'📈' if direction == 'LONG' else '📉'} *{coin}USDT {direction}*\n"
+                    f"Entry: `{entry}`\n"
+                    f"Size:  `${size:.2f}`\n\n"
+                    f"⚠️ No SL/TP set — set levels with:\n"
+                    f"`/setlevels {coin} <sl> <tp1> <tp2>`\n\n"
+                    f"Example:\n"
+                    f"`/setlevels {coin} 0.0950 0.0850 0.0800`"
+                )
+
+        except Exception as e:
+            log.error(f"Binance position sync error: {e}")
+
+    async def set_trade_levels(self, coin: str, sl: float, tp1: float, tp2: float) -> dict:
+        trade = next(
+            (t for t in state_manager.active_trades.values() if t.coin == coin),
+            None
+        )
+        if not trade:
+            return {"success": False, "reason": f"No active trade for {coin}"}
+
+        with get_session() as db:
+            t = db.query(Trade).filter(Trade.id == trade.id).first()
+            if not t:
+                return {"success": False, "reason": "Trade not found in DB"}
+            t.sl_price  = sl
+            t.tp1_price = tp1
+            t.tp2_price = tp2
+            trade.sl_price  = sl
+            trade.tp1_price = tp1
+            trade.tp2_price = tp2
+
+        log.info(f"Levels set for {coin}: SL:{sl} TP1:{tp1} TP2:{tp2}")
+        return {"success": True}
 
     async def open_trade(self, signal: dict, signal_id: int = None) -> dict:
         async with _open_lock:
@@ -398,7 +497,6 @@ class TradeManager:
         if state_manager.is_idle:
             await price_feed.stop()
         else:
-            remaining_coins = [t.coin for t in state_manager.active_trades.values()]
             await price_feed.remove_coin(trade.coin)
 
         await self._send_close_alert(trade, exit_price, pnl, outcome, close_reason)

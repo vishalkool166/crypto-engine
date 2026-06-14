@@ -27,6 +27,10 @@ async def job_monitor():
         await trade_manager.run_health_check_only()
     except Exception as e:
         log.error(f"Monitor job error: {e}")
+    try:
+        await trade_manager.sync_binance_positions()
+    except Exception as e:
+        log.error(f"Binance sync error: {e}")
 
 
 async def job_morning_briefing():

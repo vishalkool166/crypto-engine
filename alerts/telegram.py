@@ -273,6 +273,7 @@ async def register_commands():
         {"command": "factors",  "description": "Factor analysis"},
         {"command": "debrief",  "description": "Last trade debrief"},
         {"command": "trades",   "description": "All active trades"},
+        {"command": "setlevels", "description": "Set SL/TP for manual trade"},
         {"command": "help",     "description": "Full command list"},
     ]
     try:
@@ -521,6 +522,25 @@ async def _handle_command(text: str, chat_id: str = ""):
         else:
             await send(f"⚠️ Usage: `/backtest BTC`")
         return
+    
+    if t.startswith("/setlevels"):
+    parts = t.split()
+    if len(parts) != 5:
+        await send(
+            "⚠️ Usage: `/setlevels COIN SL TP1 TP2`\n\n"
+            "Example:\n`/setlevels ALGO 0.0950 0.0850 0.0800`"
+        )
+        return
+    coin = parts[1].upper()
+    try:
+        sl  = float(parts[2])
+        tp1 = float(parts[3])
+        tp2 = float(parts[4])
+    except ValueError:
+        await send("⚠️ Invalid numbers. Use: `/setlevels ALGO 0.0950 0.0850 0.0800`")
+        return
+    await _cmd_setlevels(coin, sl, tp1, tp2)
+    return
 
     if t in TOTP_COMMANDS:
         needs_totp = await _require_totp(chat_id, t)
@@ -1164,6 +1184,20 @@ async def _cmd_queue():
         keyboard=_signal_keyboard(coin)
     )
 
+async def _cmd_setlevels(coin: str, sl: float, tp1: float, tp2: float):
+    from trade.manager import trade_manager
+    result = await trade_manager.set_trade_levels(coin, sl, tp1, tp2)
+    if result["success"]:
+        await send(
+            f"✅ *Levels Set — {coin}USDT*\n\n"
+            f"SL:  `{sl}`\n"
+            f"TP1: `{tp1}`\n"
+            f"TP2: `{tp2}`\n\n"
+            f"Bot is now monitoring this trade."
+        )
+    else:
+        await send(f"❌ Failed: `{result['reason']}`")
+
 
 async def _cmd_help():
     await send(
@@ -1175,6 +1209,7 @@ async def _cmd_help():
         "/health  — health engine output\n"
         "/levels  — price ladder\n"
         "/close   — close trade (TOTP)\n\n"
+        "/setlevels COIN SL TP1 TP2 — set levels for manual trade\n\n"
         "*MARKET*\n"
         "/btc         — BTC analysis\n"
         "/coin ETH    — any coin analysis\n"
