@@ -387,17 +387,15 @@ def build_progress(trade, current: float) -> dict:
 
     return {
         "pct":         round(pct),
-        "color":       progress_color(pct),
+        "color":       C["green"] if in_profit else C["red"],
         "label":       label,
         "left_label":  fmt_price(sl),
         "mid_label":   fmt_price(entry),
         "right_label": fmt_price(tp1),
-        "pct":         round(pct),
-        "color":       C["green"] if in_profit else C["red"],
         "phase":       1,
         "phase_label": "Phase 1 — To TP1",
         "tp1_hit":     False,
-        "tp2_hit":     False
+        "tp2_hit":     False,
     }
 
 
