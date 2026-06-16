@@ -161,8 +161,8 @@ function _updateTradeCard(el, t) {
         <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(0,0,0,0.2)"></div>
         <div data-prog-fill style="position:absolute;height:100%;border-radius:100px;
           ${t.progress?.pct > 0
-            ? `left:50%;width:${(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
-            : `right:50%;width:${(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
+            ? `left:50%;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
+            : `right:50%;width:${(Math.abst.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
           }">
         </div>
       </div>
