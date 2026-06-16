@@ -626,12 +626,14 @@ async def add_coin(request: Request):
             loop    = asyncio.get_running_loop()
             markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
             symbol  = f"{coin}/USDT"
-            if symbol not in markets:
+            symbol2 = f"{coin}/USDT:USDT"
+            if symbol not in markets and symbol2 not in markets:
                 return JSONResponse(
                     status_code = 400,
                     content     = {"success": False, "reason": f"{coin} not found on Binance Futures"}
                 )
-            if not markets[symbol].get("active", True):
+            market_data = markets.get(symbol) or markets.get(symbol2, {})
+            if not market_data.get("active", True):
                 return JSONResponse(
                     status_code = 400,
                     content     = {"success": False, "reason": f"{coin} is not active on Binance"}
@@ -706,9 +708,11 @@ async def validate_coin(request: Request, coin: str):
         loop    = asyncio.get_running_loop()
         markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
         symbol  = f"{coin}/USDT"
-        if symbol not in markets:
+        symbol2 = f"{coin}/USDT:USDT"
+        if symbol not in markets and symbol2 not in markets:
             return JSONResponse(content={"valid": False, "reason": f"{coin} not found on Binance Futures"})
-        if not markets[symbol].get("active", True):
+        market_data = markets.get(symbol) or markets.get(symbol2, {})
+        if not market_data.get("active", True):
             return JSONResponse(content={"valid": False, "reason": f"{coin} is not active"})
         return JSONResponse(content={"valid": True, "coin": coin, "symbol": symbol})
     except Exception as e:
