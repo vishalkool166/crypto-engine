@@ -157,12 +157,12 @@ function _updateTradeCard(el, t) {
         <span>${t.progress?.mid_label || ''}</span>
         <span>${t.progress?.right_label || ''}</span>
       </div>
-      <div class="progress-track" style="height:8px;position:relative">
+      <div class="progress-track" style="height:8px;position:relative;overflow:visible">
         <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(0,0,0,0.2)"></div>
         <div data-prog-fill style="position:absolute;height:100%;border-radius:100px;
           ${t.progress?.pct > 0
-            ? `left:50%;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
-            : `right:50%;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
+            ? `left:50%;right:auto;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
+            : `right:50%;left:auto;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
           }">
         </div>
       </div>
