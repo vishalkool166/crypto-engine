@@ -624,7 +624,7 @@ async def add_coin(request: Request):
 
         try:
             loop    = asyncio.get_running_loop()
-            markets = await loop.run_in_executor(None, sync_exchange.load_markets)
+            markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
             symbol  = f"{coin}/USDT"
             if symbol not in markets:
                 return JSONResponse(
@@ -704,7 +704,7 @@ async def validate_coin(request: Request, coin: str):
     coin = coin.upper().replace("USDT", "").replace("/", "")
     try:
         loop    = asyncio.get_running_loop()
-        markets = await loop.run_in_executor(None, sync_exchange.load_markets)
+        markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
         symbol  = f"{coin}/USDT"
         if symbol not in markets:
             return JSONResponse(content={"valid": False, "reason": f"{coin} not found on Binance Futures"})
