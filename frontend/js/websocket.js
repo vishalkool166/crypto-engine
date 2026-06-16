@@ -145,9 +145,14 @@ function applyPriceUpdate(d) {
   $set('h-today-pnl', { text: d.pnl, color: d.pnl_color })
 
   if (d.price_raw && trade) {
-    const pct    = _calcProgressPct(d.price_raw, trade)
+    const { pct, inProfit } = _calcProgressPct(d.price_raw, trade)
     const fillEl = card ? card.querySelector('[data-prog-fill]') : null
-    if (fillEl) fillEl.style.width = Math.min(100, pct) + '%'
+    if (fillEl) {
+      fillEl.style.width      = Math.abs(pct) / 2 + '%'
+      fillEl.style.left       = inProfit ? '50%' : 'auto'
+      fillEl.style.right      = inProfit ? 'auto' : '50%'
+      fillEl.style.background = inProfit ? '#34c759' : '#ff3b30'
+    }
 
     const ladderNow = card ? card.querySelector('.ladder-now span:nth-child(2)') : null
     if (ladderNow) ladderNow.textContent = d.price
@@ -162,14 +167,14 @@ function _calcProgressPct(priceRaw, trade) {
   const isLong = trade.direction === 'LONG'
 
   const total = Math.abs(entry - sl)
-  if (total === 0) return { pct: 0, color: C.red }
+  if (total === 0) return { pct: 0, inProfit: false }
 
   const diff = isLong
     ? (priceRaw - entry) / total * 100
     : (entry - priceRaw) / total * 100
 
   const inProfit = diff > 0
-  const clamped  = Math.max(0, Math.min(100, Math.round(Math.abs(diff))))
+  const clamped  = Math.max(-100, Math.min(100, Math.round(diff)))
 
-  return { pct: clamped, color: inProfit ? C.green : C.red }
+  return { pct: clamped, inProfit }
 }
