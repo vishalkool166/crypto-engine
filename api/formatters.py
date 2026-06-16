@@ -352,7 +352,7 @@ def build_progress(trade, current: float) -> dict:
         pct = (entry - current) / total * 100
 
     in_profit = pct > 0
-    pct = max(0, min(100, pct))
+    pct = max(-100, min(100, pct))
 
     if is_long:
         if tp1 and current >= tp1:
