@@ -138,6 +138,14 @@ def mark_clean_shutdown():
 def was_crash() -> bool:
     return _state.get("crash_detected", False)
 
+def get_paper_balance() -> float:
+    return _state.get("paper_balance", 0.0)
+
+
+def set_paper_balance(balance: float):
+    _state["paper_balance"] = balance
+    save()
+
 
 # Load on import
 load()
