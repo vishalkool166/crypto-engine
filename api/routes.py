@@ -747,6 +747,22 @@ async def set_mode(request: Request):
         cfg.TRADING_MODE  = mode
         cfg.PAPER_TRADING = mode != "live"
 
+        if mode == "live":
+            from data.fetcher import get_live_balance
+            from trade.risk import get_tier_config
+            fresh_balance = await get_live_balance()
+            if fresh_balance > 0:
+                rs.set_balance_cache(fresh_balance)
+                tier = get_tier_config(fresh_balance)
+                rs.set_tier_config(tier)
+                cfg.CAPITAL = fresh_balance
+        else:
+            from trade.risk import get_tier_config
+            paper_balance = cfg.CAPITAL
+            rs.set_balance_cache(paper_balance)
+            tier = get_tier_config(paper_balance)
+            rs.set_tier_config(tier)
+
         ip = request.client.host if request.client else ""
         audit("mode_set", "dashboard", f"mode:{mode}", ip=ip)
 
