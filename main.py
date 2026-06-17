@@ -187,6 +187,7 @@ async def lifespan(app: FastAPI):
         balance = await get_live_balance()
     else:
         balance = cfg.CAPITAL
+        log.info(f"Paper mode — using CAPITAL from .env: ${balance:.2f}")
 
     if balance > 0:
         rs.set_balance_cache(balance)
@@ -194,10 +195,6 @@ async def lifespan(app: FastAPI):
         rs.set_tier_config(tier)
         cfg.CAPITAL = balance
         log.info(f"Balance loaded: ${balance:.2f} Tier:{tier['tier']}")
-    else:
-        cached_bal = rs.get_balance_cache().get("balance", 0)
-        if cached_bal > 0:
-            cfg.CAPITAL = cached_bal
 
     price_feed.on_price(trade_manager.on_price_update)
     price_feed.on_price(broadcast_price)
