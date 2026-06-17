@@ -78,9 +78,26 @@ function startDashboardSocket() {
   _dashSocket.onmessage = (event) => {
     try {
       const d = JSON.parse(event.data)
+
       if (d.type === 'dashboard') {
         applyAndRender(d)
+        return
       }
+
+      if (d.type === 'ping') {
+        return
+      }
+
+      if (
+        d.type === 'trade_opened' ||
+        d.type === 'trade_closed' ||
+        d.type === 'health_changed' ||
+        d.type === 'scan_complete'
+      ) {
+        fetchDashboard()
+        return
+      }
+
     } catch(e) {
       console.error('Dashboard WS parse error:', e)
     }
@@ -131,21 +148,36 @@ function applyPriceUpdate(d) {
   const card   = $id(cardId)
 
   if (card) {
-    const curEl  = card.querySelector('[data-current-price]')
-    const moveEl = card.querySelector('[data-move-pct]')
-    const pnlEl  = card.querySelector('[data-pnl]')
+    const curEl    = card.querySelector('[data-current-price]')
+    const moveEl   = card.querySelector('[data-move-pct]')
+    const pnlEl    = card.querySelector('[data-pnl]')
     const pnlPctEl = card.querySelector('[data-pnl-pct]')
 
-    if (curEl)    { curEl.textContent  = d.price;    curEl.style.color    = d.current_color }
-    if (moveEl)   { moveEl.textContent = d.move_pct; moveEl.style.color   = d.move_color }
-    if (pnlEl)    { pnlEl.textContent  = d.pnl;      pnlEl.style.color    = d.pnl_color }
-    if (pnlPctEl) { pnlPctEl.textContent = d.pnl_pct; pnlPctEl.style.color = d.pnl_color }
+    if (curEl)    { curEl.textContent    = d.price;    curEl.style.color    = d.current_color }
+    if (moveEl)   { moveEl.textContent   = d.move_pct; moveEl.style.color   = d.move_color }
+    if (pnlEl)    { pnlEl.textContent    = d.pnl;      pnlEl.style.color    = d.pnl_color }
+    if (pnlPctEl) { pnlPctEl.textContent = d.pnl_pct;  pnlPctEl.style.color = d.pnl_color }
   }
 
   $set('h-today-pnl', { text: d.pnl, color: d.pnl_color })
 
   if (d.price_raw && trade) {
-    const { pct, inProfit } = _calcProgressPct(d.price_raw, trade)
+    const entry  = trade.entry_price_raw  || 0
+    const sl     = trade.sl_price_raw     || 0
+    const isLong = trade.direction === 'LONG'
+
+    const total = Math.abs(entry - sl)
+    let pct     = 0
+    let inProfit = false
+
+    if (total > 0) {
+      pct      = isLong
+        ? (d.price_raw - entry) / total * 100
+        : (entry - d.price_raw) / total * 100
+      inProfit = pct > 0
+      pct      = Math.max(-100, Math.min(100, Math.round(pct)))
+    }
+
     const fillEl = card ? card.querySelector('[data-prog-fill]') : null
     if (fillEl) {
       fillEl.style.width      = Math.abs(pct) / 2 + '%'
@@ -157,24 +189,4 @@ function applyPriceUpdate(d) {
     const ladderNow = card ? card.querySelector('.ladder-now span:nth-child(2)') : null
     if (ladderNow) ladderNow.textContent = d.price
   }
-}
-
-
-function _calcProgressPct(priceRaw, trade) {
-  const clean  = s => parseFloat(String(s || '0').replace(/[$,]/g, '')) || 0
-  const entry  = clean(trade.entry_price)
-  const sl     = clean(trade.sl_price)
-  const isLong = trade.direction === 'LONG'
-
-  const total = Math.abs(entry - sl)
-  if (total === 0) return { pct: 0, inProfit: false }
-
-  const diff = isLong
-    ? (priceRaw - entry) / total * 100
-    : (entry - priceRaw) / total * 100
-
-  const inProfit = diff > 0
-  const clamped  = Math.max(-100, Math.min(100, Math.round(diff)))
-
-  return { pct: clamped, inProfit }
 }

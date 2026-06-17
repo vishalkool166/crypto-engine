@@ -194,211 +194,6 @@ def _get_live_upnl(coin: str) -> float | None:
     return None
 
 
-def build_ladder(trade, current: float) -> list:
-    entry   = trade.entry_price
-    sl      = trade.sl_price
-    tp1     = trade.tp1_price
-    tp2     = trade.tp2_price
-    is_long = trade.direction == "LONG"
-    tp1_hit = detect_tp1_hit(trade)
-
-    def dist_pct(a, b) -> str:
-        if not a or not b or b == 0:
-            return ""
-        pct  = (a - b) / b * 100
-        sign = "+" if pct >= 0 else ""
-        return f"{sign}{pct:.2f}%"
-
-    levels = []
-
-    levels.append({
-        "pos":         tp2,
-        "cls":         "tp2",
-        "label":       "TP2",
-        "price":       fmt_price(tp2),
-        "dist":        dist_pct(tp2, current),
-        "color":       C["green_dark"],
-        "badge":       "🎯 +2.5R",
-        "badge_style": f"background:{C['green_bg']};color:{C['green_dark']}",
-        "is_current":  False,
-        "is_hit":      False
-    })
-
-    tp1_color = C["muted"] if tp1_hit else C["green_dark"]
-    levels.append({
-        "pos":         tp1,
-        "cls":         "tp1",
-        "label":       "TP1",
-        "price":       fmt_price(tp1),
-        "dist":        dist_pct(tp1, current),
-        "color":       tp1_color,
-        "badge":       "✅ HIT" if tp1_hit else "🎯 +1.5R",
-        "badge_style": (
-            f"background:rgba(110,110,115,0.1);color:{C['muted']}"
-            if tp1_hit else
-            f"background:{C['green_bg']};color:{C['green_dark']}"
-        ),
-        "is_current":  False,
-        "is_hit":      tp1_hit
-    })
-
-    levels.append({
-        "pos":         current,
-        "cls":         "current",
-        "label":       "NOW",
-        "price":       fmt_price(current),
-        "dist":        "",
-        "color":       C["blue"],
-        "badge":       "📍 LIVE",
-        "badge_style": f"background:{C['blue_bg']};color:{C['blue']}",
-        "is_current":  True,
-        "is_hit":      False
-    })
-
-    levels.append({
-        "pos":         entry,
-        "cls":         "entry",
-        "label":       "ENTRY",
-        "price":       fmt_price(entry),
-        "dist":        dist_pct(entry, current),
-        "color":       C["orange"],
-        "badge":       "✅ FILLED",
-        "badge_style": f"background:{C['orange_bg']};color:{C['orange']}",
-        "is_current":  False,
-        "is_hit":      False
-    })
-
-    sl_label = "BE"        if tp1_hit else "SL"
-    sl_badge = "🔒 B/E"    if tp1_hit else "🛑 STOP"
-    sl_color = C["orange"] if tp1_hit else C["red_dark"]
-    sl_bg    = C["orange_bg"] if tp1_hit else C["red_bg"]
-
-    levels.append({
-        "pos":         sl,
-        "cls":         "sl",
-        "label":       sl_label,
-        "price":       fmt_price(sl),
-        "dist":        dist_pct(sl, current),
-        "color":       sl_color,
-        "badge":       sl_badge,
-        "badge_style": f"background:{sl_bg};color:{sl_color}",
-        "is_current":  False,
-        "is_hit":      False
-    })
-
-    levels.sort(key=lambda x: x["pos"] or 0, reverse=is_long)
-    return levels
-
-
-def build_progress(trade, current: float) -> dict:
-    entry   = trade.entry_price
-    sl      = trade.sl_price
-    tp1     = trade.tp1_price
-    tp2     = trade.tp2_price
-    is_long = trade.direction == "LONG"
-    tp1_hit = detect_tp1_hit(trade)
-
-    tp2_hit = False
-    if tp2 and current:
-        tp2_hit = (current >= tp2 if is_long else current <= tp2)
-
-    if tp2_hit:
-        return {
-            "pct":         100,
-            "color":       C["green"],
-            "label":       "🏆 TP2 Hit — Full Win!",
-            "left_label":  fmt_price(entry),
-            "mid_label":   "TP1 ✅",
-            "right_label": fmt_price(tp2) + " ✅",
-            "phase":       3,
-            "phase_label": "Phase 3 — Complete",
-            "tp1_hit":     True,
-            "tp2_hit":     True
-        }
-
-    if tp1_hit:
-        total = abs(tp2 - entry) if tp2 and entry else 0
-        if total == 0:
-            pct = 0
-        elif is_long:
-            pct = (current - entry) / total * 100
-        else:
-            pct = (entry - current) / total * 100
-        pct       = max(0, min(100, pct))
-        remaining = abs(tp2 - current) if tp2 and current else 0
-        label     = (
-            f"{'📈' if is_long else '📉'} {pct:.0f}% to TP2 — "
-            f"Risk Free ✅ ({fmt_price(remaining)} remaining)"
-        )
-        return {
-            "pct":         round(pct),
-            "color":       C["green"],
-            "label":       label,
-            "left_label":  f"BE: {fmt_price(entry)}",
-            "mid_label":   "TP1 ✅",
-            "right_label": f"TP2: {fmt_price(tp2)}",
-            "phase":       2,
-            "phase_label": "Phase 2 — Risk Free",
-            "tp1_hit":     True,
-            "tp2_hit":     False
-        }
-
-    total = abs(entry - sl) if entry and sl else 0
-    if total == 0:
-        pct = 0
-    elif is_long:
-        pct = (current - entry) / total * 100  # positive = right of center
-    else:
-        pct = (entry - current) / total * 100
-
-    in_profit = pct > 0
-    pct = max(-100, min(100, pct))
-
-    if is_long:
-        if tp1 and current >= tp1:
-            label = "🎯 TP1 Reached!"
-        elif entry and current > entry:
-            rng   = (tp1 - entry) if tp1 and entry else 1
-            inner = (current - entry) / rng * 100 if rng > 0 else 0
-            away  = fmt_price(tp1 - current) if tp1 else "--"
-            label = f"📈 In profit — {inner:.0f}% to TP1 ({away} away)"
-        elif entry and current == entry:
-            label = "⚖️ At entry — breakeven"
-        else:
-            rng   = (entry - sl) if entry and sl else 1
-            inner = (entry - current) / rng * 100 if rng > 0 else 0
-            above = fmt_price(current - sl) if sl else "--"
-            label = f"📉 {inner:.0f}% toward SL ({above} above SL)"
-    else:
-        if tp1 and current <= tp1:
-            label = "🎯 TP1 Reached!"
-        elif entry and current < entry:
-            rng   = (entry - tp1) if entry and tp1 else 1
-            inner = (entry - current) / rng * 100 if rng > 0 else 0
-            away  = fmt_price(current - tp1) if tp1 else "--"
-            label = f"📉 In profit — {inner:.0f}% to TP1 ({away} away)"
-        elif entry and current == entry:
-            label = "⚖️ At entry — breakeven"
-        else:
-            rng   = (sl - entry) if sl and entry else 1
-            inner = (current - entry) / rng * 100 if rng > 0 else 0
-            below = fmt_price(sl - current) if sl else "--"
-            label = f"📈 {inner:.0f}% toward SL ({below} below SL)"
-
-    return {
-        "pct":         round(pct),
-        "color":       C["green"] if in_profit else C["red"],
-        "label":       label,
-        "left_label":  fmt_price(sl),
-        "mid_label":   fmt_price(entry),
-        "right_label": fmt_price(tp1),
-        "phase":       1,
-        "phase_label": "Phase 1 — To TP1",
-        "tp1_hit":     False,
-        "tp2_hit":     False,
-    }
-
-
 def build_trade_data(trade, current: float) -> dict:
     is_long  = trade.direction == "LONG"
     tp1_hit  = detect_tp1_hit(trade)
@@ -441,10 +236,16 @@ def build_trade_data(trade, current: float) -> dict:
     dir_color  = C["green_dark"] if is_long else C["red_dark"]
     dir_border = C["green"]      if is_long else C["red"]
 
-    header_bg = ""
+    tp2_hit = False
+    if trade.tp2_price and current:
+        tp2_hit = (current >= trade.tp2_price if is_long else current <= trade.tp2_price)
 
-    prog        = build_progress(trade, current)
-    phase       = prog["phase"]
+    phase = 1
+    if tp2_hit:
+        phase = 3
+    elif tp1_hit:
+        phase = 2
+
     phase_badge = (
         "🏆 TP2 Phase" if phase == 3 else
         "⚡ Risk Free" if phase == 2 else
@@ -471,6 +272,159 @@ def build_trade_data(trade, current: float) -> dict:
 
     pnl_source = "binance" if live_upnl is not None else "calculated"
 
+    entry  = trade.entry_price
+    sl     = trade.sl_price
+    tp1    = trade.tp1_price
+    tp2    = trade.tp2_price
+
+    total_phase1 = abs(entry - sl) if entry and sl else 0
+    if total_phase1 == 0:
+        progress_pct = 0
+    elif is_long:
+        progress_pct = (current - entry) / total_phase1 * 100
+    else:
+        progress_pct = (entry - current) / total_phase1 * 100
+
+    progress_pct   = max(-100, min(100, progress_pct))
+    progress_in_profit = progress_pct > 0
+
+    if tp2_hit:
+        progress_label = "🏆 TP2 Hit — Full Win!"
+        progress_phase_label = "Phase 3 — Complete"
+    elif tp1_hit:
+        total_p2 = abs(tp2 - entry) if tp2 and entry else 0
+        p2_pct   = 0
+        if total_p2 > 0:
+            p2_pct = ((current - entry) / total_p2 * 100) if is_long else ((entry - current) / total_p2 * 100)
+        p2_pct = max(0, min(100, p2_pct))
+        remaining = abs(tp2 - current) if tp2 and current else 0
+        progress_pct = p2_pct
+        progress_in_profit = True
+        progress_label = f"{'📈' if is_long else '📉'} {p2_pct:.0f}% to TP2 — Risk Free ✅ ({fmt_price(remaining)} remaining)"
+        progress_phase_label = "Phase 2 — Risk Free"
+    else:
+        if is_long:
+            if tp1 and current >= tp1:
+                progress_label = "🎯 TP1 Reached!"
+            elif entry and current > entry:
+                rng   = (tp1 - entry) if tp1 and entry else 1
+                inner = (current - entry) / rng * 100 if rng > 0 else 0
+                away  = fmt_price(tp1 - current) if tp1 else "--"
+                progress_label = f"📈 In profit — {inner:.0f}% to TP1 ({away} away)"
+            elif entry and current == entry:
+                progress_label = "⚖️ At entry — breakeven"
+            else:
+                rng   = (entry - sl) if entry and sl else 1
+                inner = (entry - current) / rng * 100 if rng > 0 else 0
+                above = fmt_price(current - sl) if sl else "--"
+                progress_label = f"📉 {inner:.0f}% toward SL ({above} above SL)"
+        else:
+            if tp1 and current <= tp1:
+                progress_label = "🎯 TP1 Reached!"
+            elif entry and current < entry:
+                rng   = (entry - tp1) if entry and tp1 else 1
+                inner = (entry - current) / rng * 100 if rng > 0 else 0
+                away  = fmt_price(current - tp1) if tp1 else "--"
+                progress_label = f"📉 In profit — {inner:.0f}% to TP1 ({away} away)"
+            elif entry and current == entry:
+                progress_label = "⚖️ At entry — breakeven"
+            else:
+                rng   = (sl - entry) if sl and entry else 1
+                inner = (current - entry) / rng * 100 if rng > 0 else 0
+                below = fmt_price(sl - current) if sl else "--"
+                progress_label = f"📈 {inner:.0f}% toward SL ({below} below SL)"
+        progress_phase_label = "Phase 1 — To TP1"
+
+    if tp2_hit:
+        progress_left  = fmt_price(entry)
+        progress_mid   = "TP1 ✅"
+        progress_right = fmt_price(tp2) + " ✅"
+    elif tp1_hit:
+        progress_left  = f"BE: {fmt_price(entry)}"
+        progress_mid   = "TP1 ✅"
+        progress_right = f"TP2: {fmt_price(tp2)}"
+    else:
+        progress_left  = fmt_price(sl)
+        progress_mid   = fmt_price(entry)
+        progress_right = fmt_price(tp1)
+
+    ladder = []
+
+    ladder.append({
+        "pos":         tp2,
+        "cls":         "tp2",
+        "label":       "TP2",
+        "price":       fmt_price(tp2),
+        "dist":        _dist_pct(tp2, current),
+        "color":       C["green_dark"],
+        "badge":       "🎯 +2.5R",
+        "badge_style": f"background:{C['green_bg']};color:{C['green_dark']}",
+        "is_current":  False,
+        "is_hit":      False
+    })
+
+    tp1_color = C["muted"] if tp1_hit else C["green_dark"]
+    ladder.append({
+        "pos":         tp1,
+        "cls":         "tp1",
+        "label":       "TP1",
+        "price":       fmt_price(tp1),
+        "dist":        _dist_pct(tp1, current),
+        "color":       tp1_color,
+        "badge":       "✅ HIT" if tp1_hit else "🎯 +1.5R",
+        "badge_style": (
+            f"background:rgba(110,110,115,0.1);color:{C['muted']}"
+            if tp1_hit else
+            f"background:{C['green_bg']};color:{C['green_dark']}"
+        ),
+        "is_current":  False,
+        "is_hit":      tp1_hit
+    })
+
+    ladder.append({
+        "pos":         current,
+        "cls":         "current",
+        "label":       "NOW",
+        "price":       fmt_price(current),
+        "dist":        "",
+        "color":       C["blue"],
+        "badge":       "📍 LIVE",
+        "badge_style": f"background:{C['blue_bg']};color:{C['blue']}",
+        "is_current":  True,
+        "is_hit":      False
+    })
+
+    ladder.append({
+        "pos":         entry,
+        "cls":         "entry",
+        "label":       "ENTRY",
+        "price":       fmt_price(entry),
+        "dist":        _dist_pct(entry, current),
+        "color":       C["orange"],
+        "badge":       "✅ FILLED",
+        "badge_style": f"background:{C['orange_bg']};color:{C['orange']}",
+        "is_current":  False,
+        "is_hit":      False
+    })
+
+    sl_badge = "🔒 B/E"    if tp1_hit else "🛑 STOP"
+    sl_bg    = C["orange_bg"] if tp1_hit else C["red_bg"]
+
+    ladder.append({
+        "pos":         sl,
+        "cls":         "sl",
+        "label":       sl_label,
+        "price":       fmt_price(sl),
+        "dist":        _dist_pct(sl, current),
+        "color":       sl_color,
+        "badge":       sl_badge,
+        "badge_style": f"background:{sl_bg};color:{sl_color}",
+        "is_current":  False,
+        "is_hit":      False
+    })
+
+    ladder.sort(key=lambda x: x["pos"] or 0, reverse=is_long)
+
     return {
         "id":               trade.id,
         "coin":             f"{trade.coin}USDT",
@@ -478,7 +432,6 @@ def build_trade_data(trade, current: float) -> dict:
         "dir_emoji":        "📈" if is_long else "📉",
         "dir_color":        dir_color,
         "dir_border":       dir_border,
-        "header_bg":        header_bg,
         "grade":            trade.grade,
         "grade_color":      grade_color(trade.grade),
         "state":            trade.state,
@@ -488,18 +441,24 @@ def build_trade_data(trade, current: float) -> dict:
         "phase_color":      phase_color,
         "tp1_hit":          tp1_hit,
         "pnl":              fmt_pnl(upnl),
+        "pnl_raw":          upnl,
         "pnl_color":        pnl_color(upnl),
         "pnl_pct":          fmt_pct(pnl_pct) + " of capital",
         "pnl_positive":     upnl >= 0,
         "pnl_source":       pnl_source,
         "current_price":    fmt_price(current),
+        "current_price_raw": current,
         "current_color":    current_color,
-        "entry_price":      fmt_price(trade.entry_price),
-        "sl_price":         fmt_price(trade.sl_price),
+        "entry_price":      fmt_price(entry),
+        "entry_price_raw":  entry,
+        "sl_price":         fmt_price(sl),
+        "sl_price_raw":     sl,
         "sl_label":         sl_label,
         "sl_color":         sl_color,
-        "tp1_price":        fmt_price(trade.tp1_price),
-        "tp2_price":        fmt_price(trade.tp2_price),
+        "tp1_price":        fmt_price(tp1),
+        "tp1_price_raw":    tp1,
+        "tp2_price":        fmt_price(tp2),
+        "tp2_price_raw":    tp2,
         "move_pct":         fmt_pct(move_pct),
         "move_color":       pnl_color(move_pct),
         "dist_to_sl":       f"{fmt_price(dist_sl)} ({dist_sl_p:.2f}%)",
@@ -511,8 +470,20 @@ def build_trade_data(trade, current: float) -> dict:
         "margin_used":      f"${trade.margin_used:.2f}" if trade.margin_used else "--",
         "leverage":         f"{trade.leverage}x",
         "rr_ratio":         f"1:{rr}",
-        "progress":         prog,
-        "ladder":           build_ladder(trade, current),
+        "progress": {
+            "pct":          round(progress_pct),
+            "color":        C["green"] if progress_in_profit else C["red"],
+            "label":        progress_label,
+            "left_label":   progress_left,
+            "mid_label":    progress_mid,
+            "right_label":  progress_right,
+            "phase":        phase,
+            "phase_label":  progress_phase_label,
+            "tp1_hit":      tp1_hit,
+            "tp2_hit":      tp2_hit,
+            "in_profit":    progress_in_profit,
+        },
+        "ladder":           ladder,
         "entry_order_id":   trade.entry_order_id,
         "sl_order_id":      trade.sl_order_id,
         "tp1_order_id":     trade.tp1_order_id,
@@ -531,6 +502,14 @@ def build_trade_data(trade, current: float) -> dict:
         "tier":             tier["tier"],
         "balance":          f"${tier['balance']:.2f}"
     }
+
+
+def _dist_pct(a, b) -> str:
+    if not a or not b or b == 0:
+        return ""
+    pct  = (a - b) / b * 100
+    sign = "+" if pct >= 0 else ""
+    return f"{sign}{pct:.2f}%"
 
 
 def build_all_trades_data(current_prices: dict = None) -> list:

@@ -21,6 +21,7 @@ from trade.manager    import trade_manager
 from trade.risk       import risk_guard
 from alerts.telegram  import send, register_webhook, handle_webhook
 from config           import cfg, _bootstrap_secrets
+from events           import on_event, emit
 import runtime_state  as rs
 
 logging.basicConfig(
@@ -96,20 +97,31 @@ async def broadcast_price(coin: str, price: float):
     _ws_clients.difference_update(dead)
 
 
-async def push_dashboard():
+async def push_event(event_type: str, data: dict = None):
     global _last_dashboard_data, _last_payload_hash
     if not _dashboard_clients:
         return
     try:
-        data         = await build_dashboard_payload()
-        payload_str  = json.dumps(data)
+        if event_type == "ping":
+            payload = json.dumps({"type": "ping"})
+            dead = set()
+            for ws in _dashboard_clients:
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    dead.add(ws)
+            _dashboard_clients.difference_update(dead)
+            return
+
+        full_data    = await build_dashboard_payload()
+        payload_str  = json.dumps(full_data)
         payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
 
         if payload_hash == _last_payload_hash:
             return
 
         _last_payload_hash   = payload_hash
-        _last_dashboard_data = data
+        _last_dashboard_data = full_data
 
         dead = set()
         for ws in _dashboard_clients:
@@ -120,13 +132,13 @@ async def push_dashboard():
         _dashboard_clients.difference_update(dead)
 
     except Exception as e:
-        log.error(f"Dashboard push error: {e}")
+        log.error(f"push_event error: {e}")
 
 
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(3)
-        await push_dashboard()
+        await asyncio.sleep(30)
+        await emit("ping")
 
 
 @asynccontextmanager
@@ -135,6 +147,8 @@ async def lifespan(app: FastAPI):
 
     rs.load()
     _bootstrap_secrets()
+
+    on_event(push_event)
 
     from auth import setup_status
     status = setup_status()
@@ -189,7 +203,6 @@ async def lifespan(app: FastAPI):
     else:
         log.info("No active trades in DB — checking Binance for open positions")
 
-    # Sync any untracked Binance positions on startup
     await trade_manager.sync_binance_positions()
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())

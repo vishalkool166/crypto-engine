@@ -24,9 +24,9 @@ import runtime_state as rs
 
 log = logging.getLogger(__name__)
 
-CACHE_TTL       = 1500
-TRADE_MAX_AGE   = 300
-ENTRY_PRICE_TOL = 0.003
+CACHE_TTL           = 1500
+TRADE_MAX_AGE       = 300
+ENTRY_PRICE_TOL     = 0.003
 MAX_ENTRY_DEVIATION = 0.01
 
 _scan_running   = False
@@ -482,6 +482,10 @@ async def scan_all_coins() -> list:
             _check_heartbeat()
 
         await send_scan_summary(results)
+
+        from events import emit
+        asyncio.create_task(emit("scan_complete"))
+
         log.info(f"Scan complete — {len(results)} coins")
 
     finally:

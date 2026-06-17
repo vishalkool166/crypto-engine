@@ -128,7 +128,6 @@ function _createTradeCard(t) {
 }
 
 function _updateTradeCard(el, t) {
-  el.style.background = t.header_bg || ''
   el.innerHTML = `
     <div style="padding:16px 20px;border-bottom:1px solid rgba(0,0,0,0.06)">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -160,7 +159,7 @@ function _updateTradeCard(el, t) {
       <div class="progress-track" style="height:8px;position:relative;overflow:visible">
         <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(0,0,0,0.2)"></div>
         <div data-prog-fill style="position:absolute;height:100%;border-radius:100px;
-          ${t.progress?.pct > 0
+          ${(t.progress?.pct || 0) > 0
             ? `left:50%;right:auto;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
             : `right:50%;left:auto;width:${Math.abs(t.progress?.pct || 0) / 2}%;background:${t.progress?.color}`
           }">
@@ -535,16 +534,16 @@ function showTradeDetail(h) {
         <div class="section-label" style="margin-bottom:4px">Closed</div>
         <div style="font-size:12px;color:#1d1d1f;font-weight:500">${fmtDate(h.closed_at)}</div>
       </div>
-    </div>
+        </div>
 
     ${(h.balance_at_open || h.tier_at_open) ? `
     <div style="background:rgba(0,113,227,0.04);border:1px solid rgba(0,113,227,0.12);border-radius:10px;padding:12px">
       <div class="section-label" style="margin-bottom:6px">Account at Open</div>
-          <div style="font-size:11px;color:#6e6e73;line-height:2">
-            ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
-            ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
-          </div>
-        </div>` : ''}
+      <div style="font-size:11px;color:#6e6e73;line-height:2">
+        ${h.balance_at_open ? `<div>Balance: <strong style="color:#1d1d1f">$${parseFloat(h.balance_at_open).toFixed(2)}</strong></div>` : ''}
+        ${h.tier_at_open    ? `<div>Tier: <strong style="color:#1d1d1f">${h.tier_at_open}</strong></div>` : ''}
+      </div>
+    </div>` : ''}
   `
 
   overlay.classList.remove('hidden')

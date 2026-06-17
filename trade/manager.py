@@ -100,7 +100,6 @@ class TradeManager:
                     continue
 
                 symbol = pos.get("symbol", "")
-                # Fix: single clean extraction
                 if "/" in symbol:
                     coin = symbol.split("/")[0]
                 elif symbol.endswith("USDT"):
@@ -111,7 +110,7 @@ class TradeManager:
                 side      = pos.get("side", "")
                 direction = "LONG" if side == "long" else "SHORT"
                 entry     = float(pos.get("entryPrice", 0) or 0)
-                tier      = get_current_tier()  # Fix: define tier before use
+                tier      = get_current_tier()
                 actual_leverage = int(float(pos.get("leverage", tier["leverage"]) or tier["leverage"]))
                 size      = abs(float(pos.get("notional", 0) or contracts * entry))
 
@@ -128,7 +127,6 @@ class TradeManager:
                 balance_now = rs.get_balance_cache().get("balance", cfg.CAPITAL)
 
                 with get_session() as db:
-                    # Check if already in DB as active
                     existing = db.query(Trade).filter(
                         Trade.coin      == coin,
                         Trade.direction == direction,
@@ -215,8 +213,8 @@ class TradeManager:
             tier = get_current_tier()
             return {"success": False, "reason": f"Max {tier['max_trades']} concurrent trades reached"}
 
-        coin  = signal.get("coin", "")
-        tier  = get_current_tier()
+        coin = signal.get("coin", "")
+        tier = get_current_tier()
 
         current_price = get_current_price(coin)
         if current_price and signal.get("entry"):
@@ -335,6 +333,9 @@ class TradeManager:
 
         await self._send_entry_alert(trade, signal, sizing)
 
+        from events import emit
+        asyncio.create_task(emit("trade_opened"))
+
         log.info(f"Trade opened: {coin} {direction} @ {signal['entry']} Grade:{signal['grade']}")
         return {"success": True, "trade_id": trade.id, "coin": coin, "direction": direction}
 
@@ -428,6 +429,9 @@ class TradeManager:
                 await send(format_health_alert(health, trade_obj.coin))
                 log.info(f"Health: {prev_state} → {health['state']} for {trade_obj.coin}")
 
+                from events import emit
+                asyncio.create_task(emit("health_changed"))
+
         except Exception as e:
             log.debug(f"Health check error: {e}")
 
@@ -476,6 +480,9 @@ class TradeManager:
             f"30% running to TP2: `{trade.tp2_price}`\n\n"
             f"Risk-free trade ✅"
         )
+
+        from events import emit
+        asyncio.create_task(emit("trade_opened"))
 
     async def _close_trade(self, trade: Trade, exit_price: float,
                            outcome: str, close_reason: str, phase: int = 1):
@@ -529,6 +536,9 @@ class TradeManager:
 
         import runtime_state as rs
         rs.set_tier_config(get_current_tier())
+
+        from events import emit
+        asyncio.create_task(emit("trade_closed"))
 
         log.info(f"Trade closed: {trade.coin} {outcome} PnL:${pnl} Reason:{close_reason}")
 
