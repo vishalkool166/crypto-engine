@@ -37,9 +37,7 @@ function startPriceSocket() {
   _priceSocket.onclose = () => {
     _cleanupPrice()
     setWsStatus(false)
-    if (S.data?.state !== 'idle') {
-      _priceReconnect = setTimeout(startPriceSocket, 3000)
-    }
+    _priceReconnect = setTimeout(startPriceSocket, 3000)
   }
 
   _priceSocket.onerror = () => {
@@ -73,6 +71,7 @@ function startDashboardSocket() {
   _dashSocket = new WebSocket(WS_DASHBOARD_URL)
 
   _dashSocket.onopen = () => {
+    setWsStatus(true)
     console.log('Dashboard WS connected')
   }
 
@@ -80,12 +79,21 @@ function startDashboardSocket() {
     try {
       const d = JSON.parse(event.data)
 
+      // instant price tick — update UI directly without full re-render
+      if (d.type === 'price') {
+        applyPriceUpdate(d)
+        return
+      }
+
+      // full dashboard payload
       if (d.type === 'dashboard') {
         applyAndRender(d)
         return
       }
 
-      if (d.type === 'ping') {
+      // full payload without type field (legacy)
+      if (d.state !== undefined) {
+        applyAndRender(d)
         return
       }
 
@@ -106,6 +114,7 @@ function startDashboardSocket() {
 
   _dashSocket.onclose = () => {
     _cleanupDash()
+    setWsStatus(false)
     _dashReconnect = setTimeout(startDashboardSocket, 3000)
   }
 
@@ -131,12 +140,10 @@ function _cleanupDash() {
 }
 
 
+// always start price socket regardless of state
+// dashboard WS now also receives price ticks directly
 function syncConnectionMode(state) {
-  if (state !== 'idle') {
-    startPriceSocket()
-  } else {
-    stopPriceSocket()
-  }
+  startPriceSocket()
 }
 
 

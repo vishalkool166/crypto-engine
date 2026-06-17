@@ -44,7 +44,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 async def broadcast_price(coin: str, price: float):
-    if not _ws_clients:
+    if not _ws_clients and not _dashboard_clients:
         return
 
     active_trades = state_manager.active_trades
@@ -96,28 +96,25 @@ async def broadcast_price(coin: str, price: float):
             dead.add(ws)
     _ws_clients.difference_update(dead)
 
+    dead = set()
+    for ws in _dashboard_clients:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.add(ws)
+    _dashboard_clients.difference_update(dead)
+
 
 async def push_event(event_type: str, data: dict = None):
     global _last_dashboard_data, _last_payload_hash
     if not _dashboard_clients:
         return
     try:
-        if event_type == "ping":
-            payload = json.dumps({"type": "ping"})
-            dead = set()
-            for ws in _dashboard_clients:
-                try:
-                    await ws.send_text(payload)
-                except Exception:
-                    dead.add(ws)
-            _dashboard_clients.difference_update(dead)
-            return
-
         full_data    = await build_dashboard_payload()
         payload_str  = json.dumps(full_data)
         payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
 
-        if payload_hash == _last_payload_hash:
+        if payload_hash == _last_payload_hash and event_type == "ping":
             return
 
         _last_payload_hash   = payload_hash
@@ -137,8 +134,25 @@ async def push_event(event_type: str, data: dict = None):
 
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(30)
-        await emit("ping")
+        await asyncio.sleep(5)
+        if _dashboard_clients:
+            await push_event("ping")
+
+
+async def _ensure_price_feeds():
+    """Watchdog — restarts price feed for any active trade that lost its stream."""
+    while True:
+        await asyncio.sleep(10)
+        try:
+            if state_manager.is_idle:
+                continue
+            for trade in state_manager.active_trades.values():
+                task = price_feed._tasks.get(trade.coin)
+                if not task or task.done():
+                    log.warning(f"Price feed dead for {trade.coin} — restarting")
+                    await price_feed.start(trade.coin)
+        except Exception as e:
+            log.error(f"Price feed watchdog error: {e}")
 
 
 @asynccontextmanager
@@ -206,6 +220,7 @@ async def lifespan(app: FastAPI):
     await trade_manager.sync_binance_positions()
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
+    asyncio.create_task(_ensure_price_feeds())
 
     start_scheduler()
     await register_webhook()
