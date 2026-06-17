@@ -265,15 +265,15 @@ class StateManager:
         import trade.risk as risk_module
         risk_module._cap_warning_sent = False
         today = str(datetime.now(timezone.utc).date())
-        from trade.risk import get_current_tier
+        from trade.risk import get_current_tier, get_tier_config
         tier = get_current_tier()
         try:
             with get_session() as db:
                 risk = db.query(DailyRisk).filter(DailyRisk.date == today).first()
                 if not risk:
                     risk = DailyRisk(date=today, trades_taken=0,
-                                     total_pnl=0.0, total_loss=0.0,
-                                     cap_hit=False, tier=tier["tier"])
+                                    total_pnl=0.0, total_loss=0.0,
+                                    cap_hit=False, tier=tier["tier"])
                     db.add(risk)
                 risk.total_pnl += pnl
                 if pnl < 0:
@@ -285,6 +285,17 @@ class StateManager:
                         log.warning(f"Daily loss cap hit: ${abs(risk.total_loss):.4f}")
         except Exception as e:
             log.error(f"record_trade_close error: {e}")
+
+        if cfg.PAPER_TRADING:
+            import runtime_state as rs
+            current = rs.get_balance_cache().get("balance", cfg.CAPITAL)
+            new_balance = current + pnl
+            if new_balance > 0:
+                rs.set_paper_balance(new_balance)
+                rs.set_balance_cache(new_balance)
+                new_tier = get_tier_config(new_balance)
+                rs.set_tier_config(new_tier)
+                cfg.CAPITAL = new_balance
 
     def _update_state(self, trade: Trade, state: str):
         try:

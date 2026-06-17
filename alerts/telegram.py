@@ -737,6 +737,7 @@ async def _cmd_resume_confirmed():
 async def _cmd_golive_confirmed():
     from auth import audit
     from data.fetcher import get_live_balance
+    from trade.risk import get_tier_config
 
     balance = await get_live_balance()
     if balance < cfg.MIN_BALANCE_LIVE:
@@ -748,10 +749,20 @@ async def _cmd_golive_confirmed():
         await send("❌ Binance API keys not configured.")
         return
 
+    current_paper = rs.get_balance_cache().get("balance", cfg.CAPITAL)
+    rs.set_paper_balance(current_paper)
+
     rs.set_trading_mode("live")
     cfg.TRADING_MODE  = "live"
     cfg.PAPER_TRADING = False
+    rs.set_balance_cache(balance)
+    tier = get_tier_config(balance)
+    rs.set_tier_config(tier)
+    cfg.CAPITAL = balance
     audit("golive", "telegram", f"balance:{balance}", success=True)
+
+    from events import emit
+    await emit("mode_changed")
 
     await send(
         f"🔴 *LIVE TRADING ENABLED*\n\n"
@@ -763,11 +774,28 @@ async def _cmd_golive_confirmed():
 
 async def _cmd_gopaper_confirmed():
     from auth import audit
+    from trade.risk import get_tier_config
+
     rs.set_trading_mode("paper")
     cfg.TRADING_MODE  = "paper"
     cfg.PAPER_TRADING = True
+
+    saved_paper = rs.get_paper_balance()
+    paper_balance = saved_paper if saved_paper > 0 else cfg.CAPITAL
+    rs.set_balance_cache(paper_balance)
+    tier = get_tier_config(paper_balance)
+    rs.set_tier_config(tier)
+    cfg.CAPITAL = paper_balance
     audit("gopaper", "telegram", success=True)
-    await send("🔵 *PAPER TRADING ENABLED*\n\nNo real orders will be placed.")
+
+    from events import emit
+    await emit("mode_changed")
+
+    await send(
+        f"🔵 *PAPER TRADING ENABLED*\n\n"
+        f"Balance: `${paper_balance:.2f}`\n"
+        f"No real orders will be placed."
+    )
 
 
 async def _cmd_btc():

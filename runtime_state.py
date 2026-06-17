@@ -17,6 +17,7 @@ _defaults = {
     "totp_pending":    {},
     "crash_detected":  False,
     "last_shutdown":   "clean",
+    "paper_balance":   0.0,
 }
 
 _state: dict = {}

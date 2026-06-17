@@ -48,13 +48,22 @@ async def job_refresh_balance():
         import runtime_state as rs
         from config import cfg
 
-        balance = await get_live_balance()
-        if balance > 0:
+        if cfg.PAPER_TRADING:
+            saved = rs.get_paper_balance()
+            balance = saved if saved > 0 else cfg.CAPITAL
             rs.set_balance_cache(balance)
             tier = get_tier_config(balance)
             rs.set_tier_config(tier)
             cfg.CAPITAL = balance
-            log.info(f"Balance refreshed: ${balance:.2f} Tier:{tier['tier']}")
+            log.info(f"Paper balance: ${balance:.2f} Tier:{tier['tier']}")
+        else:
+            balance = await get_live_balance()
+            if balance > 0:
+                rs.set_balance_cache(balance)
+                tier = get_tier_config(balance)
+                rs.set_tier_config(tier)
+                cfg.CAPITAL = balance
+                log.info(f"Balance refreshed: ${balance:.2f} Tier:{tier['tier']}")
     except Exception as e:
         log.error(f"Balance refresh error: {e}")
 
