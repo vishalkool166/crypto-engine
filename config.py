@@ -52,7 +52,7 @@ class Config:
 
     MIN_GRADE_TO_TRADE = ["A+", "A"]
 
-    DAILY_LOSS_CAP_PCT = 0.20
+    DAILY_LOSS_CAP_PCT = 0.30
     MAX_TRADES_PER_DAY = 3
 
     GRADE_APLUS = 85
@@ -91,13 +91,13 @@ class Config:
     REQUIRE_CANDLE_CLOSE          = True
 
     BALANCE_TIERS = [
-        {"min": 0,    "max": 50,   "risk_pct": 0.10, "max_trades": 2, "leverage": 10},
-        {"min": 50,   "max": 200,  "risk_pct": 0.08, "max_trades": 2, "leverage": 10},
-        {"min": 200,  "max": 1000, "risk_pct": 0.10, "max_trades": 3, "leverage": 15},
+        {"min": 0,    "max": 50,   "risk_pct": 0.30, "max_trades": 2, "leverage": 10},
+        {"min": 50,   "max": 200,  "risk_pct": 0.30, "max_trades": 2, "leverage": 10},
+        {"min": 200,  "max": 1000, "risk_pct": 0.15, "max_trades": 3, "leverage": 15},
         {"min": 1000, "max": None, "risk_pct": 0.12, "max_trades": 3, "leverage": 20},
     ]
 
-    RISK_PCT_PER_TRADE = 0.10
+    RISK_PCT_PER_TRADE = 0.30
 
     @property
     def COINS(self) -> list:
