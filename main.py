@@ -51,7 +51,7 @@ async def broadcast_price(coin: str, price: float):
     if not active_trades:
         return
 
-    trade = next((t for t in active_trades.values() if t.coin == coin), None)
+    trade = next((t for t in active_trades.values() if t.coin == coin or t.coin == coin + "USDT"), None)
     if not trade:
         return
 
