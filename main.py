@@ -183,7 +183,11 @@ async def lifespan(app: FastAPI):
 
     from data.fetcher import get_live_balance
     from trade.risk import get_tier_config
-    balance = await get_live_balance()
+    if not cfg.PAPER_TRADING:
+        balance = await get_live_balance()
+    else:
+        balance = cfg.CAPITAL
+
     if balance > 0:
         rs.set_balance_cache(balance)
         tier = get_tier_config(balance)
