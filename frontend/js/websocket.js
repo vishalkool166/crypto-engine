@@ -12,6 +12,7 @@ let _dashReconnect   = null
 
 function startPriceSocket() {
   if (_priceSocket && (_priceSocket.readyState === WebSocket.CONNECTING || _priceSocket.readyState === WebSocket.OPEN)) return
+  _cleanupPrice()
 
   _priceSocket = new WebSocket(WS_PRICE_URL)
 
