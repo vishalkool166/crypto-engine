@@ -7,60 +7,44 @@ from config import cfg
 log = logging.getLogger(__name__)
 
 
-# ═══════════════════════════════════════════════════════
-# SAVE CANDLES
-# ═══════════════════════════════════════════════════════
 def save_candles(
     coin:      str,
     timeframe: str,
     df:        pd.DataFrame
 ):
-    """
-    Saves DataFrame of candles to DB.
-    Skips duplicates by timestamp.
-    """
     if df is None or df.empty:
         return
 
     db = SessionLocal()
     try:
-        # Get existing timestamps
-        existing = set(
-            row.timestamp for row in
-            db.query(Candle.timestamp).filter(
-                and_(
-                    Candle.coin      == coin,
-                    Candle.timeframe == timeframe
-                )
-            ).all()
-        )
-
         new_rows = []
         for ts, row in df.iterrows():
-            # Convert timestamp to unix ms
-            ts_ms = int(
-                pd.Timestamp(ts).timestamp() * 1000
-            )
-            if ts_ms in existing:
-                continue
-            new_rows.append(Candle(
-                coin      = coin,
-                timeframe = timeframe,
-                timestamp = ts_ms,
-                open      = float(row["open"]),
-                high      = float(row["high"]),
-                low       = float(row["low"]),
-                close     = float(row["close"]),
-                volume    = float(row["volume"])
-            ))
+            ts_ms = int(pd.Timestamp(ts).timestamp() * 1000)
+            new_rows.append({
+                "coin":      coin,
+                "timeframe": timeframe,
+                "timestamp": ts_ms,
+                "open":      float(row["open"]),
+                "high":      float(row["high"]),
+                "low":       float(row["low"]),
+                "close":     float(row["close"]),
+                "volume":    float(row["volume"])
+            })
 
-        if new_rows:
-            db.bulk_save_objects(new_rows)
-            db.commit()
-            log.info(
-                f"Saved {len(new_rows)} new candles: "
-                f"{coin} {timeframe}"
-            )
+        if not new_rows:
+            return
+
+        from sqlalchemy.dialects.sqlite import insert
+        stmt = insert(Candle).values(new_rows)
+        stmt = stmt.on_conflict_do_nothing(
+            index_elements=["coin", "timeframe", "timestamp"]
+        )
+        result = db.execute(stmt)
+        db.commit()
+
+        saved = result.rowcount
+        if saved > 0:
+            log.info(f"Saved {saved} new candles: {coin} {timeframe}")
 
     except Exception as e:
         log.error(f"Save candles error {coin} {timeframe}: {e}")
@@ -69,18 +53,11 @@ def save_candles(
         db.close()
 
 
-# ═══════════════════════════════════════════════════════
-# LOAD CANDLES
-# ═══════════════════════════════════════════════════════
 def load_candles(
     coin:      str,
     timeframe: str,
     limit:     int = 1000
 ) -> pd.DataFrame:
-    """
-    Loads candles from DB as DataFrame.
-    Returns None if not enough data.
-    """
     db = SessionLocal()
     try:
         rows = db.query(Candle).filter(
@@ -115,18 +92,10 @@ def load_candles(
         db.close()
 
 
-# ═══════════════════════════════════════════════════════
-# GET LAST TIMESTAMP
-# used for incremental fetch
-# ═══════════════════════════════════════════════════════
 def get_last_timestamp(
     coin:      str,
     timeframe: str
 ) -> int:
-    """
-    Returns last stored candle timestamp in unix ms.
-    Returns None if no data stored yet.
-    """
     db = SessionLocal()
     try:
         row = db.query(Candle).filter(
@@ -147,9 +116,6 @@ def get_last_timestamp(
         db.close()
 
 
-# ═══════════════════════════════════════════════════════
-# HAS ENOUGH DATA
-# ═══════════════════════════════════════════════════════
 def has_enough_data(
     coin:      str,
     timeframe: str,
@@ -171,9 +137,6 @@ def has_enough_data(
         db.close()
 
 
-# ═══════════════════════════════════════════════════════
-# GET CANDLE COUNT
-# ═══════════════════════════════════════════════════════
 def get_candle_count(
     coin:      str,
     timeframe: str
