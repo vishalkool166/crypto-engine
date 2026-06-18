@@ -51,9 +51,9 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
 
 
 def get_session(vol_ratio: float = 1.0) -> dict:
-    now     = datetime.now(timezone.utc)
-    hour    = now.hour + now.minute / 60
-    weekday = now.weekday()
+    now        = datetime.now(timezone.utc)
+    hour       = now.hour + now.minute / 60
+    weekday    = now.weekday()
     is_weekend = weekday >= 5
 
     london = 8  <= hour < 16
@@ -150,18 +150,18 @@ def check_correlation(coin: str) -> dict:
 
 
 def dynamic_risk_pct(score: float) -> float:
-    min_risk = 0.07
-    max_risk = 0.13
-    base     = 0.10
+    min_risk = 0.01
+    max_risk = 0.02
+    base     = 0.015
 
     if score >= 95:
         return max_risk
     if score >= 85:
         t = (score - 85) / 10
-        return round(base + t * (max_risk - base), 3)
+        return round(base + t * (max_risk - base), 4)
     if score >= 68:
         t = (score - 68) / 17
-        return round(min_risk + t * (base - min_risk), 3)
+        return round(min_risk + t * (base - min_risk), 4)
     return min_risk
 
 
@@ -209,8 +209,8 @@ def check_15m_entry(
     prev_high  = float(prev["high"])
     prev_low   = float(prev["low"])
 
-    pattern       = "None"
-    pattern_score = 0
+    pattern        = "None"
+    pattern_score  = 0
     follow_through = True
 
     if direction == "LONG":
@@ -257,7 +257,7 @@ def check_15m_entry(
 
     ema_ok = False
     if ema20:
-        if direction == "LONG"  and price > ema20: ema_ok = True
+        if direction == "LONG"    and price > ema20: ema_ok = True
         elif direction == "SHORT" and price < ema20: ema_ok = True
 
     last5       = recent.tail(5)
@@ -333,18 +333,18 @@ def check_15m_entry(
     desc_parts.append(f"Vol:{'✅' if vol_ok else '❌'}")
 
     return {
-        "confirmed":    confirmed,
-        "score":        score,
-        "pattern":      pattern,
-        "entry_price":  price,
-        "ema20":        ema20,
-        "ema_ok":       ema_ok,
-        "vol_ok":       vol_ok,
-        "struct_ok":    struct_ok,
-        "micro_sweep":  micro_sweep,
-        "micro_disp":   micro_disp,
+        "confirmed":      confirmed,
+        "score":          score,
+        "pattern":        pattern,
+        "entry_price":    price,
+        "ema20":          ema20,
+        "ema_ok":         ema_ok,
+        "vol_ok":         vol_ok,
+        "struct_ok":      struct_ok,
+        "micro_sweep":    micro_sweep,
+        "micro_disp":     micro_disp,
         "follow_through": follow_through,
-        "desc":         " · ".join(desc_parts)
+        "desc":           " · ".join(desc_parts)
     }
 
 
@@ -538,13 +538,13 @@ def run_no_trade_engine(
         soft("⚠️", "4H structure conflicts daily",
              "Wait for 4H structure to align.", 3)
 
-    market_hard_blocked = len(market_blocks) > 0 and any(
+    market_hard_blocked  = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks
     )
     entry_hard_blocked   = len(entry_blocks) > 0
     portfolio_blocked    = len(portfolio_blocks) > 0
 
-    adj_score  = max(0, base_score - score_penalty)
+    adj_score = max(0, base_score - score_penalty)
 
     market_score = wconf.get("market_score", 0) if wconf else 0
     if market_score >= 70 and not market_hard_blocked:
@@ -560,7 +560,6 @@ def run_no_trade_engine(
         }
 
     all_reasons = market_blocks + entry_blocks + portfolio_blocks
-
     hard_blocks = [r for r in all_reasons if r.get("severity") == "HARD"]
     soft_blocks = [r for r in market_blocks if r.get("severity") == "SOFT"]
 
@@ -769,62 +768,36 @@ def generate_signal(
     sl_pct  = sl_dist / entry * 100
 
     if is_long:
-        tp1_candidates = []
-        tp2_candidates = []
+        tp_candidates = []
 
         if swings.get("last_high"):
-            tp1_candidates.append(swings["last_high"]["price"])
+            tp_candidates.append(swings["last_high"]["price"])
         if key_levels.get("pdh"):
-            tp1_candidates.append(key_levels["pdh"])
+            tp_candidates.append(key_levels["pdh"])
+        if key_levels.get("pwh"):
+            tp_candidates.append(key_levels["pwh"])
         vah = d1d.get("vah")
         if vah and vah > entry:
-            tp1_candidates.append(vah)
+            tp_candidates.append(vah)
 
-        tp1_candidates = [c for c in tp1_candidates if c > entry + sl_dist * 0.8]
-        tp1 = min(tp1_candidates) if tp1_candidates else entry + sl_dist * 1.5
-
-        if d1w:
-            pwh = key_levels.get("pwh")
-            if pwh and pwh > tp1:
-                tp2_candidates.append(pwh)
-        poc = d1d.get("poc")
-        if poc and poc > tp1:
-            tp2_candidates.append(poc)
-        if swings.get("prev_high"):
-            ph = swings["prev_high"]["price"]
-            if ph > tp1:
-                tp2_candidates.append(ph)
-
-        tp2 = min(tp2_candidates) if tp2_candidates else entry + sl_dist * 2.5
+        tp_candidates = [c for c in tp_candidates if c > entry + sl_dist * 0.8]
+        tp1 = min(tp_candidates) if tp_candidates else entry + sl_dist * 2.0
 
     else:
-        tp1_candidates = []
-        tp2_candidates = []
+        tp_candidates = []
 
         if swings.get("last_low"):
-            tp1_candidates.append(swings["last_low"]["price"])
+            tp_candidates.append(swings["last_low"]["price"])
         if key_levels.get("pdl"):
-            tp1_candidates.append(key_levels["pdl"])
+            tp_candidates.append(key_levels["pdl"])
+        if key_levels.get("pwl"):
+            tp_candidates.append(key_levels["pwl"])
         val = d1d.get("val")
         if val and val < entry:
-            tp1_candidates.append(val)
+            tp_candidates.append(val)
 
-        tp1_candidates = [c for c in tp1_candidates if c < entry - sl_dist * 0.8]
-        tp1 = max(tp1_candidates) if tp1_candidates else entry - sl_dist * 1.5
-
-        if d1w:
-            pwl = key_levels.get("pwl")
-            if pwl and pwl < tp1:
-                tp2_candidates.append(pwl)
-        poc = d1d.get("poc")
-        if poc and poc < tp1:
-            tp2_candidates.append(poc)
-        if swings.get("prev_low"):
-            pl = swings["prev_low"]["price"]
-            if pl < tp1:
-                tp2_candidates.append(pl)
-
-        tp2 = max(tp2_candidates) if tp2_candidates else entry - sl_dist * 2.5
+        tp_candidates = [c for c in tp_candidates if c < entry - sl_dist * 0.8]
+        tp1 = max(tp_candidates) if tp_candidates else entry - sl_dist * 2.0
 
     risk_pct = dynamic_risk_pct(score_15m)
     risk_amt = capital * risk_pct
@@ -841,7 +814,7 @@ def generate_signal(
         "entry":       entry,
         "sl":          sl,
         "tp1":         tp1,
-        "tp2":         tp2,
+        "tp2":         None,
         "sl_pct":      sl_pct,
         "sl_method":   "Structure-aware",
         "risk_pct":    risk_pct * 100,

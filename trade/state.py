@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from database import Trade, DailyRisk, get_session
 from config import cfg
 import logging
+import asyncio
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class StateManager:
         self._health_states: dict[int, str]   = {}
         self._health_data:   dict[int, dict]  = {}
         self._paused:        bool             = False
+        self._trade_locks:   dict[int, asyncio.Lock] = {}
         self._load_active_trades()
 
     def _load_active_trades(self):
@@ -30,6 +32,7 @@ class StateManager:
                     self._active_trades[trade.id] = trade
                     self._health_states[trade.id] = "HEALTHY"
                     self._health_data[trade.id]   = {}
+                    self._trade_locks[trade.id]   = asyncio.Lock()
                 if trades:
                     log.info(f"Resumed {len(trades)} active trade(s)")
                 else:
@@ -37,10 +40,25 @@ class StateManager:
         except Exception as e:
             log.warning(f"Could not load active trades: {e}")
 
+    def get_trade_lock(self, trade_id: int) -> asyncio.Lock:
+        if trade_id not in self._trade_locks:
+            self._trade_locks[trade_id] = asyncio.Lock()
+        return self._trade_locks[trade_id]
+
     def _check_tp1_hit(self, trade: Trade) -> bool:
-        if not trade or not trade.sl_price or not trade.entry_price:
+        if not trade:
             return False
-        return abs(trade.sl_price - trade.entry_price) / trade.entry_price < 0.002
+        if trade.tp1_hit:
+            return True
+        try:
+            with get_session() as db:
+                t = db.query(Trade).filter(Trade.id == trade.id).first()
+                if t and t.tp1_hit:
+                    trade.tp1_hit = True
+                    return True
+        except Exception:
+            pass
+        return False
 
     @property
     def is_idle(self) -> bool:
@@ -149,16 +167,20 @@ class StateManager:
         self._active_trades.pop(trade_id, None)
         self._health_states.pop(trade_id, None)
         self._health_data.pop(trade_id, None)
+        self._trade_locks.pop(trade_id, None)
 
     def set_entry(self, trade: Trade):
         self._active_trades[trade.id] = trade
         self._health_states[trade.id] = "HEALTHY"
         self._health_data[trade.id]   = {}
+        self._trade_locks[trade.id]   = asyncio.Lock()
         self._update_state(trade, TradeState.ENTRY)
         log.info(f"State → ENTRY: {trade.coin} {trade.direction}")
 
     def set_in_trade(self, trade: Trade):
         self._active_trades[trade.id] = trade
+        if trade.id not in self._trade_locks:
+            self._trade_locks[trade.id] = asyncio.Lock()
         self._update_state(trade, TradeState.IN_TRADE)
         log.info(f"State → IN_TRADE: {trade.coin} {trade.direction}")
 
@@ -170,6 +192,7 @@ class StateManager:
             self._active_trades.clear()
             self._health_states.clear()
             self._health_data.clear()
+            self._trade_locks.clear()
             log.info("State → IDLE (all trades cleared)")
 
     def undo_trade_open(self, trade_id: int):
