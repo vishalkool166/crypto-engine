@@ -121,7 +121,6 @@ class Trade(Base):
     regime_at_entry  = Column(String, nullable=True)
     session_at_entry = Column(String, nullable=True)
     score_at_entry   = Column(Float, nullable=True)
-    # P2-25 additions
     totp_confirmed   = Column(Boolean, default=False)
     balance_at_open  = Column(Float, nullable=True)
     tier_at_open     = Column(Integer, nullable=True)
@@ -182,14 +181,15 @@ class BacktestResult(Base):
 class CoinConfig(Base):
     __tablename__ = "coin_config"
 
-    id         = Column(Integer, primary_key=True)
-    coin       = Column(String, unique=True, nullable=False)
-    enabled    = Column(Boolean, default=True)
-    tier       = Column(Integer, default=1)
-    source     = Column(String, default="manual")
-    volume_24h = Column(Float, nullable=True)
-    added_at   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen  = Column(DateTime, nullable=True)
+    id              = Column(Integer, primary_key=True)
+    coin            = Column(String, unique=True, nullable=False)
+    enabled         = Column(Boolean, default=True)
+    tier            = Column(Integer, default=1)
+    source          = Column(String, default="manual")
+    volume_24h      = Column(Float, nullable=True)
+    added_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen       = Column(DateTime, nullable=True)
+    btc_correlation = Column(Float, default=0.8, nullable=True)
 
 
 class AuditLog(Base):

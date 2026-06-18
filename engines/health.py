@@ -136,18 +136,30 @@ def check_trade_health(
 
     if is_long:
         if struct_bias == "bear" and not bos_against_thesis:
-            failures.append(
-                "Daily structure flipped bearish — original thesis invalidated"
-            )
+            price_breaking_down = entry > 0 and current_price < entry * 0.97
+            if price_breaking_down:
+                failures.append(
+                    "Daily structure bearish and price down 3%+ from entry — thesis invalidated"
+                )
+            else:
+                warnings.append(
+                    "Daily structure bearish — monitor for continuation above entry"
+                )
         elif d1_cls == "bear":
             warnings.append("Daily trend weakening — monitor closely")
         else:
             checks.append("D1 structure intact")
     else:
         if struct_bias == "bull" and not bos_against_thesis:
-            failures.append(
-                "Daily structure flipped bullish — original thesis invalidated"
-            )
+            price_breaking_up = entry > 0 and current_price > entry * 1.03
+            if price_breaking_up:
+                failures.append(
+                    "Daily structure bullish and price up 3%+ from entry — thesis invalidated"
+                )
+            else:
+                warnings.append(
+                    "Daily structure bullish — monitor for continuation below entry"
+                )
         elif d1_cls == "bull":
             warnings.append("Daily trend weakening — monitor closely")
         else:
@@ -176,7 +188,7 @@ def check_trade_health(
         btc_adx = btc_data.get("adx", 0) or 0
 
         if is_long and btc_cls == "bear":
-            if btc_adx > 25:
+            if btc_adx > 35:
                 warnings.append(
                     f"BTC strongly bearish (ADX {btc_adx:.0f}) "
                     f"— significant headwind for long"
@@ -187,7 +199,7 @@ def check_trade_health(
                     f"— minor headwind"
                 )
         elif not is_long and btc_cls == "bull":
-            if btc_adx > 25:
+            if btc_adx > 35:
                 warnings.append(
                     f"BTC strongly bullish (ADX {btc_adx:.0f}) "
                     f"— significant headwind for short"

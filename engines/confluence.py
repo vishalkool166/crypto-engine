@@ -23,6 +23,18 @@ ENTRY_OPPORTUNITY_KEYS = [
 ]
 
 
+def _get_btc_correlation(coin: str) -> float:
+    try:
+        from database import SessionLocal, CoinConfig
+        with SessionLocal() as db:
+            row = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
+            if row and row.btc_correlation is not None:
+                return float(row.btc_correlation)
+    except Exception:
+        pass
+    return 0.8
+
+
 def score_confluence(
     d1w, d1d, d4h, d1h,
     market, key_levels,
@@ -206,16 +218,19 @@ def score_confluence(
         bn      = btc_aligned_cls == "neutral"
         penalty = len(btc_instability.get("warnings", [])) * 2
 
-        base_score = (
-            W["btc_alignment"] if ba else
-            4 if bn else 0
-        )
-        btc_score  = max(0, round(base_score * alignment_mult) - penalty)
-        btc_detail = (
-            f"{align_note} — confirms" if ba else
-            "BTC neutral" if bn else
-            f"{align_note} — conflicts"
-        )
+        corr = _get_btc_correlation(coin)
+
+        if ba:
+            base_score = W["btc_alignment"]
+            btc_detail = f"{align_note} — confirms"
+        elif bn:
+            base_score = 4
+            btc_detail = "BTC neutral"
+        else:
+            base_score = round(W["btc_alignment"] * (1 - corr))
+            btc_detail = f"{align_note} — conflicts (correlation {corr:.1f})"
+
+        btc_score = max(0, round(base_score * alignment_mult) - penalty)
 
     add(
         "btc_alignment", "BTC Alignment",

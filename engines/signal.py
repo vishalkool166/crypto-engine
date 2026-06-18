@@ -51,15 +51,16 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
 
 
 def get_session(vol_ratio: float = 1.0) -> dict:
-    now  = datetime.now(timezone.utc)
-    hour = now.hour + now.minute / 60
+    now     = datetime.now(timezone.utc)
+    hour    = now.hour + now.minute / 60
+    weekday = now.weekday()
+    is_weekend = weekday >= 5
 
     london = 8  <= hour < 16
     ny     = 13 <= hour < 21
     asia   = 0  <= hour < 8
 
     def _downgrade(session: dict) -> dict:
-        order = ["BEST", "GOOD", "CAUTION"]
         quality_map = {
             "BEST":    ("GOOD",    7),
             "GOOD":    ("CAUTION", 2),
@@ -113,6 +114,10 @@ def get_session(vol_ratio: float = 1.0) -> dict:
             "tradeable": False,
             "desc":      "Low volume. Wait for London open."
         }
+
+    if is_weekend:
+        s = _downgrade(s)
+        s["desc"] = s["desc"] + " — weekend, reduced volume."
 
     if vol_ratio < 0.6:
         s = _downgrade(s)
@@ -703,7 +708,7 @@ def generate_signal(
 
     score_15m = score
     if not entry_15m["confirmed"]:
-        score_15m = max(0, score - 5)
+        score_15m = max(0, score - 2)
         tier = get_tier(score_15m, no_trade.get("market_blocked", False))
 
     entry = (

@@ -9,18 +9,18 @@ _cap_warning_sent = False
 
 
 def dynamic_risk_pct(score: float) -> float:
-    min_risk = 0.07
-    max_risk = 0.13
-    base     = 0.10
+    min_risk = 0.01
+    max_risk = 0.02
+    base     = 0.015
 
     if score >= 95:
         return max_risk
     if score >= 85:
         t = (score - 85) / 10
-        return round(base + t * (max_risk - base), 3)
+        return round(base + t * (max_risk - base), 4)
     if score >= 68:
         t = (score - 68) / 17
-        return round(min_risk + t * (base - min_risk), 3)
+        return round(min_risk + t * (base - min_risk), 4)
     return min_risk
 
 
@@ -36,7 +36,7 @@ def get_tier_config(balance: float) -> dict:
             }
     return {
         "tier":       4,
-        "risk_pct":   0.12,
+        "risk_pct":   0.02,
         "max_trades": 3,
         "leverage":   20,
         "balance":    balance

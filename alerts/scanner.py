@@ -42,12 +42,21 @@ def _interpret_oi(market: dict) -> dict:
     bearish_confirm = (not pu) and oiu
     confirmed       = bullish_confirm or bearish_confirm
 
-    primary_score = 7 if confirmed else 3
-    primary_label = (
-        "OI bullish confirm"  if bullish_confirm else
-        "OI bearish confirm"  if bearish_confirm else
-        "OI exhaustion"
-    )
+    oi_change = market.get("oi_change", 0)
+    oi_flat   = abs(oi_change) <= 1
+
+    if bullish_confirm:
+        primary_score = 7
+        primary_label = "OI bullish confirm"
+    elif bearish_confirm:
+        primary_score = 7
+        primary_label = "OI bearish confirm"
+    elif oi_flat:
+        primary_score = 5
+        primary_label = "OI neutral"
+    else:
+        primary_score = 3
+        primary_label = "OI exhaustion"
 
     funding_score = (
         0 if abs(fund) > 0.08 else
