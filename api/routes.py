@@ -688,3 +688,47 @@ async def validate_coin(request: Request, coin: str):
     except Exception as e:
         log.error(f"Coin validate error: {e}")
         raise HTTPException(500, str(e))
+    
+@router.post("/test/content/{signal_id}")
+async def test_content_pipeline(request: Request, signal_id: int):
+    _auth(request)
+    try:
+        from content.pipeline import run_content_pipeline
+        asyncio.create_task(run_content_pipeline(signal_id))
+        return JSONResponse(content={"success": True, "message": f"Content pipeline triggered for signal {signal_id}"})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/test/commentary")
+async def test_commentary_pipeline(request: Request):
+    _auth(request)
+    try:
+        from content.pipeline import run_commentary_pipeline
+        from data.cache import cache
+
+        fake_results = [
+            {
+                "coin":      "BTC",
+                "grade":     "C",
+                "score":     42,
+                "direction": "LONG",
+                "regime":    "CHOPPY",
+                "session":   "London/NY Overlap",
+                "market":    {"funding": 0.0001, "price": 65000, "change24": -1.2}
+            },
+            {
+                "coin":      "ETH",
+                "grade":     "C",
+                "score":     38,
+                "direction": "SHORT",
+                "regime":    "CHOPPY",
+                "session":   "London/NY Overlap",
+                "market":    {"funding": 0.0002, "price": 3200, "change24": -0.8}
+            }
+        ]
+
+        asyncio.create_task(run_commentary_pipeline(fake_results))
+        return JSONResponse(content={"success": True, "message": "Commentary pipeline triggered with fake choppy market data"})
+    except Exception as e:
+        raise HTTPException(500, str(e))
