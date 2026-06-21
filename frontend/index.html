@@ -67,8 +67,13 @@ tailwind.config = {
       type="number"
       placeholder="000000"
       maxlength="6"
-      style="width:100%;padding:14px;border:1.5px solid rgba(0,0,0,0.1);border-radius:12px;font-size:24px;font-family:monospace;text-align:center;letter-spacing:0.2em;outline:none;margin-bottom:16px"
+      style="width:100%;padding:14px;border:1.5px solid rgba(0,0,0,0.1);border-radius:12px;font-size:24px;font-family:monospace;text-align:center;letter-spacing:0.2em;outline:none;margin-bottom:12px"
     >
+    <button id="otp-tg-btn"
+            onclick="requestOtpViaTelegram()"
+            style="width:100%;margin-bottom:16px;padding:10px;border-radius:10px;border:1px solid rgba(0,113,227,0.2);background:rgba(0,113,227,0.06);color:#0071e3;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">
+      📱 Send code to Telegram
+    </button>
     <div style="display:flex;gap:12px">
       <button onclick="closeOtpModal()"
               style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(0,0,0,0.1);background:rgba(0,0,0,0.04);font-weight:600;font-size:13px;cursor:pointer;font-family:inherit">
@@ -148,7 +153,8 @@ tailwind.config = {
       <button id="mode-toggle-btn"
               onclick="showModeToggle()"
               class="px-3 py-1 rounded-full text-xs font-semibold transition-all"
-              style="background:rgba(0,113,227,0.1);color:#0071e3;border:1px solid rgba(0,113,227,0.2)">
+              style="background:rgba(0,113,227,0.1);color:#0071e3;border:1px solid rgba(0,113,227,0.2)"
+              data-mode="paper">
         🔵 PAPER
       </button>
       <div id="ws-status" class="flex items-center text-[10px] text-apple-secondary">
@@ -206,7 +212,7 @@ tailwind.config = {
         </div>
         <div id="ft-trades-wrap" class="p-3">
           <div id="ft-trades-empty" class="text-center py-8 text-apple-secondary text-xs">
-            No open trades.<br>Waiting for A/A+ signals.
+            No open trades.<br>Waiting for signals.
           </div>
           <div id="ft-trades-grid" class="space-y-3 hidden"></div>
         </div>
@@ -440,21 +446,24 @@ async function handleLogout() {
 }
 
 function showModeToggle() {
-  const badge    = $id('mode-toggle-btn')
-  const isLive   = badge && badge.dataset.mode === 'live'
-  const newMode  = isLive ? 'paper' : 'live'
-  _pendingMode   = newMode
+  const badge   = $id('mode-toggle-btn')
+  const isLive  = badge && badge.dataset.mode === 'live'
+  const newMode = isLive ? 'paper' : 'live'
+  _pendingMode  = newMode
 
-  const overlay  = $id('otp-modal-overlay')
-  const title    = $id('otp-modal-title')
-  const desc     = $id('otp-modal-desc')
-  const errEl    = $id('otp-modal-error')
-  const inp      = $id('otp-modal-input')
+  const overlay = $id('otp-modal-overlay')
+  const title   = $id('otp-modal-title')
+  const desc    = $id('otp-modal-desc')
+  const errEl   = $id('otp-modal-error')
+  const inp     = $id('otp-modal-input')
+  const tgBtn   = $id('otp-tg-btn')
 
-  title.textContent = `Switch to ${newMode.toUpperCase()} mode`
-  desc.textContent  = `Enter your 6-digit authenticator code to confirm`
-  errEl.style.display = 'none'
-  inp.value = ''
+  title.textContent       = `Switch to ${newMode.toUpperCase()} mode`
+  desc.textContent        = `Enter your 6-digit authenticator code to confirm`
+  errEl.style.display     = 'none'
+  inp.value               = ''
+  tgBtn.disabled          = false
+  tgBtn.textContent       = '📱 Send code to Telegram'
 
   overlay.style.display = 'flex'
   setTimeout(() => inp.focus(), 100)
@@ -466,11 +475,40 @@ function closeOtpModal() {
   _pendingMode = null
 }
 
+async function requestOtpViaTelegram() {
+  const btn = $id('otp-tg-btn')
+  btn.disabled    = true
+  btn.textContent = '⏳ Sending...'
+  try {
+    const res  = await fetch('/auth/request-totp', { method: 'POST' })
+    const data = await res.json()
+    if (data.success) {
+      btn.textContent = '✅ Code sent to Telegram!'
+      setTimeout(() => {
+        btn.disabled    = false
+        btn.textContent = '📱 Send code to Telegram'
+      }, 30000)
+    } else {
+      btn.textContent = '❌ ' + (data.reason || 'Failed')
+      setTimeout(() => {
+        btn.disabled    = false
+        btn.textContent = '📱 Send code to Telegram'
+      }, 3000)
+    }
+  } catch(e) {
+    btn.textContent = '❌ Connection error'
+    setTimeout(() => {
+      btn.disabled    = false
+      btn.textContent = '📱 Send code to Telegram'
+    }, 3000)
+  }
+}
+
 async function confirmModeToggle() {
-  const inp    = $id('otp-modal-input')
-  const errEl  = $id('otp-modal-error')
-  const btn    = $id('otp-modal-confirm')
-  const code   = inp ? inp.value.trim() : ''
+  const inp   = $id('otp-modal-input')
+  const errEl = $id('otp-modal-error')
+  const btn   = $id('otp-modal-confirm')
+  const code  = inp ? inp.value.trim() : ''
 
   if (code.length !== 6) {
     errEl.textContent   = 'Enter your 6-digit code'
@@ -492,8 +530,16 @@ async function confirmModeToggle() {
 
     if (data.success) {
       closeOtpModal()
-      toast(`✅ Switched to ${_pendingMode.toUpperCase()}`, data.message || '', 'success')
-      await fetchDashboard()
+      toast(
+        `✅ Switched to ${_pendingMode.toUpperCase()}`,
+        data.message || 'Freqtrade restarting...',
+        'success',
+        6000
+      )
+      setTimeout(async () => {
+        await fetchDashboard()
+        await fetchFtSummary()
+      }, 5000)
     } else {
       errEl.textContent   = '❌ ' + (data.reason || 'Failed')
       errEl.style.display = 'block'
@@ -512,7 +558,9 @@ document.addEventListener('keydown', e => {
     closeModal()
     closeOtpModal()
   }
-  if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') triggerScan()
+  if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') {
+    triggerScan()
+  }
 })
 
 document.getElementById('otp-modal-input')?.addEventListener('keydown', e => {

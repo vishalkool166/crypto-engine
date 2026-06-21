@@ -559,6 +559,8 @@ async def mode_toggle(request: Request):
         cfg.TRADING_MODE  = new_mode
         cfg.PAPER_TRADING = new_mode != "live"
 
+        _update_freqtrade_config(new_mode)
+
         try:
             await _restart_freqtrade()
         except Exception as e:
@@ -579,6 +581,30 @@ async def mode_toggle(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
+
+
+def _update_freqtrade_config(mode: str):
+    import json
+    config_path = "freqtrade/user_data/config.json"
+    try:
+        with open(config_path, "r") as f:
+            ft_config = json.load(f)
+
+        if mode == "live":
+            ft_config["dry_run"] = False
+            ft_config.pop("dry_run_wallet", None)
+        else:
+            ft_config["dry_run"]        = True
+            ft_config["dry_run_wallet"] = 1000
+
+        with open(config_path, "w") as f:
+            json.dump(ft_config, f, indent=2)
+
+        log.info(f"Freqtrade config updated: dry_run={mode != 'live'}")
+
+    except Exception as e:
+        log.error(f"Failed to update Freqtrade config: {e}")
+        raise
 
 
 async def _restart_freqtrade():

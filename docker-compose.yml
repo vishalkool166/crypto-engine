@@ -25,6 +25,7 @@ services:
       - "8000:8000"
     volumes:
       - ./database:/app/database
+      - ./freqtrade/user_data:/app/freqtrade/user_data
     env_file:
       - ./.env
     environment:
