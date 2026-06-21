@@ -37,7 +37,6 @@ def _interpret_oi(market: dict) -> dict:
 
     bullish_confirm = pu and oiu
     bearish_confirm = (not pu) and oiu
-    confirmed       = bullish_confirm or bearish_confirm
 
     oi_change = market.get("oi_change", 0)
     oi_flat   = abs(oi_change) <= 1
@@ -121,7 +120,8 @@ def _write_signal_to_redis(signal: dict, coin: str, regime: str,
             "signal_id":           db_id,
             "regime":              regime,
             "session":             session,
-            "cached_at":           time.time()
+            "cached_at":           time.time(),
+            "ml_probability":      signal.get("ml_probability", None)
         }
 
         key = f"signal:{coin}USDT"
@@ -132,9 +132,27 @@ def _write_signal_to_redis(signal: dict, coin: str, regime: str,
         log.error(f"Redis signal write failed {coin}: {e}")
 
 
+def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
+    """
+    Check ML gate if enabled.
+    Returns (passed: bool, probability: float)
+    """
+    if not cfg.ML_ENABLED:
+        return True, 1.0
+
+    try:
+        from ml.predictor import is_ml_approved
+        approved, prob = is_ml_approved(signal, wconf)
+        signal["ml_probability"] = prob
+        return approved, prob
+    except Exception as e:
+        log.error(f"ML gate error: {e}")
+        return True, 1.0
+
+
 def save_signal_to_db(signal, coin, regime, session, sweep,
                       retest, disp, market, wconf=None) -> int:
-    if signal.get("grade") not in ["A+", "A"]:
+    if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
         return None
     if signal.get("direction") in ["NO TRADE", "WATCH", "SKIP"]:
         return None
@@ -345,15 +363,31 @@ async def _analyze_coin_inner(
 
     if db_id:
         signal["db_id"] = db_id
-        if signal.get("grade") in ["A+", "A"] and \
+
+        if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and \
            signal.get("direction") in ["LONG", "SHORT"]:
-            _write_signal_to_redis(
-                signal  = signal,
-                coin    = coin,
-                regime  = regime["label"],
-                session = session["name"],
-                db_id   = db_id
-            )
+
+            ml_passed, ml_prob = _check_ml_gate(signal, wconf)
+
+            if ml_passed:
+                _write_signal_to_redis(
+                    signal  = signal,
+                    coin    = coin,
+                    regime  = regime["label"],
+                    session = session["name"],
+                    db_id   = db_id
+                )
+                log.info(
+                    f"Signal forwarded to Freqtrade: {coin} "
+                    f"Grade:{signal.get('grade')} "
+                    f"ML_prob:{ml_prob:.2f}"
+                )
+            else:
+                log.info(
+                    f"Signal ML-filtered: {coin} "
+                    f"Grade:{signal.get('grade')} "
+                    f"ML_prob:{ml_prob:.2f} — not forwarded"
+                )
 
     result = {
         "coin":              coin,
@@ -382,6 +416,7 @@ async def _analyze_coin_inner(
         "market_blocked":    no_trade.get("market_blocked",    False),
         "entry_blocked":     no_trade.get("entry_blocked",     False),
         "portfolio_blocked": no_trade.get("portfolio_blocked", False),
+        "ml_probability":    signal.get("ml_probability", None),
         "cached_at":         time.time(),
         "data_quality": {
             tf: {
@@ -396,7 +431,7 @@ async def _analyze_coin_inner(
 
     cache.set(f"signal_{coin}", result, ttl=CACHE_TTL)
 
-    if signal.get("grade") in ["A+", "A"]:
+    if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE:
         if signal.get("direction") in ["LONG", "SHORT"]:
             await send_signal(signal, coin, regime["label"], session["name"])
 
@@ -461,8 +496,8 @@ def _write_active_pairs_to_redis():
         if not r:
             return
 
-        pairs = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
-        payload = json.dumps({"pairs": pairs})
+        pairs   = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
+        payload = json.dumps({"pairs": pairs, "refresh_period": 1800})
         r.setex("pairs:active", 1800, payload)
         log.info(f"Active pairs written to Redis: {len(pairs)} pairs")
 
@@ -512,7 +547,7 @@ def get_db_stats() -> dict:
             wins     = [s for s in closed if s.outcome == "win"]
 
             by_grade = {}
-            for g in ["A+", "A"]:
+            for g in ["A+", "A", "B"]:
                 g_trades = [s for s in closed if s.grade == g]
                 g_wins   = [s for s in g_trades if s.outcome == "win"]
                 by_grade[g] = {

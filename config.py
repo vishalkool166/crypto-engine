@@ -62,7 +62,7 @@ class Config:
         {"min": 1000, "max": None, "risk_pct": 0.02, "max_trades": 3, "leverage": 20},
     ]
 
-    MIN_GRADE_TO_TRADE = ["A+", "A"]
+    MIN_GRADE_TO_TRADE = ["A+", "A", "B"]
 
     GRADE_APLUS = 85
     GRADE_A     = 68

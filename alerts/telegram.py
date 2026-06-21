@@ -184,27 +184,33 @@ async def register_webhook():
 
 async def register_commands():
     commands = [
-        {"command": "status",   "description": "Bot status + last scan"},
-        {"command": "btc",      "description": "BTC analysis"},
-        {"command": "regime",   "description": "Regime across coins"},
-        {"command": "funding",  "description": "Funding rates"},
-        {"command": "fear",     "description": "Fear & greed index"},
-        {"command": "pnl",      "description": "All time PnL"},
-        {"command": "history",  "description": "Last 5 signals"},
-        {"command": "stats",    "description": "Full all time stats"},
-        {"command": "streak",   "description": "Win/loss streak"},
-        {"command": "grade",    "description": "Grade accuracy"},
-        {"command": "session",  "description": "Current session"},
-        {"command": "daily",    "description": "Daily summary"},
-        {"command": "next",     "description": "Next scan + session times"},
-        {"command": "scan",     "description": "Trigger manual scan"},
-        {"command": "queue",    "description": "Best signal in cache"},
-        {"command": "mode",     "description": "Current bot config"},
-        {"command": "brief",    "description": "Morning briefing now"},
-        {"command": "backtest", "description": "Backtest a coin"},
-        {"command": "factors",  "description": "Factor analysis"},
-        {"command": "debrief",  "description": "Last signal debrief"},
-        {"command": "help",     "description": "Full command list"},
+        {"command": "status",      "description": "Bot status + last scan"},
+        {"command": "btc",         "description": "BTC analysis"},
+        {"command": "regime",      "description": "Regime across coins"},
+        {"command": "funding",     "description": "Funding rates"},
+        {"command": "fear",        "description": "Fear & greed index"},
+        {"command": "pnl",         "description": "All time PnL"},
+        {"command": "history",     "description": "Last 5 signals"},
+        {"command": "stats",       "description": "Full all time stats"},
+        {"command": "streak",      "description": "Win/loss streak"},
+        {"command": "grade",       "description": "Grade accuracy"},
+        {"command": "session",     "description": "Current session"},
+        {"command": "daily",       "description": "Daily summary"},
+        {"command": "next",        "description": "Next scan + session times"},
+        {"command": "scan",        "description": "Trigger manual scan"},
+        {"command": "queue",       "description": "Best signal in cache"},
+        {"command": "mode",        "description": "Current bot config"},
+        {"command": "brief",       "description": "Morning briefing now"},
+        {"command": "backtest",    "description": "Backtest a coin"},
+        {"command": "factors",     "description": "Factor analysis"},
+        {"command": "debrief",     "description": "Last signal debrief"},
+        {"command": "ml",          "description": "ML model status"},
+        {"command": "ftstatus",    "description": "Freqtrade open trades"},
+        {"command": "ftbalance",   "description": "Freqtrade balance"},
+        {"command": "ftprofit",    "description": "Freqtrade profit summary"},
+        {"command": "ftstart",     "description": "Start Freqtrade bot"},
+        {"command": "ftstop",      "description": "Stop Freqtrade bot"},
+        {"command": "help",        "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
@@ -357,26 +363,32 @@ async def _handle_command(text: str, chat_id: str = ""):
         return
 
     handlers = {
-        "/status":  _cmd_status,
-        "/pnl":     _cmd_pnl,
-        "/queue":   _cmd_queue,
-        "/daily":   _cmd_daily,
-        "/scan":    _cmd_scan,
-        "/help":    _cmd_help,
-        "/btc":     _cmd_btc,
-        "/regime":  _cmd_regime,
-        "/funding": _cmd_funding,
-        "/fear":    _cmd_fear,
-        "/history": _cmd_history,
-        "/stats":   _cmd_stats,
-        "/streak":  _cmd_streak,
-        "/grade":   _cmd_grade,
-        "/session": _cmd_session,
-        "/next":    _cmd_next,
-        "/mode":    _cmd_mode,
-        "/brief":   _cmd_brief,
-        "/factors": _cmd_factors,
-        "/debrief": _cmd_debrief,
+        "/status":    _cmd_status,
+        "/pnl":       _cmd_pnl,
+        "/queue":     _cmd_queue,
+        "/daily":     _cmd_daily,
+        "/scan":      _cmd_scan,
+        "/help":      _cmd_help,
+        "/btc":       _cmd_btc,
+        "/regime":    _cmd_regime,
+        "/funding":   _cmd_funding,
+        "/fear":      _cmd_fear,
+        "/history":   _cmd_history,
+        "/stats":     _cmd_stats,
+        "/streak":    _cmd_streak,
+        "/grade":     _cmd_grade,
+        "/session":   _cmd_session,
+        "/next":      _cmd_next,
+        "/mode":      _cmd_mode,
+        "/brief":     _cmd_brief,
+        "/factors":   _cmd_factors,
+        "/debrief":   _cmd_debrief,
+        "/ml":        _cmd_ml,
+        "/ftstatus":  _cmd_ft_status,
+        "/ftbalance": _cmd_ft_balance,
+        "/ftprofit":  _cmd_ft_profit,
+        "/ftstart":   _cmd_ft_start,
+        "/ftstop":    _cmd_ft_stop,
     }
 
     if t.startswith("/"):
@@ -405,7 +417,7 @@ async def _cmd_status():
     cached_results = _all_cached_signals()
     tradeable = [
         r for r in cached_results
-        if r.get("grade") in ["A+", "A"] and
+        if r.get("grade") in cfg.MIN_GRADE_TO_TRADE and
         r.get("direction") in ["LONG", "SHORT"]
     ]
 
@@ -413,6 +425,7 @@ async def _cmd_status():
         f"📊 *Bot Status*\n\n"
         f"State: `RUNNING`\n"
         f"Coins: `{len(cfg.COINS)} being scanned`\n"
+        f"Grades: `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Signals in cache: `{len(cached_results)}`\n"
         f"Tradeable now: `{len(tradeable)}`\n\n"
         f"All-time signals: `{stats.get('total', 0)}`\n"
@@ -440,8 +453,8 @@ async def _cmd_coin(coin: str):
     disp    = cached.get("displacement", {})
     retest  = cached.get("retest", {})
     d1d     = cached.get("d1d", {})
-    d4h     = cached.get("d4h", {})
     expl    = cached.get("explanation", {})
+    ml_prob = cached.get("ml_probability")
 
     price   = market.get("price", 0)
     change  = market.get("change24", 0)
@@ -456,8 +469,15 @@ async def _cmd_coin(coin: str):
         f"Price:   `${price:,.4f}` ({sign}{change:.2f}%)\n"
         f"Grade:   `{grade}` · Score `{score}/100`\n"
         f"Signal:  {em} `{dir_}`\n"
-        f"Conf:    `{expl.get('confidence_label', '--')}`\n\n"
-        f"Regime:  `{cached.get('regime', '--')}`\n"
+        f"Conf:    `{expl.get('confidence_label', '--')}`\n"
+    )
+
+    if ml_prob is not None:
+        ml_color = "✅" if ml_prob >= 0.65 else "❌"
+        base += f"ML Prob: {ml_color} `{ml_prob*100:.1f}%`\n"
+
+    base += (
+        f"\nRegime:  `{cached.get('regime', '--')}`\n"
         f"Session: `{cached.get('session', '--')}`\n\n"
     )
 
@@ -553,8 +573,8 @@ async def _cmd_history():
 
     lines = ["📜 *Last 5 Signals*\n"]
     for s in signals:
-        emoji  = "✅" if s.outcome == "win" else "❌"
-        dir_em = "📈" if s.direction == "LONG" else "📉"
+        emoji   = "✅" if s.outcome == "win" else "❌"
+        dir_em  = "📈" if s.direction == "LONG" else "📉"
         pnl_str = f"+${s.pnl:.4f}" if (s.pnl or 0) >= 0 else f"-${abs(s.pnl or 0):.4f}"
         lines.append(
             f"{emoji} {dir_em} `{s.coin}` {s.direction} Grade `{s.grade}` — `{pnl_str}`\n"
@@ -571,6 +591,7 @@ async def _cmd_stats():
     bg = stats.get("by_grade", {})
     ap = bg.get("A+", {})
     a  = bg.get("A", {})
+    b  = bg.get("B", {})
 
     await send(
         f"📊 *All Time Stats*\n\n"
@@ -583,7 +604,9 @@ async def _cmd_stats():
         f"*Grade A+*\n"
         f"Trades: `{ap.get('total',0)}` · WR: `{ap.get('win_rate',0)}%` · PnL: `${ap.get('total_pnl',0)}`\n\n"
         f"*Grade A*\n"
-        f"Trades: `{a.get('total',0)}` · WR: `{a.get('win_rate',0)}%` · PnL: `${a.get('total_pnl',0)}`\n"
+        f"Trades: `{a.get('total',0)}` · WR: `{a.get('win_rate',0)}%` · PnL: `${a.get('total_pnl',0)}`\n\n"
+        f"*Grade B*\n"
+        f"Trades: `{b.get('total',0)}` · WR: `{b.get('win_rate',0)}%` · PnL: `${b.get('total_pnl',0)}`\n"
     )
 
 
@@ -631,6 +654,7 @@ async def _cmd_grade():
         f"🏆 *Grade Accuracy*\n\n"
         f"{_grade_block('A+', bg.get('A+', {}))}\n"
         f"{_grade_block('A',  bg.get('A',  {}))}\n"
+        f"{_grade_block('B',  bg.get('B',  {}))}\n"
         f"_Minimum 50 trades for reliable data_"
     )
 
@@ -674,6 +698,7 @@ async def _cmd_mode():
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Scan:        `every :00/:15/:30/:45 UTC`\n"
         f"Execution:   `Freqtrade`\n"
+        f"ML:          `{'✅ Active' if cfg.ML_ENABLED else '⏳ Collecting data'}`\n"
     )
 
 
@@ -744,6 +769,7 @@ async def _cmd_backtest(coin: str):
             f"TP1 hit: `{pb.get('tp1_hit_rate', 0)}%` · TP2 hit: `{pb.get('tp2_hit_rate', 0)}%`\n\n"
             f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
             f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
+            f"B:  `{bg.get('B',{}).get('win_rate',0)}% WR` · `{bg.get('B',{}).get('trades',0)} trades`\n"
         )
     except asyncio.TimeoutError:
         await send(f"❌ Backtest timed out after 120s")
@@ -762,10 +788,9 @@ async def _cmd_debrief():
         await send("📋 No closed signals yet.")
         return
 
-    cached = _get_cached(signal.coin)
-    expl   = cached.get("explanation", {}) if cached else {}
-
-    pnl_str     = f"+${signal.pnl:.4f}" if (signal.pnl or 0) >= 0 else f"-${abs(signal.pnl or 0):.4f}"
+    cached  = _get_cached(signal.coin)
+    expl    = cached.get("explanation", {}) if cached else {}
+    pnl_str = f"+${signal.pnl:.4f}" if (signal.pnl or 0) >= 0 else f"-${abs(signal.pnl or 0):.4f}"
     result_emoji = "✅" if signal.outcome == "win" else "❌"
 
     await send(
@@ -797,22 +822,29 @@ async def _cmd_queue():
             continue
         score = cached.get("score", 0)
         grade = cached.get("grade", "F")
-        if score > best_score and grade in ["A+", "A"]:
+        if score > best_score and grade in cfg.MIN_GRADE_TO_TRADE:
             best       = cached
             best_score = score
 
     if not best:
-        await send("📋 *Signal Queue*\n\nNo A/A+ signals in cache.\nUse /scan to scan now.")
+        await send("📋 *Signal Queue*\n\nNo signals in cache.\nUse /scan to scan now.")
         return
 
-    sig  = best.get("signal", {})
-    coin = best.get("coin", "?")
+    sig     = best.get("signal", {})
+    coin    = best.get("coin", "?")
+    ml_prob = best.get("ml_probability")
+
+    ml_line = ""
+    if ml_prob is not None:
+        ml_icon = "✅" if ml_prob >= 0.65 else "❌"
+        ml_line = f"ML Prob: {ml_icon} `{ml_prob*100:.1f}%`\n"
 
     await send_with_keyboard(
         f"📋 *Next Signal — Grade {best['grade']}*\n\n"
         f"Coin:  `{coin}USDT`\n"
         f"Dir:   `{best['direction']}`\n"
-        f"Score: `{best['score']}/100`\n\n"
+        f"Score: `{best['score']}/100`\n"
+        f"{ml_line}\n"
         f"Entry: `{sig.get('entry', '--')}`\n"
         f"SL:    `{sig.get('sl', '--')}`\n"
         f"TP1:   `{sig.get('tp1', '--')}`\n"
@@ -820,6 +852,171 @@ async def _cmd_queue():
         f"Signal forwarded to Freqtrade for execution.",
         keyboard=_signal_keyboard(coin)
     )
+
+
+async def _cmd_ml():
+    from ml.eligibility import get_ml_status
+    status = get_ml_status()
+
+    closed   = status.get("closed_trades", 0)
+    required = status.get("required", 100)
+    enabled  = status.get("ml_enabled", False)
+    eligible = status.get("eligible", False)
+    message  = status.get("message", "")
+
+    progress_pct = min(100, int(closed / required * 100))
+    bar_filled   = progress_pct // 10
+    bar          = "█" * bar_filled + "░" * (10 - bar_filled)
+
+    top_features = status.get("top_features", [])
+    top_str = ""
+    if top_features:
+        top_str = "\n*Top Features:*\n" + "\n".join(
+            f"  `{f['feature']}` — `{f['importance']}`"
+            for f in top_features[:3]
+        )
+
+    await send(
+        f"🤖 *ML Status*\n\n"
+        f"Status: `{'✅ ACTIVE' if enabled else '⏳ Collecting data'}`\n\n"
+        f"Progress: `{closed}/{required}` trades\n"
+        f"`{bar}` {progress_pct}%\n\n"
+        f"{message}\n"
+        f"{f'CV AUC: `{status.get(chr(99)+chr(118)+chr(95)+chr(97)+chr(117)+chr(99))}`' if enabled else ''}"
+        f"{top_str}\n\n"
+        f"Grades tracked: `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
+        f"Auto-trains at: `{required} trades`\n"
+        f"Retrains every: `50 new trades`"
+    )
+
+
+# ── Freqtrade Commands ────────────────────────────────────────────────────────
+
+async def _ft_api_get(path: str) -> dict | None:
+    try:
+        from api.freqtrade import _get_ft_token
+        import httpx
+        token = await _get_ft_token()
+        if not token:
+            return None
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{cfg.FREQTRADE_URL}/api/v1{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10
+            )
+            return r.json()
+    except Exception as e:
+        log.error(f"FT API error {path}: {e}")
+        return None
+
+
+async def _ft_api_post(path: str, body: dict = None) -> dict | None:
+    try:
+        from api.freqtrade import _get_ft_token
+        import httpx
+        token = await _get_ft_token()
+        if not token:
+            return None
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{cfg.FREQTRADE_URL}/api/v1{path}",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body or {},
+                timeout=10
+            )
+            return r.json()
+    except Exception as e:
+        log.error(f"FT API post error {path}: {e}")
+        return None
+
+
+async def _cmd_ft_status():
+    data = await _ft_api_get("/status")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+
+    if not data or not isinstance(data, list):
+        await send("📊 *Freqtrade Status*\n\nNo open trades.")
+        return
+
+    lines = [f"📊 *Freqtrade — {len(data)} Open Trade(s)*\n"]
+    for t in data:
+        pair    = t.get("pair", "--")
+        pnl     = float(t.get("profit_abs", 0))
+        pnl_pct = float(t.get("profit_ratio", 0)) * 100
+        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+        side    = "📈 LONG" if not t.get("is_short") else "📉 SHORT"
+        lines.append(
+            f"{side} `{pair}`\n"
+            f"Entry: `{t.get('open_rate')}` · Current: `{t.get('current_rate')}`\n"
+            f"PnL: `{pnl_str}` ({pnl_pct:.2f}%)\n"
+            f"SL: `{t.get('stop_loss_abs')}`\n"
+        )
+
+    await send("\n".join(lines))
+
+
+async def _cmd_ft_balance():
+    data = await _ft_api_get("/balance")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+
+    total = float(data.get("total", 0))
+    free  = float(data.get("free", 0) if isinstance(data.get("free"), (int, float)) else 0)
+
+    currencies = data.get("currencies", [])
+    usdt = next((c for c in currencies if c.get("currency") == "USDT"), {})
+
+    await send(
+        f"💰 *Freqtrade Balance*\n\n"
+        f"Total:  `${total:.2f} USDT`\n"
+        f"Free:   `${float(usdt.get('free', 0)):.2f} USDT`\n"
+        f"Used:   `${float(usdt.get('used', 0)):.2f} USDT`\n"
+    )
+
+
+async def _cmd_ft_profit():
+    data = await _ft_api_get("/profit")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+
+    profit     = float(data.get("profit_all_coin", 0))
+    profit_str = f"+${profit:.4f}" if profit >= 0 else f"-${abs(profit):.4f}"
+    win_rate   = float(data.get("winrate", 0)) * 100
+    trades     = data.get("trade_count", 0)
+    best       = float(data.get("best_pair_profit_ratio", 0)) * 100
+    worst      = float(data.get("worst_pair_profit_ratio", 0)) * 100
+
+    await send(
+        f"💰 *Freqtrade Profit*\n\n"
+        f"Total PnL:   `{profit_str}`\n"
+        f"Win Rate:    `{win_rate:.1f}%`\n"
+        f"Total Trades:`{trades}`\n\n"
+        f"Best:  `+{best:.2f}%`\n"
+        f"Worst: `{worst:.2f}%`\n"
+    )
+
+
+async def _cmd_ft_start():
+    data = await _ft_api_post("/start")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+    status = data.get("status", "unknown")
+    await send(f"▶️ *Freqtrade Started*\n\nStatus: `{status}`")
+
+
+async def _cmd_ft_stop():
+    data = await _ft_api_post("/stop")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+    status = data.get("status", "unknown")
+    await send(f"⏹ *Freqtrade Stopped*\n\nStatus: `{status}`")
 
 
 async def _cmd_help():
@@ -850,13 +1047,21 @@ async def _cmd_help():
         "*ANALYSIS*\n"
         "/backtest BTC — backtest a coin\n"
         "/factors      — factor analysis\n"
-        "/debrief      — last signal debrief\n"
-        "/help         — this message\n"
+        "/debrief      — last signal debrief\n\n"
+        "*ML*\n"
+        "/ml      — ML model status\n\n"
+        "*FREQTRADE*\n"
+        "/ftstatus   — open trades\n"
+        "/ftbalance  — balance\n"
+        "/ftprofit   — profit summary\n"
+        "/ftstart    — start bot\n"
+        "/ftstop     — stop bot\n\n"
+        "/help    — this message\n"
     )
 
 
 async def send_signal(signal: dict, coin: str, regime: str, session: str):
-    if signal.get("grade") not in ["A+", "A"]:
+    if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
         return
     if signal.get("direction") not in ["LONG", "SHORT"]:
         return
@@ -878,18 +1083,25 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
     sl_pct    = signal.get("sl_pct", 0)
     risk_amt  = signal.get("risk_amt", 0)
     pos_size  = signal.get("pos_size", 0)
-    emoji     = "🏆" if grade == "A+" else "✅"
+    emoji     = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
     dir_emoji = "📈" if direction == "LONG" else "📉"
+    ml_prob   = signal.get("ml_probability")
 
     explanation = signal.get("explanation", {})
     thesis      = explanation.get("thesis", "")
     conf_label  = explanation.get("confidence_label", "")
+
+    ml_line = ""
+    if ml_prob is not None:
+        ml_icon = "✅" if ml_prob >= 0.65 else "❌"
+        ml_line = f"ML Prob: {ml_icon} `{ml_prob*100:.1f}%`\n"
 
     await send_with_keyboard(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
         f"{'Confidence: `' + conf_label + ' (' + str(score) + '/100)`' + chr(10) if conf_label else ''}"
+        f"{ml_line}"
         f"Regime:  `{regime}`\n"
         f"Session: `{session}`\n"
         f"Time:    `{now_ist()}`\n\n"
@@ -927,10 +1139,12 @@ async def send_scan_summary(results: list):
             score     = r.get("score", 0)
             coin      = r.get("coin", "?")
             conf      = r.get("explanation", {}).get("confidence_label", "")
-            emoji     = "🏆" if g == "A+" else "✅"
+            ml_prob   = r.get("ml_probability")
+            emoji     = "🏆" if g == "A+" else "✅" if g == "A" else "👀"
             dir_emoji = "📈" if direction == "LONG" else "📉"
+            ml_str    = f" · ML:`{ml_prob*100:.0f}%`" if ml_prob is not None else ""
             lines.append(
-                f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf if conf else ''}\n"
+                f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf if conf else ''}{ml_str}\n"
                 f"{dir_emoji} {direction}\n"
             )
 
