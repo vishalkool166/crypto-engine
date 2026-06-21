@@ -58,7 +58,7 @@ services:
         condition: service_healthy
       signal-engine:
         condition: service_healthy
-    entrypoint: >
+    entrypoint: ["bash", "/freqtrade/user_data/start.sh"]
       bash -c "pip install redis>=5.0.0 -q &&
       freqtrade trade
       --config /freqtrade/user_data/config.json

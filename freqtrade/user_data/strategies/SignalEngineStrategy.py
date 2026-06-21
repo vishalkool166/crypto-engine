@@ -157,7 +157,8 @@ class SignalEngineStrategy(IStrategy):
         return inf
 
     def bot_loop_start(self, **kwargs):
-        pairs = self.dp.current_whitelist()
+        pairs    = self.dp.current_whitelist()
+        dry_run  = self.config.get("dry_run", True)
 
         for pair in pairs:
             try:
@@ -204,30 +205,33 @@ class SignalEngineStrategy(IStrategy):
                         pair, "1d", limit=2
                     )
                     if hist and len(hist) >= 2:
-                        cur  = float(hist[-1].get("openInterestAmount", 0))
-                        prev = float(hist[-2].get("openInterestAmount", 0))
+                        cur    = float(hist[-1].get("openInterestAmount", 0))
+                        prev   = float(hist[-2].get("openInterestAmount", 0))
                         change = ((cur - prev) / prev * 100) if prev > 0 else 0.0
                         _push_oi_change_to_redis(coin, change)
                 except Exception as e:
                     logger.warning(f"OI change push failed {coin}: {e}")
 
-                # Push long/short ratio
-                try:
-                    response = self.dp._exchange._api.request(
-                        "GET",
-                        "/futures/data/globalLongShortAccountRatio",
-                        params={
-                            "symbol": f"{coin}USDT",
-                            "period": "1h",
-                            "limit":  1
-                        }
-                    )
-                    if response and len(response) > 0:
-                        long_pct  = float(response[0].get("longAccount",  0)) * 100
-                        short_pct = float(response[0].get("shortAccount", 0)) * 100
-                        _push_ls_ratio_to_redis(coin, long_pct, short_pct)
-                except Exception as e:
-                    logger.warning(f"LS ratio push failed {coin}: {e}")
+                # Push long/short ratio — skip in dry_run (testnet has no LS endpoint)
+                if not dry_run:
+                    try:
+                        response = self.dp._exchange._api.request(
+                            "GET",
+                            "/futures/data/globalLongShortAccountRatio",
+                            params={
+                                "symbol": f"{coin}USDT",
+                                "period": "1h",
+                                "limit":  1
+                            }
+                        )
+                        if response and len(response) > 0:
+                            long_pct  = float(response[0].get("longAccount",  0)) * 100
+                            short_pct = float(response[0].get("shortAccount", 0)) * 100
+                            _push_ls_ratio_to_redis(coin, long_pct, short_pct)
+                    except Exception as e:
+                        logger.warning(f"LS ratio push failed {coin}: {e}")
+                else:
+                    logger.debug(f"Skipping LS ratio in dry_run: {coin}")
 
             except Exception as e:
                 logger.error(f"bot_loop_start error for {pair}: {e}")
@@ -281,10 +285,10 @@ class SignalEngineStrategy(IStrategy):
 
     def custom_stoploss(
         self,
-        pair:         str,
-        trade:        Trade,
-        current_time: datetime,
-        current_rate: float,
+        pair:           str,
+        trade:          Trade,
+        current_time:   datetime,
+        current_rate:   float,
         current_profit: float,
         **kwargs
     ) -> float:
@@ -346,14 +350,14 @@ class SignalEngineStrategy(IStrategy):
 
     def confirm_trade_entry(
         self,
-        pair:             str,
-        order_type:       str,
-        amount:           float,
-        rate:             float,
-        time_in_force:    str,
-        current_time:     datetime,
-        entry_tag:        Optional[str],
-        side:             str,
+        pair:           str,
+        order_type:     str,
+        amount:         float,
+        rate:           float,
+        time_in_force:  str,
+        current_time:   datetime,
+        entry_tag:      Optional[str],
+        side:           str,
         **kwargs
     ) -> bool:
         coin = pair.replace("/USDT", "").replace(":USDT", "")
