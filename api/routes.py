@@ -538,7 +538,7 @@ async def mode_toggle(request: Request):
         new_mode = body.get("mode", "")
 
         if new_mode not in ["live", "paper"]:
-            raise HTTPException(400, "Invalid mode — must be live or paper")
+            raise HTTPException(400, "Invalid mode")
 
         from auth import verify_totp
         if not verify_totp(totp):
@@ -546,6 +546,20 @@ async def mode_toggle(request: Request):
                 status_code = 401,
                 content     = {"success": False, "reason": "Invalid TOTP code"}
             )
+
+        try:
+            from api.freqtrade import _ft_get
+            status = await _ft_get("/status")
+            if status and isinstance(status, list) and len(status) > 0:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {
+                        "success": False,
+                        "reason":  f"Cannot switch mode — {len(status)} open trade(s). Close all trades first."
+                    }
+                )
+        except Exception as e:
+            log.warning(f"Could not check open trades: {e}")
 
         if new_mode == "live":
             if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
