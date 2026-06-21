@@ -367,7 +367,7 @@ def build_radar_data(results: list) -> list:
 def build_signal_queue(results: list) -> list:
     tradeable = [
         r for r in results
-        if r.get("grade") in ["A+", "A"] and
+        if r.get("grade") in cfg.MIN_GRADE_TO_TRADE and
         r.get("direction") in ["LONG", "SHORT"]
     ][:3]
 
