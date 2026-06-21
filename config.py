@@ -99,6 +99,10 @@ class Config:
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
 
+    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "http://freqtrade:8080")
+    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "freqtrade")
+    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
+
     @property
     def COINS(self) -> list:
         global _coins_cache, _coins_cache_time
