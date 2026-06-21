@@ -43,62 +43,27 @@ KEY CONCEPTS YOU KNOW:
 - PnL = Profit and Loss
 - Leverage = multiplier on position size — 10x means $10 controls $100
 - Drawdown = how much the account dropped from its peak
-- Health State = HEALTHY (thesis intact), WARNING (weakening), INVALIDATED (exit signal)
 - Daily Cap = maximum loss allowed per day before bot stops trading
 - Order Block = price zone where institutions placed large orders
 - FVG = Fair Value Gap — imbalance in price that often gets filled
 - BOS = Break of Structure — confirms trend direction
-- CHoCH = Change of Character — early reversal signal
-- Tier = account size bracket that controls risk%, leverage, max trades
-- Balance Tiers: Tier1 <$50 (5% risk, 1 trade, 5x), Tier2 $50-200 (8%, 2 trades, 10x), Tier3 $200-1000 (10%, 3 trades, 15x), Tier4 >$1000 (12%, 3 trades, 20x)"""
+- CHoCH = Change of Character — early reversal signal"""
 
 
 def _detect_intent(message: str) -> str:
     m = message.lower()
-    if any(w in m for w in ["trade", "position", "entry", "sl", "tp", "pnl", "profit", "loss", "close"]):
-        return "trade"
     if any(w in m for w in ["coin", "btc", "eth", "signal", "grade", "score", "regime", "session"]):
         return "signal"
-    if any(w in m for w in ["balance", "capital", "tier", "risk", "leverage", "daily"]):
-        return "risk"
     return "general"
 
 
 async def _get_context_for_intent(intent: str) -> str:
     lines = []
     try:
-        from trade.state import state_manager
-        from trade.risk import risk_guard, get_current_tier
         from data.cache import cache
         from config import cfg
-        import runtime_state as rs
 
-        tier = get_current_tier()
-        mode = rs.get_trading_mode()
-
-        lines.append(f"Mode: {'LIVE' if mode == 'live' else 'PAPER'}")
-        lines.append(f"Tier: {tier['tier']} | Balance: ${tier['balance']:.2f} | Leverage: {tier['leverage']}x | Max trades: {tier['max_trades']}")
-
-        if intent in ("trade", "general"):
-            if state_manager.is_idle:
-                lines.append("State: IDLE — no active trades")
-            else:
-                for trade in state_manager.active_trades.values():
-                    health = state_manager.health_state_for(trade.id)
-                    hd     = state_manager.health_data_for(trade.id)
-                    lines.append(f"TRADE: {trade.coin}USDT {trade.direction} Grade:{trade.grade}")
-                    lines.append(f"Entry:{trade.entry_price} SL:{trade.sl_price} TP1:{trade.tp1_price} TP2:{trade.tp2_price}")
-                    lines.append(f"Size:${trade.position_size:.2f} Risk:${trade.risk_amt:.4f}")
-                    lines.append(f"Health:{health}")
-                    if hd.get("failures"):
-                        lines.append(f"Failures: {'; '.join(hd['failures'][:3])}")
-                    if hd.get("warnings"):
-                        lines.append(f"Warnings: {'; '.join(hd['warnings'][:3])}")
-
-        if intent in ("risk", "general"):
-            risk = risk_guard.get_daily_stats()
-            lines.append(f"Today: {risk['trades_taken']} trades | PnL:${risk['total_pnl']:.4f} | Loss:${abs(risk['total_loss']):.4f} | Cap hit:{risk['cap_hit']}")
-            lines.append(f"Remaining trades:{risk['remaining_trades']} | Loss cap left:${risk['remaining_loss']:.4f}")
+        lines.append(f"Capital: ${cfg.CAPITAL:.2f}")
 
         if intent in ("signal", "general"):
             has_signals = False

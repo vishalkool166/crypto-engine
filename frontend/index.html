@@ -78,44 +78,28 @@ tailwind.config = {
       <div class="w-9 h-9 rounded-apple-sm bg-gradient-to-br from-apple-blue to-blue-600 flex items-center justify-center text-white text-base shadow-apple">⚡</div>
       <div>
         <div class="font-semibold text-[15px] text-apple-text leading-tight">Signal Engine</div>
-        <div class="text-apple-secondary text-[11px]">v5 · Binance Futures</div>
+        <div class="text-apple-secondary text-[11px]">v5 · Signal Brain</div>
       </div>
     </div>
 
     <div class="flex items-center gap-5 flex-wrap">
-      <div class="text-center">
-        <div class="section-label mb-0.5">Balance</div>
-        <div id="h-capital" class="num font-semibold text-sm text-apple-text">$--</div>
-      </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Tier</div>
-        <div id="h-tier" class="num font-semibold text-sm text-apple-text">--</div>
-      </div>
-      <div class="w-px h-6 bg-black/8"></div>
-      <div class="text-center">
-        <div class="section-label mb-0.5">Leverage</div>
-        <div id="h-leverage" class="num font-semibold text-sm text-apple-text">--x</div>
-      </div>
-      <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
         <div class="section-label mb-0.5">Today PnL</div>
         <div id="h-today-pnl" class="num font-semibold text-sm">--</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
-        <div class="section-label mb-0.5">Slots</div>
-        <div id="h-slots" class="num font-semibold text-sm text-apple-text">--</div>
+        <div class="section-label mb-0.5">Win Rate</div>
+        <div id="h-winrate" class="num font-semibold text-sm">--%</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
-        <div class="section-label mb-0.5">Win Rate</div>
-        <div id="h-winrate" class="num font-semibold text-sm">--%</div>
+        <div class="section-label mb-0.5">Coins</div>
+        <div id="h-coins-count" class="num font-semibold text-sm text-apple-text">--</div>
       </div>
     </div>
 
     <div class="flex items-center gap-3">
-      <span id="mode-badge" class="px-3 py-1 rounded-full text-xs font-semibold bg-apple-blue/10 text-apple-blue border border-apple-blue/20">PAPER</span>
       <div id="ws-status" class="flex items-center text-[10px] text-apple-secondary">
         <span class="ws-dot"></span>
         <span id="ws-status-text">connecting</span>
@@ -126,6 +110,12 @@ tailwind.config = {
           Next: <span id="countdown-val" class="text-apple-blue font-semibold">--:--</span>
         </div>
       </div>
+      <a href="https://signal-engine-v5.vishalkool.top/trade/"
+         target="_blank"
+         class="text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors"
+         style="background:rgba(52,199,89,0.1);color:#248a3d;border-color:rgba(52,199,89,0.2)">
+        FreqUI →
+      </a>
       <button onclick="handleLogout()" class="text-[11px] text-apple-secondary hover:text-apple-red transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
         Logout
       </button>
@@ -152,22 +142,6 @@ tailwind.config = {
 
     <!-- LEFT -->
     <div class="space-y-3">
-
-      <!-- ACTIVE TRADES -->
-      <section id="trade-section">
-        <div id="trade-idle" class="glass rounded-apple p-5 flex items-center gap-4">
-          <div class="w-12 h-12 rounded-apple-sm bg-black/5 flex items-center justify-center text-2xl">⚪</div>
-          <div>
-            <div class="font-semibold text-base text-apple-secondary">No Active Trades</div>
-            <div id="idle-mode-text" class="text-apple-secondary text-xs mt-0.5"></div>
-          </div>
-          <div class="ml-auto text-right hidden sm:block">
-            <div class="section-label mb-0.5">Last Scan</div>
-            <div id="idle-last-scan" class="text-xs text-apple-text num font-medium">--</div>
-          </div>
-        </div>
-        <div id="trades-grid" class="hidden space-y-3"></div>
-      </section>
 
       <!-- MARKET RADAR -->
       <section class="glass rounded-apple overflow-hidden">
@@ -204,7 +178,7 @@ tailwind.config = {
             <div id="perf-pf-sub" class="text-[10px] mt-0.5 text-apple-secondary">gross P/L</div>
           </div>
           <div class="p-4">
-            <div class="section-label mb-1.5">Best Trade</div>
+            <div class="section-label mb-1.5">Best Signal</div>
             <div id="perf-best"     class="num font-bold text-xl text-apple-green">$--</div>
             <div id="perf-best-sub" class="text-[10px] mt-0.5 text-apple-secondary">--</div>
           </div>
@@ -257,11 +231,11 @@ tailwind.config = {
 
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
-            <h2 class="section-label">💼 Recent Trades</h2>
+            <h2 class="section-label">💼 Recent Signals</h2>
             <span class="text-[10px] text-apple-secondary">click for details</span>
           </div>
           <div class="p-3 max-h-48 overflow-y-auto space-y-1.5" id="history-list">
-            <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
+            <div class="text-center py-8 text-apple-secondary text-xs">No closed signals yet</div>
           </div>
         </section>
       </div>
@@ -278,57 +252,6 @@ tailwind.config = {
         </div>
         <div class="p-3 space-y-2" id="signal-queue">
           <div class="text-center py-8 text-apple-secondary text-xs">No A/A+ signals yet.<br>Waiting for next scan.</div>
-        </div>
-      </section>
-
-      <!-- DAILY RISK -->
-      <section class="glass rounded-apple overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-3 border-b divider">
-          <h2 class="section-label">🛡️ Daily Risk</h2>
-          <span id="risk-cap-status" class="text-xs font-semibold text-apple-green">✅ Active</span>
-        </div>
-        <div class="p-4 space-y-3">
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Trades Today</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-trades-bar" class="h-full rounded-full bar bg-apple-blue" style="width:0%"></div>
-            </div>
-            <span id="risk-trades-val" class="num text-xs font-semibold w-8 text-right text-apple-text">0/3</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Daily Loss</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-loss-bar" class="h-full rounded-full bar bg-apple-green" style="width:0%"></div>
-            </div>
-            <span id="risk-loss-val" class="num text-xs font-semibold w-14 text-right text-apple-text">$0.00</span>
-          </div>
-          <div class="flex items-center gap-3">
-            <span class="text-xs text-apple-secondary w-24 shrink-0">Today PnL</span>
-            <div class="flex-1 progress-track h-1.5">
-              <div id="risk-pnl-bar" class="h-full rounded-full bar bg-apple-green" style="width:0%"></div>
-            </div>
-            <span id="risk-pnl-val" class="num text-xs font-semibold w-14 text-right">$0.00</span>
-          </div>
-          <div class="grid grid-cols-2 gap-2 pt-1">
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Slots Left</div>
-              <div id="risk-remaining-trades" class="num font-bold text-2xl text-apple-text">3</div>
-            </div>
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Loss Cap Left</div>
-              <div id="risk-remaining-loss" class="num font-bold text-2xl text-apple-text">$--</div>
-            </div>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Tier</div>
-              <div id="risk-tier" class="num font-bold text-xl text-apple-text">--</div>
-            </div>
-            <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Balance</div>
-              <div id="risk-balance" class="num font-bold text-xl text-apple-text">$--</div>
-            </div>
-          </div>
         </div>
       </section>
 

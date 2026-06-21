@@ -12,9 +12,6 @@ function applyAndRender(data) {
   applyDashboard(data)
   renderHeader(data.header)
   renderStatusBar(data)
-  renderRisk(data.risk)
-  renderTrades(data.trades, data.state)
-  syncConnectionMode(data.state)
   renderRadar(data.radar)
   renderSignalQueue(data.queue)
   renderPerformance(data.performance)
@@ -104,36 +101,6 @@ async function triggerScan() {
     S.scanning = false
     if (btn) { btn.disabled = false; btn.textContent = '🔍 Scan Now' }
     renderStatusBar(S.data)
-  }
-}
-
-
-async function closeTrade(tradeId = null) {
-  const btn = tradeId
-    ? document.querySelector(`[data-close-btn="${tradeId}"]`)
-    : $id('close-trade-btn')
-
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Closing...' }
-
-  try {
-    const body = tradeId ? JSON.stringify({ trade_id: tradeId }) : '{}'
-    const res  = await fetch(`${API}/trade/close`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-      body
-    })
-    const result = await res.json()
-
-    if (result.success) {
-      toast('✅ Trade Closed', 'Position closed at market', 'success')
-      await fetchDashboard()
-    } else {
-      toast('❌ Close Failed', result.reason || 'Unknown error', 'error')
-      if (btn) { btn.disabled = false; btn.textContent = '🔴 Close Trade at Market' }
-    }
-  } catch(e) {
-    toast('❌ Error', e.message, 'error')
-    if (btn) { btn.disabled = false; btn.textContent = '🔴 Close Trade at Market' }
   }
 }
 

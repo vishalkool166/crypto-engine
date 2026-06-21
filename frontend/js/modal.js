@@ -43,67 +43,79 @@ function closeModal() {
   overlay.classList.remove('flex')
 }
 
-function showConfirmClose(tradeId = null) {
-  const d = S.data
-  if (!d || d.state === 'idle') {
-    toast('⚠️ No active trade', '', 'warning')
-    return
-  }
-
-  const trades = d.trades || []
-  const t      = tradeId
-    ? trades.find(tr => tr.id === tradeId)
-    : trades[0]
-
-  if (!t) {
-    toast('⚠️ Trade not found', '', 'warning')
-    return
-  }
-
+function showSignalDetail(h) {
   const title   = $id('modal-title')
   const body    = $id('modal-body')
   const overlay = $id('modal-overlay')
 
-  title.textContent = `Close ${t.coin} ${t.direction}?`
+  const isLong       = h.direction === 'LONG'
+  const dirColor     = isLong ? '#248a3d' : '#c0392b'
+  const outcomeColor = h.outcome === 'win' ? '#248a3d' : h.outcome === 'loss' ? '#c0392b' : '#6e6e73'
+
+  title.textContent = `${h.coin}USDT ${h.direction} — ${(h.outcome || '--').toUpperCase()}`
+
+  const fmt = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+
+  const fmtDate = s => {
+    if (!s) return '--'
+    try {
+      return new Date(s).toLocaleString('en-IN', {
+        timeZone: 'Asia/Kolkata', hour12: true,
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      }) + ' IST'
+    } catch { return s }
+  }
 
   body.innerHTML = `
-    <div style="margin-bottom:16px">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
-        <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
-          <div class="section-label" style="margin-bottom:4px">Entry</div>
-          <div style="font-family:monospace;font-weight:600;font-size:14px">${t.entry_price}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Signal Info</div>
+        <div style="font-size:13px;font-weight:700;color:${dirColor};margin-bottom:6px">
+          ${h.dir_emoji || ''} ${h.coin}USDT ${h.direction}
         </div>
-        <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
-          <div class="section-label" style="margin-bottom:4px">Current</div>
-          <div style="font-family:monospace;font-weight:600;font-size:14px;color:${t.current_color}">${t.current_price}</div>
-        </div>
-        <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
-          <div class="section-label" style="margin-bottom:4px">uPnL</div>
-          <div style="font-family:monospace;font-weight:600;font-size:14px;color:${t.pnl_color}">${t.pnl}</div>
-        </div>
-        <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
-          <div class="section-label" style="margin-bottom:4px">Health</div>
-          <div style="font-weight:600;font-size:14px;color:${t.health_color}">${t.health_emoji} ${t.health_state}</div>
+        <div style="font-size:11px;color:#6e6e73;line-height:2">
+          <div>Grade: <strong style="color:#1d1d1f">${h.grade || '--'}</strong></div>
+          <div>Score: <strong style="color:#1d1d1f">${h.score_at_entry || '--'}/100</strong></div>
+          <div>Regime: <strong style="color:#1d1d1f">${h.regime_at_entry || '--'}</strong></div>
+          <div>Session: <strong style="color:#1d1d1f">${h.session_at_entry || '--'}</strong></div>
+          <div>Timestamp: <strong style="color:#1d1d1f">${fmtDate(h.opened_at)}</strong></div>
         </div>
       </div>
-      <p style="font-size:12px;color:#6e6e73;margin-bottom:16px;text-align:center">
-        This cancels all SL/TP orders and closes at market price.
-      </p>
-      <div style="display:flex;gap:12px">
-        <button onclick="closeModal()"
-                style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(0,0,0,0.1);background:rgba(0,0,0,0.04);font-weight:600;font-size:13px;cursor:pointer">
-          Cancel
-        </button>
-        <button onclick="closeModal();closeTrade(${tradeId || ''})"
-                class="btn-danger"
-                style="flex:1">
-          ✅ Yes, Close
-        </button>
+      <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
+        <div class="section-label" style="margin-bottom:8px">Outcome</div>
+        <div style="font-size:22px;font-weight:700;font-family:monospace;color:${h.pnl_color || outcomeColor};margin-bottom:6px">
+          ${h.pnl || '--'}
+        </div>
+        <div style="font-size:11px;color:#6e6e73;line-height:2">
+          <div>Result: <strong style="color:${outcomeColor}">${(h.outcome || '--').toUpperCase()}</strong></div>
+          <div>Exit Price: <strong style="color:#1d1d1f">${fmt(h.exit_price)}</strong></div>
+        </div>
       </div>
-    </div>`
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+      ${_detailCell('Entry', fmt(h.entry_price), '#0071e3')}
+      ${_detailCell('Stop',  fmt(h.sl_price),    '#ff3b30')}
+      ${_detailCell('TP1',   fmt(h.tp1_price),   '#34c759')}
+      ${_detailCell('TP2',   fmt(h.tp2_price),   '#34c759')}
+      ${_detailCell('Risk',     fmt(h.risk_amt),      '#ff3b30')}
+      ${_detailCell('Size',     fmt(h.position_size), '#1d1d1f')}
+      ${_detailCell('Leverage', (h.leverage || '--'), '#1d1d1f')}
+      ${_detailCell('Score',    (h.score_at_entry ? h.score_at_entry + '/100' : '--'), '#0071e3')}
+    </div>
+  `
 
   overlay.classList.remove('hidden')
   overlay.classList.add('flex')
+}
+
+function _detailCell(label, value, color) {
+  return `
+    <div style="background:rgba(0,0,0,0.04);border-radius:10px;padding:10px 12px">
+      <div class="section-label" style="margin-bottom:4px">${label}</div>
+      <div style="font-family:monospace;font-weight:600;font-size:13px;color:${color}">${value}</div>
+    </div>`
 }
 
 function _renderModalData(coin, data, title, body) {

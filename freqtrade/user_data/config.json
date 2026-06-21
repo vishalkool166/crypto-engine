@@ -1,0 +1,77 @@
+{
+  "bot_name": "SignalEngineBody",
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "exchange": {
+    "name": "binance",
+    "key": "",
+    "secret": "",
+    "ccxt_config": {
+      "enableRateLimit": true
+    },
+    "ccxt_async_config": {
+      "enableRateLimit": true
+    },
+    "pair_whitelist": [],
+    "pair_blacklist": []
+  },
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 0.99,
+  "max_open_trades": 3,
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "cancel_open_orders_on_exit": true,
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 10,
+    "exit_timeout_count": 0,
+    "unit": "minutes"
+  },
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1,
+    "price_last_balance": 0.0,
+    "check_depth_of_market": {
+      "enabled": false,
+      "bids_to_ask_delta": 1
+    }
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "pairlists": [
+    {
+      "method": "RemotePairList",
+      "url": "http://localhost:8000/api/coins/active",
+      "refresh_period": 1800,
+      "read_timeout": 60,
+      "keep_last_successful_refresh": true
+    }
+  ],
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "0.0.0.0",
+    "listen_port": 8080,
+    "verbosity": "error",
+    "enable_openapi": false,
+    "jwt_secret_key": "change-this-to-a-random-secret",
+    "ws_token": "change-this-to-a-random-token",
+    "username": "freqtrade",
+    "password": "change-this-password"
+  },
+  "telegram": {
+    "enabled": false
+  },
+  "internals": {
+    "process_throttle_secs": 5
+  },
+  "strategy": "SignalEngineStrategy",
+  "strategy_path": "/freqtrade/user_data/strategies/",
+  "datadir": "/freqtrade/user_data/data",
+  "logfile": "/freqtrade/user_data/logs/freqtrade.log",
+  "db_url": "sqlite:////freqtrade/user_data/tradesv3.sqlite"
+}

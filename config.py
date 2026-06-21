@@ -38,22 +38,17 @@ class Config:
     WEBHOOK_SECRET          = os.getenv("WEBHOOK_SECRET", "")
     JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
-    TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
-    PAPER_TRADING = TRADING_MODE != "live"
-
-    MIN_BALANCE_LIVE = float(os.getenv("MIN_BALANCE_LIVE", 0.00))
+    REDIS_URL      = os.getenv("REDIS_URL", "redis://localhost:6379")
+    ML_MIN_TRADES  = 100
+    ML_ENABLED     = False
 
     _FALLBACK_COINS = []
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
     CAPITAL  = float(os.getenv("CAPITAL", 16))
-    LEVERAGE = 10
 
     MIN_GRADE_TO_TRADE = ["A+", "A"]
-
-    DAILY_LOSS_CAP_PCT = 0.06
-    MAX_TRADES_PER_DAY = 3
 
     GRADE_APLUS = 85
     GRADE_A     = 68
@@ -89,13 +84,6 @@ class Config:
 
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
-
-    BALANCE_TIERS = [
-        {"min": 0,    "max": 50,   "risk_pct": 0.02, "max_trades": 2, "leverage": 10},
-        {"min": 50,   "max": 200,  "risk_pct": 0.02, "max_trades": 2, "leverage": 10},
-        {"min": 200,  "max": 1000, "risk_pct": 0.02, "max_trades": 3, "leverage": 15},
-        {"min": 1000, "max": None, "risk_pct": 0.02, "max_trades": 3, "leverage": 20},
-    ]
 
     RISK_PCT_PER_TRADE = 0.02
 

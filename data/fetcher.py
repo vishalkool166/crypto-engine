@@ -35,7 +35,6 @@ TF_LIMITS = {
 _api_fail_count   = 0
 _api_fail_alerted = False
 
-# P2-22 — last known fear/greed cache
 _last_fg: dict = {"value": 50, "label": "Neutral", "stale": False}
 
 
@@ -61,6 +60,29 @@ def _reset_api_fail():
     global _api_fail_count, _api_fail_alerted
     _api_fail_count   = 0
     _api_fail_alerted = False
+
+
+def _read_candles_from_redis(coin: str, tf: str) -> pd.DataFrame | None:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return None
+        key  = f"candles:{coin}USDT:{tf}"
+        data = r.get(key)
+        if not data:
+            return None
+        df = pd.read_json(data)
+        if df.empty:
+            return None
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df = df.set_index("timestamp")
+        log.debug(f"Redis candle hit: {key} ({len(df)} rows)")
+        return df
+    except Exception as e:
+        log.warning(f"Redis candle read failed {coin} {tf}: {e}")
+        return None
 
 
 async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
@@ -102,14 +124,42 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
 
 
 async def get_ohlcv(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
+    df = _read_candles_from_redis(coin, tf)
+    if df is not None:
+        save_candles(coin, tf, df)
+        return df
     return await fetch_and_store(coin, tf, limit=limit)
 
 
 async def get_ticker(coin: str) -> dict:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            key  = f"ticker:{coin}USDT"
+            data = r.get(key)
+            if data:
+                import json
+                parsed = json.loads(data)
+                log.debug(f"Redis ticker hit: {key}")
+                return {"last": parsed["last"], "percentage": parsed["percentage"]}
+    except Exception as e:
+        log.warning(f"Redis ticker read failed {coin}: {e}")
     return await exchange.fetch_ticker(f"{coin}/USDT")
 
 
 async def get_funding_rate(coin: str) -> float:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            key  = f"funding:{coin}USDT"
+            data = r.get(key)
+            if data:
+                log.debug(f"Redis funding hit: {key}")
+                return float(data)
+    except Exception as e:
+        log.warning(f"Redis funding read failed {coin}: {e}")
     try:
         data = await exchange.fetch_funding_rate(f"{coin}/USDT")
         return float(data.get("fundingRate", 0))
@@ -120,6 +170,17 @@ async def get_funding_rate(coin: str) -> float:
 
 async def get_open_interest(coin: str) -> float:
     try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            key  = f"oi:{coin}USDT"
+            data = r.get(key)
+            if data:
+                log.debug(f"Redis OI hit: {key}")
+                return float(data)
+    except Exception as e:
+        log.warning(f"Redis OI read failed {coin}: {e}")
+    try:
         data = await exchange.fetch_open_interest(f"{coin}/USDT")
         return float(data.get("openInterestAmount", 0))
     except Exception as e:
@@ -128,6 +189,17 @@ async def get_open_interest(coin: str) -> float:
 
 
 async def get_oi_change(coin: str) -> float:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            key  = f"oi_change:{coin}USDT"
+            data = r.get(key)
+            if data:
+                log.debug(f"Redis OI change hit: {key}")
+                return float(data)
+    except Exception as e:
+        log.warning(f"Redis OI change read failed {coin}: {e}")
     try:
         hist = await exchange.fetch_open_interest_history(
             f"{coin}/USDT", "1d", limit=2
@@ -143,6 +215,19 @@ async def get_oi_change(coin: str) -> float:
 
 
 async def get_ls_ratio(coin: str) -> dict:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            key  = f"ls_ratio:{coin}USDT"
+            data = r.get(key)
+            if data:
+                import json
+                parsed = json.loads(data)
+                log.debug(f"Redis LS ratio hit: {key}")
+                return {"long": parsed["long"], "short": parsed["short"]}
+    except Exception as e:
+        log.warning(f"Redis LS ratio read failed {coin}: {e}")
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
@@ -177,7 +262,6 @@ async def get_fear_greed() -> dict:
             return _last_fg
     except Exception as e:
         log.warning(f"Fear greed failed: {e}")
-        # P2-22 — return stale value
         return {**_last_fg, "stale": True}
 
 
@@ -254,6 +338,13 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
     cached    = cache.get_raw(cache_key)
     if cached is not None:
         return cached
+
+    df = _read_candles_from_redis(coin, "15m")
+    if df is not None:
+        save_candles(coin, "15m", df)
+        cache.set(cache_key, df, ttl=300)
+        return df
+
     try:
         df = await fetch_and_store(coin, "15m", limit=200)
         cache.set(cache_key, df, ttl=300)
@@ -261,19 +352,6 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
     except Exception as e:
         log.warning(f"15m fetch failed {coin}: {e}")
         return None
-
-
-# P0-3 — live balance from Binance
-async def get_live_balance() -> float:
-    try:
-        data = await exchange.fetch_balance()
-        usdt = data.get("USDT", {})
-        bal  = float(usdt.get("free", 0) or usdt.get("total", 0) or 0)
-        log.info(f"Live balance fetched: ${bal:.2f}")
-        return bal
-    except Exception as e:
-        log.warning(f"Balance fetch failed: {e}")
-        return 0.0
 
 
 async def get_all_data(coin: str) -> dict:

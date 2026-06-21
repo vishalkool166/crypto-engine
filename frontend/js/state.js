@@ -6,9 +6,7 @@ const S = {
   nextScanEpoch:      null,
   prevGrades:         {},
   lastHistoryLen:     0,
-  lastTradeIds:       new Set(),
   lastState:          null,
-  lastHealthStates:   {},
   _clockInterval:     null,
   _countdownInterval: null,
 }
@@ -50,37 +48,18 @@ function applyDashboard(data) {
   S.data = data
   if (data.next_scan_epoch) S.nextScanEpoch = data.next_scan_epoch
 
-  const prevIds       = new Set(S.lastTradeIds)
-  const newIds        = new Set((data.trades || []).map(t => t.id))
-  const stateChanged  = data.state !== S.lastState
-  const tradesChanged = (
-    newIds.size !== prevIds.size ||
-    [...newIds].some(id => !prevIds.has(id))
-  )
-
-  const healthChanged = (data.trades || []).some(t => {
-    return t.health_state !== S.lastHealthStates[t.id]
-  })
-
+  const stateChanged = data.state !== S.lastState
   S.lastState = data.state
-  S.lastTradeIds = newIds;
-  (data.trades || []).forEach(t => {
-    S.lastHealthStates[t.id] = t.health_state
+
+  (data.radar || []).forEach(r => {
+    const prev = S.prevGrades[r.coin]
+    if (prev && prev !== r.grade && r.tradeable) {
+      toast(
+        `🎯 Grade ${r.grade} Signal`,
+        `${r.coin} ${r.direction} — Score ${r.score}`,
+        r.grade === 'A+' ? 'success' : 'info'
+      )
+    }
+    S.prevGrades[r.coin] = r.grade
   })
-
-  if (stateChanged && data.state !== 'idle') {
-    toast('⚡ Trade Active', `${data.trade?.coin || ''} ${data.trade?.direction || ''}`, 'success')
-  }
-
-  if (healthChanged) {
-    (data.trades || []).forEach(t => {
-      if (t.health_state === 'INVALIDATED') {
-        toast(`🚨 ${t.coin} Invalidated`, 'Thesis failed — consider closing', 'error', 8000)
-      } else if (t.health_state === 'WARNING') {
-        toast(`⚠️ ${t.coin} Warning`, 'Thesis weakening', 'warning', 6000)
-      }
-    })
-  }
-
-  return { stateChanged, tradesChanged, healthChanged }
 }

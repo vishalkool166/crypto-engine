@@ -18,3 +18,4 @@ slowapi
 qrcode[pil]
 jinja2
 tenacity
+redis>=5.0.0

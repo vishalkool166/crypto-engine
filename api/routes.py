@@ -9,24 +9,19 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from database import (
     get_db, Signal as SignalModel,
-    Trade as TradeModel, BacktestResult,
-    CoinConfig, SessionLocal
+    BacktestResult, CoinConfig, SessionLocal
 )
 from alerts.scanner import analyze_coin, scan_all_coins, get_db_stats
 from data.cache import cache
 from data.fetcher import get_fear_greed, get_news_filter
-from trade.state import state_manager
-from trade.manager import trade_manager
-from trade.risk import risk_guard
-from trade.orders import get_current_price, exchange as sync_exchange
 from backtest.engine import run_backtest
 from backtest.factor_analysis import run_factor_analysis
 from scheduler import get_next_scan_epoch
 from config import cfg
 from auth import is_authenticated, audit
 from api.formatters import (
-    make_serializable, build_trade_data, build_all_trades_data,
-    build_risk_data, build_performance_data, build_radar_data,
+    make_serializable,
+    build_performance_data, build_radar_data,
     build_signal_queue, build_history_data, build_header_data
 )
 import runtime_state as rs
@@ -42,61 +37,40 @@ def _auth(request: Request):
 
 
 async def build_dashboard_payload() -> dict:
-    trades_data = []
-
-    if not state_manager.is_idle:
-        state_manager.refresh()
-        for trade in state_manager.active_trades.values():
-            if trade.is_active:
-                current = get_current_price(trade.coin)
-                trades_data.append(build_trade_data(trade, current))
-
-    trade_state = "idle" if state_manager.is_idle else "in_trade"
-    trade_data  = trades_data[0] if len(trades_data) == 1 else None
-
-    risk_stats = risk_guard.get_daily_stats()
-    risk_data  = build_risk_data(risk_stats)
-    stats      = get_db_stats()
+    stats = get_db_stats()
 
     db = SessionLocal()
     try:
-        trades_raw = db.query(TradeModel).filter(
-            TradeModel.is_active == False
-        ).order_by(TradeModel.closed_at.desc()).limit(10).all()
+        signals_raw = db.query(SignalModel).filter(
+            SignalModel.outcome.notin_(["pending"]),
+            SignalModel.outcome.isnot(None)
+        ).order_by(SignalModel.timestamp.desc()).limit(10).all()
 
-        trades_list = [{
-            "id":               t.id,
-            "coin":             t.coin,
-            "direction":        t.direction,
-            "grade":            t.grade,
-            "pnl":              t.pnl,
-            "pnl_raw":          t.pnl,
-            "outcome":          t.outcome,
-            "close_reason":     t.close_reason,
-            "entry_price":      t.entry_price,
-            "exit_price":       t.exit_price,
-            "sl_price":         t.sl_price,
-            "tp1_price":        t.tp1_price,
-            "tp2_price":        t.tp2_price,
-            "risk_amt":         t.risk_amt,
-            "position_size":    t.position_size,
-            "leverage":         t.leverage,
-            "tp1_hit":          t.tp1_hit,
-            "partial_pnl":      t.partial_pnl,
-            "regime_at_entry":  t.regime_at_entry,
-            "session_at_entry": t.session_at_entry,
-            "score_at_entry":   t.score_at_entry,
-            "balance_at_open":  t.balance_at_open,
-            "tier_at_open":     t.tier_at_open,
-            "health_at_close":  t.health_at_close,
-            "opened_at":        t.opened_at.isoformat() if t.opened_at else None,
-            "closed_at":        t.closed_at.isoformat() if t.closed_at else None
-        } for t in trades_raw]
+        signals_list = [{
+            "id":        s.id,
+            "coin":      s.coin,
+            "direction": s.direction,
+            "grade":     s.grade,
+            "outcome":   s.outcome,
+            "pnl":       s.pnl,
+            "entry":     s.entry,
+            "exit_price":s.exit_price,
+            "sl":        s.sl,
+            "tp1":       s.tp1,
+            "tp2":       s.tp2,
+            "risk_amt":  s.risk_amt,
+            "position":  s.position,
+            "leverage":  s.leverage,
+            "regime":    s.regime,
+            "session":   s.session,
+            "score":     s.score,
+            "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+        } for s in signals_raw]
     finally:
         db.close()
 
-    perf_data    = build_performance_data(stats, trades_list)
-    history_data = build_history_data(trades_list)
+    perf_data    = build_performance_data(stats)
+    history_data = build_history_data(signals_list)
 
     radar_data = []
     queue_data = []
@@ -114,15 +88,11 @@ async def build_dashboard_payload() -> dict:
         queue_data = build_signal_queue(cached_results)
         last_scan  = "From cache"
 
-    header_data   = build_header_data(risk_stats, stats)
+    header_data   = build_header_data(stats)
     coin_universe = build_coin_universe()
 
     return make_serializable({
         "type":            "dashboard",
-        "state":           trade_state,
-        "trade":           trade_data,
-        "trades":          trades_data,
-        "risk":            risk_data,
         "performance":     perf_data,
         "history":         history_data,
         "radar":           radar_data,
@@ -270,53 +240,44 @@ async def get_signals(
         raise HTTPException(500, str(e))
 
 
-@router.get("/stats")
-async def get_stats(request: Request):
+@router.get("/signals/latest")
+async def signals_latest(request: Request):
     _auth(request)
     try:
-        return JSONResponse(content=make_serializable(get_db_stats()))
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
+        from redis_client import get_redis
+        import json
+        import time
 
+        r = get_redis()
+        if not r:
+            raise HTTPException(503, "Redis unavailable")
 
-@router.get("/trade/status")
-async def trade_status(request: Request):
-    _auth(request)
-    try:
-        if state_manager.is_idle:
-            return JSONResponse(content={"state": "idle", "trade": None, "trades": []})
+        best       = None
+        best_score = 0
 
-        state_manager.refresh()
-        trades_data = []
-        for trade in state_manager.active_trades.values():
-            current = get_current_price(trade.coin)
-            trades_data.append(build_trade_data(trade, current))
+        for coin in cfg.COINS:
+            key  = f"signal:{coin}USDT"
+            data = r.get(key)
+            if not data:
+                continue
+            try:
+                sig = json.loads(data)
+            except Exception:
+                continue
+            if time.time() > sig.get("valid_until", 0):
+                continue
+            if sig.get("grade") not in ["A+", "A"]:
+                continue
+            score = sig.get("score", 0)
+            if score > best_score:
+                best       = sig
+                best_score = score
 
-        return JSONResponse(content={
-            "state":  "in_trade",
-            "trade":  trades_data[0] if trades_data else None,
-            "trades": make_serializable(trades_data)
-        })
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
+        if not best:
+            raise HTTPException(404, "No valid signals found")
 
+        return JSONResponse(content=best)
 
-@router.post("/trade/close")
-async def close_trade(request: Request):
-    _auth(request)
-    try:
-        body     = {}
-        if request.headers.get("content-type", "").startswith("application/json"):
-            body = await request.json()
-        trade_id = body.get("trade_id")
-        result   = await trade_manager.manual_close(trade_id=trade_id)
-        if not result["success"]:
-            raise HTTPException(400, result["reason"])
-        ip = request.client.host if request.client else ""
-        audit("manual_close", "api", f"trade_id:{trade_id}", ip=ip)
-        return JSONResponse(content=result)
     except HTTPException:
         raise
     except Exception as e:
@@ -324,58 +285,77 @@ async def close_trade(request: Request):
         raise HTTPException(500, str(e))
 
 
-@router.get("/trade/history")
-async def trade_history(
-    request: Request,
-    limit:   int = 20,
-    db: Session = Depends(get_db)
-):
+@router.get("/signals/active")
+async def signals_active(request: Request):
     _auth(request)
     try:
-        trades = db.query(TradeModel).filter(
-            TradeModel.is_active == False
-        ).order_by(TradeModel.closed_at.desc()).limit(limit).all()
+        from redis_client import get_redis
+        import json
+        import time
 
-        result = [{
-            "id":               t.id,
-            "coin":             t.coin,
-            "direction":        t.direction,
-            "grade":            t.grade,
-            "entry_price":      t.entry_price,
-            "exit_price":       t.exit_price,
-            "sl_price":         t.sl_price,
-            "tp1_price":        t.tp1_price,
-            "tp2_price":        t.tp2_price,
-            "pnl":              t.pnl,
-            "outcome":          t.outcome,
-            "close_reason":     t.close_reason,
-            "risk_amt":         t.risk_amt,
-            "position_size":    t.position_size,
-            "margin_used":      t.margin_used,
-            "leverage":         t.leverage,
-            "tp1_hit":          t.tp1_hit,
-            "partial_pnl":      t.partial_pnl,
-            "regime_at_entry":  t.regime_at_entry,
-            "session_at_entry": t.session_at_entry,
-            "score_at_entry":   t.score_at_entry,
-            "balance_at_open":  t.balance_at_open,
-            "tier_at_open":     t.tier_at_open,
-            "health_at_close":  t.health_at_close,
-            "opened_at":        t.opened_at.isoformat() if t.opened_at else None,
-            "closed_at":        t.closed_at.isoformat() if t.closed_at else None
-        } for t in trades]
+        r = get_redis()
+        if not r:
+            raise HTTPException(503, "Redis unavailable")
 
-        return JSONResponse(content=result)
+        active = []
+
+        for coin in cfg.COINS:
+            key  = f"signal:{coin}USDT"
+            data = r.get(key)
+            if not data:
+                continue
+            try:
+                sig = json.loads(data)
+            except Exception:
+                continue
+            if time.time() > sig.get("valid_until", 0):
+                continue
+            if sig.get("grade") not in ["A+", "A"]:
+                continue
+            active.append(sig)
+
+        active.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return JSONResponse(content=active)
+
+    except HTTPException:
+        raise
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
-@router.get("/risk/daily")
-async def daily_risk(request: Request):
+@router.get("/coins/active")
+async def coins_active():
+    try:
+        from redis_client import get_redis
+        import json
+
+        r = get_redis()
+        if r:
+            data = r.get("pairs:active")
+            if data:
+                return JSONResponse(content=json.loads(data))
+
+        with SessionLocal() as db:
+            rows = db.query(CoinConfig).filter(
+                CoinConfig.enabled == True
+            ).all()
+            pairs = [f"{row.coin}/USDT" for row in rows]
+
+        return JSONResponse(content={
+            "pairs":          pairs,
+            "refresh_period": 1800
+        })
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.get("/stats")
+async def get_stats(request: Request):
     _auth(request)
     try:
-        return JSONResponse(content=make_serializable(risk_guard.get_daily_stats()))
+        return JSONResponse(content=make_serializable(get_db_stats()))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -416,15 +396,13 @@ async def backtest(request: Request, coin: str):
     if coin not in cfg.COINS:
         raise HTTPException(400, f"{coin} not supported")
     try:
-        from trade.risk import get_current_tier
-        tier   = get_current_tier()
         loop   = asyncio.get_running_loop()
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: run_backtest(
                     coin     = coin,
-                    capital  = tier["balance"] or cfg.CAPITAL,
-                    leverage = tier["leverage"]
+                    capital  = cfg.CAPITAL,
+                    leverage = 10
                 )
             ),
             timeout=120.0
@@ -444,8 +422,6 @@ async def backtest(request: Request, coin: str):
 @router.get("/backtest/all/run")
 async def backtest_all(request: Request):
     _auth(request)
-    from trade.risk import get_current_tier
-    tier    = get_current_tier()
     results = []
     loop    = asyncio.get_running_loop()
 
@@ -455,8 +431,8 @@ async def backtest_all(request: Request):
                 loop.run_in_executor(
                     None, lambda c=coin: run_backtest(
                         coin     = c,
-                        capital  = tier["balance"] or cfg.CAPITAL,
-                        leverage = tier["leverage"]
+                        capital  = cfg.CAPITAL,
+                        leverage = 10
                     )
                 ),
                 timeout=120.0
@@ -506,15 +482,25 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/health")
 async def health(request: Request):
-    trade = state_manager.current_trade
+    from ml.eligibility import get_ml_status
+
+    redis_connected = False
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            r.ping()
+            redis_connected = True
+    except Exception:
+        pass
+
     return JSONResponse(content={
-        "status":        "ok",
-        "timestamp":     datetime.now(timezone.utc).isoformat(),
-        "trade_state":   state_manager.current_state,
-        "active_trades": len(state_manager.active_trades),
-        "active_coin":   trade.coin if trade else None,
-        "trading_mode":  rs.get_trading_mode(),
-        "health_state":  state_manager.health_state
+        "status":          "ok",
+        "timestamp":       datetime.now(timezone.utc).isoformat(),
+        "trading_mode":    rs.get_trading_mode(),
+        "coins_count":     len(cfg.COINS),
+        "redis_connected": redis_connected,
+        "ml_status":       get_ml_status()
     })
 
 
@@ -553,22 +539,6 @@ async def audit_log(request: Request, limit: int = 50, db: Session = Depends(get
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-
-
-@router.get("/tier/status")
-async def tier_status(request: Request):
-    _auth(request)
-    from trade.risk import get_current_tier
-    tier    = get_current_tier()
-    balance = rs.get_balance_cache()
-    return JSONResponse(content={
-        "tier":          tier["tier"],
-        "balance":       tier["balance"],
-        "risk_pct":      tier["risk_pct"],
-        "max_trades":    tier["max_trades"],
-        "leverage":      tier["leverage"],
-        "balance_cache": balance
-    })
 
 
 @router.get("/coins")
@@ -623,8 +593,9 @@ async def add_coin(request: Request):
             return JSONResponse(status_code=400, content={"success": False, "reason": "Invalid coin name"})
 
         try:
+            from data.fetcher import exchange
             loop    = asyncio.get_running_loop()
-            markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
+            markets = await loop.run_in_executor(None, lambda: exchange.load_markets(reload=True))
             symbol  = f"{coin}/USDT"
             symbol2 = f"{coin}/USDT:USDT"
             if symbol not in markets and symbol2 not in markets:
@@ -705,8 +676,9 @@ async def validate_coin(request: Request, coin: str):
     _auth(request)
     coin = coin.upper().replace("USDT", "").replace("/", "")
     try:
+        from data.fetcher import exchange
         loop    = asyncio.get_running_loop()
-        markets = await loop.run_in_executor(None, lambda: sync_exchange.load_markets(reload=True))
+        markets = await loop.run_in_executor(None, lambda: exchange.load_markets(reload=True))
         symbol  = f"{coin}/USDT"
         symbol2 = f"{coin}/USDT:USDT"
         if symbol not in markets and symbol2 not in markets:
@@ -717,58 +689,4 @@ async def validate_coin(request: Request, coin: str):
         return JSONResponse(content={"valid": True, "coin": coin, "symbol": symbol})
     except Exception as e:
         log.error(f"Coin validate error: {e}")
-        raise HTTPException(500, str(e))
-
-
-@router.post("/mode/set")
-async def set_mode(request: Request):
-    _auth(request)
-    try:
-        body = await request.json()
-        mode = body.get("mode", "paper")
-        if mode not in ["live", "paper"]:
-            raise HTTPException(400, "Invalid mode")
-
-        if mode == "live":
-            if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
-                return JSONResponse(
-                    status_code = 400,
-                    content     = {"success": False, "reason": "Binance API keys not configured"}
-                )
-            from data.fetcher import get_live_balance
-            balance = await get_live_balance()
-            if balance < cfg.MIN_BALANCE_LIVE:
-                return JSONResponse(
-                    status_code = 400,
-                    content     = {"success": False, "reason": f"Balance ${balance:.2f} below minimum ${cfg.MIN_BALANCE_LIVE}"}
-                )
-
-        rs.set_trading_mode(mode)
-        cfg.TRADING_MODE  = mode
-        cfg.PAPER_TRADING = mode != "live"
-
-        if mode == "live":
-            from data.fetcher import get_live_balance
-            from trade.risk import get_tier_config
-            fresh_balance = await get_live_balance()
-            if fresh_balance > 0:
-                rs.set_balance_cache(fresh_balance)
-                tier = get_tier_config(fresh_balance)
-                rs.set_tier_config(tier)
-                cfg.CAPITAL = fresh_balance
-        else:
-            from trade.risk import get_tier_config
-            paper_balance = cfg.CAPITAL
-            rs.set_balance_cache(paper_balance)
-            tier = get_tier_config(paper_balance)
-            rs.set_tier_config(tier)
-
-        ip = request.client.host if request.client else ""
-        audit("mode_set", "dashboard", f"mode:{mode}", ip=ip)
-
-        return JSONResponse(content={"success": True, "mode": mode})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))

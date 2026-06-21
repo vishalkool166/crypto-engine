@@ -15,10 +15,6 @@ from slowapi.errors import RateLimitExceeded
 from api.routes       import router, build_dashboard_payload
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
-from trade.state      import state_manager
-from trade.price_feed import price_feed
-from trade.manager    import trade_manager
-from trade.risk       import risk_guard
 from alerts.telegram  import send, register_webhook, handle_webhook
 from config           import cfg, _bootstrap_secrets
 from events           import on_event, emit
@@ -34,75 +30,12 @@ logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 log       = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="frontend")
 
-_ws_clients:          set          = set()
 _dashboard_clients:   set          = set()
 _last_dashboard_data: dict         = {}
 _last_payload_hash:   str          = ""
 _dashboard_push_task: asyncio.Task = None
 
 limiter = Limiter(key_func=get_remote_address)
-
-
-async def broadcast_price(coin: str, price: float):
-    if not _ws_clients and not _dashboard_clients:
-        return
-
-    active_trades = state_manager.active_trades
-    if not active_trades:
-        return
-
-    trade = next((t for t in active_trades.values() if t.coin == coin or t.coin == coin + "USDT"), None)
-    if not trade:
-        return
-
-    from api.formatters import fmt_price, fmt_pnl, fmt_pct, pnl_color
-    from trade.risk import get_current_tier
-
-    tier    = get_current_tier()
-    capital = tier["balance"] or cfg.CAPITAL
-    is_long = trade.direction == "LONG"
-
-    upnl = risk_guard.calculate_unrealized_pnl(
-        direction     = trade.direction,
-        entry_price   = trade.entry_price,
-        current_price = price,
-        pos_size      = trade.position_size
-    )
-    pnl_pct  = (upnl / capital * 100) if capital else 0
-    move_pct = (price - trade.entry_price) / trade.entry_price * 100
-
-    payload = json.dumps({
-        "type":          "price",
-        "coin":          coin,
-        "trade_id":      trade.id,
-        "price":         fmt_price(price),
-        "price_raw":     price,
-        "pnl":           fmt_pnl(upnl),
-        "pnl_color":     pnl_color(upnl),
-        "pnl_pct":       fmt_pct(pnl_pct) + " of capital",
-        "move_pct":      fmt_pct(move_pct),
-        "move_color":    pnl_color(move_pct),
-        "current_color": "#248a3d" if (
-            (is_long     and price > trade.entry_price) or
-            (not is_long and price < trade.entry_price)
-        ) else "#c0392b"
-    })
-
-    dead = set()
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _ws_clients.difference_update(dead)
-
-    dead = set()
-    for ws in _dashboard_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _dashboard_clients.difference_update(dead)
 
 
 async def push_event(event_type: str, data: dict = None):
@@ -139,22 +72,6 @@ async def _dashboard_push_loop():
             await push_event("ping")
 
 
-async def _ensure_price_feeds():
-    """Watchdog — restarts price feed for any active trade that lost its stream."""
-    while True:
-        await asyncio.sleep(10)
-        try:
-            if state_manager.is_idle:
-                continue
-            for trade in state_manager.active_trades.values():
-                task = price_feed._tasks.get(trade.coin)
-                if not task or task.done():
-                    log.warning(f"Price feed dead for {trade.coin} — restarting")
-                    await price_feed.start(trade.coin)
-        except Exception as e:
-            log.error(f"Price feed watchdog error: {e}")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_push_task
@@ -174,54 +91,7 @@ async def lifespan(app: FastAPI):
         log.warning(f"Username: {status['username']}")
         log.warning("=" * 60)
 
-    if rs.was_crash():
-        log.warning("Crash detected — forcing paper mode")
-        rs.set_trading_mode("paper")
-        cfg.TRADING_MODE  = "paper"
-        cfg.PAPER_TRADING = True
-        rs.mark_clean_shutdown()
-
-    from data.fetcher import get_live_balance
-    from trade.risk import get_tier_config
-    if not cfg.PAPER_TRADING:
-        balance = await get_live_balance()
-    else:
-        balance = cfg.CAPITAL
-        log.info(f"Paper mode — using CAPITAL from .env: ${balance:.2f}")
-
-    if balance > 0:
-        rs.set_balance_cache(balance)
-        tier = get_tier_config(balance)
-        rs.set_tier_config(tier)
-        cfg.CAPITAL = balance
-        log.info(f"Balance loaded: ${balance:.2f} Tier:{tier['tier']}")
-
-    price_feed.on_price(trade_manager.on_price_update)
-    price_feed.on_price(broadcast_price)
-    state_manager.pause()
-
-    if not state_manager.is_idle:
-        for trade in state_manager.active_trades.values():
-            log.info(f"Resumed trade: {trade.coin} {trade.direction} {trade.state}")
-            await price_feed.start(trade.coin)
-            await trade_manager.reconcile_orders(trade)
-
-        active_list = ", ".join(
-            f"{t.coin} {t.direction}" for t in state_manager.active_trades.values()
-        )
-        await send(
-            f"🔄 *Bot Restarted*\n\n"
-            f"Resumed {len(state_manager.active_trades)} active trade(s):\n"
-            f"`{active_list}`\n"
-            f"Mode: `{'PAPER' if cfg.PAPER_TRADING else 'LIVE'}`"
-        )
-    else:
-        log.info("No active trades in DB — checking Binance for open positions")
-
-    await trade_manager.sync_binance_positions()
-
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
-    asyncio.create_task(_ensure_price_feeds())
 
     start_scheduler()
     await register_webhook()
@@ -229,20 +99,12 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
-    from trade.risk import get_current_tier
-    tier = get_current_tier()
-
     await send(
         f"✅ *Signal Engine v5 Started*\n\n"
-        f"Mode:     `{'🔴 LIVE' if not cfg.PAPER_TRADING else '🔵 PAPER'}`\n"
-        f"Balance:  `${tier['balance']:.2f}`\n"
-        f"Tier:     `{tier['tier']}`\n"
-        f"Leverage: `{tier['leverage']}x`\n"
-        f"Risk:     `{tier['risk_pct']*100:.0f}%`\n"
-        f"Max trades: `{tier['max_trades']}`\n"
         f"Coins:    `{len(cfg.COINS)} coins`\n"
         f"Grades:   `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
-        f"Webhook:  `✅ Active`\n\n"
+        f"Webhook:  `✅ Active`\n"
+        f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
 
@@ -260,20 +122,8 @@ async def lifespan(app: FastAPI):
             pass
 
     stop_scheduler()
-    await price_feed.stop()
 
-    if not state_manager.is_idle:
-        active_list = ", ".join(
-            f"{t.coin} {t.direction}" for t in state_manager.active_trades.values()
-        )
-        await send(
-            f"⚠️ *Bot Shutting Down*\n\n"
-            f"Active trades NOT closed:\n"
-            f"`{active_list}`\n\n"
-            f"Bot will resume on restart."
-        )
-    else:
-        await send("🔴 *Signal Engine v5 Stopped*")
+    await send("🔴 *Signal Engine v5 Stopped*")
 
     rs.mark_clean_shutdown()
     log.info("Signal Engine stopped")
@@ -281,7 +131,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title       = "Signal Engine v5",
-    description = "Automated crypto signal + trade engine",
+    description = "Automated crypto signal engine",
     version     = "5.0.0",
     lifespan    = lifespan
 )
@@ -483,17 +333,6 @@ async def auth_qr_png():
         return Response(content=png, media_type="image/png")
     except Exception as e:
         raise HTTPException(500, str(e))
-
-
-@app.websocket("/ws/price")
-async def price_websocket(websocket: WebSocket):
-    await websocket.accept()
-    _ws_clients.add(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        _ws_clients.discard(websocket)
 
 
 @app.websocket("/ws/dashboard")

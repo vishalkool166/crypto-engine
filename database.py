@@ -84,62 +84,6 @@ class Signal(Base):
     btc_score      = Column(Float, nullable=True)
 
 
-class Trade(Base):
-    __tablename__ = "trades"
-
-    id               = Column(Integer, primary_key=True)
-    signal_id        = Column(Integer, nullable=True)
-    coin             = Column(String)
-    direction        = Column(String)
-    grade            = Column(String)
-    state            = Column(String, default="idle")
-    is_active        = Column(Boolean, default=False)
-    entry_price      = Column(Float)
-    sl_price         = Column(Float)
-    tp1_price        = Column(Float)
-    tp2_price        = Column(Float)
-    current_price    = Column(Float, nullable=True)
-    entry_order_id   = Column(String, nullable=True)
-    sl_order_id      = Column(String, nullable=True)
-    tp1_order_id     = Column(String, nullable=True)
-    tp2_order_id     = Column(String, nullable=True)
-    position_size    = Column(Float)
-    margin_used      = Column(Float)
-    leverage         = Column(Integer)
-    risk_amt         = Column(Float)
-    opened_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    closed_at        = Column(DateTime, nullable=True)
-    outcome          = Column(String, default="pending")
-    exit_price       = Column(Float, nullable=True)
-    pnl              = Column(Float, nullable=True)
-    close_reason     = Column(String, nullable=True)
-    trade_date       = Column(String)
-    notes            = Column(Text, nullable=True)
-    health_at_close  = Column(String, nullable=True)
-    tp1_hit          = Column(Boolean, default=False)
-    partial_pnl      = Column(Float, nullable=True)
-    regime_at_entry  = Column(String, nullable=True)
-    session_at_entry = Column(String, nullable=True)
-    score_at_entry   = Column(Float, nullable=True)
-    totp_confirmed   = Column(Boolean, default=False)
-    balance_at_open  = Column(Float, nullable=True)
-    tier_at_open     = Column(Integer, nullable=True)
-
-
-class DailyRisk(Base):
-    __tablename__ = "daily_risk"
-
-    id            = Column(Integer, primary_key=True)
-    date          = Column(String, unique=True)
-    trades_taken  = Column(Integer, default=0)
-    total_loss    = Column(Float, default=0.0)
-    total_pnl     = Column(Float, default=0.0)
-    cap_hit       = Column(Boolean, default=False)
-    balance_start = Column(Float, nullable=True)
-    balance_end   = Column(Float, nullable=True)
-    tier          = Column(Integer, nullable=True)
-
-
 class Candle(Base):
     __tablename__ = "candles"
 

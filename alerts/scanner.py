@@ -18,9 +18,6 @@ from engines.signal import (
 )
 from alerts.telegram import send_signal, send_scan_summary
 from alerts.utils import categorize_results
-from trade.state import state_manager
-from trade.manager import trade_manager
-import runtime_state as rs
 
 log = logging.getLogger(__name__)
 
@@ -99,38 +96,40 @@ def _extract_key_levels(d1d_df, d1w_df) -> dict:
     }
 
 
-def _is_cache_fresh_for_trade(cached: dict) -> bool:
-    return time.time() - cached.get("cached_at", 0) <= TRADE_MAX_AGE
+def _write_signal_to_redis(signal: dict, coin: str, regime: str,
+                            session: str, db_id: int):
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return
 
+        direction = signal.get("direction", "")
+        side      = "long" if direction == "LONG" else "short"
 
-def _entry_price_valid(signal: dict, current_price: float) -> bool:
-    entry     = signal.get("entry", 0)
-    direction = signal.get("direction", "")
-    if not entry or not current_price:
-        return False
+        payload = {
+            "symbol":              f"{coin}USDT",
+            "side":                side,
+            "entry":               signal.get("entry", 0),
+            "stoploss":            signal.get("sl", 0),
+            "tp1":                 signal.get("tp1", 0),
+            "tp2":                 signal.get("tp2", 0),
+            "grade":               signal.get("grade", "F"),
+            "score":               signal.get("score", 0),
+            "valid_until":         int(time.time()) + 900,
+            "entry_deviation_pct": 0.0,
+            "signal_id":           db_id,
+            "regime":              regime,
+            "session":             session,
+            "cached_at":           time.time()
+        }
 
-    deviation = abs(current_price - entry) / entry
+        key = f"signal:{coin}USDT"
+        r.setex(key, 900, json.dumps(payload))
+        log.info(f"Signal written to Redis: {key} Grade:{signal.get('grade')} {direction}")
 
-    if deviation > MAX_ENTRY_DEVIATION:
-        log.warning(f"Entry too stale: {deviation*100:.2f}% drift — skipping")
-        return False
-
-    if direction == "SHORT" and current_price >= entry:
-        signal["entry"] = current_price
-        log.info(f"SHORT better entry: {entry} → {current_price}")
-        return True
-
-    if direction == "LONG" and current_price <= entry:
-        signal["entry"] = current_price
-        log.info(f"LONG better entry: {entry} → {current_price}")
-        return True
-
-    if deviation <= ENTRY_PRICE_TOL:
-        return True
-
-    signal["entry"] = current_price
-    log.info(f"Entry updated: {entry} → {current_price} ({deviation*100:.2f}% drift)")
-    return True
+    except Exception as e:
+        log.error(f"Redis signal write failed {coin}: {e}")
 
 
 def save_signal_to_db(signal, coin, regime, session, sweep,
@@ -162,7 +161,7 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
                 risk_amt      = signal.get("risk_amt", 0),
                 risk_pct      = signal.get("risk_pct", 0),
                 position      = signal.get("pos_size", 0),
-                leverage      = str(cfg.LEVERAGE) + "x",
+                leverage      = str(cfg.LEVERAGE) + "x" if hasattr(cfg, "LEVERAGE") else "10x",
                 regime        = regime,
                 session       = session,
                 sweep_score   = sweep.get("score", 0),
@@ -188,38 +187,6 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
 
 
-async def _attempt_trade(signal: dict, coin: str) -> bool:
-    grade     = signal.get("grade")
-    direction = signal.get("direction")
-
-    if state_manager.is_paused:
-        log.info(f"Auto-execution paused — skipped: {coin}")
-        return False
-
-    if grade not in cfg.MIN_GRADE_TO_TRADE:
-        return False
-
-    if direction not in ["LONG", "SHORT"]:
-        return False
-
-    if not state_manager.can_open_trade():
-        log.info(f"Max concurrent trades reached — skipped: {coin}")
-        return False
-
-    if signal.get("signal_type") == "PORTFOLIO_BLOCK":
-        return False
-
-    from trade.orders import get_current_price
-    current_price = get_current_price(coin)
-    if not _entry_price_valid(signal, current_price):
-        log.warning(f"Entry price stale — skipping {coin}")
-        return False
-
-    log.info(f"All gates passed — opening trade: {coin} {direction} Grade:{grade}")
-    await trade_manager.open_trade(signal=signal, signal_id=signal.get("db_id"))
-    return True
-
-
 async def analyze_coin(
     coin:     str,
     capital:  float = None,
@@ -234,27 +201,13 @@ async def _analyze_coin_inner(
     capital:  float = None,
     leverage: int   = None
 ) -> dict:
-    from trade.risk import get_current_tier
-    from trade.orders import get_current_price
 
-    tier     = get_current_tier()
-    capital  = capital  or tier["balance"] or cfg.CAPITAL
-    leverage = leverage or tier["leverage"]
+    capital  = capital  or cfg.CAPITAL
+    leverage = leverage or 10
 
     cached = cache.get(f"signal_{coin}")
     if cached:
-        signal        = cached.get("signal", {})
-        grade         = signal.get("grade", "F")
-        current_price = get_current_price(coin)
-
-        if grade in cfg.MIN_GRADE_TO_TRADE and signal.get("direction") in ["LONG", "SHORT"]:
-            if _is_cache_fresh_for_trade(cached) and _entry_price_valid(signal, current_price):
-                await _attempt_trade(signal, coin)
-                return cached
-            else:
-                cache.clear(f"signal_{coin}")
-        else:
-            return cached
+        return cached
 
     try:
         from data.fetcher import get_all_data
@@ -392,6 +345,15 @@ async def _analyze_coin_inner(
 
     if db_id:
         signal["db_id"] = db_id
+        if signal.get("grade") in ["A+", "A"] and \
+           signal.get("direction") in ["LONG", "SHORT"]:
+            _write_signal_to_redis(
+                signal  = signal,
+                coin    = coin,
+                regime  = regime["label"],
+                session = session["name"],
+                db_id   = db_id
+            )
 
     result = {
         "coin":              coin,
@@ -434,9 +396,7 @@ async def _analyze_coin_inner(
 
     cache.set(f"signal_{coin}", result, ttl=CACHE_TTL)
 
-    traded = await _attempt_trade(signal, coin)
-
-    if not traded and signal.get("grade") in ["A+", "A"]:
+    if signal.get("grade") in ["A+", "A"]:
         if signal.get("direction") in ["LONG", "SHORT"]:
             await send_signal(signal, coin, regime["label"], session["name"])
 
@@ -479,16 +439,7 @@ async def scan_all_coins() -> list:
 
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
-        tradeable = [
-            r for r in results
-            if r.get("grade") in ["A+", "A"] and
-            r.get("direction") in ["LONG", "SHORT"]
-        ]
-
-        if tradeable:
-            rs.set_last_signal_time(time.time())
-        else:
-            _check_heartbeat()
+        _write_active_pairs_to_redis()
 
         await send_scan_summary(results)
 
@@ -503,6 +454,22 @@ async def scan_all_coins() -> list:
     return results
 
 
+def _write_active_pairs_to_redis():
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return
+
+        pairs = [f"{coin}/USDT" for coin in cfg.COINS]
+        payload = json.dumps({"pairs": pairs})
+        r.setex("pairs:active", 1800, payload)
+        log.info(f"Active pairs written to Redis: {len(pairs)} pairs")
+
+    except Exception as e:
+        log.error(f"Redis active pairs write failed: {e}")
+
+
 async def _scan_coin_safe(coin: str) -> dict:
     try:
         r = await analyze_coin(coin)
@@ -514,6 +481,7 @@ async def _scan_coin_safe(coin: str) -> dict:
 
 
 def _check_heartbeat():
+    import runtime_state as rs
     last = rs.get_last_signal_time()
     if last == 0:
         rs.set_last_signal_time(time.time())

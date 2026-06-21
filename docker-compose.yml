@@ -1,15 +1,39 @@
 version: "3"
 
 services:
-  app:
-    build: .
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    volumes:
+      - redis_data:/data
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  signal-engine:
+    build: ./crypto-engine
     container_name: signal-engine
     ports:
       - "8000:8000"
     volumes:
-      - ./database:/app/database
+      - ./crypto-engine/database:/app/database
     env_file:
-      - .env
+      - ./crypto-engine/.env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health', timeout=5)"]
@@ -17,3 +41,40 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    container_name: freqtrade
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./freqtrade/user_data:/freqtrade/user_data
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      signal-engine:
+        condition: service_healthy
+    command: >
+      trade
+      --config /freqtrade/user_data/config.json
+      --strategy SignalEngineStrategy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - signal-engine
+      - freqtrade
+    restart: unless-stopped
+
+volumes:
+  redis_data:
