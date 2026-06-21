@@ -59,9 +59,10 @@ services:
       signal-engine:
         condition: service_healthy
     command: >
-      trade
+      bash -c "pip install -r /freqtrade/user_data/requirements.txt -q &&
+      freqtrade trade
       --config /freqtrade/user_data/config.json
-      --strategy SignalEngineStrategy
+      --strategy SignalEngineStrategy"
     restart: unless-stopped
 
 volumes:
