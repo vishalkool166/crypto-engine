@@ -62,3 +62,9 @@ services:
 
 volumes:
   redis_data:
+
+freqtrade:
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - FREQTRADE__EXCHANGE__KEY=${BINANCE_API_KEY}
+      - FREQTRADE__EXCHANGE__SECRET=${BINANCE_SECRET}
