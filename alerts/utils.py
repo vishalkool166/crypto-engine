@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from database import get_session, Trade
+from database import get_session, Signal
 import logging
 
 log = logging.getLogger(__name__)
@@ -18,15 +18,14 @@ def now_ist_str() -> str:
 def grade_accuracy_str(grade: str) -> str:
     try:
         with get_session() as db:
-            trades = db.query(Trade).filter(
-                Trade.grade     == grade,
-                Trade.is_active == False,
-                Trade.outcome.in_(["win", "loss"])
+            signals = db.query(Signal).filter(
+                Signal.grade     == grade,
+                Signal.outcome.in_(["win", "loss"])
             ).all()
-            if not trades:
+            if not signals:
                 return f"Grade {grade} accuracy: no data yet"
-            wins  = sum(1 for t in trades if t.outcome == "win")
-            total = len(trades)
+            wins  = sum(1 for s in signals if s.outcome == "win")
+            total = len(signals)
             wr    = round(wins / total * 100, 1)
             return f"Grade {grade} accuracy: `{wins}W {total - wins}L` — `{wr}% win rate`"
     except Exception as e:
