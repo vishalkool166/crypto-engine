@@ -195,6 +195,25 @@ class AuditLog(Base):
     success   = Column(Boolean, default=True)
 
 
+class ContentPost(Base):
+    __tablename__ = "content_posts"
+
+    id              = Column(Integer, primary_key=True)
+    signal_id       = Column(Integer, nullable=False)
+    chart_path      = Column(String, nullable=True)
+    twitter_draft   = Column(Text, nullable=True)
+    long_draft      = Column(Text, nullable=True)
+    hashtags        = Column(Text, nullable=True)
+    tone_used       = Column(String, nullable=True)
+    status          = Column(String, default="pending")
+    platform        = Column(String, default="twitter")
+    tweet_id        = Column(String, nullable=True)
+    posted_at       = Column(DateTime, nullable=True)
+    engagement_json = Column(Text, nullable=True)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    edited_text     = Column(Text, nullable=True)
+
+
 def init_db():
     Base.metadata.create_all(engine)
     import logging

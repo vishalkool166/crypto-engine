@@ -184,38 +184,44 @@ async def register_webhook():
 
 async def register_commands():
     commands = [
-        {"command": "status",      "description": "Bot status + last scan"},
-        {"command": "btc",         "description": "BTC analysis"},
-        {"command": "regime",      "description": "Regime across coins"},
-        {"command": "funding",     "description": "Funding rates"},
-        {"command": "fear",        "description": "Fear & greed index"},
-        {"command": "pnl",         "description": "All time PnL"},
-        {"command": "history",     "description": "Last 5 signals"},
-        {"command": "stats",       "description": "Full all time stats"},
-        {"command": "streak",      "description": "Win/loss streak"},
-        {"command": "grade",       "description": "Grade accuracy"},
-        {"command": "session",     "description": "Current session"},
-        {"command": "daily",       "description": "Daily summary"},
-        {"command": "next",        "description": "Next scan + session times"},
-        {"command": "scan",        "description": "Trigger manual scan"},
-        {"command": "queue",       "description": "Best signal in cache"},
-        {"command": "mode",        "description": "Current bot config"},
-        {"command": "brief",       "description": "Morning briefing now"},
-        {"command": "backtest",    "description": "Backtest a coin"},
-        {"command": "factors",     "description": "Factor analysis"},
-        {"command": "debrief",     "description": "Last signal debrief"},
-        {"command": "ml",          "description": "ML model status"},
-        {"command": "ftstatus",    "description": "Freqtrade open trades"},
-        {"command": "ftbalance",   "description": "Freqtrade balance"},
-        {"command": "ftprofit",    "description": "Freqtrade profit summary"},
-        {"command": "ftstart",     "description": "Start Freqtrade bot"},
-        {"command": "ftstop",      "description": "Stop Freqtrade bot"},
-        {"command": "help",        "description": "Full command list"},
+        {"command": "status",     "description": "Bot status + last scan"},
+        {"command": "btc",        "description": "BTC analysis"},
+        {"command": "coin",       "description": "Any coin analysis — /coin ETH"},
+        {"command": "regime",     "description": "Regime across coins"},
+        {"command": "funding",    "description": "Funding rates"},
+        {"command": "fear",       "description": "Fear & greed index"},
+        {"command": "pnl",        "description": "All time PnL"},
+        {"command": "history",    "description": "Last 5 signals"},
+        {"command": "stats",      "description": "Full all time stats"},
+        {"command": "streak",     "description": "Win/loss streak"},
+        {"command": "grade",      "description": "Grade accuracy"},
+        {"command": "session",    "description": "Current session"},
+        {"command": "daily",      "description": "Daily summary"},
+        {"command": "next",       "description": "Next scan + session times"},
+        {"command": "scan",       "description": "Trigger manual scan"},
+        {"command": "queue",      "description": "Best signal in cache"},
+        {"command": "mode",       "description": "Current bot config"},
+        {"command": "brief",      "description": "Morning briefing now"},
+        {"command": "backtest",   "description": "Backtest a coin — /backtest BTC"},
+        {"command": "factors",    "description": "Factor analysis"},
+        {"command": "debrief",    "description": "Last signal debrief"},
+        {"command": "ml",         "description": "ML model status"},
+        {"command": "ftstatus",   "description": "Freqtrade open trades"},
+        {"command": "ftbalance",  "description": "Freqtrade balance"},
+        {"command": "ftprofit",   "description": "Freqtrade profit summary"},
+        {"command": "ftstart",    "description": "Start Freqtrade bot"},
+        {"command": "ftstop",     "description": "Stop Freqtrade bot"},
+        {"command": "pending",    "description": "Posts awaiting approval"},
+        {"command": "content",    "description": "Content posting stats"},
+        {"command": "help",       "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
-            r    = await client.post(f"{BASE}/setMyCommands",
-                                     json={"commands": commands}, timeout=10)
+            r    = await client.post(
+                f"{BASE}/setMyCommands",
+                json={"commands": commands},
+                timeout=10
+            )
             data = r.json()
             if data.get("ok"):
                 log.info("Telegram commands registered")
@@ -260,16 +266,38 @@ async def _handle_callback(callback: dict):
 
     await answer_callback(callback_id)
 
-    if ":" in data:
-        action, coin = data.split(":", 1)
-        handlers = {
-            "factors": _cb_show_factors,
-            "risks":   _cb_show_risks,
-            "skip":    _cb_skip_signal,
-        }
-        fn = handlers.get(action)
-        if fn:
-            await fn(coin)
+    if ":" not in data:
+        return
+
+    action, value = data.split(":", 1)
+
+    signal_handlers = {
+        "factors": _cb_show_factors,
+        "risks":   _cb_show_risks,
+        "skip":    _cb_skip_signal,
+    }
+
+    if action in signal_handlers:
+        await signal_handlers[action](value)
+        return
+
+    try:
+        post_id = int(value)
+    except ValueError:
+        return
+
+    if action == "approve_post":
+        from content.approval_flow import handle_approve_post
+        await handle_approve_post(post_id)
+    elif action == "discard_post":
+        from content.approval_flow import handle_discard_post
+        await handle_discard_post(post_id)
+    elif action == "edit_post":
+        from content.approval_flow import handle_edit_post
+        await handle_edit_post(post_id)
+    elif action == "regen_post":
+        from content.approval_flow import handle_regen_post
+        await handle_regen_post(post_id)
 
 
 async def _cb_show_factors(coin: str):
@@ -331,6 +359,14 @@ async def _cb_skip_signal(coin: str):
 async def _handle_command(text: str, chat_id: str = ""):
     t = text.lower().strip()
 
+    import runtime_state as rs
+    pending_edit_id = rs.get("pending_edit_post_id")
+    if pending_edit_id and not t.startswith("/"):
+        from content.approval_flow import apply_edit_to_post
+        rs.set("pending_edit_post_id", None)
+        await apply_edit_to_post(int(pending_edit_id), text)
+        return
+
     if t.startswith("/coin"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else ""
@@ -341,10 +377,7 @@ async def _handle_command(text: str, chat_id: str = ""):
         if coin in coins:
             await _cmd_coin(coin)
         elif not coins:
-            await send(
-                f"⚠️ Coin universe is empty.\n\n"
-                f"Add coins via the dashboard first."
-            )
+            await send("⚠️ Coin universe is empty.\n\nAdd coins via the dashboard first.")
         else:
             await send(
                 f"⚠️ `{coin}` not in your universe.\n\n"
@@ -360,6 +393,11 @@ async def _handle_command(text: str, chat_id: str = ""):
             await _cmd_backtest(coin)
         else:
             await send(f"⚠️ Usage: `/backtest BTC`")
+        return
+
+    if t == "/canceledit":
+        rs.set("pending_edit_post_id", None)
+        await send("✅ Edit cancelled.")
         return
 
     handlers = {
@@ -389,6 +427,8 @@ async def _handle_command(text: str, chat_id: str = ""):
         "/ftprofit":  _cmd_ft_profit,
         "/ftstart":   _cmd_ft_start,
         "/ftstop":    _cmd_ft_stop,
+        "/pending":   _cmd_pending,
+        "/content":   _cmd_content,
     }
 
     if t.startswith("/"):
@@ -473,8 +513,8 @@ async def _cmd_coin(coin: str):
     )
 
     if ml_prob is not None:
-        ml_color = "✅" if ml_prob >= 0.65 else "❌"
-        base += f"ML Prob: {ml_color} `{ml_prob*100:.1f}%`\n"
+        ml_icon = "✅" if ml_prob >= 0.65 else "❌"
+        base += f"ML Prob: {ml_icon} `{ml_prob*100:.1f}%`\n"
 
     base += (
         f"\nRegime:  `{cached.get('regime', '--')}`\n"
@@ -699,6 +739,7 @@ async def _cmd_mode():
         f"Scan:        `every :00/:15/:30/:45 UTC`\n"
         f"Execution:   `Freqtrade`\n"
         f"ML:          `{'✅ Active' if cfg.ML_ENABLED else '⏳ Collecting data'}`\n"
+        f"Content:     `{'✅ Enabled' if cfg.CONTENT_ENABLED else '❌ Disabled'}`\n"
     )
 
 
@@ -861,7 +902,6 @@ async def _cmd_ml():
     closed   = status.get("closed_trades", 0)
     required = status.get("required", 100)
     enabled  = status.get("ml_enabled", False)
-    eligible = status.get("eligible", False)
     message  = status.get("message", "")
 
     progress_pct = min(100, int(closed / required * 100))
@@ -882,7 +922,6 @@ async def _cmd_ml():
         f"Progress: `{closed}/{required}` trades\n"
         f"`{bar}` {progress_pct}%\n\n"
         f"{message}\n"
-        f"{f'CV AUC: `{status.get(chr(99)+chr(118)+chr(95)+chr(97)+chr(117)+chr(99))}`' if enabled else ''}"
         f"{top_str}\n\n"
         f"Grades tracked: `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Auto-trains at: `{required} trades`\n"
@@ -890,12 +929,9 @@ async def _cmd_ml():
     )
 
 
-# ── Freqtrade Commands ────────────────────────────────────────────────────────
-
 async def _ft_api_get(path: str) -> dict | None:
     try:
         from api.freqtrade import _get_ft_token
-        import httpx
         token = await _get_ft_token()
         if not token:
             return None
@@ -914,7 +950,6 @@ async def _ft_api_get(path: str) -> dict | None:
 async def _ft_api_post(path: str, body: dict = None) -> dict | None:
     try:
         from api.freqtrade import _get_ft_token
-        import httpx
         token = await _get_ft_token()
         if not token:
             return None
@@ -964,15 +999,12 @@ async def _cmd_ft_balance():
         await send("❌ Freqtrade unavailable")
         return
 
-    total = float(data.get("total", 0))
-    free  = float(data.get("free", 0) if isinstance(data.get("free"), (int, float)) else 0)
-
     currencies = data.get("currencies", [])
     usdt = next((c for c in currencies if c.get("currency") == "USDT"), {})
 
     await send(
         f"💰 *Freqtrade Balance*\n\n"
-        f"Total:  `${total:.2f} USDT`\n"
+        f"Total:  `${float(data.get('total', 0)):.2f} USDT`\n"
         f"Free:   `${float(usdt.get('free', 0)):.2f} USDT`\n"
         f"Used:   `${float(usdt.get('used', 0)):.2f} USDT`\n"
     )
@@ -993,9 +1025,9 @@ async def _cmd_ft_profit():
 
     await send(
         f"💰 *Freqtrade Profit*\n\n"
-        f"Total PnL:   `{profit_str}`\n"
-        f"Win Rate:    `{win_rate:.1f}%`\n"
-        f"Total Trades:`{trades}`\n\n"
+        f"Total PnL:    `{profit_str}`\n"
+        f"Win Rate:     `{win_rate:.1f}%`\n"
+        f"Total Trades: `{trades}`\n\n"
         f"Best:  `+{best:.2f}%`\n"
         f"Worst: `{worst:.2f}%`\n"
     )
@@ -1006,8 +1038,7 @@ async def _cmd_ft_start():
     if data is None:
         await send("❌ Freqtrade unavailable")
         return
-    status = data.get("status", "unknown")
-    await send(f"▶️ *Freqtrade Started*\n\nStatus: `{status}`")
+    await send(f"▶️ *Freqtrade Started*\n\nStatus: `{data.get('status', 'unknown')}`")
 
 
 async def _cmd_ft_stop():
@@ -1015,8 +1046,51 @@ async def _cmd_ft_stop():
     if data is None:
         await send("❌ Freqtrade unavailable")
         return
-    status = data.get("status", "unknown")
-    await send(f"⏹ *Freqtrade Stopped*\n\nStatus: `{status}`")
+    await send(f"⏹ *Freqtrade Stopped*\n\nStatus: `{data.get('status', 'unknown')}`")
+
+
+async def _cmd_pending():
+    from content.approval_flow import get_pending_posts
+    posts = await get_pending_posts()
+
+    if not posts:
+        await send("📋 *Pending Posts*\n\nNo posts awaiting approval.")
+        return
+
+    lines = [f"📋 *Pending Posts — {len(posts)}*\n"]
+    for p in posts:
+        lines.append(
+            f"*#{p['post_id']}* — `{p['coin']}USDT {p['direction']}` Grade `{p['grade']}`\n"
+            f"_{p['twitter_draft'][:100]}..._\n"
+        )
+
+    await send("\n".join(lines))
+
+
+async def _cmd_content():
+    from content.publisher import get_posting_stats
+    stats = get_posting_stats()
+
+    if not stats:
+        await send("📊 No content stats yet.")
+        return
+
+    await send(
+        f"📊 *Content Stats*\n\n"
+        f"Total posts:  `{stats.get('total', 0)}`\n"
+        f"Posted:       `{stats.get('posted', 0)}`\n"
+        f"Pending:      `{stats.get('pending', 0)}`\n"
+        f"Discarded:    `{stats.get('discarded', 0)}`\n"
+        f"Failed:       `{stats.get('failed', 0)}`\n\n"
+        f"*Engagement*\n"
+        f"Total likes:    `{stats.get('total_likes', 0)}`\n"
+        f"Total retweets: `{stats.get('total_retweets', 0)}`\n"
+        f"Total views:    `{stats.get('total_views', 0)}`\n\n"
+        f"*Averages per post*\n"
+        f"Avg likes:    `{stats.get('avg_likes', 0)}`\n"
+        f"Avg retweets: `{stats.get('avg_retweets', 0)}`\n"
+        f"Avg views:    `{stats.get('avg_views', 0)}`\n"
+    )
 
 
 async def _cmd_help():
@@ -1056,6 +1130,9 @@ async def _cmd_help():
         "/ftprofit   — profit summary\n"
         "/ftstart    — start bot\n"
         "/ftstop     — stop bot\n\n"
+        "*CONTENT*\n"
+        "/pending — posts awaiting approval\n"
+        "/content — posting stats\n\n"
         "/help    — this message\n"
     )
 
@@ -1147,7 +1224,6 @@ async def send_scan_summary(results: list):
                 f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf if conf else ''}{ml_str}\n"
                 f"{dir_emoji} {direction}\n"
             )
-
         lines.append(f"\nNext scan: `{next_scan}`")
         await send("\n".join(lines))
         return

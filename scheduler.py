@@ -37,6 +37,14 @@ async def job_ml_check():
         log.error(f"ML check job error: {e}")
 
 
+async def job_engagement_update():
+    try:
+        from content.publisher import update_all_engagement
+        await update_all_engagement()
+    except Exception as e:
+        log.error(f"Engagement update job error: {e}")
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -92,11 +100,19 @@ def start_scheduler():
         replace_existing=True
     )
 
+    scheduler.add_job(
+        job_engagement_update,
+        trigger=IntervalTrigger(hours=6),
+        id="engagement_update",
+        replace_existing=True
+    )
+
     scheduler.start()
     log.info(
         f"Scheduler started — "
         f"scan::00/:15/:30/:45 — "
         f"ml_check:1h — "
+        f"engagement:6h — "
         f"next scan:{get_next_scan_time()}"
     )
 

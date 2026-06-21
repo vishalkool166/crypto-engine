@@ -18,11 +18,11 @@ from engines.signal import (
 )
 from alerts.telegram import send_signal, send_scan_summary
 from alerts.utils import categorize_results
+from content.pipeline import run_content_pipeline
 
 log = logging.getLogger(__name__)
 
 CACHE_TTL           = 1500
-TRADE_MAX_AGE       = 300
 ENTRY_PRICE_TOL     = 0.003
 MAX_ENTRY_DEVIATION = 0.01
 
@@ -133,10 +133,6 @@ def _write_signal_to_redis(signal: dict, coin: str, regime: str,
 
 
 def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
-    """
-    Check ML gate if enabled.
-    Returns (passed: bool, probability: float)
-    """
     if not cfg.ML_ENABLED:
         return True, 1.0
 
@@ -363,6 +359,9 @@ async def _analyze_coin_inner(
 
     if db_id:
         signal["db_id"] = db_id
+
+        if cfg.CONTENT_ENABLED and signal.get("grade") in ["A+", "A"]:
+            asyncio.create_task(run_content_pipeline(db_id))
 
         if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and \
            signal.get("direction") in ["LONG", "SHORT"]:

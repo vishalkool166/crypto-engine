@@ -21,3 +21,6 @@ tenacity
 redis>=5.0.0
 lightgbm
 scikit-learn
+mplfinance
+tweepy
+Pillow

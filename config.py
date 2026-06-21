@@ -40,7 +40,18 @@ class Config:
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
     ML_MIN_TRADES = 100
-    ML_ENABLED    = False
+    ML_ENABLED    = os.getenv("ML_ENABLED", "False").lower() == "true"
+
+    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "http://freqtrade:8080")
+    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "freqtrade")
+    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
+
+    TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
+    TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
+    TWITTER_ACCESS_TOKEN  = os.getenv("TWITTER_ACCESS_TOKEN", "")
+    TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
+    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "True").lower() == "true"
+    CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
     _FALLBACK_COINS = []
 
@@ -98,10 +109,6 @@ class Config:
 
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
-
-    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "http://freqtrade:8080")
-    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "freqtrade")
-    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
 
     @property
     def COINS(self) -> list:
