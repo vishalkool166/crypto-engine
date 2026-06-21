@@ -340,7 +340,7 @@ async def coins_active():
             rows = db.query(CoinConfig).filter(
                 CoinConfig.enabled == True
             ).all()
-            pairs = [f"{row.coin}/USDT" for row in rows]
+            pairs = [f"{row.coin}/USDT:USDT" for row in rows]
 
         return JSONResponse(content={
             "pairs":          pairs,

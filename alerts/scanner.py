@@ -461,7 +461,7 @@ def _write_active_pairs_to_redis():
         if not r:
             return
 
-        pairs = [f"{coin}/USDT" for coin in cfg.COINS]
+        pairs = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
         payload = json.dumps({"pairs": pairs})
         r.setex("pairs:active", 1800, payload)
         log.info(f"Active pairs written to Redis: {len(pairs)} pairs")
