@@ -28,7 +28,7 @@ services:
     volumes:
       - ./crypto-engine/database:/app/database
     env_file:
-      - ./crypto-engine/.env
+      - ./.env
     environment:
       - REDIS_URL=redis://redis:6379
     depends_on:
