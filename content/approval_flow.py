@@ -11,19 +11,14 @@ async def send_for_approval(
     chart_path: str | None,
     draft:      dict
 ) -> bool:
-    """
-    Send chart + draft to Telegram for approval.
-    Returns True if sent successfully.
-    """
     try:
-        from alerts.telegram import send, _post
+        from alerts.telegram import _post
         from config import cfg
 
         if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
             log.error("Telegram not configured")
             return False
 
-        # Save to DB first
         twitter_draft = draft.get("twitter_draft", "")
         long_draft    = draft.get("long_draft", "")
         hashtags      = str(draft.get("hashtags", []))
@@ -58,9 +53,6 @@ async def send_for_approval(
             db.refresh(post)
             post_id = post.id
 
-        log.info(f"ContentPost created: id={post_id} signal={signal_id}")
-
-        # Send chart image if available
         if chart_path and os.path.exists(chart_path):
             await _send_photo(
                 chat_id    = cfg.TELEGRAM_CHAT_ID,
@@ -68,12 +60,11 @@ async def send_for_approval(
                 caption    = f"📊 *{coin}USDT {direction}* — Grade `{grade}` · Score `{score}/100`"
             )
 
-        # Send approval message with keyboard
         char_count = len(twitter_draft)
         char_color = "✅" if char_count <= 280 else "⚠️"
 
         message = (
-            f"📝 *New Post Ready for Approval*\n\n"
+            f"📝 *New Signal Post Ready*\n\n"
             f"*{coin}USDT {direction}* — Grade `{grade}` · Score `{score}/100`\n"
             f"Tone: `{tone_used}`\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -110,8 +101,75 @@ async def send_for_approval(
         return False
 
 
+async def send_commentary_for_approval(draft: dict) -> bool:
+    try:
+        from alerts.telegram import _post
+        from config import cfg
+
+        if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
+            return False
+
+        twitter_draft = draft.get("twitter_draft", "")
+        long_draft    = draft.get("long_draft", "")
+        tone_used     = draft.get("tone_used", "humor")
+
+        with SessionLocal() as db:
+            post = ContentPost(
+                signal_id     = None,
+                chart_path    = None,
+                twitter_draft = twitter_draft,
+                long_draft    = long_draft,
+                hashtags      = str(draft.get("hashtags", [])),
+                tone_used     = tone_used,
+                status        = "pending",
+                platform      = "twitter"
+            )
+            db.add(post)
+            db.flush()
+            db.refresh(post)
+            post_id = post.id
+
+        char_count = len(twitter_draft)
+        char_color = "✅" if char_count <= 280 else "⚠️"
+
+        message = (
+            f"💬 *Market Commentary Ready*\n\n"
+            f"Type: `commentary` · Tone: `{tone_used}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"*Draft* {char_color} `{char_count}/280`:\n\n"
+            f"{twitter_draft}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"*Long Form:*\n\n"
+            f"{long_draft[:300]}{'...' if len(long_draft) > 300 else ''}\n"
+        )
+
+        keyboard = [
+            [
+                {"text": "✅ Approve & Post",  "callback_data": f"approve_post:{post_id}"},
+                {"text": "❌ Discard",          "callback_data": f"discard_post:{post_id}"}
+            ],
+            [
+                {"text": "✏️ Edit Draft",       "callback_data": f"edit_post:{post_id}"},
+                {"text": "🔄 Regenerate",       "callback_data": f"regen_post:{post_id}"}
+            ]
+        ]
+
+        await _post("sendMessage", {
+            "chat_id":      cfg.TELEGRAM_CHAT_ID,
+            "text":         message,
+            "parse_mode":   "Markdown",
+            "reply_markup": {"inline_keyboard": keyboard}
+        })
+
+        log.info(f"Commentary approval sent: post {post_id}")
+        return True
+
+    except Exception as e:
+        log.error(f"send_commentary_for_approval error: {e}")
+        return False
+
+
 async def _send_photo(chat_id: str, photo_path: str, caption: str = ""):
-    """Send photo to Telegram chat."""
     try:
         import httpx
         from config import cfg
@@ -124,7 +182,7 @@ async def _send_photo(chat_id: str, photo_path: str, caption: str = ""):
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{BASE}/sendPhoto",
-                data    = {
+                data  = {
                     "chat_id":    chat_id,
                     "caption":    caption,
                     "parse_mode": "Markdown"
@@ -139,7 +197,6 @@ async def _send_photo(chat_id: str, photo_path: str, caption: str = ""):
 
 
 async def handle_approve_post(post_id: int):
-    """Handle approve button callback."""
     try:
         from alerts.telegram import send
         from content.publisher import post_to_twitter
@@ -173,7 +230,8 @@ async def handle_approve_post(post_id: int):
             tweet_id = result.get("tweet_id", "")
             await send(
                 f"✅ *Posted to Twitter*\n\n"
-                f"Post #{post_id} · Signal #{signal_id}\n"
+                f"Post #{post_id}"
+                f"{f' · Signal #{signal_id}' if signal_id else ' · Commentary'}\n"
                 f"Tweet ID: `{tweet_id}`\n"
                 f"[View Tweet](https://twitter.com/i/web/status/{tweet_id})"
             )
@@ -191,7 +249,6 @@ async def handle_approve_post(post_id: int):
 
 
 async def handle_discard_post(post_id: int):
-    """Handle discard button callback."""
     try:
         from alerts.telegram import send
 
@@ -215,7 +272,6 @@ async def handle_discard_post(post_id: int):
 
 
 async def handle_edit_post(post_id: int):
-    """Handle edit button callback — prompts user to send new text."""
     try:
         from alerts.telegram import send
         import runtime_state as rs
@@ -233,10 +289,8 @@ async def handle_edit_post(post_id: int):
 
 
 async def handle_regen_post(post_id: int):
-    """Handle regenerate button callback."""
     try:
         from alerts.telegram import send
-        from content.groq_writer import generate_post_draft
 
         with SessionLocal() as db:
             post = db.query(ContentPost).filter(
@@ -245,11 +299,19 @@ async def handle_regen_post(post_id: int):
             if not post:
                 await send(f"⚠️ Post #{post_id} not found.")
                 return
-            signal_id = post.signal_id
+            signal_id  = post.signal_id
+            chart_path = post.chart_path
+            is_commentary = signal_id is None
 
         await send("🔄 Regenerating draft...")
 
+        if is_commentary:
+            await send("⚠️ Cannot regenerate commentary without market context. Discard and wait for next scan.")
+            return
+
+        from content.groq_writer import generate_post_draft
         new_draft = await generate_post_draft(signal_id)
+
         if not new_draft:
             await send("❌ Regeneration failed.")
             return
@@ -265,18 +327,16 @@ async def handle_regen_post(post_id: int):
                 post.edited_text   = None
                 db.commit()
 
-        chart_path = post.chart_path if post else None
         await send_for_approval(signal_id, chart_path, new_draft)
-        await send(f"✅ New draft ready for post #{post_id}")
 
     except Exception as e:
         log.error(f"handle_regen_post error: {e}")
 
 
 async def apply_edit_to_post(post_id: int, new_text: str):
-    """Apply edited text to a pending post."""
     try:
-        from alerts.telegram import send
+        from alerts.telegram import send, _post
+        from config import cfg
 
         if len(new_text) > 280:
             await send(
@@ -299,9 +359,8 @@ async def apply_edit_to_post(post_id: int, new_text: str):
         await send(
             f"✅ *Draft Updated*\n\n"
             f"Post #{post_id} · `{len(new_text)}/280` chars\n\n"
-            f"{new_text}\n\n"
-            f"Tap Approve to post.",
-            )
+            f"{new_text}"
+        )
 
         keyboard = [
             [
@@ -310,11 +369,9 @@ async def apply_edit_to_post(post_id: int, new_text: str):
             ]
         ]
 
-        from alerts.telegram import _post
-        from config import cfg
         await _post("sendMessage", {
             "chat_id":      cfg.TELEGRAM_CHAT_ID,
-            "text":         f"Updated draft ready:",
+            "text":         "Tap to post your edited draft:",
             "parse_mode":   "Markdown",
             "reply_markup": {"inline_keyboard": keyboard}
         })
@@ -327,7 +384,6 @@ async def apply_edit_to_post(post_id: int, new_text: str):
 
 
 async def get_pending_posts() -> list:
-    """Get all pending posts."""
     try:
         with SessionLocal() as db:
             posts = db.query(ContentPost).filter(
@@ -336,20 +392,23 @@ async def get_pending_posts() -> list:
 
             result = []
             for p in posts:
-                signal = db.query(SignalModel).filter(
-                    SignalModel.id == p.signal_id
-                ).first()
+                signal = None
+                if p.signal_id:
+                    signal = db.query(SignalModel).filter(
+                        SignalModel.id == p.signal_id
+                    ).first()
 
                 result.append({
-                    "post_id":      p.id,
-                    "signal_id":    p.signal_id,
-                    "coin":         signal.coin if signal else "--",
-                    "direction":    signal.direction if signal else "--",
-                    "grade":        signal.grade if signal else "--",
+                    "post_id":       p.id,
+                    "signal_id":     p.signal_id,
+                    "coin":          signal.coin      if signal else "MARKET",
+                    "direction":     signal.direction if signal else "--",
+                    "grade":         signal.grade     if signal else "--",
                     "twitter_draft": p.twitter_draft,
-                    "tone_used":    p.tone_used,
-                    "created_at":   p.created_at.isoformat() if p.created_at else "--",
-                    "chart_path":   p.chart_path
+                    "tone_used":     p.tone_used,
+                    "post_type":     "signal" if p.signal_id else "commentary",
+                    "created_at":    p.created_at.isoformat() if p.created_at else "--",
+                    "chart_path":    p.chart_path
                 })
 
             return result

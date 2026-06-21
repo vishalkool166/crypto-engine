@@ -18,7 +18,7 @@ from engines.signal import (
 )
 from alerts.telegram import send_signal, send_scan_summary
 from alerts.utils import categorize_results
-from content.pipeline import run_content_pipeline
+from content.pipeline import run_content_pipeline, run_commentary_pipeline
 
 log = logging.getLogger(__name__)
 
@@ -474,6 +474,15 @@ async def scan_all_coins() -> list:
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         _write_active_pairs_to_redis()
+
+        tradeable = [
+            r for r in results
+            if r.get("grade") in ["A+", "A"] and
+            r.get("direction") in ["LONG", "SHORT"]
+        ]
+
+        if not tradeable and cfg.CONTENT_ENABLED and results:
+            asyncio.create_task(run_commentary_pipeline(results))
 
         await send_scan_summary(results)
 

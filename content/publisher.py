@@ -11,10 +11,6 @@ async def post_to_twitter(
     text:       str,
     chart_path: str | None = None
 ) -> dict:
-    """
-    Post to Twitter/X using tweepy.
-    Returns dict with success, tweet_id, url.
-    """
     try:
         import tweepy
         from config import cfg
@@ -27,7 +23,6 @@ async def post_to_twitter(
         ]):
             return {"success": False, "reason": "Twitter API keys not configured"}
 
-        # Twitter v2 client
         client = tweepy.Client(
             consumer_key        = cfg.TWITTER_API_KEY,
             consumer_secret     = cfg.TWITTER_API_SECRET,
@@ -38,12 +33,10 @@ async def post_to_twitter(
 
         media_id = None
 
-        # Upload chart image if available
         if chart_path:
             try:
                 import os
                 if os.path.exists(chart_path):
-                    # v1 API needed for media upload
                     auth = tweepy.OAuth1UserHandler(
                         consumer_key        = cfg.TWITTER_API_KEY,
                         consumer_secret     = cfg.TWITTER_API_SECRET,
@@ -58,19 +51,17 @@ async def post_to_twitter(
                 log.warning(f"Chart upload failed — posting text only: {e}")
                 media_id = None
 
-        # Post tweet
         if media_id:
             response = client.create_tweet(
-                text     = text,
+                text      = text,
                 media_ids = [media_id]
             )
         else:
             response = client.create_tweet(text=text)
 
-        tweet_id = str(response.data["id"])
+        tweet_id  = str(response.data["id"])
         tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
 
-        # Update DB
         with SessionLocal() as db:
             post = db.query(ContentPost).filter(
                 ContentPost.id == post_id
@@ -92,7 +83,6 @@ async def post_to_twitter(
     except Exception as e:
         log.error(f"Twitter post error: {e}")
 
-        # Update DB to failed
         try:
             with SessionLocal() as db:
                 post = db.query(ContentPost).filter(
@@ -108,10 +98,6 @@ async def post_to_twitter(
 
 
 async def update_engagement(post_id: int) -> dict:
-    """
-    Fetch tweet engagement metrics and update DB.
-    Returns engagement dict.
-    """
     try:
         import tweepy
         from config import cfg
@@ -142,10 +128,10 @@ async def update_engagement(post_id: int) -> dict:
 
         metrics = tweet.data.get("public_metrics", {})
         engagement = {
-            "likes":    metrics.get("like_count",     0),
-            "retweets": metrics.get("retweet_count",  0),
-            "replies":  metrics.get("reply_count",    0),
-            "views":    metrics.get("impression_count", 0),
+            "likes":      metrics.get("like_count",        0),
+            "retweets":   metrics.get("retweet_count",     0),
+            "replies":    metrics.get("reply_count",       0),
+            "views":      metrics.get("impression_count",  0),
             "updated_at": datetime.now(timezone.utc).isoformat()
         }
 
@@ -166,7 +152,6 @@ async def update_engagement(post_id: int) -> dict:
 
 
 async def update_all_engagement():
-    """Update engagement for all posted tweets."""
     try:
         with SessionLocal() as db:
             posts = db.query(ContentPost).filter(
@@ -188,7 +173,6 @@ async def update_all_engagement():
 
 
 def get_posting_stats() -> dict:
-    """Get overall posting statistics."""
     try:
         with SessionLocal() as db:
             posts = db.query(ContentPost).all()
@@ -198,6 +182,9 @@ def get_posting_stats() -> dict:
         posted    = sum(1 for p in posts if p.status == "posted")
         discarded = sum(1 for p in posts if p.status == "discarded")
         failed    = sum(1 for p in posts if p.status == "failed")
+
+        signals    = sum(1 for p in posts if p.signal_id is not None and p.status == "posted")
+        commentary = sum(1 for p in posts if p.signal_id is None     and p.status == "posted")
 
         total_likes    = 0
         total_retweets = 0
@@ -217,6 +204,8 @@ def get_posting_stats() -> dict:
             "total":          total,
             "pending":        pending,
             "posted":         posted,
+            "signal_posts":   signals,
+            "commentary_posts": commentary,
             "discarded":      discarded,
             "failed":         failed,
             "total_likes":    total_likes,
