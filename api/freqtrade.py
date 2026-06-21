@@ -35,10 +35,7 @@ async def _get_ft_token() -> str:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{cfg.FREQTRADE_URL}/api/v1/token/login",
-                data={
-                    "username": cfg.FREQTRADE_USERNAME,
-                    "password": cfg.FREQTRADE_PASSWORD
-                },
+                auth=(cfg.FREQTRADE_USERNAME, cfg.FREQTRADE_PASSWORD),
                 timeout=5
             )
             if r.status_code == 200:
