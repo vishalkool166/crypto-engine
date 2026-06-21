@@ -47,7 +47,7 @@
         {
         "method": "RemotePairList",
         "pairlist_url": "http://signal-engine:8000/api/coins/active",
-        "refresh_period": 1800,
+        "refresh_period": 60,
         "read_timeout": 60,
         "keep_last_successful_refresh": true,
         "number_assets": 30
