@@ -239,6 +239,20 @@ function renderFtTrades(trades) {
           </div>
         </div>` : ''}
 
+        <div style="padding:12px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+            ${['15m','1h','4h','1d'].map(t => `
+              <button
+                data-chart-btn="chart-${t.trade_id}"
+                data-tf="${t}"
+                onclick="switchChartTf('chart-${t.trade_id}','${coin}','${t}',${entry},${sl},${tp || 0})"
+                style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(0,0,0,0.1);transition:all 0.15s;background:${t === '4h' ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'};color:${t === '4h' ? '#0071e3' : '#6e6e73'}">
+                ${t}
+              </button>`).join('')}
+          </div>
+          <div id="chart-${t.trade_id}" style="width:100%;height:280px;border-radius:8px;overflow:hidden"></div>
+        </div>
+
         <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div style="font-size:11px;color:#6e6e73">
             Opened: <strong style="color:#1d1d1f">${openDate}</strong>
@@ -253,6 +267,22 @@ function renderFtTrades(trades) {
       </div>
     `
   }).join('')
+
+    trades.forEach(t => {
+    const coin   = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
+    const entry  = parseFloat(t.open_rate || 0)
+    const sl     = parseFloat(t.stop_loss_abs || 0)
+    const tp     = t.tp1 || 0
+
+    setTimeout(() => {
+      _createTradeChart(
+        `chart-${t.trade_id}`,
+        coin, '4h',
+        entry, sl, tp
+      )
+    }, 100)
+  })
+  
 }
 
 function renderFtProfit(profit) {
@@ -583,4 +613,173 @@ function showCoinPillDetail(c) {
 
   overlay.classList.remove('hidden')
   overlay.classList.add('flex')
+}
+
+const _tradeCharts = {}
+
+function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
+  const container = document.getElementById(containerId)
+  if (!container) return null
+
+  if (_tradeCharts[containerId]) {
+    try { _tradeCharts[containerId].chart.remove() } catch(e) {}
+    delete _tradeCharts[containerId]
+  }
+
+  const chart = LightweightCharts.createChart(container, {
+    width:  container.clientWidth || 600,
+    height: 280,
+    layout: {
+      background: { color: '#0d1117' },
+      textColor:  '#e6edf3',
+    },
+    grid: {
+      vertLines:   { color: '#21262d' },
+      horzLines:   { color: '#21262d' },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+    },
+    rightPriceScale: {
+      borderColor: '#21262d',
+    },
+    timeScale: {
+      borderColor:     '#21262d',
+      timeVisible:     true,
+      secondsVisible:  false,
+    },
+  })
+
+  const candleSeries = chart.addCandlestickSeries({
+    upColor:          '#34c759',
+    downColor:        '#ff3b30',
+    borderUpColor:    '#34c759',
+    borderDownColor:  '#ff3b30',
+    wickUpColor:      '#34c759',
+    wickDownColor:    '#ff3b30',
+  })
+
+  const volumeSeries = chart.addHistogramSeries({
+    color:      '#21262d',
+    priceFormat: { type: 'volume' },
+    priceScaleId: 'volume',
+    scaleMargins: { top: 0.85, bottom: 0 },
+  })
+
+  const priceLinesMap = {}
+
+  if (entry) {
+    priceLinesMap.entry = candleSeries.createPriceLine({
+      price:     entry,
+      color:     '#0071e3',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `Entry ${entry.toFixed(4)}`,
+    })
+  }
+
+  if (sl) {
+    priceLinesMap.sl = candleSeries.createPriceLine({
+      price:     sl,
+      color:     '#ff3b30',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title: `SL ${sl.toFixed(4)}`,
+    })
+  }
+
+  if (tp) {
+    priceLinesMap.tp = candleSeries.createPriceLine({
+      price:     tp,
+      color:     '#34c759',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title: `TP ${tp.toFixed(4)}`,
+    })
+  }
+
+  priceLinesMap.current = candleSeries.createPriceLine({
+    price:     entry || 0,
+    color:     '#ff9500',
+    lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dotted,
+    axisLabelVisible: true,
+    title: 'Now',
+  })
+
+  _tradeCharts[containerId] = {
+    chart,
+    candleSeries,
+    volumeSeries,
+    priceLinesMap,
+    coin,
+    tf
+  }
+
+  _loadChartData(containerId, coin, tf)
+
+  return _tradeCharts[containerId]
+}
+
+
+async function _loadChartData(containerId, coin, tf) {
+  try {
+    const res = await fetch(`/api/candles/${coin}/${tf}`)
+    if (!res.ok) return
+    const data = await res.json()
+    if (!data || !data.length) return
+
+    const chartObj = _tradeCharts[containerId]
+    if (!chartObj) return
+
+    chartObj.candleSeries.setData(data.map(c => ({
+      time:  c.time,
+      open:  c.open,
+      high:  c.high,
+      low:   c.low,
+      close: c.close
+    })))
+
+    chartObj.volumeSeries.setData(data.map(c => ({
+      time:  c.time,
+      value: c.volume,
+      color: c.close >= c.open ? 'rgba(52,199,89,0.3)' : 'rgba(255,59,48,0.3)'
+    })))
+
+    chartObj.chart.timeScale().fitContent()
+
+  } catch(e) {
+    console.error('Chart data load error:', e)
+  }
+}
+
+
+function updateChartPrice(containerId, price) {
+  const chartObj = _tradeCharts[containerId]
+  if (!chartObj) return
+  if (!chartObj.priceLinesMap.current) return
+  try {
+    chartObj.priceLinesMap.current.applyOptions({ price })
+  } catch(e) {}
+}
+
+
+function switchChartTf(containerId, coin, tf, entry, sl, tp) {
+  const chartObj = _tradeCharts[containerId]
+  if (!chartObj) return
+
+  const btns = document.querySelectorAll(`[data-chart-btn="${containerId}"]`)
+  btns.forEach(b => {
+    b.style.background = b.dataset.tf === tf
+      ? 'rgba(0,113,227,0.2)'
+      : 'rgba(0,0,0,0.1)'
+    b.style.color = b.dataset.tf === tf ? '#0071e3' : '#6e6e73'
+  })
+
+  chartObj.tf   = tf
+  chartObj.coin = coin
+  _loadChartData(containerId, coin, tf)
 }

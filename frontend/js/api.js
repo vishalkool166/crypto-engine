@@ -233,6 +233,8 @@ async function fetchFtPrices() {
       if (pnlPctEl) { pnlPctEl.textContent = pnlPctStr; pnlPctEl.style.color = pnlColor }
       if (curEl)    { curEl.textContent    = '$' + current.toFixed(4); curEl.style.color = pnlColor }
       if (moveEl)   { moveEl.textContent   = moveStr;   moveEl.style.color   = moveColor }
+
+      updateChartPrice(`chart-${t.trade_id}`, current)
     })
 
   } catch(e) {

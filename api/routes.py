@@ -945,3 +945,48 @@ async def ft_forcesell(request: Request):
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+    
+@router.get("/candles/{coin}/{tf}")
+async def get_candles(request: Request, coin: str, tf: str):
+    _auth(request)
+    coin = coin.upper()
+
+    valid_tfs = ["15m", "1h", "4h", "1d"]
+    if tf not in valid_tfs:
+        raise HTTPException(400, f"Invalid timeframe. Use: {valid_tfs}")
+
+    limits = {
+        "15m": 200,
+        "1h":  300,
+        "4h":  500,
+        "1d":  365
+    }
+    limit = limits.get(tf, 300)
+
+    try:
+        from database import SessionLocal, Candle
+        with SessionLocal() as db:
+            candles = db.query(Candle).filter(
+                Candle.coin      == coin,
+                Candle.timeframe == tf
+            ).order_by(Candle.timestamp.desc()).limit(limit).all()
+
+        if not candles:
+            return JSONResponse(content=[])
+
+        candles = list(reversed(candles))
+
+        result = [{
+            "time":   c.timestamp // 1000,
+            "open":   c.open,
+            "high":   c.high,
+            "low":    c.low,
+            "close":  c.close,
+            "volume": c.volume
+        } for c in candles]
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        log.error(f"Candles endpoint error {coin} {tf}: {e}")
+        raise HTTPException(500, str(e))
