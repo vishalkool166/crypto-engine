@@ -63,6 +63,14 @@ async def job_sync_outcomes():
         log.error(f"Outcome sync job error: {e}")
 
 
+async def job_health_check():
+    try:
+        from trade.health_monitor import run_health_checks
+        await run_health_checks()
+    except Exception as e:
+        log.error(f"Health check job error: {e}")
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -139,14 +147,22 @@ def start_scheduler():
         replace_existing=True
     )
 
+    scheduler.add_job(
+        job_health_check,
+        trigger=IntervalTrigger(minutes=1),
+        id="health_check",
+        replace_existing=True
+    )
+
     scheduler.start()
     log.info(
         f"Scheduler started — "
         f"scan::00/:15/:30/:45 — "
-        f"morning:08:00 UTC (13:30 IST) — "
-        f"evening:13:00 UTC (18:30 IST) — "
-        f"ml_check:1h — "
+        f"morning:08:00 UTC — "
+        f"evening:13:00 UTC — "
+        f"health:1m — "
         f"sync:30m — "
+        f"ml:1h — "
         f"next scan:{get_next_scan_time()}"
     )
 

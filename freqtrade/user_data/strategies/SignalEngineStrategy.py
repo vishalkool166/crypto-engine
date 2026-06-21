@@ -315,13 +315,8 @@ class SignalEngineStrategy(IStrategy):
             signal = _get_signal(coin)
 
             if not signal:
-                logger.info(f"Signal expired for {coin} — exiting trade")
+                logger.info(f"Signal expired for {coin} — exiting")
                 return "signal_expired"
-
-            grade = signal.get("grade", "F")
-            if grade == "F":
-                logger.info(f"Signal invalidated for {coin} grade:{grade} — exiting")
-                return "signal_invalidated"
 
             tp = float(signal.get("tp1", 0))
             if not tp:

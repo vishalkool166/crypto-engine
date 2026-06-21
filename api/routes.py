@@ -837,8 +837,23 @@ async def ft_summary(request: Request):
         if not isinstance(config, Exception) and config:
             bot_state = config.get("state", "unknown")
 
+        trades_with_health = []
+        if not isinstance(status, Exception) and status and isinstance(status, list):
+            for trade in status:
+                pair = trade.get("pair", "")
+                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                health = None
+                try:
+                    from trade.health_monitor import get_health_from_redis
+                    health = get_health_from_redis(coin)
+                except Exception:
+                    pass
+                trade_copy = dict(trade)
+                trade_copy["health"] = health
+                trades_with_health.append(trade_copy)
+
         return JSONResponse(content={
-            "status":    status    if not isinstance(status,    Exception) else [],
+            "status":    trades_with_health,
             "profit":    profit    if not isinstance(profit,    Exception) else {},
             "balance":   balance   if not isinstance(balance,   Exception) else {},
             "daily":     daily     if not isinstance(daily,     Exception) else [],

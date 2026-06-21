@@ -1081,18 +1081,46 @@ async def _cmd_ft_status():
         return
 
     lines = [f"📊 *Freqtrade — {len(data)} Open Trade(s)*\n_{_now_ist()}_\n"]
+
     for t in data:
         pair    = t.get("pair", "--")
+        coin    = pair.replace("/USDT:USDT", "").replace("/USDT", "")
         pnl     = float(t.get("profit_abs", 0))
         pnl_pct = float(t.get("profit_ratio", 0)) * 100
         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
         side    = "📈 LONG" if not t.get("is_short") else "📉 SHORT"
+
+        try:
+            from trade.health_monitor import get_health_from_redis
+            health      = get_health_from_redis(coin)
+            health_state = health.get("state", "UNKNOWN") if health else "Checking..."
+            health_emoji = {
+                "HEALTHY":     "✅",
+                "WARNING":     "⚠️",
+                "INVALIDATED": "🚨"
+            }.get(health_state, "⏳")
+            failures = health.get("failures", []) if health else []
+            warnings = health.get("warnings", []) if health else []
+        except Exception:
+            health_state = "Checking..."
+            health_emoji = "⏳"
+            failures     = []
+            warnings     = []
+
         lines.append(
             f"{side} `{pair}`\n"
             f"Entry: `{t.get('open_rate')}` · Current: `{t.get('current_rate')}`\n"
             f"PnL: `{pnl_str}` ({pnl_pct:.2f}%)\n"
             f"SL: `{t.get('stop_loss_abs')}`\n"
+            f"Health: {health_emoji} `{health_state}`\n"
         )
+
+        if failures:
+            lines.append(f"✘ _{failures[0]}_")
+        elif warnings:
+            lines.append(f"⚠ _{warnings[0]}_")
+
+        lines.append("")
 
     await send("\n".join(lines))
 

@@ -143,6 +143,32 @@ function renderFtTrades(trades) {
         : `${Math.abs(progressPct).toFixed(0)}% toward SL`
     }
 
+    const health      = t.health || null
+    const healthState = health ? health.state : null
+
+    const healthColor = {
+      'HEALTHY':     '#248a3d',
+      'WARNING':     '#e8820c',
+      'INVALIDATED': '#ff3b30'
+    }[healthState] || '#6e6e73'
+
+    const healthEmoji = {
+      'HEALTHY':     '✅',
+      'WARNING':     '⚠️',
+      'INVALIDATED': '🚨'
+    }[healthState] || '⏳'
+
+    const healthLabel = healthState || 'Checking...'
+
+    const healthFailures = health ? (health.failures || []) : []
+    const healthWarnings = health ? (health.warnings || []) : []
+
+    const healthDetail = healthState === 'INVALIDATED' && healthFailures.length
+      ? healthFailures[0]
+      : healthState === 'WARNING' && healthWarnings.length
+      ? healthWarnings[0]
+      : ''
+
     return `
       <div class="glass-strong rounded-apple overflow-hidden trade-card" id="ft-trade-${t.trade_id}">
         <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
@@ -155,12 +181,19 @@ function renderFtTrades(trades) {
               <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
                 #${t.trade_id} · ${leverage}x
               </span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;color:${healthColor};background:${healthColor}15;border:1px solid ${healthColor}40">
+                ${healthEmoji} ${healthLabel}
+              </span>
             </div>
             <div style="text-align:right">
               <div data-pnl style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
               <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
             </div>
           </div>
+          ${healthDetail ? `
+          <div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
+            ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
+          </div>` : ''}
         </div>
 
         ${tp ? `
@@ -195,6 +228,16 @@ function renderFtTrades(trades) {
             <div style="font-weight:600;font-family:monospace;font-size:13px;color:#34c759">${tp ? fmtP(tp) : '$' + stake.toFixed(2)}</div>
           </div>
         </div>
+
+        ${health && (healthFailures.length > 1 || healthWarnings.length > 0) ? `
+        <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div class="section-label" style="margin-bottom:6px">Trade Health</div>
+          <div style="font-size:11px;line-height:1.8">
+            ${healthFailures.map(f => `<div style="color:#ff3b30">✘ ${f}</div>`).join('')}
+            ${healthWarnings.slice(0,3).map(w => `<div style="color:#e8820c">⚠ ${w}</div>`).join('')}
+            ${health.checks ? health.checks.slice(0,2).map(c => `<div style="color:#248a3d">✔ ${c}</div>`).join('') : ''}
+          </div>
+        </div>` : ''}
 
         <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div style="font-size:11px;color:#6e6e73">
