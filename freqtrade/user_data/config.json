@@ -67,7 +67,6 @@
         "enabled": false,
         "token": "disabled",
         "chat_id": "disabled"
-    }
   },
   "internals": {
     "process_throttle_secs": 5
