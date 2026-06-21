@@ -3,7 +3,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from sqlalchemy import (
     create_engine, Column, Integer,
-    String, Float, DateTime, Text, Boolean, BigInteger, event
+    String, Float, DateTime, Text, Boolean, BigInteger, event,
+    UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -138,6 +139,10 @@ class Candle(Base):
     low       = Column(Float)
     close     = Column(Float)
     volume    = Column(Float)
+
+    __table_args__ = (
+        UniqueConstraint("coin", "timeframe", "timestamp", name="uq_candle"),
+    )
 
 
 class BacktestResult(Base):
