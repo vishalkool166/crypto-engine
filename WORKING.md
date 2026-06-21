@@ -1,98 +1,119 @@
-## How A Trade Is Born — Complete Journey
+# How A Signal Is Born — Complete Journey
 
-### The Big Picture First
+## The Big Picture First
 
-Think of the app like a very strict hiring manager.
-Every 15 minutes it interviews 13 coins.
-Most get rejected immediately.
-A few pass the first round.
-Even fewer pass all rounds.
-Only the best of the best get hired — meaning a trade opens.
+Signal Engine is split into two parts that work together.
 
----
+**Signal Engine** is the brain.
+It watches the market, scores every coin, decides what is worth trading,
+and writes the decision to a shared memory called Redis.
 
-## Step 1 — The Alarm Clock
+**Freqtrade** is the body.
+It reads from Redis, places real or simulated orders on Binance,
+manages the trade until it closes, and reports the result back.
 
-Every 15 minutes a scheduler fires at exactly :00, :15, :30, :45 UTC.
+**Redis** is the nervous system connecting them.
+Signal Engine writes. Freqtrade reads. No direct connection needed.
 
-Think of it like a school bell.
-When the bell rings, the app wakes up and says
-"okay time to check all 13 coins."
-
-It goes through them in order:
-BTC → ETH → BNB → SOL → XRP → ADA → AVAX → LINK → DOT → DOGE → LTC → ATOM → POL
-
-Maximum 3 coins analyzed at the same time to not overload Binance API.
+Think of it like a trading desk.
+The analyst (Signal Engine) does the research and writes a trade idea on a whiteboard.
+The trader (Freqtrade) reads the whiteboard and executes the order.
+The whiteboard (Redis) is always up to date.
 
 ---
 
-## Step 2 — Fetching The Raw Data
+## The Scan Cycle — Every 15 Minutes
 
-For each coin the app goes to Binance and downloads:
+A scheduler fires at exactly :00, :15, :30, :45 UTC.
 
-| What It Downloads | Why |
-|------------------|-----|
-| Weekly candles (1W) — last 500 | Big picture trend |
-| Daily candles (1D) — last 1000 | Medium trend |
-| 4 Hour candles (4H) — last 2000 | Entry zone |
-| 1 Hour candles (1H) — last 1000 | Fine detail |
-| 15 Minute candles (15M) — last 200 | Exact entry timing |
-| Current price | Live market |
-| Funding rate | Is market too crowded |
-| Open interest | Is smart money entering or leaving |
-| Long/short ratio | Is everyone on same side |
-| Fear and greed index | Overall market mood |
-| News filter | Any big economic events today |
+When it fires, Signal Engine wakes up and says:
+"Time to check every coin in the universe."
 
-Think of candles like a history book.
-Each candle is one chapter — it tells you what price did
-during that time period — where it opened, highest it went,
-lowest it went, where it closed.
+It goes through all enabled coins — you control which coins are active
+via the dashboard coin universe panel.
+
+Maximum 3 coins analyzed at the same time to respect Binance API limits.
 
 ---
 
-## Step 3 — Data Cleaning
+## Step 1 — Fetching Market Data
 
-Before doing anything with the data the app checks it is not garbage.
+For each coin, Signal Engine first checks Redis.
+Freqtrade has already pushed fresh market data there.
+
+If Redis has it — use it directly. No Binance API call needed.
+If Redis does not have it — fall back to Binance directly.
+
+| Data | Redis Key | TTL |
+|------|-----------|-----|
+| OHLCV candles | candles:{coin}USDT:{tf} | 900s |
+| Current price | ticker:{coin}USDT | 60s |
+| Funding rate | funding:{coin}USDT | 300s |
+| Open interest | oi:{coin}USDT | 300s |
+| OI change % | oi_change:{coin}USDT | 300s |
+| Long/short ratio | ls_ratio:{coin}USDT | 300s |
+
+These two always hit external APIs directly:
+- Fear and greed index → alternative.me
+- News filter → Finnhub economic calendar
+
+Candles downloaded per timeframe:
+| Timeframe | Candles | Covers |
+|-----------|---------|--------|
+| Weekly (1W) | 500 | ~10 years |
+| Daily (1D) | 1000 | ~3 years |
+| 4 Hour (4H) | 500 | ~83 days |
+| 1 Hour (1H) | 300 | ~12 days |
+| 15 Minute (15M) | 200 | ~2 days |
+
+All candles are also saved to SQLite for persistence.
+Next scan loads from SQLite and only fetches new candles incrementally.
+
+---
+
+## Step 2 — Data Cleaning
+
+Before doing anything with the data the app validates it.
 
 | Check | What It Catches |
 |-------|----------------|
 | Missing candles | Gaps in history |
-| Duplicate candles | Same candle twice |
+| Duplicate candles | Same timestamp twice |
 | High lower than low | Impossible price data |
 | Zero prices | Exchange glitch |
 | Extreme moves over 50% | Data error not real move |
 
-If data is too dirty the coin gets skipped entirely.
-Better to miss a signal than trade on bad data.
+If data is too dirty the coin is skipped entirely.
+Better to miss a signal than trade on corrupted data.
 
 ---
 
-## Step 4 — Running The Indicators
+## Step 3 — Running The Indicators
 
-Now the app calculates all the technical indicators on the clean data.
+The app calculates all technical indicators on the clean candle data.
+This runs on all 4 timeframes — weekly, daily, 4H, 1H.
 
 Think of indicators like different doctors examining the same patient.
 Each one looks at a different thing and gives their opinion.
 
-| Indicator | What It Tells Us | Simple Explanation |
-|-----------|-----------------|-------------------|
-| EMA 20, 50, 200 | Trend direction | Is price above or below its average |
-| RSI | Momentum | Is the move getting tired or still strong |
-| MACD | Momentum direction | Is buying or selling pressure growing |
-| ATR | Volatility | How much does price normally move per day |
-| ADX | Trend strength | Is there actually a trend or just noise |
-| Bollinger Bands | Volatility range | Is price squeezed or expanding |
-| Swing highs/lows | Structure | Where did price reverse before |
-| Volume profile | Interest zones | Where did most trading happen |
-| CVD | Buying vs selling | Are buyers or sellers actually in control |
-
-This runs on all 4 timeframes — weekly, daily, 4H, 1H.
-So the app has 4 complete pictures of the same coin at different zoom levels.
+| Indicator | What It Tells Us |
+|-----------|-----------------|
+| EMA 20, 50, 200 | Is price above or below its average — trend direction |
+| RSI | Is the move getting tired or still strong |
+| MACD | Is buying or selling pressure growing |
+| ATR | How much does price normally move per candle |
+| ADX | Is there actually a trend or just noise |
+| Bollinger Bands | Is price squeezed or expanding |
+| Swing highs/lows | Where did price reverse before |
+| Volume profile | Where did most trading happen |
+| CVD | Are buyers or sellers actually in control |
+| BOS/CHoCH | Did market structure break or change character |
+| Order blocks | Where did institutions place large orders |
+| Fair Value Gaps | Where did price move so fast it left a gap |
 
 ---
 
-## Step 5 — The Four Engine Checks
+## Step 4 — The Four Engine Checks
 
 Before scoring anything the app runs 4 specific checks.
 These are the core ICT concepts the system is built on.
@@ -101,15 +122,14 @@ These are the core ICT concepts the system is built on.
 
 ### Engine 1 — Liquidity Sweep Detection
 
-**What is a liquidity sweep in simple terms:**
+**What is a liquidity sweep:**
 
-Imagine a swimming pool.
-Everyone puts their stop losses just below the pool edge.
+Imagine everyone puts their stop losses just below a key price level.
 Big players — banks, institutions, whales — they know where those stops are.
 They push price down briefly to trigger all those stops,
 collect all that liquidity, then reverse and go up hard.
 
-That brief dip below the edge is called a liquidity sweep.
+That brief dip below the level is called a liquidity sweep.
 
 **What the app checks:**
 - Did price dip below a key level (previous day low, weekly low, swing low)
@@ -124,7 +144,7 @@ That brief dip below the edge is called a liquidity sweep.
 
 ### Engine 2 — Displacement Detection
 
-**What is displacement in simple terms:**
+**What is displacement:**
 
 After the sweep happens, the big players have collected their liquidity.
 Now they push price hard in the real direction.
@@ -136,8 +156,8 @@ Displacement is when they let go (real move up).
 
 **What the app checks:**
 - Was there a candle bigger than 1.5x the normal daily range
-- Did the candle body take up more than 60% of the candle range (strong, not wicky)
-- Did price close beyond the previous candle high (broke structure)
+- Did the candle body take up more than 60% of the candle range
+- Did price close beyond the previous candle high
 - Was volume higher than normal on that candle
 
 **Score: 0 to 11**
@@ -146,11 +166,11 @@ Displacement is when they let go (real move up).
 
 ### Engine 3 — Retest Detection
 
-**What is a retest in simple terms:**
+**What is a retest:**
 
 After the big displacement candle, price often comes back to test
 the zone where it launched from.
-This is your entry opportunity.
+This is the entry opportunity.
 
 Think of it like a rocket launch.
 The rocket blasts off (displacement).
@@ -160,8 +180,8 @@ That brief dip back is where you want to get on board.
 **What the app checks:**
 - Is there a valid zone to retest — Order Block, Fair Value Gap, or EMA
 - Is price currently inside that zone
-- Did price show a rejection candle inside the zone (hammer, engulfing)
-- Was volume absorbed (selling dried up inside the zone)
+- Did price show a rejection candle inside the zone
+- Was volume absorbed inside the zone
 
 **Zone priority:**
 1. Order Block — where institutions placed big orders
@@ -174,7 +194,7 @@ That brief dip back is where you want to get on board.
 
 ### Engine 4 — Order Block Detection
 
-**What is an order block in simple terms:**
+**What is an order block:**
 
 Before a big move, institutions place massive orders.
 The last candle before the big move is called the order block.
@@ -195,27 +215,27 @@ That defense is what creates the bounce.
 
 ---
 
-## Step 6 — Market Regime Detection
+## Step 5 — Market Regime Detection
 
 Before scoring the signal the app asks one big question:
 **Is this even a tradeable market right now?**
 
 | Regime | What It Means | Tradeable |
 |--------|--------------|-----------|
-| Trending Bullish | Strong uptrend, ADX above 25 | ✅ Yes |
-| Trending Bearish | Strong downtrend, ADX above 25 | ✅ Yes |
-| Volatility Expansion | Big breakout happening | ✅ Yes |
-| Weak Trend | ADX developing, 18-25 | 🟡 Reduced confidence |
-| Ranging | Flat, narrow Bollinger Bands | ❌ No |
-| Choppy | ADX below 18 on both 1D and 4H | ❌ Hard blocked |
+| Trending Bullish | Strong uptrend, ADX above 25 | Yes |
+| Trending Bearish | Strong downtrend, ADX above 25 | Yes |
+| Volatility Expansion | Big breakout happening | Yes |
+| Weak Trend | ADX developing, 18-25 | Reduced confidence |
+| Ranging | Flat, narrow Bollinger Bands | No |
+| Choppy | ADX below 18 on both 1D and 4H | Hard blocked |
 
 Think of regime like weather.
 You only go sailing in good weather.
-Choppy market = storm = stay home.
+Choppy market means stay home.
 
 ---
 
-## Step 7 — The No-Trade Engine
+## Step 6 — The No-Trade Engine
 
 This is the bouncer at the door.
 Even if everything looks good, certain conditions
@@ -232,8 +252,7 @@ immediately kill the signal before scoring even starts.
 | Retest zone failed | Setup already invalidated |
 | BTC unstable with 2+ warnings | Market too risky |
 | No sweep AND no displacement | Minimum condition not met |
-| Asian session | Low volume — fake moves |
-| Already in a trade | One trade at a time |
+| Asian or Off Hours session | Low volume — fake moves |
 
 **Soft Blocks — Reduce the score but do not kill it:**
 
@@ -248,7 +267,7 @@ immediately kill the signal before scoring even starts.
 
 ---
 
-## Step 8 — Scoring All 16 Confluence Factors
+## Step 7 — Scoring All 16 Confluence Factors
 
 Now the real scoring happens.
 Think of this like a judge scoring an Olympic gymnast.
@@ -257,204 +276,33 @@ All scores added up give the final result.
 
 The app has 16 judges — each looking at one specific thing.
 
----
-
-### The 16 Factors Explained Simply
-
 **Why 16 factors?**
 Because no single indicator is reliable alone.
 When 12 out of 16 things align — that is a high probability setup.
 When only 4 align — that is noise.
 
----
-
-**Factor 1 — Liquidity Sweep (Weight: 12)**
-
-Already calculated in Engine 1.
-Highest weight because without a sweep there is no smart money footprint.
-No sweep = no institutional involvement = no edge.
-
-*What we learn: Did big players hunt stops before this move?*
-
----
-
-**Factor 2 — Retest Confirmation (Weight: 12)**
-
-Already calculated in Engine 3.
-Equal highest weight because without a retest there is no entry point.
-A sweep without a retest means you missed the entry.
-
-*What we learn: Is price giving us a safe entry point right now?*
-
----
-
-**Factor 3 — Displacement (Weight: 11)**
-
-Already calculated in Engine 2.
-Near highest weight because displacement confirms institutional intent.
-Without displacement the move could be random noise.
-
-*What we learn: Did institutions actually push price with conviction?*
+| Factor | Weight | Simple Explanation |
+|--------|--------|-------------------|
+| Liquidity Sweep | 12 | Did big players hunt stops before this move |
+| Retest Confirmation | 12 | Is price giving a safe entry point right now |
+| Displacement | 11 | Did institutions push price with conviction |
+| Market Regime | 10 | Is this a market worth trading at all |
+| Weekly Filter | 10 | Is the big picture supporting this direction |
+| Market Structure | 9 | Is the market organized in our direction |
+| Session Timing | 8 | Is there enough real participation right now |
+| BTC Alignment | 8 | Is the market leader supporting this trade |
+| OI Behavior | 7 | Is smart money actually entering |
+| Volume Expansion | 7 | Is there real participation behind this move |
+| Funding Rate | 6 | Is the market too crowded in one direction |
+| RSI Divergence | 4 | Is momentum secretly building or fading |
+| Order Blocks | 4 | Are we entering at an institutional level |
+| ATR Volatility | 3 | Is volatility in a tradeable range |
+| RSI Context | 2 | Is momentum in a healthy zone for entry |
+| MACD Histogram | 1 | Is momentum mathematically confirmed |
 
 ---
 
-**Factor 4 — Market Regime (Weight: 10)**
-
-Is the overall market trending or choppy.
-Full score if trending. Zero if choppy.
-
-*What we learn: Is this a market worth trading at all?*
-
----
-
-**Factor 5 — Weekly Filter (Weight: 10)**
-
-Does the weekly trend agree with the daily trend.
-Both bullish = full score.
-Weekly neutral = half score.
-Weekly conflicts daily = zero.
-
-*What we learn: Is the big picture supporting this trade direction?*
-
----
-
-**Factor 6 — Market Structure (Weight: 9)**
-
-Is price making higher highs and higher lows (bullish structure)
-or lower highs and lower lows (bearish structure).
-
-*What we learn: Is the market organized in our direction?*
-
----
-
-**Factor 7 — Session Timing (Weight: 8)**
-
-What trading session is active right now.
-
-| Session | Score | Why |
-|---------|-------|-----|
-| London/NY Overlap | 9/9 | Highest volume — best signals |
-| New York | 7/9 | High volume — good signals |
-| London | 7/9 | High volume — good signals |
-| Asian | 2/9 | Low volume — fake moves |
-
-Also checks if current volume is above 60% of session average.
-Low volume session = downgrade quality regardless of time.
-
-*What we learn: Is there enough real participation for this signal to work?*
-
----
-
-**Factor 8 — BTC Alignment (Weight: 8)**
-
-For every coin except BTC itself —
-is Bitcoin trending in the same direction.
-
-Checks both 1D and 4H BTC trend.
-Both must agree for full score.
-1D bull but 4H already flipping bear = half score only.
-
-*What we learn: Is the market leader supporting or fighting this trade?*
-
----
-
-**Factor 9 — OI Behavior (Weight: 7)**
-
-Open interest = total number of active contracts.
-
-| Scenario | Meaning |
-|----------|---------|
-| Price up + OI up | Real buying — institutions entering longs |
-| Price down + OI up | Real selling — institutions entering shorts |
-| Price up + OI down | Short covering — weaker move |
-| OI exhaustion | Momentum fading |
-
-*What we learn: Is smart money actually entering or is this just retail?*
-
----
-
-**Factor 10 — Volume Expansion (Weight: 7)**
-
-Is current volume higher than the 5-period average.
-Above 1.5x average = full score.
-Above 0.85x = partial score.
-Below = zero.
-
-*What we learn: Is there real participation behind this move?*
-
----
-
-**Factor 11 — Funding Rate (Weight: 6)**
-
-Funding rate is a fee paid between longs and shorts every 8 hours.
-High positive funding = too many longs = squeeze risk.
-High negative funding = too many shorts = squeeze risk.
-
-| Funding | Score |
-|---------|-------|
-| Below 0.05% | Full score — neutral |
-| 0.05-0.08% | Partial — elevated |
-| Above 0.08% | Zero — hard block |
-
-*What we learn: Is the market too crowded in one direction?*
-
----
-
-**Factor 12 — RSI Divergence (Weight: 4)**
-
-Divergence is when price and RSI disagree.
-
-| Type | Meaning |
-|------|---------|
-| Bullish divergence | Price made lower low but RSI made higher low — hidden strength |
-| Bearish divergence | Price made higher high but RSI made lower high — hidden weakness |
-| Hidden bull | Price higher low, RSI lower low — trend continuation |
-| Hidden bear | Price lower high, RSI higher high — trend continuation down |
-
-*What we learn: Is momentum secretly building or secretly fading?*
-
----
-
-**Factor 13 — Order Blocks (Weight: 4)**
-
-Already calculated in Engine 4.
-Is price in or approaching a valid order block zone.
-
-*What we learn: Are we entering at an institutional level?*
-
----
-
-**Factor 14 — ATR Volatility (Weight: 3)**
-
-ATR as percentage of price should be between 0.5% and 5%.
-Too low = dead market, no movement.
-Too high = chaotic, unpredictable.
-
-*What we learn: Is volatility in a tradeable range?*
-
----
-
-**Factor 15 — RSI Context (Weight: 2)**
-
-For a long trade — RSI should be between 40 and 75.
-Not oversold (already bounced) and not overbought (exhausted).
-For a short trade — RSI between 25 and 60.
-
-*What we learn: Is momentum in a healthy zone for entry?*
-
----
-
-**Factor 16 — MACD Histogram (Weight: 1)**
-
-Is the MACD histogram positive and expanding for longs.
-Negative and expanding for shorts.
-Lowest weight because it is a lagging confirmation only.
-
-*What we learn: Is momentum mathematically confirmed in our direction?*
-
----
-
-## Step 9 — Calculating The Final Score
+## Step 8 — Calculating The Final Score
 
 All 16 factor scores are added up.
 
@@ -462,7 +310,7 @@ All 16 factor scores are added up.
 Total earned points / Maximum possible points × 100 = Score out of 100
 ```
 
-Maximum possible = 118 points across all 16 factors.
+Maximum possible = 114 points across all 16 factors.
 
 Then soft block penalties are subtracted.
 
@@ -472,21 +320,41 @@ Score after penalties = Final score
 
 ---
 
-## Step 10 — Grading
+## Step 9 — Grading
 
-| Score | Grade | Action |
-|-------|-------|--------|
-| 85-100 | A+ | Auto-execute trade |
-| 68-84 | A | Auto-execute trade |
-| 52-67 | B | Skip |
-| 38-51 | C | Watch — setup building |
-| 0-37 | F | Hard blocked |
+| Score | Grade | Action | Mode |
+|-------|-------|--------|------|
+| 85-100 | A+ | Execute | Paper + Live |
+| 68-84 | A | Execute | Paper + Live |
+| 52-67 | B | Execute with filter | Paper only |
+| 38-51 | C | Watch | Never |
+| 0-37 | F | Hard blocked | Never |
+
+---
+
+## Step 10 — Grade B Quality Filter
+
+If grade is B the app runs an additional check before allowing execution.
+
+B grades are lower quality setups.
+They are allowed in paper mode to collect training data for ML.
+But not every B grade is worth trading — only the better ones.
+
+**B grade passes if ALL of these are true:**
+- Paper mode is active (never in live)
+- Market score is at least 65 out of 100
+- Session is London, NY, or London/NY Overlap
+- BTC score is at least 4 (BTC not strongly conflicting)
+- Maximum 1 hard block exists (session block is acceptable)
+
+If B grade fails this filter it is marked SKIP and not forwarded to Freqtrade.
+The signal is still saved to the database for analysis.
 
 ---
 
 ## Step 11 — Direction Decision
 
-If grade is A or A+ the app decides direction:
+If grade passes the app decides direction:
 
 | Condition | Direction |
 |-----------|----------|
@@ -494,7 +362,8 @@ If grade is A or A+ the app decides direction:
 | 1D bearish AND 4H bearish | SHORT |
 | Conflict | No trade |
 
-Simple rule — both timeframes must agree.
+Both timeframes must agree.
+If they disagree the signal is downgraded to C and not traded.
 
 ---
 
@@ -511,24 +380,19 @@ It looks for a specific candle pattern:
 | Hammer/Pin bar | Long wick below, closed high — rejection of lows |
 | Shooting star | Long wick above, closed low — rejection of highs |
 | Bearish engulfing | Big red candle swallowed previous green candle |
-
-**Two candle confirmation required:**
-Pattern candle must be confirmed by next candle not reversing it.
-One candle alone is not enough.
+| Micro sweep | Small stop hunt on 15m before the real move |
 
 Also checks:
 - Is price above EMA20 on 15m for longs
 - Is volume above average
-- Is there a micro sweep on 15m (mini liquidity grab)
+- Is there a micro sweep on 15m
 
 If 15m confirms — use 15m price as entry.
-If 15m does not confirm — use current 4H price but reduce score by 5 points.
+If 15m does not confirm — use current 4H price but reduce score by 2 points.
 
 ---
 
-## Step 13 — SL/TP Calculation
-
-### Stop Loss — Where Is The Trade Wrong
+## Step 13 — SL Calculation
 
 SL is placed at the point where the trade thesis is completely broken.
 Not a random ATR multiple — the actual invalidation point.
@@ -537,197 +401,373 @@ Not a random ATR multiple — the actual invalidation point.
 
 | Priority | Level | Logic |
 |----------|-------|-------|
-| 1st | Below retest zone bottom + small buffer | If price closes below where the setup formed, setup is invalid |
-| 2nd | Below sweep low | If price goes below where smart money hunted stops, they are not defending |
-| 3rd | Beyond swing point | Structural invalidation |
+| 1st | Below retest zone bottom + ATR×0.15 buffer | If price closes below where the setup formed, setup is invalid |
+| 2nd | Below sweep low + ATR×0.1 buffer | If price goes below where smart money hunted stops, they are not defending |
+| 3rd | Beyond swing point + ATR×0.1 buffer | Structural invalidation |
 | 4th | ATR × regime multiplier | Fallback only |
 
 **ATR multiplier by market condition:**
-- Expansion market = 2.5x ATR — volatile, needs room
-- Trending market = 2.0x ATR — standard
-- Weak trend = 1.5x ATR — tighter is fine
-
-Minimum SL distance enforced at 1.2% — prevents SL too tight to survive normal wicks.
-
-### Take Profit — Where Is The Next Wall
-
-TP is placed at the next real resistance or support level.
-Not a fixed 1.5R or 2.5R multiple — actual market structure.
-
-**TP1 — nearest real level:**
-Looks at swing highs/lows, previous day high/low,
-Volume Area High/Low from volume profile.
-Picks the nearest one that is at least 1.2R away.
-
-**TP2 — next major structure:**
-Looks at weekly levels, previous week high/low,
-Point of Control from volume profile.
-Picks the next level beyond TP1.
-
-### Trade Split:
-- 70% of position closes at TP1
-- 30% of position runs to TP2
-- When TP1 hits — SL moves to breakeven automatically
-- Remaining 30% is now risk-free
+| Regime | Multiplier |
+|--------|-----------|
+| Expansion | 2.5x |
+| Trending | 2.0x |
+| Weak Trend | 1.5x |
 
 ---
 
-## Step 14 — Risk Sizing
+## Step 14 — TP Calculation
+
+Single TP — no split position.
+
+TP is placed at the nearest real resistance or support level
+that is at least the grade multiplier distance away.
+
+**Grade multipliers:**
+| Grade | TP Multiplier |
+|-------|--------------|
+| A+ | 2.5x risk distance |
+| A | 2.0x risk distance |
+| B | 1.5x risk distance |
+
+**Structure levels checked:**
+- Swing highs/lows
+- Previous day high/low
+- Previous week high/low
+- Volume Area High/Low
+
+If nearest structure is closer than the multiplier minimum — use the minimum.
+If nearest structure is further — use the structure level.
+
+This gives realistic targets based on actual market structure
+while ensuring minimum acceptable reward.
+
+---
+
+## Step 15 — Risk Sizing
 
 How much of the position to take:
 
 ```
-Risk amount = Capital × dynamic risk percentage
+Risk amount = Capital × grade risk percentage
 Position size = Risk amount ÷ SL percentage
 Margin used = Position size ÷ leverage
 ```
 
-Dynamic risk percentage scales with score:
-- Score 95+ → risk 13% of capital
-- Score 85-94 → risk 10-13%
-- Score 68-84 → risk 7-10%
+**Grade risk percentages:**
+| Grade | Risk % |
+|-------|--------|
+| A+ | 2% of capital |
+| A | 1.5% of capital |
+| B | 1% of capital |
 
-Higher confidence = slightly bigger position.
-Lower confidence = smaller position.
-
----
-
-## Step 15 — Final Gates Before Trade Opens
-
-Even after all this, three more checks:
-
-| Gate | Check |
-|------|-------|
-| Daily trade count | Max 3 trades per day |
-| Daily loss cap | If already lost 20% of capital today — stop |
-| Entry price validation | Current price must be within 0.3% of signal entry — no stale signals |
-
-All three must pass or trade is blocked.
+Higher grade = slightly bigger position.
+Lower grade = smaller position.
+B grades risk less because they are lower quality setups.
 
 ---
 
-## Step 16 — Trade Opens
+## Step 16 — ML Gate Check
 
-If everything passes:
+If ML is enabled (100+ closed trades exist and model is trained):
 
-1. Set leverage to 10x on Binance
-2. Place market order — fills immediately at current price
-3. Place stop loss order at calculated SL
-4. Place TP1 order for 70% of position
-5. Place TP2 order for 30% of position
-6. Save everything to database
-7. Start live price feed via WebSocket
-8. Send Telegram alert to you
-
----
-
-## Step 17 — What Comes To Your Telegram
-
-You receive a message like this:
+The signal's 16 factor scores are fed into the LightGBM model.
+The model returns a win probability between 0 and 1.
 
 ```
-🏆 Grade A+ — LONG
+Probability >= 0.65 → signal passes → forwarded to Freqtrade
+Probability < 0.65  → signal filtered → not forwarded
+```
+
+If ML is not yet enabled (below 100 trades):
+All A+/A/B signals that pass the grade filter are forwarded.
+
+The ML probability is shown on the dashboard radar card,
+in the Telegram signal alert, and in the coin analysis modal.
+
+---
+
+## Step 17 — Signal Written To Redis
+
+If the signal passes all gates it is written to Redis.
+
+```
+Key: signal:{coin}USDT
+TTL: 900 seconds (15 minutes)
+```
+
+**Payload written:**
+```json
+{
+  "symbol": "AVAXUSDT",
+  "side": "short",
+  "entry": 6.32,
+  "stoploss": 6.80,
+  "tp1": 5.90,
+  "grade": "A",
+  "score": 71,
+  "valid_until": 1782034000,
+  "signal_id": 47,
+  "regime": "TRENDING BEARISH",
+  "session": "London/NY Overlap",
+  "ml_probability": 0.73,
+  "tp_mult": 2.0,
+  "actual_rr": 1.9
+}
+```
+
+Freqtrade reads this key every 4H candle close.
+If valid and grade is A+/A/B — it enters the trade.
+
+---
+
+## Step 18 — Content Pipeline Triggered
+
+For A+ and A signals only — the content pipeline fires asynchronously.
+This does not block the scan. It runs in the background.
+
+**Step 1 — Chart generated:**
+mplfinance draws a 4H candlestick chart of the last 50 candles.
+Entry, SL, and TP lines are drawn.
+Sweep zone is shaded yellow.
+Grade badge, score, direction label, and Signal Engine watermark added.
+Saved as PNG 1200×675 pixels.
+
+**Step 2 — Groq writes a post draft:**
+Signal data including thesis, factor scores, entry/SL/TP, regime, session
+is sent to llama-3.3-70b via Groq API.
+Model writes a Twitter post under 280 characters.
+Also writes a longer form version.
+Tone rotates: 70% professional, 20% educational, 10% humor.
+
+**Step 3 — Telegram approval sent:**
+You receive the chart image followed by a message:
+
+```
+📝 New Signal Post Ready
+
+AVAXUSDT SHORT — Grade A · Score 71/100
+Tone: professional
+
+Twitter Draft ✅ 241/280:
+
+AVAX swept weekly highs and showed strong bearish
+displacement. Confluence 71/100 with trending bearish
+regime. Entry 6.32 | SL 6.80 | TP 5.90
+
+#AVAX #CryptoTrading #SignalEngine
+
+[✅ Approve & Post] [❌ Discard]
+[✏️ Edit Draft]     [🔄 Regenerate]
+```
+
+You tap one button. That is all.
+
+---
+
+## Step 19 — Freqtrade Executes The Trade
+
+Freqtrade runs its bot loop every 4H candle close.
+It calls `populate_entry_trend()` which reads the Redis signal.
+
+If signal is valid and not expired:
+- Sets enter_long = 1 or enter_short = 1 on the last candle
+- Freqtrade places a limit order at the signal entry price
+- `confirm_trade_entry()` runs a final check:
+  - Signal still in Redis and not expired
+  - Entry price within 0.5% of current price
+  - Grade is A+, A, or B
+  - If any check fails — trade rejected
+
+If trade opens:
+- `custom_stoploss()` sets SL at the signal stoploss price
+- `custom_exit()` monitors for TP hit or signal invalidation
+
+**Exit conditions:**
+| Condition | Action |
+|-----------|--------|
+| Current price reaches TP | Exit with tp_hit reason |
+| Signal grade becomes F | Exit with signal_invalidated reason |
+| Signal expires from Redis | Exit with signal_expired reason |
+
+---
+
+## Step 20 — What Comes To Your Telegram
+
+You receive a signal alert like this:
+
+```
+🏆 Grade A+ — SHORT
 ━━━━━━━━━━━━━━━━━━━━━━
 
-BTCUSDT — 📈 LONG
-Confidence: Very High (87/100)
-Regime: TRENDING BULLISH
+AVAXUSDT — 📉 SHORT
+Confidence: High (87/100)
+ML Prob: ✅ 73.2%
+Regime: TRENDING BEARISH
 Session: London/NY Overlap
-Time: 02:34 PM IST
+Time: 06:45 PM IST
 
 ━━━━━━━━━━━━━━━━━━━━━━
-Entry:   $67,234.0000
-SL:      $66,180.0000 (1.57%)
-TP1:     $68,890.0000
-TP2:     $70,450.0000
+Entry:   $6.3200
+SL:      $6.8000 (7.59%)
+TP:      $5.9000 (2.5x risk)
+R:R:     1:1.9
 
 ━━━━━━━━━━━━━━━━━━━━━━
-Risk:    $1.00
-Size:    $100.00
-Lev:     10x
+Risk:    $20.00
+Size:    $263.00
 
-Why This Trade?
-✔ Market structure bullish — structure and trend aligned
-✔ Liquidity swept at Swing Low Sweep — 3 candles ago
-✔ Strong displacement bullish — 2.1x ATR range, vol 1.8x
-✔ Retest confirmed at 4H Order Block — Bullish engulfing
-✔ BTC bullish — confirms direction
-✔ OI confirming — OI bullish confirm
+Why This Trade:
+✔ Liquidity swept at Weekly High Sweep — 2 candles ago
+✔ Strong displacement bearish — 2.3x ATR range, vol 1.9x
+✔ BTC bearish — confirms direction
+⚠ OI exhaustion signal — momentum may be fading
+
+Signal forwarded to Freqtrade for execution.
 ```
 
 With two buttons:
-- 📊 Show Factors — see all 16 scores
-- ⚠️ Show Risks — see what could go wrong
+- 📊 Factors — see all 16 scores
+- ⚠️ Risks — see what could go wrong
 
 ---
 
-## Step 18 — While Trade Is Open
+## Step 21 — Outcome Sync
 
-Every 1 minute the health engine runs silently:
+Every 30 minutes the scheduler runs `sync_freqtrade_outcomes()`.
 
-| Check | What It Looks For |
-|-------|------------------|
-| Retest zone | Did price close below the zone it launched from |
-| Structure | Did a bearish BOS form against the long |
-| BTC | Did BTC flip bearish strongly |
-| OI | Is OI showing exhaustion |
-| Price vs ATR | How far adverse from entry |
-| Order block | Was the entry OB mitigated |
+It reads all closed trades from Freqtrade API.
+For each closed trade it finds the matching Signal record by:
+- Same coin
+- Same direction
+- Entry price within 2% tolerance
+- Closest timestamp match
 
-You get alerts at:
-- 25% progress to TP1
-- 50% progress to TP1
-- 75% progress to TP1
-- TP1 hit — SL moved to breakeven
-- Health state change — HEALTHY → WARNING → INVALIDATED
+When matched:
+- Signal.outcome updated to win or loss
+- Signal.pnl updated with actual PnL
+- Signal.exit_price updated
 
----
-
-## Step 19 — Trade Closes
-
-Four ways a trade closes:
-
-| Reason | Outcome |
-|--------|---------|
-| SL hit | Loss — full position stopped out |
-| TP1 hit then BE SL hit | Win — locked in partial profit |
-| TP2 hit | Full win — maximum profit |
-| Manual close via /close | Manual — your decision |
-
-After close you receive:
-- Close alert with PnL
-- Post-trade debrief — what worked, what to watch next time
-- Grade accuracy update
+This is what feeds the ML training pipeline.
+Without this sync the ML has no labels to learn from.
 
 ---
 
-## The Complete Journey — One Line Summary Per Step
+## Step 22 — ML Training (After 100 Trades)
+
+When 100 closed signals exist in the Signal table:
+
+The scheduler's hourly ML check detects eligibility.
+`train_model()` is called automatically.
+
+**Feature matrix built from:**
+- All 16 factor scores stored in factor_scores JSON column
+- sweep_score, retest_score, disp_score
+- btc_score, market_score, entry_score
+- overall score, funding rate
+- grade encoded as number
+- regime encoded as number
+- session encoded as number
+- direction encoded as +1 or -1
+
+**Label:** win=1 loss=0
+
+**Training:**
+- LightGBM classifier with 200 estimators
+- 5-fold cross validation
+- Class weights balanced for win/loss ratio
+- Model saved to ml/models/lgbm_model.pkl
+
+**After training:**
+- cfg.ML_ENABLED flips to True
+- All future signals run through predictor
+- Telegram notification sent with model stats and top features
+
+**Retraining:**
+Every 50 new closed trades the model retrains on the full dataset.
+Gets smarter over time as more data accumulates.
+
+---
+
+## Step 23 — Commentary Posts (No Signal Scans)
+
+When a scan completes with no tradeable signals:
+
+The commentary pipeline checks if conditions are interesting enough to post about.
+
+**Triggers:**
+- Fear and greed below 20 (extreme fear)
+- Fear and greed above 80 (extreme greed)
+- 70%+ of coins in choppy regime
+- Average funding above 0.06%
+- Weekend market
+
+**Cooldown by session:**
+| Session | Cooldown |
+|---------|---------|
+| London/NY Overlap | 1 hour |
+| London or NY | 2 hours |
+| Asia | 6 hours |
+| Weekend | 8 hours |
+
+If triggered, Groq writes a market commentary post.
+Tone is 40% humor — dry wit, crypto meme energy, relatable observations.
+
+Examples:
+```
+"Market regime: choppy. ADX: 12. Translation: nobody knows anything right now. #Crypto"
+
+"Funding at 0.09%. Someone out there is very confident. History suggests otherwise. #Bitcoin"
+
+"It's Sunday. Liquidity left the building. Stop hunts incoming. You have been warned. #CryptoTrading"
+```
+
+Sent to Telegram for your approval before posting.
+
+---
+
+## The Complete Journey — One Line Per Step
 
 | Step | What Happens |
 |------|-------------|
 | 1 | Alarm fires every 15 minutes |
-| 2 | Downloads all price data from Binance |
-| 3 | Cleans bad data |
-| 4 | Calculates all indicators |
-| 5 | Runs 4 ICT engine checks |
+| 2 | Reads market data from Redis (Freqtrade pushed it) or Binance fallback |
+| 3 | Cleans bad candle data |
+| 4 | Calculates all indicators on 4 timeframes |
+| 5 | Runs 4 ICT engine checks — sweep, displacement, retest, order blocks |
 | 6 | Detects market regime |
-| 7 | Bouncer checks hard blocks |
+| 7 | Bouncer checks hard blocks — choppy, news, extreme funding, wrong session |
 | 8 | Scores all 16 confluence factors |
 | 9 | Calculates final score out of 100 |
 | 10 | Assigns grade A+ to F |
-| 11 | Decides direction LONG or SHORT |
-| 12 | Refines entry on 15 minute chart |
-| 13 | Calculates structure-aware SL and TP |
-| 14 | Sizes position by risk percentage |
-| 15 | Final gates — daily cap, trade count, price validation |
-| 16 | Opens trade on Binance paper account |
-| 17 | Sends full alert to your Telegram |
-| 18 | Monitors health every minute |
-| 19 | Closes trade and sends debrief |
+| 11 | B grade runs additional quality filter |
+| 12 | Decides direction LONG or SHORT |
+| 13 | Refines entry on 15 minute chart |
+| 14 | Calculates structure-aware SL |
+| 15 | Calculates single TP with grade multiplier |
+| 16 | Sizes position by grade risk percentage |
+| 17 | ML gate checks win probability if model is trained |
+| 18 | Writes signal to Redis for Freqtrade |
+| 19 | Content pipeline generates chart and Groq draft |
+| 20 | Telegram approval sent for Twitter post |
+| 21 | Freqtrade reads Redis and executes trade on Binance |
+| 22 | You receive full signal alert on Telegram |
+| 23 | Sync job matches Freqtrade outcome back to Signal table |
+| 24 | After 100 trades LightGBM trains and filters future signals |
+| 25 | Commentary posts generated when market is interesting but no signals |
 
-> This is not a bot that buys when RSI is low and sells when RSI is high.
-> Every trade has a reason — a story — sweep happened here,
-> institutions displaced price there, retest gave entry here,
-> structure says direction is this way, BTC agrees, volume confirms.
+---
+
+> Signal Engine is not a bot that buys when RSI is low and sells when RSI is high.
+>
+> Every signal has a reason — a story.
+> Sweep happened here. Institutions displaced price there.
+> Retest gave entry here. Structure says direction is this way.
+> BTC agrees. Volume confirms. ML says 73% probability.
+>
 > When enough of those pieces align at the same time — that is the signal.
-> That is the edge. Not any single indicator. The alignment of all of them together.
+> That is the edge. Not any single indicator.
+> The alignment of all of them together.
+>
+> The ML layer learns which specific combinations of those alignments
+> actually produce winning trades in real market conditions.
+> Over time the system gets smarter about its own signals.
