@@ -317,6 +317,7 @@ function renderRadar(radar) {
 
   if (!grid.querySelector('[id^="radar-"]')) grid.innerHTML = ''
 
+  radar.sort((a, b) => b.score - a.score)
   radar.forEach(r => {
     const prev = S.prevGrades[r.coin]
     if (prev && prev !== r.grade && r.tradeable) {

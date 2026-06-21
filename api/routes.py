@@ -110,7 +110,7 @@ def build_coin_universe() -> list:
         with SessionLocal() as db:
             rows = db.query(CoinConfig).order_by(
                 CoinConfig.enabled.desc(),
-                CoinConfig.volume_24h.desc()
+                CoinConfig.coin.asc()
             ).all()
 
         result = []
