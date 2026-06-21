@@ -594,8 +594,7 @@ async def add_coin(request: Request):
 
         try:
             from data.fetcher import exchange
-            loop    = asyncio.get_running_loop()
-            markets = await loop.run_in_executor(None, lambda: exchange.load_markets(reload=True))
+            markets = await exchange.load_markets(reload=True)
             symbol  = f"{coin}/USDT"
             symbol2 = f"{coin}/USDT:USDT"
             if symbol not in markets and symbol2 not in markets:
@@ -677,8 +676,7 @@ async def validate_coin(request: Request, coin: str):
     coin = coin.upper().replace("USDT", "").replace("/", "")
     try:
         from data.fetcher import exchange
-        loop    = asyncio.get_running_loop()
-        markets = await loop.run_in_executor(None, lambda: exchange.load_markets(reload=True))
+        markets = await exchange.load_markets(reload=True)
         symbol  = f"{coin}/USDT"
         symbol2 = f"{coin}/USDT:USDT"
         if symbol not in markets and symbol2 not in markets:
