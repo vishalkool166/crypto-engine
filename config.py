@@ -73,7 +73,8 @@ class Config:
         {"min": 1000, "max": None, "risk_pct": 0.02, "max_trades": 3, "leverage": 20},
     ]
 
-    MIN_GRADE_TO_TRADE = ["A+", "A", "B"]
+    B_GRADE_MARKET_SCORE_MIN = 65
+    B_GRADE_BTC_SCORE_MIN    = 4
 
     GRADE_APLUS = 85
     GRADE_A     = 68
@@ -109,6 +110,12 @@ class Config:
 
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
+
+    @property
+    def MIN_GRADE_TO_TRADE(self) -> list:
+        if self.PAPER_TRADING:
+            return ["A+", "A", "B"]
+        return ["A+", "A"]
 
     @property
     def COINS(self) -> list:

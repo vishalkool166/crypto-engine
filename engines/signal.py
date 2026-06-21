@@ -20,9 +20,9 @@ TIERS = {
     "B": {
         "min":         52,
         "cls":         "b",
-        "action":      "SKIP — Below minimum grade",
-        "desc":        "Grade B skipped.",
-        "signal_type": "SKIP"
+        "action":      "QUALIFIED SIGNAL — Moderate Confidence",
+        "desc":        "Grade B — paper mode only with quality filter.",
+        "signal_type": "FULL"
     },
     "C": {
         "min":         38,
@@ -38,6 +38,18 @@ TIERS = {
         "desc":        "Market untradeable.",
         "signal_type": "HARD_BLOCK"
     }
+}
+
+GRADE_TP_MULTIPLIER = {
+    "A+": 2.5,
+    "A":  2.0,
+    "B":  1.5,
+}
+
+GRADE_RISK_PCT = {
+    "A+": 0.02,
+    "A":  0.015,
+    "B":  0.01,
 }
 
 
@@ -149,20 +161,45 @@ def check_correlation(coin: str) -> dict:
     return {"blocked": False, "reason": ""}
 
 
-def dynamic_risk_pct(score: float) -> float:
-    min_risk = 0.01
-    max_risk = 0.02
-    base     = 0.015
+def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bool, str]:
+    if not cfg.PAPER_TRADING:
+        return False, "B grades not allowed in live mode"
 
-    if score >= 95:
-        return max_risk
-    if score >= 85:
-        t = (score - 85) / 10
-        return round(base + t * (max_risk - base), 4)
-    if score >= 68:
-        t = (score - 68) / 17
-        return round(min_risk + t * (base - min_risk), 4)
-    return min_risk
+    market_score = wconf.get("market_score", 0)
+    if market_score < cfg.B_GRADE_MARKET_SCORE_MIN:
+        return False, f"Market score {market_score} below minimum {cfg.B_GRADE_MARKET_SCORE_MIN}"
+
+    session_name = session.get("name", "")
+    allowed_sessions = ["London/NY Overlap", "New York Session", "London Session"]
+    if session_name not in allowed_sessions:
+        return False, f"Session {session_name} not suitable for B grade"
+
+    btc_score = wconf.get("btc_score", 0)
+    if btc_score < cfg.B_GRADE_BTC_SCORE_MIN:
+        return False, f"BTC score {btc_score} too low — BTC conflicting"
+
+    hard_blocks = no_trade.get("hard_blocks", [])
+    entry_blocks = no_trade.get("entry_blocks", [])
+
+    non_session_hard = [
+        b for b in hard_blocks
+        if "session" not in b.get("reason", "").lower()
+    ]
+    if len(non_session_hard) > 0:
+        return False, f"Hard block: {non_session_hard[0].get('reason', 'unknown')}"
+
+    if len(entry_blocks) > 1:
+        return False, f"Too many entry blocks: {len(entry_blocks)}"
+
+    return True, "B grade quality filter passed"
+
+
+def dynamic_risk_pct(grade: str) -> float:
+    return GRADE_RISK_PCT.get(grade, 0.01)
+
+
+def get_tp_multiplier(grade: str) -> float:
+    return GRADE_TP_MULTIPLIER.get(grade, 1.5)
 
 
 def check_15m_entry(
@@ -633,15 +670,14 @@ def generate_signal(
         )
         return result
 
-    if non_trade_type in ("HARD_BLOCK", "SKIP", "WATCH"):
+    if non_trade_type in ("HARD_BLOCK", "WATCH"):
         direction_map = {
             "HARD_BLOCK": ("NO TRADE", "notrade", "F"),
-            "SKIP":       ("SKIP",     "skip",    "B"),
             "WATCH":      ("WATCH",    "watch",   "C"),
         }
         direction, dir_class, grade = direction_map[non_trade_type]
 
-        if non_trade_type in ("WATCH", "SKIP"):
+        if non_trade_type == "WATCH":
             intended = _determine_direction(d1d, d4h)
             if intended in ("LONG", "SHORT"):
                 direction = intended
@@ -652,7 +688,6 @@ def generate_signal(
             if non_trade_type == "HARD_BLOCK" and no_trade.get("market_blocks")
             else no_trade["entry_blocks"][0]["reason"]
             if non_trade_type == "HARD_BLOCK" and no_trade.get("entry_blocks")
-            else "Grade B — skipped" if non_trade_type == "SKIP"
             else "Setup building — not ready"
         )
         result = {
@@ -661,7 +696,11 @@ def generate_signal(
             "dir_class":   dir_class,
             "grade":       grade,
             "signal_type": non_trade_type,
-            "reason":      reason
+            "reason":      reason,
+            "entry":       None,
+            "sl":          None,
+            "tp1":         None,
+            "tp2":         None,
         }
         result["explanation"] = _attach_explanation(
             result, sweep, displacement, retest,
@@ -670,6 +709,32 @@ def generate_signal(
             no_trade, wconf
         )
         return result
+
+    grade_label = tier["label"]
+
+    if non_trade_type == "FULL" and grade_label == "B":
+        b_ok, b_reason = should_trade_b_grade(wconf, no_trade, session or {})
+        if not b_ok:
+            intended = _determine_direction(d1d, d4h)
+            result = {
+                **base,
+                "direction":   intended if intended in ("LONG", "SHORT") else "WATCH",
+                "dir_class":   "long" if intended == "LONG" else "short" if intended == "SHORT" else "watch",
+                "grade":       "B",
+                "signal_type": "SKIP",
+                "reason":      f"Grade B filtered: {b_reason}",
+                "entry":       None,
+                "sl":          None,
+                "tp1":         None,
+                "tp2":         None,
+            }
+            result["explanation"] = _attach_explanation(
+                result, sweep, displacement, retest,
+                d1d, d4h, btc_data, btc_inst,
+                oi_matrix, market, regime, session,
+                no_trade, wconf
+            )
+            return result
 
     d1_cls = d1d["trend"]["cls"]
     d4_cls = d4h["trend"]["cls"]
@@ -683,7 +748,11 @@ def generate_signal(
             "tier":        get_tier(38, False),
             "grade":       "C",
             "signal_type": "WATCH",
-            "reason":      "1D and 4H not aligned"
+            "reason":      "1D and 4H not aligned",
+            "entry":       None,
+            "sl":          None,
+            "tp1":         None,
+            "tp2":         None,
         }
         result["explanation"] = _attach_explanation(
             result, sweep, displacement, retest,
@@ -767,6 +836,8 @@ def generate_signal(
     sl_dist = abs(entry - sl)
     sl_pct  = sl_dist / entry * 100
 
+    tp_mult = get_tp_multiplier(grade_label)
+
     if is_long:
         tp_candidates = []
 
@@ -780,8 +851,15 @@ def generate_signal(
         if vah and vah > entry:
             tp_candidates.append(vah)
 
+        min_tp = entry + sl_dist * tp_mult
         tp_candidates = [c for c in tp_candidates if c > entry + sl_dist * 0.8]
-        tp1 = min(tp_candidates) if tp_candidates else entry + sl_dist * 2.0
+
+        if tp_candidates:
+            nearest_structure = min(tp_candidates)
+            tp1 = min(nearest_structure, min_tp * 1.5)
+            tp1 = max(tp1, min_tp)
+        else:
+            tp1 = min_tp
 
     else:
         tp_candidates = []
@@ -796,19 +874,28 @@ def generate_signal(
         if val and val < entry:
             tp_candidates.append(val)
 
+        min_tp = entry - sl_dist * tp_mult
         tp_candidates = [c for c in tp_candidates if c < entry - sl_dist * 0.8]
-        tp1 = max(tp_candidates) if tp_candidates else entry - sl_dist * 2.0
 
-    risk_pct = dynamic_risk_pct(score_15m)
+        if tp_candidates:
+            nearest_structure = max(tp_candidates)
+            tp1 = max(nearest_structure, min_tp * 0.67)
+            tp1 = min(tp1, min_tp)
+        else:
+            tp1 = min_tp
+
+    risk_pct = dynamic_risk_pct(grade_label)
     risk_amt = capital * risk_pct
     pos_size = risk_amt / (sl_pct / 100)
     margin   = pos_size / leverage
+
+    actual_rr = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0
 
     result = {
         **base,
         "direction":   direction,
         "dir_class":   "long" if is_long else "short",
-        "grade":       tier["label"],
+        "grade":       grade_label,
         "score":       score_15m,
         "signal_type": tier["signal_type"],
         "entry":       entry,
@@ -824,6 +911,8 @@ def generate_signal(
         "eff_lev":     leverage,
         "atr_used":    atr,
         "atr_mult":    atr_mult,
+        "tp_mult":     tp_mult,
+        "actual_rr":   round(actual_rr, 2),
         "funding":     market.get("funding", 0),
         "sweep_score": 0,
         "disp_score":  0,

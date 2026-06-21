@@ -57,7 +57,7 @@ async def build_dashboard_payload() -> dict:
             "exit_price":s.exit_price,
             "sl":        s.sl,
             "tp1":       s.tp1,
-            "tp2":       s.tp2,
+            "tp2":       None,
             "risk_amt":  s.risk_amt,
             "position":  s.position,
             "leverage":  s.leverage,
@@ -222,7 +222,6 @@ async def get_signals(
             "entry":        s.entry,
             "sl":           s.sl,
             "tp1":          s.tp1,
-            "tp2":          s.tp2,
             "risk_amt":     s.risk_amt,
             "regime":       s.regime,
             "session":      s.session,
@@ -310,7 +309,7 @@ async def signals_active(request: Request):
                 continue
             if time.time() > sig.get("valid_until", 0):
                 continue
-            if sig.get("grade") not in ["A+", "A"]:
+            if sig.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
                 continue
             active.append(sig)
 
@@ -483,6 +482,7 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
 @router.get("/health")
 async def health(request: Request):
     from ml.eligibility import get_ml_status
+    from trade.sync import get_sync_status
 
     redis_connected = False
     try:
@@ -497,11 +497,100 @@ async def health(request: Request):
     return JSONResponse(content={
         "status":          "ok",
         "timestamp":       datetime.now(timezone.utc).isoformat(),
-        "trading_mode":    rs.get_trading_mode(),
+        "trading_mode":    "live" if not cfg.PAPER_TRADING else "paper",
         "coins_count":     len(cfg.COINS),
+        "grades":          cfg.MIN_GRADE_TO_TRADE,
         "redis_connected": redis_connected,
-        "ml_status":       get_ml_status()
+        "ml_status":       get_ml_status(),
+        "sync_status":     await get_sync_status()
     })
+
+
+@router.post("/sync/outcomes")
+async def sync_outcomes(request: Request):
+    _auth(request)
+    try:
+        from trade.sync import sync_freqtrade_outcomes
+        result = await sync_freqtrade_outcomes()
+        return JSONResponse(content=result)
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.get("/mode/status")
+async def mode_status(request: Request):
+    _auth(request)
+    return JSONResponse(content={
+        "mode":         "live" if not cfg.PAPER_TRADING else "paper",
+        "paper":        cfg.PAPER_TRADING,
+        "grades":       cfg.MIN_GRADE_TO_TRADE,
+        "b_grade_live": False
+    })
+
+
+@router.post("/mode/toggle")
+async def mode_toggle(request: Request):
+    _auth(request)
+    try:
+        body     = await request.json()
+        totp     = body.get("totp_code", "")
+        new_mode = body.get("mode", "")
+
+        if new_mode not in ["live", "paper"]:
+            raise HTTPException(400, "Invalid mode — must be live or paper")
+
+        from auth import verify_totp
+        if not verify_totp(totp):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid TOTP code"}
+            )
+
+        if new_mode == "live":
+            if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
+                return JSONResponse(
+                    status_code = 400,
+                    content     = {"success": False, "reason": "Binance API keys not configured"}
+                )
+
+        from config import _ensure
+        _ensure("TRADING_MODE", new_mode)
+        cfg.TRADING_MODE  = new_mode
+        cfg.PAPER_TRADING = new_mode != "live"
+
+        try:
+            await _restart_freqtrade()
+        except Exception as e:
+            log.warning(f"Freqtrade restart failed: {e}")
+
+        ip = request.client.host if request.client else ""
+        audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=ip)
+
+        return JSONResponse(content={
+            "success": True,
+            "mode":    new_mode,
+            "grades":  cfg.MIN_GRADE_TO_TRADE,
+            "message": f"Switched to {new_mode} mode. Freqtrade restarting."
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+async def _restart_freqtrade():
+    try:
+        import docker
+        client    = docker.from_env()
+        container = client.containers.get("freqtrade")
+        container.restart()
+        log.info("Freqtrade container restarted")
+    except Exception as e:
+        log.error(f"Freqtrade restart error: {e}")
+        raise
 
 
 @router.get("/analysis/factors")
@@ -688,47 +777,116 @@ async def validate_coin(request: Request, coin: str):
     except Exception as e:
         log.error(f"Coin validate error: {e}")
         raise HTTPException(500, str(e))
-    
-@router.post("/test/content/{signal_id}")
-async def test_content_pipeline(request: Request, signal_id: int):
+
+
+@router.get("/ft/summary")
+async def ft_summary(request: Request):
     _auth(request)
     try:
-        from content.pipeline import run_content_pipeline
-        asyncio.create_task(run_content_pipeline(signal_id))
-        return JSONResponse(content={"success": True, "message": f"Content pipeline triggered for signal {signal_id}"})
+        from api.freqtrade import _ft_get
+        status, profit, balance, daily, config = await asyncio.gather(
+            _ft_get("/status"),
+            _ft_get("/profit"),
+            _ft_get("/balance"),
+            _ft_get("/daily?timescale=7"),
+            _ft_get("/show_config"),
+            return_exceptions=True
+        )
+
+        bot_state = "unknown"
+        if not isinstance(config, Exception) and config:
+            bot_state = config.get("state", "unknown")
+
+        return JSONResponse(content={
+            "status":    status    if not isinstance(status,    Exception) else [],
+            "profit":    profit    if not isinstance(profit,    Exception) else {},
+            "balance":   balance   if not isinstance(balance,   Exception) else {},
+            "daily":     daily     if not isinstance(daily,     Exception) else [],
+            "bot_state": bot_state
+        })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))
 
 
-@router.post("/test/commentary")
-async def test_commentary_pipeline(request: Request):
+@router.get("/ft/status")
+async def ft_status(request: Request):
     _auth(request)
     try:
-        from content.pipeline import run_commentary_pipeline
-        from data.cache import cache
+        from api.freqtrade import _ft_get
+        data = await _ft_get("/status")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
-        fake_results = [
-            {
-                "coin":      "BTC",
-                "grade":     "C",
-                "score":     42,
-                "direction": "LONG",
-                "regime":    "CHOPPY",
-                "session":   "London/NY Overlap",
-                "market":    {"funding": 0.0001, "price": 65000, "change24": -1.2}
-            },
-            {
-                "coin":      "ETH",
-                "grade":     "C",
-                "score":     38,
-                "direction": "SHORT",
-                "regime":    "CHOPPY",
-                "session":   "London/NY Overlap",
-                "market":    {"funding": 0.0002, "price": 3200, "change24": -0.8}
-            }
-        ]
 
-        asyncio.create_task(run_commentary_pipeline(fake_results))
-        return JSONResponse(content={"success": True, "message": "Commentary pipeline triggered with fake choppy market data"})
+@router.get("/ft/profit")
+async def ft_profit(request: Request):
+    _auth(request)
+    try:
+        from api.freqtrade import _ft_get
+        data = await _ft_get("/profit")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/ft/balance")
+async def ft_balance(request: Request):
+    _auth(request)
+    try:
+        from api.freqtrade import _ft_get
+        data = await _ft_get("/balance")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/ft/start")
+async def ft_start(request: Request):
+    _auth(request)
+    try:
+        from api.freqtrade import _ft_post
+        data = await _ft_post("/start")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/ft/stop")
+async def ft_stop(request: Request):
+    _auth(request)
+    try:
+        from api.freqtrade import _ft_post
+        data = await _ft_post("/stop")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.post("/ft/forcesell")
+async def ft_forcesell(request: Request):
+    _auth(request)
+    try:
+        body    = await request.json()
+        tradeid = body.get("tradeid")
+        if not tradeid:
+            raise HTTPException(400, "tradeid required")
+        from api.freqtrade import _ft_post
+        data = await _ft_post("/forcesell", {"tradeid": str(tradeid)})
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, str(e))

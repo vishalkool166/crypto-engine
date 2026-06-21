@@ -16,6 +16,7 @@ function applyAndRender(data) {
   renderSignalQueue(data.queue)
   renderPerformance(data.performance)
   renderCoinUniverse(data.coin_universe)
+  renderModeToggle(data.header?.mode?.toLowerCase() || 'paper')
 
   if ((data.history?.length || 0) !== S.lastHistoryLen) {
     S.lastHistoryLen = data.history?.length || 0
@@ -181,7 +182,9 @@ async function deleteCoin(coin) {
 
 // ── Freqtrade API ─────────────────────────────────────────────────────────────
 
-let _ftPollTimer = null
+let _ftPollTimer     = null
+let _ftFastPollTimer = null
+
 
 async function fetchFtSummary() {
   try {
@@ -192,16 +195,58 @@ async function fetchFtSummary() {
     renderFtTrades(data.status)
     renderFtProfit(data.profit)
     renderFtHeader(data.balance, data.profit)
-    renderFtBotStatus(data.status)
+    renderFtBotStatus(data.status, data.bot_state)
   } catch(e) {
     console.error('FT summary error:', e)
   }
 }
 
 
+async function fetchFtPrices() {
+  try {
+    const res = await fetch(`${API}/ft/status`, { headers: _authHeaders() })
+    if (!res.ok) return
+    const trades = await res.json()
+    if (!trades || !Array.isArray(trades) || !trades.length) return
+
+    trades.forEach(t => {
+      const card = $id(`ft-trade-${t.trade_id}`)
+      if (!card) return
+
+      const current   = parseFloat(t.current_rate || 0)
+      const entry     = parseFloat(t.open_rate || 0)
+      const pnl       = parseFloat(t.profit_abs || 0)
+      const pnlPct    = parseFloat(t.profit_ratio || 0) * 100
+      const pnlColor  = pnl >= 0 ? '#248a3d' : '#c0392b'
+      const pnlStr    = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)
+      const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
+      const movePct   = entry > 0 ? ((current - entry) / entry * 100) : 0
+      const moveStr   = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+      const moveColor = movePct >= 0 ? '#248a3d' : '#c0392b'
+
+      const pnlEl    = card.querySelector('[data-pnl]')
+      const pnlPctEl = card.querySelector('[data-pnl-pct]')
+      const curEl    = card.querySelector('[data-current]')
+      const moveEl   = card.querySelector('[data-move]')
+
+      if (pnlEl)    { pnlEl.textContent    = pnlStr;    pnlEl.style.color    = pnlColor }
+      if (pnlPctEl) { pnlPctEl.textContent = pnlPctStr; pnlPctEl.style.color = pnlColor }
+      if (curEl)    { curEl.textContent    = '$' + current.toFixed(4); curEl.style.color = pnlColor }
+      if (moveEl)   { moveEl.textContent   = moveStr;   moveEl.style.color   = moveColor }
+    })
+
+  } catch(e) {
+    console.error('FT prices error:', e)
+  }
+}
+
+
 function startFtPolling() {
   if (_ftPollTimer) clearInterval(_ftPollTimer)
-  _ftPollTimer = setInterval(fetchFtSummary, 10000)
+  if (_ftFastPollTimer) clearInterval(_ftFastPollTimer)
+
+  _ftPollTimer     = setInterval(fetchFtSummary, 10000)
+  _ftFastPollTimer = setInterval(fetchFtPrices,  3000)
 }
 
 
@@ -246,5 +291,25 @@ async function ftForceSell(tradeid) {
     await fetchFtSummary()
   } catch(e) {
     toast('❌ Error', e.message, 'error')
+  }
+}
+
+
+async function syncOutcomes() {
+  toast('🔄 Syncing outcomes...', '', 'info', 3000)
+  try {
+    const res  = await fetch(`${API}/sync/outcomes`, {
+      method:  'POST',
+      headers: _authHeaders()
+    })
+    const data = await res.json()
+    toast(
+      `✅ Sync Complete`,
+      `${data.synced || 0} synced · ${data.unmatched || 0} unmatched`,
+      'success'
+    )
+    await fetchDashboard()
+  } catch(e) {
+    toast('❌ Sync Failed', e.message, 'error')
   }
 }

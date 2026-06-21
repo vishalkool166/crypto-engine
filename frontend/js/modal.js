@@ -79,7 +79,7 @@ function showSignalDetail(h) {
           <div>Score: <strong style="color:#1d1d1f">${h.score_at_entry || '--'}/100</strong></div>
           <div>Regime: <strong style="color:#1d1d1f">${h.regime_at_entry || '--'}</strong></div>
           <div>Session: <strong style="color:#1d1d1f">${h.session_at_entry || '--'}</strong></div>
-          <div>Timestamp: <strong style="color:#1d1d1f">${fmtDate(h.opened_at)}</strong></div>
+          <div>Time: <strong style="color:#1d1d1f">${fmtDate(h.opened_at)}</strong></div>
         </div>
       </div>
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:14px">
@@ -97,12 +97,12 @@ function showSignalDetail(h) {
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
       ${_detailCell('Entry', fmt(h.entry_price), '#0071e3')}
       ${_detailCell('Stop',  fmt(h.sl_price),    '#ff3b30')}
-      ${_detailCell('TP1',   fmt(h.tp1_price),   '#34c759')}
-      ${_detailCell('TP2',   fmt(h.tp2_price),   '#34c759')}
-      ${_detailCell('Risk',     fmt(h.risk_amt),      '#ff3b30')}
+      ${_detailCell('TP',    fmt(h.tp1_price),   '#34c759')}
+      ${_detailCell('Risk',  fmt(h.risk_amt),    '#ff3b30')}
       ${_detailCell('Size',     fmt(h.position_size), '#1d1d1f')}
       ${_detailCell('Leverage', (h.leverage || '--'), '#1d1d1f')}
       ${_detailCell('Score',    (h.score_at_entry ? h.score_at_entry + '/100' : '--'), '#0071e3')}
+      ${_detailCell('Grade',    h.grade || '--', gradeColor(h.grade || 'F'))}
     </div>
   `
 
@@ -134,6 +134,9 @@ function _renderModalData(coin, data, title, body) {
   const market  = data.market || {}
   const expl    = data.explanation || {}
   const ob      = data.d4h?.order_blocks || {}
+  const ml_prob = data.ml_probability
+  const actual_rr = data.actual_rr || 0
+  const tp_mult   = data.tp_mult || 2.0
 
   const gc = gradeColor(grade)
 
@@ -154,6 +157,10 @@ function _renderModalData(coin, data, title, body) {
           Funding: ${(Number(market.funding||0)*100).toFixed(4)}%
         </div>
         ${expl.confidence_label ? `<div style="font-size:10px;margin-top:4px;font-weight:600;color:${gc}">Confidence: ${expl.confidence_label} (${score}/100)</div>` : ''}
+        ${ml_prob !== null && ml_prob !== undefined ? `
+          <div style="font-size:10px;margin-top:4px;font-weight:600;color:${ml_prob >= 0.65 ? '#248a3d' : '#ff3b30'}">
+            ML: ${ml_prob >= 0.65 ? '✅' : '❌'} ${(ml_prob*100).toFixed(1)}% win probability
+          </div>` : ''}
       </div>
 
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
@@ -183,21 +190,22 @@ function _renderModalData(coin, data, title, body) {
         <div class="no-trade-block">${expl.no_trade_reason}</div>
       </div>` : ''}
 
-    ${(grade === 'A+' || grade === 'A') ? `
+    ${(grade === 'A+' || grade === 'A' || grade === 'B') && sig.entry ? `
       <div style="border-radius:12px;padding:12px;margin-bottom:12px;background:${gc}10;border:1px solid ${gc}25">
         <div class="section-label" style="margin-bottom:8px">Signal Levels</div>
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
           ${_levelCell('Entry', sig.entry, '#0071e3')}
           ${_levelCell('Stop',  sig.sl,    '#ff3b30')}
-          ${_levelCell('TP1',   sig.tp1,   '#34c759')}
-          ${_levelCell('TP2',   sig.tp2,   '#34c759')}
+          ${_levelCell('TP',    sig.tp1,   '#34c759')}
         </div>
         <div style="display:flex;gap:16px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(0,0,0,0.06);font-size:10px;color:#6e6e73">
           <span>SL: ${sig.sl_pct ? Number(sig.sl_pct).toFixed(2)+'%' : '--'}</span>
           <span>Risk: $${sig.risk_amt ? Number(sig.risk_amt).toFixed(2) : '--'}</span>
           <span>Size: $${sig.pos_size ? Number(sig.pos_size).toFixed(2) : '--'}</span>
-          <span>Lev: ${sig.eff_lev||'--'}x</span>
+          <span>TP: ${tp_mult}x risk</span>
+          <span>R:R: 1:${actual_rr}</span>
         </div>
+        ${grade === 'B' ? `<div style="margin-top:8px;font-size:10px;color:#e8820c;font-weight:600">⚠️ Grade B — paper mode only · quality filter passed</div>` : ''}
       </div>` : ''}
 
     ${hards.length ? `

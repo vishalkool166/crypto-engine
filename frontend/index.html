@@ -55,6 +55,35 @@ tailwind.config = {
   ⚠️ API connection lost — retrying...
 </div>
 
+<!-- OTP MODAL for mode toggle -->
+<div id="otp-modal-overlay"
+     style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:20px">
+  <div style="background:rgba(255,255,255,0.95);border-radius:20px;padding:32px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+    <div style="font-size:24px;text-align:center;margin-bottom:12px">🔐</div>
+    <div style="font-weight:700;font-size:16px;text-align:center;margin-bottom:8px" id="otp-modal-title">Confirm Mode Switch</div>
+    <div style="font-size:13px;color:#6e6e73;text-align:center;margin-bottom:20px" id="otp-modal-desc">Enter your 6-digit authenticator code</div>
+    <input
+      id="otp-modal-input"
+      type="number"
+      placeholder="000000"
+      maxlength="6"
+      style="width:100%;padding:14px;border:1.5px solid rgba(0,0,0,0.1);border-radius:12px;font-size:24px;font-family:monospace;text-align:center;letter-spacing:0.2em;outline:none;margin-bottom:16px"
+    >
+    <div style="display:flex;gap:12px">
+      <button onclick="closeOtpModal()"
+              style="flex:1;padding:12px;border-radius:12px;border:1px solid rgba(0,0,0,0.1);background:rgba(0,0,0,0.04);font-weight:600;font-size:13px;cursor:pointer;font-family:inherit">
+        Cancel
+      </button>
+      <button id="otp-modal-confirm"
+              style="flex:1;padding:12px;border-radius:12px;border:none;background:#0071e3;color:white;font-weight:600;font-size:13px;cursor:pointer;font-family:inherit"
+              onclick="confirmModeToggle()">
+        Confirm
+      </button>
+    </div>
+    <div id="otp-modal-error" style="margin-top:12px;font-size:12px;color:#ff3b30;text-align:center;display:none"></div>
+  </div>
+</div>
+
 <div id="modal-overlay"
      class="modal-overlay fixed inset-0 z-40 hidden items-center justify-center p-4"
      onclick="closeModal()">
@@ -112,9 +141,16 @@ tailwind.config = {
     <div class="flex items-center gap-3">
       <div id="ft-status-badge"
            class="px-3 py-1 rounded-full text-xs font-semibold"
-           style="background:rgba(110,110,115,0.1);color:#6e6e73;border:1px solid rgba(110,110,115,0.2)">
+           style="background:rgba(110,110,115,0.1);color:#6e6e73;border:1px solid rgba(110,110,115,0.2)"
+           data-running="false">
         ⏳ Bot
       </div>
+      <button id="mode-toggle-btn"
+              onclick="showModeToggle()"
+              class="px-3 py-1 rounded-full text-xs font-semibold transition-all"
+              style="background:rgba(0,113,227,0.1);color:#0071e3;border:1px solid rgba(0,113,227,0.2)">
+        🔵 PAPER
+      </button>
       <div id="ws-status" class="flex items-center text-[10px] text-apple-secondary">
         <span class="ws-dot"></span>
         <span id="ws-status-text">connecting</span>
@@ -125,6 +161,12 @@ tailwind.config = {
           Next: <span id="countdown-val" class="text-apple-blue font-semibold">--:--</span>
         </div>
       </div>
+      <a href="https://freqtrade.vishalkool.top"
+         target="_blank"
+         class="text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors"
+         style="background:rgba(52,199,89,0.1);color:#248a3d;border-color:rgba(52,199,89,0.2)">
+        FreqUI →
+      </a>
       <button onclick="handleLogout()" class="text-[11px] text-apple-secondary hover:text-apple-red transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
         Logout
       </button>
@@ -143,7 +185,10 @@ tailwind.config = {
     <div class="flex items-center gap-2">
       <span class="text-xs text-apple-secondary">Last scan: <span id="last-scan-time" class="text-apple-text font-medium">--</span></span>
       <button id="scan-btn" onclick="triggerScan()" class="btn-apple">🔍 Scan Now</button>
-      <button id="ft-start-btn" onclick="ftStartStop()" class="btn-apple" style="background:rgba(52,199,89,0.15);color:#248a3d;border:1px solid rgba(52,199,89,0.3)">▶ Start Bot</button>
+      <button id="ft-start-btn" onclick="ftStartStop()" class="btn-apple"
+              style="background:rgba(52,199,89,0.15);color:#248a3d;border:1px solid rgba(52,199,89,0.3)">
+        ▶ Start Bot
+      </button>
     </div>
   </div>
 
@@ -153,7 +198,7 @@ tailwind.config = {
     <!-- LEFT -->
     <div class="space-y-3">
 
-      <!-- ACTIVE TRADES (Freqtrade) -->
+      <!-- ACTIVE TRADES -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">⚡ Active Trades</h2>
@@ -255,11 +300,11 @@ tailwind.config = {
 
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
-            <h2 class="section-label">💼 Recent Trades</h2>
+            <h2 class="section-label">💼 Recent Signals</h2>
             <span class="text-[10px] text-apple-secondary">click for details</span>
           </div>
           <div class="p-3 max-h-48 overflow-y-auto space-y-1.5" id="history-list">
-            <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
+            <div class="text-center py-8 text-apple-secondary text-xs">No closed signals yet</div>
           </div>
         </section>
       </div>
@@ -300,18 +345,18 @@ tailwind.config = {
               <div id="ft-total-trades" class="num font-bold text-xl text-apple-text">--</div>
             </div>
             <div class="bg-black/4 rounded-apple-sm p-3">
-              <div class="section-label mb-1">Avg Duration</div>
+              <div class="section-label mb-1">Profit Factor</div>
               <div id="ft-avg-duration" class="num font-bold text-xl text-apple-text">--</div>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-2">
             <div class="bg-black/4 rounded-apple-sm p-3">
               <div class="section-label mb-1">Best Trade</div>
-              <div id="ft-best-trade" class="num font-bold text-lg text-apple-green">$--</div>
+              <div id="ft-best-trade" class="num font-bold text-lg text-apple-green">--</div>
             </div>
             <div class="bg-black/4 rounded-apple-sm p-3">
               <div class="section-label mb-1">Worst Trade</div>
-              <div id="ft-worst-trade" class="num font-bold text-lg text-apple-red">$--</div>
+              <div id="ft-worst-trade" class="num font-bold text-lg text-apple-red">--</div>
             </div>
           </div>
         </div>
@@ -343,6 +388,16 @@ tailwind.config = {
             </div>
             <div id="a-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades</div>
           </div>
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-xs font-semibold text-apple-orange">Grade B</span>
+              <span id="b-wr" class="num text-xs font-semibold text-apple-text">--%</span>
+            </div>
+            <div class="progress-track h-1.5 mb-1.5">
+              <div id="b-bar" class="h-full rounded-full bar bg-apple-orange" style="width:0%"></div>
+            </div>
+            <div id="b-detail" class="text-[10px] text-apple-secondary">0W · 0L · 0 trades · paper only</div>
+          </div>
           <div class="relative h-28 mt-1">
             <canvas id="chart-daily"></canvas>
           </div>
@@ -364,6 +419,8 @@ tailwind.config = {
 <script>
 'use strict'
 
+let _pendingMode = null
+
 async function checkAuth() {
   try {
     const res = await fetch('/api/health')
@@ -382,9 +439,84 @@ async function handleLogout() {
   window.location.href = '/login.html'
 }
 
+function showModeToggle() {
+  const badge    = $id('mode-toggle-btn')
+  const isLive   = badge && badge.dataset.mode === 'live'
+  const newMode  = isLive ? 'paper' : 'live'
+  _pendingMode   = newMode
+
+  const overlay  = $id('otp-modal-overlay')
+  const title    = $id('otp-modal-title')
+  const desc     = $id('otp-modal-desc')
+  const errEl    = $id('otp-modal-error')
+  const inp      = $id('otp-modal-input')
+
+  title.textContent = `Switch to ${newMode.toUpperCase()} mode`
+  desc.textContent  = `Enter your 6-digit authenticator code to confirm`
+  errEl.style.display = 'none'
+  inp.value = ''
+
+  overlay.style.display = 'flex'
+  setTimeout(() => inp.focus(), 100)
+}
+
+function closeOtpModal() {
+  const overlay = $id('otp-modal-overlay')
+  overlay.style.display = 'none'
+  _pendingMode = null
+}
+
+async function confirmModeToggle() {
+  const inp    = $id('otp-modal-input')
+  const errEl  = $id('otp-modal-error')
+  const btn    = $id('otp-modal-confirm')
+  const code   = inp ? inp.value.trim() : ''
+
+  if (code.length !== 6) {
+    errEl.textContent   = 'Enter your 6-digit code'
+    errEl.style.display = 'block'
+    return
+  }
+
+  btn.disabled    = true
+  btn.textContent = '⏳...'
+  errEl.style.display = 'none'
+
+  try {
+    const res  = await fetch('/api/mode/toggle', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ mode: _pendingMode, totp_code: code })
+    })
+    const data = await res.json()
+
+    if (data.success) {
+      closeOtpModal()
+      toast(`✅ Switched to ${_pendingMode.toUpperCase()}`, data.message || '', 'success')
+      await fetchDashboard()
+    } else {
+      errEl.textContent   = '❌ ' + (data.reason || 'Failed')
+      errEl.style.display = 'block'
+    }
+  } catch(e) {
+    errEl.textContent   = '❌ Connection error'
+    errEl.style.display = 'block'
+  } finally {
+    btn.disabled    = false
+    btn.textContent = 'Confirm'
+  }
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal()
+  if (e.key === 'Escape') {
+    closeModal()
+    closeOtpModal()
+  }
   if (e.key === 's' && !e.ctrlKey && !e.metaKey && document.activeElement.tagName !== 'INPUT') triggerScan()
+})
+
+document.getElementById('otp-modal-input')?.addEventListener('keydown', e => {
+  if (e.key === 'Enter') confirmModeToggle()
 })
 
 async function init() {

@@ -22,8 +22,8 @@ function renderHeader(h) {
 
 function renderFtHeader(balance, profit) {
   if (balance) {
-    const total = balance.total || 0
-    $set('h-balance', { text: '$' + parseFloat(total).toFixed(2) })
+    const total = parseFloat(balance.total || 0)
+    $set('h-balance', { text: '$' + total.toFixed(2) })
   }
   if (profit) {
     const trades = profit.trade_count || 0
@@ -31,29 +31,50 @@ function renderFtHeader(balance, profit) {
   }
 }
 
-function renderFtBotStatus(status) {
-  const badge  = $id('ft-status-badge')
-  const btn    = $id('ft-start-btn')
+function renderFtBotStatus(status, botState) {
+  const badge = $id('ft-status-badge')
+  const btn   = $id('ft-start-btn')
   if (!badge) return
 
-  const isRunning = Array.isArray(status) && status.length >= 0
-  const isStopped = !Array.isArray(status)
+  const isRunning = botState === 'running'
 
-  if (isStopped) {
-    badge.textContent        = '⏹ Stopped'
-    badge.style.background   = 'rgba(255,59,48,0.1)'
-    badge.style.color        = '#ff3b30'
-    badge.style.borderColor  = 'rgba(255,59,48,0.2)'
-    badge.dataset.running    = 'false'
-    if (btn) { btn.textContent = '▶ Start Bot'; btn.style.background = 'rgba(52,199,89,0.15)'; btn.style.color = '#248a3d' }
+  if (isRunning) {
+    badge.textContent       = '▶ Running'
+    badge.style.background  = 'rgba(52,199,89,0.1)'
+    badge.style.color       = '#248a3d'
+    badge.style.borderColor = 'rgba(52,199,89,0.2)'
+    badge.dataset.running   = 'true'
+    if (btn) {
+      btn.textContent      = '⏹ Stop Bot'
+      btn.style.background = 'rgba(255,59,48,0.1)'
+      btn.style.color      = '#ff3b30'
+      btn.style.border     = '1px solid rgba(255,59,48,0.3)'
+    }
   } else {
-    badge.textContent        = '▶ Running'
-    badge.style.background   = 'rgba(52,199,89,0.1)'
-    badge.style.color        = '#248a3d'
-    badge.style.borderColor  = 'rgba(52,199,89,0.2)'
-    badge.dataset.running    = 'true'
-    if (btn) { btn.textContent = '⏹ Stop Bot'; btn.style.background = 'rgba(255,59,48,0.1)'; btn.style.color = '#ff3b30' }
+    badge.textContent       = '⏹ Stopped'
+    badge.style.background  = 'rgba(255,59,48,0.1)'
+    badge.style.color       = '#ff3b30'
+    badge.style.borderColor = 'rgba(255,59,48,0.2)'
+    badge.dataset.running   = 'false'
+    if (btn) {
+      btn.textContent      = '▶ Start Bot'
+      btn.style.background = 'rgba(52,199,89,0.15)'
+      btn.style.color      = '#248a3d'
+      btn.style.border     = '1px solid rgba(52,199,89,0.3)'
+    }
   }
+}
+
+function renderModeToggle(mode) {
+  const btn = $id('mode-toggle-btn')
+  if (!btn) return
+
+  const isLive = mode === 'live'
+  btn.dataset.mode    = mode
+  btn.textContent     = isLive ? '🔴 LIVE' : '🔵 PAPER'
+  btn.style.background  = isLive ? 'rgba(255,59,48,0.1)'  : 'rgba(0,113,227,0.1)'
+  btn.style.color       = isLive ? '#ff3b30'               : '#0071e3'
+  btn.style.borderColor = isLive ? 'rgba(255,59,48,0.2)'  : 'rgba(0,113,227,0.2)'
 }
 
 function renderFtTrades(trades) {
@@ -75,7 +96,7 @@ function renderFtTrades(trades) {
   if (count) count.textContent = `via Freqtrade · ${trades.length} open`
 
   grid.innerHTML = trades.map(t => {
-    const isLong    = t.trade_direction === 'long' || t.is_short === false
+    const isLong    = !t.is_short
     const dirColor  = isLong ? '#248a3d' : '#c0392b'
     const dirEmoji  = isLong ? '📈' : '📉'
     const pnl       = parseFloat(t.profit_abs || 0)
@@ -88,10 +109,17 @@ function renderFtTrades(trades) {
     const entry     = parseFloat(t.open_rate || 0)
     const current   = parseFloat(t.current_rate || 0)
     const sl        = parseFloat(t.stop_loss_abs || 0)
-    const tp        = parseFloat(t.initial_stop_loss_abs || 0)
     const stake     = parseFloat(t.stake_amount || 0)
+    const leverage  = t.leverage || 1
 
     const fmtP = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+
+    const movePct    = entry > 0 ? ((current - entry) / entry * 100) : 0
+    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+    const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
+
+    const distSl    = Math.abs(current - sl)
+    const distSlPct = current > 0 ? (distSl / current * 100).toFixed(2) : '0'
 
     const openDate = t.open_date ? new Date(t.open_date).toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata', hour12: true,
@@ -99,8 +127,24 @@ function renderFtTrades(trades) {
       hour: '2-digit', minute: '2-digit'
     }) + ' IST' : '--'
 
+    const tp = t.tp1 || null
+
+    let progressPct   = 0
+    let progressColor = '#ff3b30'
+    let progressLabel = 'At entry'
+
+    if (tp && entry) {
+      const totalDist = Math.abs(tp - entry)
+      const curDist   = isLong ? (current - entry) : (entry - current)
+      progressPct     = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
+      progressColor   = progressPct > 0 ? '#34c759' : '#ff3b30'
+      progressLabel   = progressPct > 0
+        ? `${progressPct.toFixed(0)}% to TP`
+        : `${Math.abs(progressPct).toFixed(0)}% toward SL`
+    }
+
     return `
-      <div class="glass-strong rounded-apple overflow-hidden trade-card">
+      <div class="glass-strong rounded-apple overflow-hidden trade-card" id="ft-trade-${t.trade_id}">
         <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -109,41 +153,53 @@ function renderFtTrades(trades) {
                 ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
               </span>
               <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
-                #${t.trade_id}
-              </span>
-              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
-                ${t.leverage || 1}x
+                #${t.trade_id} · ${leverage}x
               </span>
             </div>
             <div style="text-align:right">
-              <div style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
-              <div style="font-size:11px;color:${pnlColor};font-family:monospace">${pnlPctStr}</div>
+              <div data-pnl style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
+              <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
             </div>
           </div>
         </div>
 
+        ${tp ? `
+        <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#6e6e73;font-family:monospace;margin-bottom:6px">
+            <span>${fmtP(entry)}</span>
+            <span>${progressLabel}</span>
+            <span>${fmtP(tp)}</span>
+          </div>
+          <div class="progress-track" style="height:6px">
+            <div style="height:100%;border-radius:100px;width:${progressPct}%;background:${progressColor};transition:width 0.5s"></div>
+          </div>
+        </div>` : ''}
+
         <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+            <div class="section-label" style="margin-bottom:4px">Current</div>
+            <div data-current style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
+            <div data-move style="font-size:10px;margin-top:2px;font-family:monospace;color:${moveColor}">${movePctStr}</div>
+          </div>
           <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
             <div class="section-label" style="margin-bottom:4px">Entry</div>
             <div style="font-weight:600;font-family:monospace;font-size:13px;color:#0071e3">${fmtP(entry)}</div>
           </div>
           <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-            <div class="section-label" style="margin-bottom:4px">Current</div>
-            <div style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
-          </div>
-          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
             <div class="section-label" style="margin-bottom:4px">Stop Loss</div>
             <div style="font-weight:600;font-family:monospace;font-size:13px;color:#ff3b30">${fmtP(sl)}</div>
+            <div style="font-size:10px;margin-top:2px;color:#6e6e73">${distSlPct}% away</div>
           </div>
           <div style="padding:10px 12px">
-            <div class="section-label" style="margin-bottom:4px">Stake</div>
-            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#1d1d1f">$${stake.toFixed(2)}</div>
+            <div class="section-label" style="margin-bottom:4px">${tp ? 'TP' : 'Stake'}</div>
+            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#34c759">${tp ? fmtP(tp) : '$' + stake.toFixed(2)}</div>
           </div>
         </div>
 
         <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
           <div style="font-size:11px;color:#6e6e73">
             Opened: <strong style="color:#1d1d1f">${openDate}</strong>
+            · Stake: <strong style="color:#1d1d1f">$${stake.toFixed(2)}</strong>
           </div>
           <button
             onclick="ftForceSell(${t.trade_id})"
@@ -167,10 +223,8 @@ function renderFtProfit(profit) {
   $set('ft-win-rate',     { text: (parseFloat(profit.winrate || 0) * 100).toFixed(1) + '%' })
   $set('ft-total-trades', { text: profit.trade_count || 0 })
 
-  const avgDur = profit.profit_factor
-    ? profit.profit_factor.toFixed(2) + 'x'
-    : '--'
-  $set('ft-avg-duration', { text: avgDur })
+  const pf = profit.profit_factor ? profit.profit_factor.toFixed(2) + 'x' : '--'
+  $set('ft-avg-duration', { text: pf })
 
   const best  = parseFloat(profit.best_pair_profit_ratio || 0) * 100
   const worst = parseFloat(profit.worst_pair_profit_ratio || 0) * 100
@@ -251,6 +305,10 @@ function _createRadarCard(r) {
 
 function _updateRadarCard(el, r) {
   el.style.borderTopColor = r.grade_color
+  const ml = r.ml_probability !== null && r.ml_probability !== undefined
+    ? `<div style="font-size:9px;margin-top:3px;color:${r.ml_probability >= 0.65 ? '#248a3d' : '#ff3b30'};font-weight:600">ML ${(r.ml_probability*100).toFixed(0)}%</div>`
+    : ''
+
   el.innerHTML = `
     <div style="font-weight:600;font-size:12px;color:#1d1d1f;margin-bottom:4px">${r.coin}</div>
     <div style="font-size:11px;font-weight:600;margin-bottom:8px;color:${r.dir_color}">${r.dir_emoji} ${r.direction}</div>
@@ -262,7 +320,8 @@ function _updateRadarCard(el, r) {
       <span style="font-size:10px;font-family:monospace;color:${r.change_color}">${r.change}</span>
     </div>
     <div style="font-size:10px;font-family:monospace;color:#6e6e73;margin-top:2px">${r.price}</div>
-    ${r.confidence ? `<div style="font-size:10px;margin-top:4px;color:${r.grade_color}80">${r.confidence}</div>` : ''}
+    ${r.confidence ? `<div style="font-size:10px;margin-top:2px;color:${r.grade_color}80">${r.confidence}</div>` : ''}
+    ${ml}
   `
 }
 
@@ -308,7 +367,7 @@ function renderSignalQueue(queue) {
           <div style="font-family:monospace;font-size:12px;font-weight:600;color:#ff3b30">${q.sl}</div>
         </div>
         <div>
-          <div class="section-label" style="margin-bottom:2px">TP1</div>
+          <div class="section-label" style="margin-bottom:2px">TP</div>
           <div style="font-family:monospace;font-size:12px;font-weight:600;color:#34c759">${q.tp1}</div>
         </div>
       </div>
@@ -339,6 +398,9 @@ function renderPerformance(p) {
   $set('a-wr',          { text: p.a_wr })
   $set('a-bar',         { width: p.a_bar, bg: C.blue })
   $set('a-detail',      { text: p.a_detail })
+  $set('b-wr',          { text: p.b_wr || '0%' })
+  $set('b-bar',         { width: p.b_bar || 0, bg: C.orange })
+  $set('b-detail',      { text: p.b_detail || '0W · 0L · 0 trades · paper only' })
 }
 
 function renderHistory(history) {
@@ -350,18 +412,25 @@ function renderHistory(history) {
     return
   }
 
-  list.innerHTML = history.map(h => `
-    <div onclick="showSignalDetail(${JSON.stringify(h).replace(/"/g, '&quot;')})"
-         style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.03);border-left:2px solid ${h.border_color};cursor:pointer;transition:background 0.15s"
-         onmouseover="this.style.background='rgba(0,0,0,0.06)'"
-         onmouseout="this.style.background='rgba(0,0,0,0.03)'">
-      <span style="font-weight:600;font-size:12px;color:#1d1d1f;width:48px;flex-shrink:0">${h.coin}</span>
-      <span style="font-size:12px;font-weight:600;width:40px;flex-shrink:0;color:${h.dir_color}">${h.dir_emoji} ${h.direction}</span>
-      <span style="flex:1;font-size:10px;color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Grade ${h.grade} · Score ${h.score_at_entry || '--'}</span>
-      <span style="font-family:monospace;font-size:12px;font-weight:600;flex-shrink:0;color:${h.pnl_color}">${h.pnl}</span>
-      <span style="font-size:12px;flex-shrink:0">${h.outcome_emoji}</span>
-    </div>
-  `).join('')
+  list.innerHTML = history.map(h => {
+    const tsIST = h.opened_at ? new Date(h.opened_at).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata', hour12: true,
+      day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit'
+    }) + ' IST' : '--'
+
+    return `
+      <div onclick="showSignalDetail(${JSON.stringify(h).replace(/"/g, '&quot;')})"
+           style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.03);border-left:2px solid ${h.border_color};cursor:pointer;transition:background 0.15s"
+           onmouseover="this.style.background='rgba(0,0,0,0.06)'"
+           onmouseout="this.style.background='rgba(0,0,0,0.03)'">
+        <span style="font-weight:600;font-size:12px;color:#1d1d1f;width:48px;flex-shrink:0">${h.coin}</span>
+        <span style="font-size:12px;font-weight:600;width:40px;flex-shrink:0;color:${h.dir_color}">${h.dir_emoji} ${h.direction}</span>
+        <span style="flex:1;font-size:10px;color:#6e6e73;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Grade ${h.grade} · ${tsIST}</span>
+        <span style="font-family:monospace;font-size:12px;font-weight:600;flex-shrink:0;color:${h.pnl_color}">${h.pnl}</span>
+        <span style="font-size:12px;flex-shrink:0">${h.outcome_emoji}</span>
+      </div>`
+  }).join('')
 }
 
 function renderCoinUniverse(coins) {
@@ -385,11 +454,10 @@ function renderCoinUniverse(coins) {
     const gc         = c.grade_color || '#6e6e73'
     const hasSignal  = c.has_signal
     const gradeLabel = c.grade !== '--' ? c.grade : ''
-
-    const bg      = enabled ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.04)'
-    const border  = enabled ? `1px solid ${gc}30` : '1px solid rgba(0,0,0,0.08)'
-    const opacity = enabled ? '1' : '0.5'
-    const dot     = hasSignal ? `<span style="width:5px;height:5px;border-radius:50%;background:${gc};display:inline-block;margin-left:3px;vertical-align:middle"></span>` : ''
+    const bg         = enabled ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.04)'
+    const border     = enabled ? `1px solid ${gc}30` : '1px solid rgba(0,0,0,0.08)'
+    const opacity    = enabled ? '1' : '0.5'
+    const dot        = hasSignal ? `<span style="width:5px;height:5px;border-radius:50%;background:${gc};display:inline-block;margin-left:3px;vertical-align:middle"></span>` : ''
 
     return `
       <button
@@ -410,8 +478,8 @@ function showCoinPillDetail(c) {
   const body    = $id('modal-body')
   const overlay = $id('modal-overlay')
 
-  const gc      = c.grade_color || '#6e6e73'
-  const volStr  = c.volume_24h
+  const gc     = c.grade_color || '#6e6e73'
+  const volStr = c.volume_24h
     ? (c.volume_24h >= 1e9
         ? '$' + (c.volume_24h / 1e9).toFixed(1) + 'B'
         : '$' + (c.volume_24h / 1e6).toFixed(0) + 'M')

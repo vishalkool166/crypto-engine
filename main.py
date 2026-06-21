@@ -100,12 +100,17 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
+    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
+
     await send(
         f"✅ *Signal Engine v5 Started*\n\n"
+        f"Mode:     `{mode}`\n"
         f"Coins:    `{len(cfg.COINS)} coins`\n"
-        f"Grades:   `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
+        f"Grades:   `{grades}`\n"
         f"Webhook:  `✅ Active`\n"
-        f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
+        f"Scan:     `every :00/:15/:30/:45 UTC`\n"
+        f"Briefing: `08:00 UTC (London) · 13:00 UTC (NY)`\n\n"
         f"Type /help for commands"
     )
 
@@ -189,10 +194,9 @@ async def auth_setup(request: Request):
 
 @app.get("/login.html")
 async def login_page(request: Request):
-    mode = rs.get_trading_mode()
     return templates.TemplateResponse("login.html", {
         "request": request,
-        "mode":    mode
+        "mode":    "live" if not cfg.PAPER_TRADING else "paper"
     })
 
 
@@ -211,7 +215,8 @@ async def auth_login(request: Request):
         if result["success"]:
             response = JSONResponse(content={
                 "success":  True,
-                "username": result.get("username", "")
+                "username": result.get("username", ""),
+                "mode":     "live" if not cfg.PAPER_TRADING else "paper"
             })
             response.set_cookie(
                 key      = "se_token",

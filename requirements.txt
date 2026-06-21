@@ -24,3 +24,4 @@ scikit-learn
 mplfinance
 tweepy
 Pillow
+docker

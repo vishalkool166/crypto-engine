@@ -6,6 +6,8 @@ from data.cache import cache
 
 log = logging.getLogger(__name__)
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
 C = {
     "green":       "#34c759",
     "green_dark":  "#248a3d",
@@ -185,7 +187,10 @@ def build_performance_data(stats: dict) -> dict:
         "aplus_detail":   "0W · 0L · 0 trades",
         "a_wr":           "0%",
         "a_bar":          0,
-        "a_detail":       "0W · 0L · 0 trades"
+        "a_detail":       "0W · 0L · 0 trades",
+        "b_wr":           "0%",
+        "b_bar":          0,
+        "b_detail":       "0W · 0L · 0 trades · paper only"
     }
 
     if not stats:
@@ -205,8 +210,8 @@ def build_performance_data(stats: dict) -> dict:
     if not closed_signals:
         return empty
 
-    wr     = stats.get("win_rate", 0)
-    tp     = stats.get("total_pnl", 0)
+    wr = stats.get("win_rate", 0)
+    tp = stats.get("total_pnl", 0)
 
     gross_p = sum(float(s.pnl or 0) for s in closed_signals if (s.pnl or 0) > 0)
     gross_l = abs(sum(float(s.pnl or 0) for s in closed_signals if (s.pnl or 0) < 0))
@@ -230,8 +235,10 @@ def build_performance_data(stats: dict) -> dict:
     bg    = stats.get("by_grade", {})
     ap    = bg.get("A+", {})
     a     = bg.get("A", {})
+    b     = bg.get("B", {})
     ap_wr = ap.get("win_rate", 0)
     a_wr  = a.get("win_rate", 0)
+    b_wr  = b.get("win_rate", 0)
 
     return {
         "win_rate":       f"{wr}%",
@@ -256,7 +263,10 @@ def build_performance_data(stats: dict) -> dict:
         "aplus_detail":   f"{ap.get('wins',0)}W · {(ap.get('total',0) - ap.get('wins',0))}L · {ap.get('total',0)} trades · {fmt_pnl(ap.get('total_pnl',0))}",
         "a_wr":           f"{a_wr}%",
         "a_bar":          a_wr,
-        "a_detail":       f"{a.get('wins',0)}W · {(a.get('total',0) - a.get('wins',0))}L · {a.get('total',0)} trades · {fmt_pnl(a.get('total_pnl',0))}"
+        "a_detail":       f"{a.get('wins',0)}W · {(a.get('total',0) - a.get('wins',0))}L · {a.get('total',0)} trades · {fmt_pnl(a.get('total_pnl',0))}",
+        "b_wr":           f"{b_wr}%",
+        "b_bar":          b_wr,
+        "b_detail":       f"{b.get('wins',0)}W · {(b.get('total',0) - b.get('wins',0))}L · {b.get('total',0)} trades · {fmt_pnl(b.get('total_pnl',0))}"
     }
 
 
@@ -278,6 +288,15 @@ def build_history_data(signals: list) -> list:
             "rgba(0,0,0,0.1)"
         )
 
+        ts_ist = "--"
+        try:
+            if s.get("timestamp"):
+                ts_ist = datetime.fromisoformat(
+                    s["timestamp"].replace("Z", "+00:00")
+                ).astimezone(IST).strftime("%d %b %I:%M %p IST")
+        except Exception:
+            pass
+
         result.append({
             "id":               s.get("id"),
             "coin":             s.get("coin", "--"),
@@ -298,18 +317,14 @@ def build_history_data(signals: list) -> list:
             "exit_price":       s.get("exit_price"),
             "sl_price":         s.get("sl"),
             "tp1_price":        s.get("tp1"),
-            "tp2_price":        s.get("tp2"),
+            "tp2_price":        None,
             "risk_amt":         s.get("risk_amt"),
             "position_size":    s.get("position"),
             "leverage":         s.get("leverage"),
-            "tp1_hit":          False,
-            "partial_pnl":      None,
             "regime_at_entry":  s.get("regime"),
             "session_at_entry": s.get("session"),
             "score_at_entry":   s.get("score"),
-            "balance_at_open":  "--",
-            "tier_at_open":     "--",
-            "health_at_close":  "--",
+            "ts_ist":           ts_ist,
         })
 
     return result
@@ -318,28 +333,32 @@ def build_history_data(signals: list) -> list:
 def build_radar_data(results: list) -> list:
     radar = []
     for r in results:
-        grade  = r.get("grade", "F")
-        dir_   = r.get("direction", "--")
-        score  = r.get("score", 0)
-        market = r.get("market", {})
-        price  = market.get("price", 0)
-        change = market.get("change24", 0)
-        expl   = r.get("explanation", {})
+        grade   = r.get("grade", "F")
+        dir_    = r.get("direction", "--")
+        score   = r.get("score", 0)
+        market  = r.get("market", {})
+        price   = market.get("price", 0)
+        change  = market.get("change24", 0)
+        expl    = r.get("explanation", {})
+        ml_prob = r.get("ml_probability")
 
         radar.append({
-            "coin":        r.get("coin", "--"),
-            "grade":       grade,
-            "grade_color": grade_color(grade),
-            "direction":   dir_,
-            "dir_emoji":   "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁" if dir_ == "WATCH" else "—",
-            "dir_color":   C["green_dark"] if dir_ == "LONG" else C["red_dark"] if dir_ == "SHORT" else C["orange"] if dir_ == "WATCH" else C["muted"],
-            "score":       score,
-            "score_pct":   min(100, score),
-            "price":       fmt_price(price),
-            "change":      fmt_pct(change),
-            "change_color":pnl_color(change),
-            "tradeable":   grade in ["A+", "A"] and dir_ in ["LONG", "SHORT"],
-            "confidence":  expl.get("confidence_label", "")
+            "coin":           r.get("coin", "--"),
+            "grade":          grade,
+            "grade_color":    grade_color(grade),
+            "direction":      dir_,
+            "dir_emoji":      "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁" if dir_ == "WATCH" else "—",
+            "dir_color":      C["green_dark"] if dir_ == "LONG" else C["red_dark"] if dir_ == "SHORT" else C["orange"] if dir_ == "WATCH" else C["muted"],
+            "score":          score,
+            "score_pct":      min(100, score),
+            "price":          fmt_price(price),
+            "change":         fmt_pct(change),
+            "change_color":   pnl_color(change),
+            "tradeable":      grade in ["A+", "A"] and dir_ in ["LONG", "SHORT"],
+            "confidence":     expl.get("confidence_label", ""),
+            "ml_probability": ml_prob,
+            "actual_rr":      r.get("actual_rr", 0),
+            "tp_mult":        r.get("tp_mult", 2.0),
         })
 
     return radar
@@ -371,7 +390,7 @@ def build_signal_queue(results: list) -> list:
             "entry":            fmt_price(sig.get("entry")),
             "sl":               fmt_price(sig.get("sl")),
             "tp1":              fmt_price(sig.get("tp1")),
-            "tp2":              fmt_price(sig.get("tp2")),
+            "tp2":              None,
             "risk_amt":         f"${sig.get('risk_amt', 0):.2f}",
             "sl_pct":           f"{sig.get('sl_pct', 0):.2f}%",
             "regime":           r.get("regime", "--"),
@@ -379,22 +398,22 @@ def build_signal_queue(results: list) -> list:
             "thesis":           expl.get("thesis", ""),
             "risk_thesis":      expl.get("risk_thesis", ""),
             "confidence_label": expl.get("confidence_label", ""),
-            "no_trade_reason":  expl.get("no_trade_reason", "")
+            "no_trade_reason":  expl.get("no_trade_reason", ""),
+            "ml_probability":   r.get("ml_probability"),
+            "actual_rr":        r.get("actual_rr", 0),
+            "tp_mult":          r.get("tp_mult", 2.0),
         })
 
     return queue
 
 
 def build_header_data(stats: dict) -> dict:
-    from alerts.scanner import get_db_stats
-    from config import cfg
-
     today_pnl = 0.0
     try:
         from database import SessionLocal, Signal as SignalModel
         from datetime import date
         with SessionLocal() as db:
-            today_str = date.today().isoformat()
+            today_str  = date.today().isoformat()
             today_sigs = db.query(SignalModel).filter(
                 SignalModel.timestamp >= today_str,
                 SignalModel.outcome.notin_(["pending"]),
@@ -411,17 +430,19 @@ def build_header_data(stats: dict) -> dict:
         import runtime_state as rs
         last_ts = rs.get_last_signal_time()
         if last_ts:
-            from datetime import timezone as tz
-            IST = tz(timedelta(hours=5, minutes=30))
             last_scan_time = datetime.fromtimestamp(last_ts, tz=IST).strftime("%I:%M %p IST")
     except Exception:
         pass
 
+    mode = "live" if not cfg.PAPER_TRADING else "paper"
+
     return {
-        "today_pnl":        fmt_pnl(today_pnl),
-        "today_pnl_color":  pnl_color(today_pnl),
-        "win_rate":         f"{wr}%",
-        "win_rate_color":   get_color("winrate", wr),
-        "coins_count":      len(cfg.COINS),
-        "last_scan_time":   last_scan_time,
+        "today_pnl":       fmt_pnl(today_pnl),
+        "today_pnl_color": pnl_color(today_pnl),
+        "win_rate":        f"{wr}%",
+        "win_rate_color":  get_color("winrate", wr),
+        "coins_count":     len(cfg.COINS),
+        "last_scan_time":  last_scan_time,
+        "mode":            mode,
+        "mode_color":      C["red_dark"] if mode == "live" else C["blue"],
     }

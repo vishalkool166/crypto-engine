@@ -112,7 +112,7 @@ def _write_signal_to_redis(signal: dict, coin: str, regime: str,
             "entry":               signal.get("entry", 0),
             "stoploss":            signal.get("sl", 0),
             "tp1":                 signal.get("tp1", 0),
-            "tp2":                 signal.get("tp2", 0),
+            "tp2":                 None,
             "grade":               signal.get("grade", "F"),
             "score":               signal.get("score", 0),
             "valid_until":         int(time.time()) + 900,
@@ -121,12 +121,18 @@ def _write_signal_to_redis(signal: dict, coin: str, regime: str,
             "regime":              regime,
             "session":             session,
             "cached_at":           time.time(),
-            "ml_probability":      signal.get("ml_probability", None)
+            "ml_probability":      signal.get("ml_probability", None),
+            "tp_mult":             signal.get("tp_mult", 2.0),
+            "actual_rr":           signal.get("actual_rr", 0)
         }
 
         key = f"signal:{coin}USDT"
         r.setex(key, 900, json.dumps(payload))
-        log.info(f"Signal written to Redis: {key} Grade:{signal.get('grade')} {direction}")
+        log.info(
+            f"Signal written to Redis: {key} "
+            f"Grade:{signal.get('grade')} {direction} "
+            f"TP:{signal.get('tp1')} RR:{signal.get('actual_rr')}"
+        )
 
     except Exception as e:
         log.error(f"Redis signal write failed {coin}: {e}")
@@ -152,6 +158,10 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
     if signal.get("direction") in ["NO TRADE", "WATCH", "SKIP"]:
         return None
+    if signal.get("signal_type") in ["SKIP", "WATCH", "HARD_BLOCK"]:
+        return None
+    if not signal.get("entry"):
+        return None
 
     try:
         factor_scores_json = None
@@ -170,7 +180,7 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
                 entry         = signal.get("entry", 0),
                 sl            = signal.get("sl", 0),
                 tp1           = signal.get("tp1", 0),
-                tp2           = signal.get("tp2", 0),
+                tp2           = None,
                 sl_pct        = signal.get("sl_pct", 0),
                 risk_amt      = signal.get("risk_amt", 0),
                 risk_pct      = signal.get("risk_pct", 0),
@@ -193,7 +203,7 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
             db.add(row)
             db.flush()
             db.refresh(row)
-            log.info(f"Signal saved — ID:{row.id} {coin} Grade:{signal['grade']}")
+            log.info(f"Signal saved — ID:{row.id} {coin} Grade:{signal['grade']} TP:{signal.get('tp1')}")
             return row.id
 
     except Exception as e:
@@ -364,7 +374,8 @@ async def _analyze_coin_inner(
             asyncio.create_task(run_content_pipeline(db_id))
 
         if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and \
-           signal.get("direction") in ["LONG", "SHORT"]:
+           signal.get("direction") in ["LONG", "SHORT"] and \
+           signal.get("entry"):
 
             ml_passed, ml_prob = _check_ml_gate(signal, wconf)
 
@@ -379,7 +390,8 @@ async def _analyze_coin_inner(
                 log.info(
                     f"Signal forwarded to Freqtrade: {coin} "
                     f"Grade:{signal.get('grade')} "
-                    f"ML_prob:{ml_prob:.2f}"
+                    f"ML_prob:{ml_prob:.2f} "
+                    f"RR:{signal.get('actual_rr')}"
                 )
             else:
                 log.info(
@@ -416,6 +428,8 @@ async def _analyze_coin_inner(
         "entry_blocked":     no_trade.get("entry_blocked",     False),
         "portfolio_blocked": no_trade.get("portfolio_blocked", False),
         "ml_probability":    signal.get("ml_probability", None),
+        "actual_rr":         signal.get("actual_rr", 0),
+        "tp_mult":           signal.get("tp_mult", 2.0),
         "cached_at":         time.time(),
         "data_quality": {
             tf: {

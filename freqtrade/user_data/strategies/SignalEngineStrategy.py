@@ -1,17 +1,15 @@
 import json
 import time
 import logging
-import requests
 from datetime import datetime, timezone
 from typing import Optional
 from freqtrade.strategy import IStrategy
 from freqtrade.persistence import Trade
 from pandas import DataFrame
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL = None
+REDIS_URL    = None
 _redis_client = None
 
 
@@ -80,7 +78,6 @@ def _push_ticker_to_redis(coin: str, ticker: dict):
             "percentage": ticker.get("percentage", 0)
         })
         r.setex(key, 60, payload)
-        logger.debug(f"Ticker pushed to Redis: {key}")
     except Exception as e:
         logger.error(f"Redis ticker push failed {coin}: {e}")
 
@@ -90,9 +87,7 @@ def _push_funding_to_redis(coin: str, rate: float):
         r = _get_redis()
         if not r:
             return
-        key = f"funding:{coin}USDT"
-        r.setex(key, 300, str(rate))
-        logger.debug(f"Funding pushed to Redis: {key} = {rate}")
+        r.setex(f"funding:{coin}USDT", 300, str(rate))
     except Exception as e:
         logger.error(f"Redis funding push failed {coin}: {e}")
 
@@ -102,9 +97,7 @@ def _push_oi_to_redis(coin: str, oi: float):
         r = _get_redis()
         if not r:
             return
-        key = f"oi:{coin}USDT"
-        r.setex(key, 300, str(oi))
-        logger.debug(f"OI pushed to Redis: {key} = {oi}")
+        r.setex(f"oi:{coin}USDT", 300, str(oi))
     except Exception as e:
         logger.error(f"Redis OI push failed {coin}: {e}")
 
@@ -114,9 +107,7 @@ def _push_oi_change_to_redis(coin: str, change: float):
         r = _get_redis()
         if not r:
             return
-        key = f"oi_change:{coin}USDT"
-        r.setex(key, 300, str(change))
-        logger.debug(f"OI change pushed to Redis: {key} = {change}")
+        r.setex(f"oi_change:{coin}USDT", 300, str(change))
     except Exception as e:
         logger.error(f"Redis OI change push failed {coin}: {e}")
 
@@ -126,10 +117,8 @@ def _push_ls_ratio_to_redis(coin: str, long_pct: float, short_pct: float):
         r = _get_redis()
         if not r:
             return
-        key     = f"ls_ratio:{coin}USDT"
         payload = json.dumps({"long": long_pct, "short": short_pct})
-        r.setex(key, 300, payload)
-        logger.debug(f"LS ratio pushed to Redis: {key}")
+        r.setex(f"ls_ratio:{coin}USDT", 300, payload)
     except Exception as e:
         logger.error(f"Redis LS ratio push failed {coin}: {e}")
 
@@ -157,14 +146,13 @@ class SignalEngineStrategy(IStrategy):
         return inf
 
     def bot_loop_start(self, **kwargs):
-        pairs    = self.dp.current_whitelist()
-        dry_run  = self.config.get("dry_run", True)
+        pairs   = self.dp.current_whitelist()
+        dry_run = self.config.get("dry_run", True)
 
         for pair in pairs:
             try:
                 coin = pair.replace("/USDT", "").replace(":USDT", "")
 
-                # Push OHLCV for all timeframes
                 for tf in ["1w", "1d", "4h", "1h", "15m"]:
                     try:
                         df = self.dp.get_pair_dataframe(pair, tf)
@@ -173,7 +161,6 @@ class SignalEngineStrategy(IStrategy):
                     except Exception as e:
                         logger.warning(f"OHLCV push failed {coin} {tf}: {e}")
 
-                # Push ticker
                 try:
                     ticker = self.dp.ticker(pair)
                     if ticker:
@@ -181,25 +168,20 @@ class SignalEngineStrategy(IStrategy):
                 except Exception as e:
                     logger.warning(f"Ticker push failed {coin}: {e}")
 
-                # Push funding rate
                 try:
                     result = self.dp._exchange._api.fetch_funding_rate(pair)
                     if result:
-                        rate = float(result.get("fundingRate", 0))
-                        _push_funding_to_redis(coin, rate)
+                        _push_funding_to_redis(coin, float(result.get("fundingRate", 0)))
                 except Exception as e:
                     logger.warning(f"Funding push failed {coin}: {e}")
 
-                # Push open interest
                 try:
                     result = self.dp._exchange._api.fetch_open_interest(pair)
                     if result:
-                        oi = float(result.get("openInterestAmount", 0))
-                        _push_oi_to_redis(coin, oi)
+                        _push_oi_to_redis(coin, float(result.get("openInterestAmount", 0)))
                 except Exception as e:
                     logger.warning(f"OI push failed {coin}: {e}")
 
-                # Push OI change
                 try:
                     hist = self.dp._exchange._api.fetch_open_interest_history(
                         pair, "1d", limit=2
@@ -212,7 +194,6 @@ class SignalEngineStrategy(IStrategy):
                 except Exception as e:
                     logger.warning(f"OI change push failed {coin}: {e}")
 
-                # Push long/short ratio — skip in dry_run (testnet has no LS endpoint)
                 if not dry_run:
                     try:
                         response = self.dp._exchange._api.request(
@@ -251,7 +232,7 @@ class SignalEngineStrategy(IStrategy):
             if not signal:
                 return dataframe
 
-            if signal.get("grade") not in ["A+", "A"]:
+            if signal.get("grade") not in ["A+", "A", "B"]:
                 return dataframe
 
             side = signal.get("side", "")
@@ -262,7 +243,9 @@ class SignalEngineStrategy(IStrategy):
                     f"Entry signal LONG: {coin} "
                     f"Grade:{signal.get('grade')} "
                     f"Score:{signal.get('score')} "
-                    f"Entry:{signal.get('entry')}"
+                    f"Entry:{signal.get('entry')} "
+                    f"TP:{signal.get('tp1')} "
+                    f"RR:1:{signal.get('actual_rr', '--')}"
                 )
             elif side == "short":
                 dataframe.loc[dataframe.index[-1], "enter_short"] = 1
@@ -270,7 +253,9 @@ class SignalEngineStrategy(IStrategy):
                     f"Entry signal SHORT: {coin} "
                     f"Grade:{signal.get('grade')} "
                     f"Score:{signal.get('score')} "
-                    f"Entry:{signal.get('entry')}"
+                    f"Entry:{signal.get('entry')} "
+                    f"TP:{signal.get('tp1')} "
+                    f"RR:1:{signal.get('actual_rr', '--')}"
                 )
 
         except Exception as e:
@@ -328,20 +313,27 @@ class SignalEngineStrategy(IStrategy):
 
         try:
             signal = _get_signal(coin)
+
             if not signal:
+                logger.info(f"Signal expired for {coin} — exiting trade")
+                return "signal_expired"
+
+            grade = signal.get("grade", "F")
+            if grade == "F":
+                logger.info(f"Signal invalidated for {coin} grade:{grade} — exiting")
+                return "signal_invalidated"
+
+            tp = float(signal.get("tp1", 0))
+            if not tp:
                 return None
 
-            tp1 = float(signal.get("tp1", 0))
-            if not tp1:
-                return None
+            if not trade.is_short and current_rate >= tp:
+                logger.info(f"TP hit LONG: {coin} current:{current_rate} tp:{tp}")
+                return "tp_hit"
 
-            if not trade.is_short and current_rate >= tp1:
-                logger.info(f"TP1 hit LONG: {coin} current:{current_rate} tp1:{tp1}")
-                return "tp1_hit"
-
-            if trade.is_short and current_rate <= tp1:
-                logger.info(f"TP1 hit SHORT: {coin} current:{current_rate} tp1:{tp1}")
-                return "tp1_hit"
+            if trade.is_short and current_rate <= tp:
+                logger.info(f"TP hit SHORT: {coin} current:{current_rate} tp:{tp}")
+                return "tp_hit"
 
         except Exception as e:
             logger.error(f"custom_exit error {coin}: {e}")
@@ -372,6 +364,11 @@ class SignalEngineStrategy(IStrategy):
                 logger.warning(f"confirm_trade_entry: signal expired for {coin} — rejecting")
                 return False
 
+            grade = signal.get("grade", "F")
+            if grade not in ["A+", "A", "B"]:
+                logger.warning(f"confirm_trade_entry: grade {grade} not tradeable — rejecting")
+                return False
+
             entry_price = float(signal.get("entry", 0))
             if entry_price and rate:
                 deviation = abs(rate - entry_price) / entry_price
@@ -384,7 +381,7 @@ class SignalEngineStrategy(IStrategy):
 
             logger.info(
                 f"confirm_trade_entry: approved {coin} {side} "
-                f"rate:{rate} entry:{entry_price}"
+                f"grade:{grade} rate:{rate} entry:{entry_price}"
             )
             return True
 
