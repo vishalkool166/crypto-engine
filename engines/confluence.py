@@ -319,8 +319,8 @@ def score_confluence(
     macd    = d4h.get("macd")
     macd_ok = (
         macd is not None and (
-            (d4_cls == "bull" and macd["bullish"] and macd["expanding"]) or
-            (d4_cls == "bear" and macd["bearish"] and macd["expanding"])
+            (d4_cls == "bull" and macd["bullish"] and macd["exhausting"]) or
+            (d4_cls == "bear" and macd["bearish"] and macd["exhausting"])
         )
     )
     add(
@@ -330,7 +330,7 @@ def score_confluence(
         macd_ok,
         (
             f"Hist {'positive' if macd['bullish'] else 'negative'}, "
-            f"{'expanding' if macd['expanding'] else 'contracting'}"
+            f"{'expanding' if macd['exhausting'] else 'active'}"
         ) if macd else "N/A"
     )
 
