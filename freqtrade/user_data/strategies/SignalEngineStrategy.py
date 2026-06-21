@@ -313,10 +313,8 @@ class SignalEngineStrategy(IStrategy):
 
         try:
             signal = _get_signal(coin)
-
             if not signal:
-                logger.info(f"Signal expired for {coin} — exiting")
-                return "signal_expired"
+                return None
 
             tp = float(signal.get("tp1", 0))
             if not tp:
