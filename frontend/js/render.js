@@ -315,22 +315,21 @@ function renderRadar(radar) {
     return
   }
 
-  if (!grid.querySelector('[id^="radar-"]')) grid.innerHTML = ''
+  const sorted = [...radar].sort((a, b) => b.score - a.score)
 
-  radar.sort((a, b) => b.score - a.score)
-  radar.forEach(r => {
+  sorted.forEach(r => {
     const prev = S.prevGrades[r.coin]
     if (prev && prev !== r.grade && r.tradeable) {
       toast(`🎯 Grade ${r.grade} Signal`, `${r.coin} ${r.direction} — Score ${r.score}`, r.grade === 'A+' ? 'success' : 'info')
     }
     S.prevGrades[r.coin] = r.grade
+  })
 
-    const existing = $id(`radar-${r.coin}`)
-    if (existing) {
-      _updateRadarCard(existing, r)
-    } else {
-      grid.appendChild(_createRadarCard(r))
-    }
+  grid.innerHTML = ''
+
+  sorted.forEach(r => {
+    const card = _createRadarCard(r)
+    grid.appendChild(card)
   })
 
   const upd = $id('radar-updated')
