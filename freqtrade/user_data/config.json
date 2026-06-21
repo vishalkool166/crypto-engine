@@ -61,8 +61,8 @@
         "enable_openapi": false,
         "jwt_secret_key": "somethingRandomSomethingRandom123",
         "ws_token": "somethingRandomSomethingRandom456",
-        "username": "freqtrade",
-        "password": "change-this-password"
+        "username": "admin",
+        "password": "Kool@0224"
     },
     "telegram": {
         "enabled": false,
