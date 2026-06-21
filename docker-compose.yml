@@ -47,8 +47,12 @@ services:
       - "8080:8080"
     volumes:
       - ./freqtrade/user_data:/freqtrade/user_data
+    env_file:
+      - ./.env
     environment:
       - REDIS_URL=redis://redis:6379
+      - FREQTRADE__EXCHANGE__KEY=${BINANCE_API_KEY}
+      - FREQTRADE__EXCHANGE__SECRET=${BINANCE_SECRET}
     depends_on:
       redis:
         condition: service_healthy
@@ -62,9 +66,3 @@ services:
 
 volumes:
   redis_data:
-
-freqtrade:
-    environment:
-      - REDIS_URL=redis://redis:6379
-      - FREQTRADE__EXCHANGE__KEY=${BINANCE_API_KEY}
-      - FREQTRADE__EXCHANGE__SECRET=${BINANCE_SECRET}
