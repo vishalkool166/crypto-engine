@@ -177,3 +177,74 @@ async function deleteCoin(coin) {
     toast('❌ Error', e.message, 'error')
   }
 }
+
+
+// ── Freqtrade API ─────────────────────────────────────────────────────────────
+
+let _ftPollTimer = null
+
+async function fetchFtSummary() {
+  try {
+    const res = await fetch(`${API}/ft/summary`, { headers: _authHeaders() })
+    if (!res.ok) return
+    const data = await res.json()
+    S.ftData = data
+    renderFtTrades(data.status)
+    renderFtProfit(data.profit)
+    renderFtHeader(data.balance, data.profit)
+    renderFtBotStatus(data.status)
+  } catch(e) {
+    console.error('FT summary error:', e)
+  }
+}
+
+
+function startFtPolling() {
+  if (_ftPollTimer) clearInterval(_ftPollTimer)
+  _ftPollTimer = setInterval(fetchFtSummary, 10000)
+}
+
+
+async function ftStartStop() {
+  const btn    = $id('ft-start-btn')
+  const badge  = $id('ft-status-badge')
+  const isRunning = badge && badge.dataset.running === 'true'
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳...' }
+
+  try {
+    const endpoint = isRunning ? '/ft/stop' : '/ft/start'
+    const res = await fetch(`${API}${endpoint}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() }
+    })
+    const data = await res.json()
+    toast(
+      isRunning ? '⏹ Bot Stopped' : '▶ Bot Started',
+      data.status || '',
+      isRunning ? 'warning' : 'success'
+    )
+    await fetchFtSummary()
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  } finally {
+    if (btn) { btn.disabled = false }
+  }
+}
+
+
+async function ftForceSell(tradeid) {
+  if (!confirm(`Force sell trade #${tradeid}?`)) return
+  try {
+    const res = await fetch(`${API}/ft/forcesell`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+      body:    JSON.stringify({ tradeid })
+    })
+    const data = await res.json()
+    toast('✅ Force Sell', `Trade #${tradeid} closed`, 'success')
+    await fetchFtSummary()
+  } catch(e) {
+    toast('❌ Error', e.message, 'error')
+  }
+}

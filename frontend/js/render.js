@@ -15,9 +15,167 @@ function renderAll() {
 
 function renderHeader(h) {
   if (!h) return
-  $set('h-today-pnl',    { text: h.today_pnl,    color: h.today_pnl_color })
-  $set('h-winrate',      { text: h.win_rate,      color: h.win_rate_color })
-  $set('h-coins-count',  { text: h.coins_count })
+  $set('h-today-pnl',   { text: h.today_pnl,    color: h.today_pnl_color })
+  $set('h-winrate',     { text: h.win_rate,      color: h.win_rate_color })
+  $set('h-coins-count', { text: h.coins_count })
+}
+
+function renderFtHeader(balance, profit) {
+  if (balance) {
+    const total = balance.total || 0
+    $set('h-balance', { text: '$' + parseFloat(total).toFixed(2) })
+  }
+  if (profit) {
+    const trades = profit.trade_count || 0
+    $set('h-open-trades', { text: trades })
+  }
+}
+
+function renderFtBotStatus(status) {
+  const badge  = $id('ft-status-badge')
+  const btn    = $id('ft-start-btn')
+  if (!badge) return
+
+  const isRunning = Array.isArray(status) && status.length >= 0
+  const isStopped = !Array.isArray(status)
+
+  if (isStopped) {
+    badge.textContent        = '⏹ Stopped'
+    badge.style.background   = 'rgba(255,59,48,0.1)'
+    badge.style.color        = '#ff3b30'
+    badge.style.borderColor  = 'rgba(255,59,48,0.2)'
+    badge.dataset.running    = 'false'
+    if (btn) { btn.textContent = '▶ Start Bot'; btn.style.background = 'rgba(52,199,89,0.15)'; btn.style.color = '#248a3d' }
+  } else {
+    badge.textContent        = '▶ Running'
+    badge.style.background   = 'rgba(52,199,89,0.1)'
+    badge.style.color        = '#248a3d'
+    badge.style.borderColor  = 'rgba(52,199,89,0.2)'
+    badge.dataset.running    = 'true'
+    if (btn) { btn.textContent = '⏹ Stop Bot'; btn.style.background = 'rgba(255,59,48,0.1)'; btn.style.color = '#ff3b30' }
+  }
+}
+
+function renderFtTrades(trades) {
+  const empty = $id('ft-trades-empty')
+  const grid  = $id('ft-trades-grid')
+  const count = $id('ft-trade-count')
+  if (!grid) return
+
+  if (!trades || !Array.isArray(trades) || trades.length === 0) {
+    if (empty) empty.classList.remove('hidden')
+    grid.classList.add('hidden')
+    grid.innerHTML = ''
+    if (count) count.textContent = 'via Freqtrade · 0 open'
+    return
+  }
+
+  if (empty) empty.classList.add('hidden')
+  grid.classList.remove('hidden')
+  if (count) count.textContent = `via Freqtrade · ${trades.length} open`
+
+  grid.innerHTML = trades.map(t => {
+    const isLong    = t.trade_direction === 'long' || t.is_short === false
+    const dirColor  = isLong ? '#248a3d' : '#c0392b'
+    const dirEmoji  = isLong ? '📈' : '📉'
+    const pnl       = parseFloat(t.profit_abs || 0)
+    const pnlPct    = parseFloat(t.profit_ratio || 0) * 100
+    const pnlColor  = pnl >= 0 ? '#248a3d' : '#c0392b'
+    const pnlStr    = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)
+    const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
+    const pair      = t.pair || '--'
+    const coin      = pair.replace('/USDT:USDT', '').replace('/USDT', '')
+    const entry     = parseFloat(t.open_rate || 0)
+    const current   = parseFloat(t.current_rate || 0)
+    const sl        = parseFloat(t.stop_loss_abs || 0)
+    const tp        = parseFloat(t.initial_stop_loss_abs || 0)
+    const stake     = parseFloat(t.stake_amount || 0)
+
+    const fmtP = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+
+    const openDate = t.open_date ? new Date(t.open_date).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata', hour12: true,
+      day: '2-digit', month: 'short',
+      hour: '2-digit', minute: '2-digit'
+    }) + ' IST' : '--'
+
+    return `
+      <div class="glass-strong rounded-apple overflow-hidden trade-card">
+        <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
+                ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
+              </span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
+                #${t.trade_id}
+              </span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
+                ${t.leverage || 1}x
+              </span>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
+              <div style="font-size:11px;color:${pnlColor};font-family:monospace">${pnlPctStr}</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
+          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+            <div class="section-label" style="margin-bottom:4px">Entry</div>
+            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#0071e3">${fmtP(entry)}</div>
+          </div>
+          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+            <div class="section-label" style="margin-bottom:4px">Current</div>
+            <div style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
+          </div>
+          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+            <div class="section-label" style="margin-bottom:4px">Stop Loss</div>
+            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#ff3b30">${fmtP(sl)}</div>
+          </div>
+          <div style="padding:10px 12px">
+            <div class="section-label" style="margin-bottom:4px">Stake</div>
+            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#1d1d1f">$${stake.toFixed(2)}</div>
+          </div>
+        </div>
+
+        <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div style="font-size:11px;color:#6e6e73">
+            Opened: <strong style="color:#1d1d1f">${openDate}</strong>
+          </div>
+          <button
+            onclick="ftForceSell(${t.trade_id})"
+            style="padding:6px 14px;border-radius:10px;border:1px solid rgba(255,59,48,0.2);background:rgba(255,59,48,0.06);color:#ff3b30;font-size:12px;font-weight:600;cursor:pointer">
+            🔴 Force Sell
+          </button>
+        </div>
+      </div>
+    `
+  }).join('')
+}
+
+function renderFtProfit(profit) {
+  if (!profit) return
+
+  const total    = parseFloat(profit.profit_all_coin || 0)
+  const totalStr = (total >= 0 ? '+$' : '-$') + Math.abs(total).toFixed(4)
+  const color    = total >= 0 ? '#248a3d' : '#c0392b'
+
+  $set('ft-total-profit', { text: totalStr, color })
+  $set('ft-win-rate',     { text: (parseFloat(profit.winrate || 0) * 100).toFixed(1) + '%' })
+  $set('ft-total-trades', { text: profit.trade_count || 0 })
+
+  const avgDur = profit.profit_factor
+    ? profit.profit_factor.toFixed(2) + 'x'
+    : '--'
+  $set('ft-avg-duration', { text: avgDur })
+
+  const best  = parseFloat(profit.best_pair_profit_ratio || 0) * 100
+  const worst = parseFloat(profit.worst_pair_profit_ratio || 0) * 100
+  $set('ft-best-trade',  { text: '+' + best.toFixed(2) + '%',  color: '#248a3d' })
+  $set('ft-worst-trade', { text: worst.toFixed(2) + '%',        color: '#c0392b' })
 }
 
 function renderStatusBar(d) {
@@ -35,8 +193,8 @@ function renderStatusBar(d) {
 
   if (!d) return
 
-  const cached_count  = (d.radar || []).length
-  const tradeable     = (d.queue || []).length
+  const cached_count = (d.radar || []).length
+  const tradeable    = (d.queue || []).length
 
   if (dot)  dot.style.background = '#34c759'
   if (text) text.textContent = 'RUNNING — Signal Engine Active'

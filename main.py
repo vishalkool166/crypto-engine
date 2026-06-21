@@ -13,6 +13,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from api.routes       import router, build_dashboard_payload
+from api.freqtrade    import router as ft_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
 from alerts.telegram  import send, register_webhook, handle_webhook
@@ -362,7 +363,8 @@ async def telegram_webhook(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-app.include_router(router, prefix="/api")
+app.include_router(router,    prefix="/api")
+app.include_router(ft_router, prefix="/api")
 
 app.mount(
     "/",

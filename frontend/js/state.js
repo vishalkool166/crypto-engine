@@ -2,6 +2,7 @@
 
 const S = {
   data:               null,
+  ftData:             null,
   scanning:           false,
   nextScanEpoch:      null,
   prevGrades:         {},
@@ -47,6 +48,9 @@ function startCountdown() {
 function applyDashboard(data) {
   S.data = data
   if (data.next_scan_epoch) S.nextScanEpoch = data.next_scan_epoch
+
+  const stateChanged = data.state !== S.lastState
+  S.lastState = data.state
 
   ;(data.radar || []).forEach(r => {
     const prev = S.prevGrades[r.coin]

@@ -84,8 +84,18 @@ tailwind.config = {
 
     <div class="flex items-center gap-5 flex-wrap">
       <div class="text-center">
+        <div class="section-label mb-0.5">Balance</div>
+        <div id="h-balance" class="num font-semibold text-sm text-apple-text">$--</div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
         <div class="section-label mb-0.5">Today PnL</div>
         <div id="h-today-pnl" class="num font-semibold text-sm">--</div>
+      </div>
+      <div class="w-px h-6 bg-black/8"></div>
+      <div class="text-center">
+        <div class="section-label mb-0.5">Open Trades</div>
+        <div id="h-open-trades" class="num font-semibold text-sm text-apple-text">--</div>
       </div>
       <div class="w-px h-6 bg-black/8"></div>
       <div class="text-center">
@@ -100,6 +110,11 @@ tailwind.config = {
     </div>
 
     <div class="flex items-center gap-3">
+      <div id="ft-status-badge"
+           class="px-3 py-1 rounded-full text-xs font-semibold"
+           style="background:rgba(110,110,115,0.1);color:#6e6e73;border:1px solid rgba(110,110,115,0.2)">
+        ⏳ Bot
+      </div>
       <div id="ws-status" class="flex items-center text-[10px] text-apple-secondary">
         <span class="ws-dot"></span>
         <span id="ws-status-text">connecting</span>
@@ -110,12 +125,6 @@ tailwind.config = {
           Next: <span id="countdown-val" class="text-apple-blue font-semibold">--:--</span>
         </div>
       </div>
-      <a href="https://signal-engine-v5.vishalkool.top/trade/"
-         target="_blank"
-         class="text-[11px] font-semibold px-3 py-1.5 rounded-full border transition-colors"
-         style="background:rgba(52,199,89,0.1);color:#248a3d;border-color:rgba(52,199,89,0.2)">
-        FreqUI →
-      </a>
       <button onclick="handleLogout()" class="text-[11px] text-apple-secondary hover:text-apple-red transition-colors px-2 py-1 rounded-lg hover:bg-red-50">
         Logout
       </button>
@@ -134,6 +143,7 @@ tailwind.config = {
     <div class="flex items-center gap-2">
       <span class="text-xs text-apple-secondary">Last scan: <span id="last-scan-time" class="text-apple-text font-medium">--</span></span>
       <button id="scan-btn" onclick="triggerScan()" class="btn-apple">🔍 Scan Now</button>
+      <button id="ft-start-btn" onclick="ftStartStop()" class="btn-apple" style="background:rgba(52,199,89,0.15);color:#248a3d;border:1px solid rgba(52,199,89,0.3)">▶ Start Bot</button>
     </div>
   </div>
 
@@ -142,6 +152,20 @@ tailwind.config = {
 
     <!-- LEFT -->
     <div class="space-y-3">
+
+      <!-- ACTIVE TRADES (Freqtrade) -->
+      <section class="glass rounded-apple overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b divider">
+          <h2 class="section-label">⚡ Active Trades</h2>
+          <span id="ft-trade-count" class="text-[10px] text-apple-secondary">via Freqtrade</span>
+        </div>
+        <div id="ft-trades-wrap" class="p-3">
+          <div id="ft-trades-empty" class="text-center py-8 text-apple-secondary text-xs">
+            No open trades.<br>Waiting for A/A+ signals.
+          </div>
+          <div id="ft-trades-grid" class="space-y-3 hidden"></div>
+        </div>
+      </section>
 
       <!-- MARKET RADAR -->
       <section class="glass rounded-apple overflow-hidden">
@@ -231,11 +255,11 @@ tailwind.config = {
 
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
-            <h2 class="section-label">💼 Recent Signals</h2>
+            <h2 class="section-label">💼 Recent Trades</h2>
             <span class="text-[10px] text-apple-secondary">click for details</span>
           </div>
           <div class="p-3 max-h-48 overflow-y-auto space-y-1.5" id="history-list">
-            <div class="text-center py-8 text-apple-secondary text-xs">No closed signals yet</div>
+            <div class="text-center py-8 text-apple-secondary text-xs">No closed trades yet</div>
           </div>
         </section>
       </div>
@@ -252,6 +276,44 @@ tailwind.config = {
         </div>
         <div class="p-3 space-y-2" id="signal-queue">
           <div class="text-center py-8 text-apple-secondary text-xs">No A/A+ signals yet.<br>Waiting for next scan.</div>
+        </div>
+      </section>
+
+      <!-- FREQTRADE PROFIT SUMMARY -->
+      <section class="glass rounded-apple overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b divider">
+          <h2 class="section-label">💰 Profit Summary</h2>
+          <span class="text-[10px] text-apple-secondary">Freqtrade</span>
+        </div>
+        <div class="p-4 space-y-3">
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Total Profit</div>
+              <div id="ft-total-profit" class="num font-bold text-xl text-apple-text">$--</div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Win Rate</div>
+              <div id="ft-win-rate" class="num font-bold text-xl text-apple-text">--%</div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Total Trades</div>
+              <div id="ft-total-trades" class="num font-bold text-xl text-apple-text">--</div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Avg Duration</div>
+              <div id="ft-avg-duration" class="num font-bold text-xl text-apple-text">--</div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Best Trade</div>
+              <div id="ft-best-trade" class="num font-bold text-lg text-apple-green">$--</div>
+            </div>
+            <div class="bg-black/4 rounded-apple-sm p-3">
+              <div class="section-label mb-1">Worst Trade</div>
+              <div id="ft-worst-trade" class="num font-bold text-lg text-apple-red">$--</div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -332,6 +394,8 @@ async function init() {
   startCountdown()
   startDashboardSocket()
   await fetchDashboard()
+  await fetchFtSummary()
+  startFtPolling()
 }
 
 init()
