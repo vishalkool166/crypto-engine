@@ -63,8 +63,11 @@
     "username": "freqtrade",
     "password": "change-this-password"
   },
-  "telegram": {
-    "enabled": false
+    "telegram": {
+        "enabled": false,
+        "token": "disabled",
+        "chat_id": "disabled"
+    }
   },
   "internals": {
     "process_throttle_secs": 5

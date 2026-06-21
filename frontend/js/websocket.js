@@ -2,8 +2,8 @@
 
 const WS_DASHBOARD_URL = `${window.location.origin.replace('https','wss').replace('http','ws')}/ws/dashboard`
 
-let _dashSocket      = null
-let _dashReconnect   = null
+let _dashSocket    = null
+let _dashReconnect = null
 
 
 function startDashboardSocket() {
@@ -20,22 +20,20 @@ function startDashboardSocket() {
     try {
       const d = JSON.parse(event.data)
 
-      // full dashboard payload
       if (d.type === 'dashboard') {
         applyAndRender(d)
         return
       }
 
-      // full payload without type field (legacy)
-      if (d.state !== undefined || d.header !== undefined) {
+      if (d.header !== undefined || d.radar !== undefined) {
         applyAndRender(d)
         return
       }
 
       if (
-        d.type === 'trade_opened' ||
-        d.type === 'trade_closed' ||
-        d.type === 'health_changed' ||
+        d.type === 'trade_opened'  ||
+        d.type === 'trade_closed'  ||
+        d.type === 'health_changed'||
         d.type === 'scan_complete'
       ) {
         fetchDashboard()
