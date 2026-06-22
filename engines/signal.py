@@ -617,6 +617,41 @@ def run_no_trade_engine(
     }
 
 
+def _cap_sl_distance(
+    entry:   float,
+    sl:      float,
+    is_long: bool,
+    atr:     float,
+    adx:     float,
+    grade:   str
+) -> float:
+    if not entry or not sl or not atr:
+        return sl
+
+    sl_dist = abs(entry - sl)
+    sl_pct  = sl_dist / entry
+
+    atr_pct = atr / entry if entry > 0 else 0.02
+
+    if adx and adx > 40:
+        adx_mult = 1.5
+    elif adx and adx > 25:
+        adx_mult = 1.2
+    else:
+        adx_mult = 0.8
+
+    grade_mult = {"A+": 1.2, "A": 1.0, "B": 0.8}.get(grade, 1.0)
+
+    dynamic_cap = atr_pct * adx_mult * grade_mult
+    dynamic_cap = max(0.015, min(0.06, dynamic_cap))
+
+    if sl_pct > dynamic_cap:
+        sl_dist = entry * dynamic_cap
+        sl      = entry - sl_dist if is_long else entry + sl_dist
+
+    return sl
+
+
 def _calculate_tp(
     is_long:    bool,
     entry:      float,
@@ -626,13 +661,13 @@ def _calculate_tp(
     key_levels: dict,
     d1d:        dict
 ) -> float:
-    sl_dist  = abs(entry - sl)
-    tp_mult  = get_tp_multiplier(grade)
-    max_tp   = entry + sl_dist * tp_mult if is_long else entry - sl_dist * tp_mult
-
-    structure_candidates = []
+    sl_dist = abs(entry - sl)
+    tp_mult = get_tp_multiplier(grade)
 
     if is_long:
+        min_tp = entry + sl_dist * tp_mult
+
+        structure_candidates = []
         if swings.get("last_high"):
             structure_candidates.append(swings["last_high"]["price"])
         if key_levels.get("pdh"):
@@ -643,16 +678,15 @@ def _calculate_tp(
         if vah and vah > entry:
             structure_candidates.append(vah)
 
-        valid_structure = [
-            c for c in structure_candidates
-            if entry < c <= max_tp
-        ]
-
-        if valid_structure:
-            return min(valid_structure)
-        return max_tp
+        valid = [c for c in structure_candidates if c > min_tp]
+        if valid:
+            return min(valid)
+        return min_tp
 
     else:
+        min_tp = entry - sl_dist * tp_mult
+
+        structure_candidates = []
         if swings.get("last_low"):
             structure_candidates.append(swings["last_low"]["price"])
         if key_levels.get("pdl"):
@@ -663,14 +697,10 @@ def _calculate_tp(
         if val and val < entry:
             structure_candidates.append(val)
 
-        valid_structure = [
-            c for c in structure_candidates
-            if max_tp <= c < entry
-        ]
-
-        if valid_structure:
-            return max(valid_structure)
-        return max_tp
+        valid = [c for c in structure_candidates if c < min_tp]
+        if valid:
+            return max(valid)
+        return min_tp
 
 
 def generate_signal(
@@ -823,6 +853,7 @@ def generate_signal(
     atr       = d1d.get("atr") or price * 0.015
     swings    = d1d.get("swings", {})
     atr_mult  = (regime or {}).get("atr_multiplier", 2.0)
+    adx_1d    = d1d.get("adx")
 
     entry_15m = check_15m_entry(
         df_15m    = df_15m,
@@ -889,6 +920,15 @@ def generate_signal(
         if (sl - entry) < min_sl_dist:
             sl = entry + min_sl_dist
 
+    sl = _cap_sl_distance(
+        entry   = entry,
+        sl      = sl,
+        is_long = is_long,
+        atr     = atr,
+        adx     = adx_1d,
+        grade   = grade_label
+    )
+
     sl_dist = abs(entry - sl)
     sl_pct  = sl_dist / entry * 100
     tp_mult = get_tp_multiplier(grade_label)
@@ -922,7 +962,7 @@ def generate_signal(
         "tp1":         tp1,
         "tp2":         None,
         "sl_pct":      sl_pct,
-        "sl_method":   "Structure-aware",
+        "sl_method":   "Structure-aware with dynamic cap",
         "risk_pct":    risk_pct * 100,
         "risk_amt":    risk_amt,
         "pos_size":    pos_size,

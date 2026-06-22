@@ -82,10 +82,58 @@ function _cleanupDash() {
 }
 
 
+async function _backfillPriceHistory(symbol) {
+  try {
+    const key = symbol.toLowerCase()
+    if (_priceHistory[key] && _priceHistory[key].length >= 10) return
+
+    const url = `https://fapi.binance.com/fapi/v1/aggTrades?symbol=${symbol}&limit=100`
+    const res = await fetch(url)
+    if (!res.ok) return
+
+    const trades = await res.json()
+    if (!Array.isArray(trades) || !trades.length) return
+
+    if (!_priceHistory[key]) _priceHistory[key] = []
+
+    const existing = new Set(_priceHistory[key].map(h => h.time))
+
+    trades.forEach(t => {
+      const price = parseFloat(t.p)
+      const time  = t.T
+      if (price && time && !existing.has(time)) {
+        _priceHistory[key].push({ time, price })
+      }
+    })
+
+    _priceHistory[key].sort((a, b) => a.time - b.time)
+
+    if (_priceHistory[key].length > MAX_PRICE_POINTS) {
+      _priceHistory[key] = _priceHistory[key].slice(-MAX_PRICE_POINTS)
+    }
+
+    const cards = document.querySelectorAll(`[data-symbol="${symbol}"]`)
+    cards.forEach(card => {
+      const tradeId = card.id.replace('ft-trade-', '')
+      const sparkEl = document.getElementById(`sparkline-${tradeId}`)
+      if (sparkEl) {
+        const html = _buildSparkline(symbol)
+        sparkEl.innerHTML = html
+      }
+    })
+
+  } catch(e) {
+    console.warn(`Backfill failed for ${symbol}:`, e)
+  }
+}
+
+
 function startBinanceTickerWs(symbol) {
   const key = symbol.toLowerCase()
 
   if (_binanceWsSockets[key]) return
+
+  _backfillPriceHistory(symbol)
 
   const url = `wss://fstream.binance.com/ws/${key}@aggTrade`
   const ws  = new WebSocket(url)

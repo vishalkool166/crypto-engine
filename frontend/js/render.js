@@ -83,7 +83,6 @@ function _parseOpenDate(dateStr) {
   try {
     const str = dateStr.toString().trim()
     let dt
-
     if (str.includes('T')) {
       dt = new Date(str.endsWith('Z') ? str : str + '+00:00')
     } else if (str.includes(' ')) {
@@ -91,7 +90,6 @@ function _parseOpenDate(dateStr) {
     } else {
       dt = new Date(str)
     }
-
     return isNaN(dt.getTime()) ? null : dt
   } catch(e) {
     return null
@@ -176,10 +174,9 @@ function _buildSparkline(symbol) {
     return `${x.toFixed(1)},${y.toFixed(1)}`
   }).join(' ')
 
-  const first = prices[0]
-  const last  = prices[prices.length - 1]
-  const color = last >= first ? '#34c759' : '#ff3b30'
-
+  const first  = prices[0]
+  const last   = prices[prices.length - 1]
+  const color  = last >= first ? '#34c759' : '#ff3b30'
   const firstX = pad
   const firstY = h - pad - ((first - minP) / range) * (h - pad * 2)
   const lastX  = w - pad
@@ -204,97 +201,86 @@ function _buildSparkline(symbol) {
 }
 
 
-function _buildPriceLadder(entry, sl, tp, currentPrice, isLong) {
+function _buildPriceLadder(entry, sl, tp, currentPrice, isLong, tradeId) {
   if (!entry || !sl || !tp) return ''
 
-  const allPrices  = [sl, entry, currentPrice || entry, tp]
-  const minPrice   = Math.min(...allPrices)
-  const maxPrice   = Math.max(...allPrices)
-  const priceRange = maxPrice - minPrice || 1
+  const current = currentPrice || entry
 
-  function priceToPct(price) {
-    return ((price - minPrice) / priceRange * 100).toFixed(2)
-  }
+  const inProfit     = isLong ? current > entry : current < entry
+  const profitColor  = inProfit ? '#248a3d'              : '#c0392b'
+  const profitBg     = inProfit ? 'rgba(52,199,89,0.08)' : 'rgba(255,59,48,0.08)'
+  const profitBorder = inProfit ? 'rgba(52,199,89,0.25)' : 'rgba(255,59,48,0.25)'
 
-  const tpPct      = parseFloat(priceToPct(tp))
-  const entryPct   = parseFloat(priceToPct(entry))
-  const slPct      = parseFloat(priceToPct(sl))
-  const currentPct = parseFloat(priceToPct(currentPrice || entry))
-
-  const inProfit   = currentPrice ? (isLong ? currentPrice > entry : currentPrice < entry) : false
-  const fillColor  = inProfit ? 'rgba(52,199,89,0.15)' : 'rgba(255,59,48,0.15)'
-  const fillBorder = inProfit ? 'rgba(52,199,89,0.4)'  : 'rgba(255,59,48,0.4)'
-
-  const slDist  = currentPrice ? Math.abs(currentPrice - sl)  : Math.abs(entry - sl)
-  const tpDist  = currentPrice ? Math.abs(tp - currentPrice)  : Math.abs(tp - entry)
-  const slDistPct = currentPrice ? (Math.abs(currentPrice - sl)  / currentPrice * 100).toFixed(2) : '0'
-  const tpDistPct = currentPrice ? (Math.abs(tp - currentPrice)  / currentPrice * 100).toFixed(2) : '0'
+  const tpDist     = Math.abs(tp - current)
+  const tpDistPct  = current > 0 ? (tpDist / current * 100).toFixed(2) : '0'
+  const slDist     = Math.abs(current - sl)
+  const slDistPct  = current > 0 ? (slDist / current * 100).toFixed(2) : '0'
 
   const totalRange    = Math.abs(tp - entry)
-  const currentMove   = currentPrice ? Math.abs(currentPrice - entry) : 0
-  const progressToTp  = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)).toFixed(0) : 0
-  const progressColor = inProfit ? '#34c759' : '#ff3b30'
+  const currentMove   = Math.abs(current - entry)
+  const progressToTp  = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)) : 0
 
-  const movePct    = currentPrice && entry ? ((isLong ? currentPrice - entry : entry - currentPrice) / entry * 100) : 0
-  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+  const slRange       = Math.abs(sl - entry)
+  const progressToSl  = slRange > 0 ? Math.min(100, (currentMove / slRange * 100)) : 0
+
+  const movePct    = entry > 0 ? ((isLong ? current - entry : entry - current) / entry * 100) : 0
+  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
   const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
 
+  const barLeftWidth  = inProfit ? 0              : Math.min(100, progressToSl)
+  const barRightWidth = inProfit ? Math.min(100, progressToTp) : 0
+  const barLeftColor  = '#ff3b30'
+  const barRightColor = '#34c759'
+
   return `
-    <div class="price-ladder">
+    <div class="price-ladder-cards" id="ladder-${tradeId}">
 
-      <div class="price-ladder-row" style="top:${100 - tpPct}%">
-        <div class="price-ladder-label tp">
-          <span class="price-ladder-tag" style="background:rgba(52,199,89,0.15);color:#34c759;border-color:rgba(52,199,89,0.3)">🎯 TP</span>
-          <span class="price-ladder-value" style="color:#34c759">${_fmtPrice(tp)}</span>
-        </div>
-        <div class="price-ladder-line" style="background:#34c759"></div>
-        <div class="price-ladder-dist" style="color:#34c759">$${tpDist.toFixed(4)} away · ${tpDistPct}%</div>
+      <div class="plc-row plc-tp">
+        <div class="plc-icon">🎯</div>
+        <div class="plc-label">TP</div>
+        <div class="plc-price" style="color:#34c759">${_fmtPrice(tp)}</div>
+        <div class="plc-dist" style="color:#34c759">${_fmtPrice(tpDist)} away · ${tpDistPct}%</div>
       </div>
 
-      <div class="price-ladder-fill" style="
-        top:${100 - Math.max(currentPct, entryPct)}%;
-        height:${Math.abs(currentPct - entryPct)}%;
-        background:${fillColor};
-        border-left:2px solid ${fillBorder};
-        border-right:2px solid ${fillBorder};
-      "></div>
-
-      <div class="price-ladder-row price-ladder-current" id="ladder-current" style="top:${100 - currentPct}%">
-        <div class="price-ladder-label current">
-          <span class="price-ladder-tag" style="background:rgba(255,149,0,0.15);color:#ff9500;border-color:rgba(255,149,0,0.3)">
-            ● NOW
+      <div class="plc-progress-wrap">
+        <div class="plc-progress-track">
+          <div class="plc-progress-sl" id="bar-sl-${tradeId}" style="width:${barLeftWidth}%;background:${barLeftColor}"></div>
+          <div class="plc-progress-center"></div>
+          <div class="plc-progress-tp" id="bar-tp-${tradeId}" style="width:${barRightWidth}%;background:${barRightColor}"></div>
+        </div>
+        <div class="plc-progress-labels">
+          <span style="color:#ff3b30;font-size:9px">◄ SL</span>
+          <span style="color:#6e6e73;font-size:9px">ENTRY</span>
+          <span style="color:#34c759;font-size:9px">TP ►</span>
+        </div>
+        <div style="text-align:center;margin-top:2px">
+          <span id="bar-pct-${tradeId}" style="font-size:10px;font-weight:700;color:${profitColor}">
+            ${inProfit ? progressToTp.toFixed(1) + '% to TP' : progressToSl.toFixed(1) + '% to SL'}
           </span>
-          <span class="price-ladder-value" style="color:#ff9500" data-current-price>${_fmtPrice(currentPrice || entry)}</span>
-          <span style="font-size:10px;font-weight:600;color:${moveColor};margin-left:4px" data-move-pct>${movePctStr}</span>
         </div>
-        <div class="price-ladder-line price-ladder-line-current" style="background:#ff9500"></div>
       </div>
 
-      <div class="price-ladder-row" style="top:${100 - entryPct}%">
-        <div class="price-ladder-label entry">
-          <span class="price-ladder-tag" style="background:rgba(0,113,227,0.15);color:#0071e3;border-color:rgba(0,113,227,0.3)">⚡ ENTRY</span>
-          <span class="price-ladder-value" style="color:#0071e3">${_fmtPrice(entry)}</span>
+      <div class="plc-row plc-now" id="now-row-${tradeId}" style="background:${profitBg};border-color:${profitBorder}">
+        <div class="plc-icon">
+          <span class="plc-live-dot" style="background:${profitColor}"></span>
         </div>
-        <div class="price-ladder-line" style="background:#0071e3;opacity:0.6;border-top:1px dashed #0071e3"></div>
+        <div class="plc-label" style="color:${profitColor}">NOW</div>
+        <div class="plc-price" id="now-price-${tradeId}" style="color:${profitColor}">${_fmtPrice(current)}</div>
+        <div class="plc-dist" id="now-move-${tradeId}" style="color:${moveColor}">${movePctStr} from entry</div>
       </div>
 
-      <div class="price-ladder-row" style="top:${100 - slPct}%">
-        <div class="price-ladder-label sl">
-          <span class="price-ladder-tag" style="background:rgba(255,59,48,0.15);color:#ff3b30;border-color:rgba(255,59,48,0.3)">🛡 SL</span>
-          <span class="price-ladder-value" style="color:#ff3b30">${_fmtPrice(sl)}</span>
-        </div>
-        <div class="price-ladder-line" style="background:#ff3b30"></div>
-        <div class="price-ladder-dist" style="color:#ff3b30">$${slDist.toFixed(4)} away · ${slDistPct}%</div>
+      <div class="plc-row plc-entry">
+        <div class="plc-icon">⚡</div>
+        <div class="plc-label" style="color:#0071e3">ENTRY</div>
+        <div class="plc-price" style="color:#0071e3">${_fmtPrice(entry)}</div>
+        <div class="plc-dist" style="color:#6e6e73">reference</div>
       </div>
 
-      <div class="price-ladder-progress">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:10px;color:#6e6e73">Progress to TP</span>
-          <span style="font-size:10px;font-weight:700;color:${progressColor}">${progressToTp}%</span>
-        </div>
-        <div style="height:4px;background:rgba(0,0,0,0.08);border-radius:100px;overflow:hidden">
-          <div style="height:100%;width:${progressToTp}%;background:${progressColor};border-radius:100px;transition:width 0.5s ease"></div>
-        </div>
+      <div class="plc-row plc-sl">
+        <div class="plc-icon">🛡</div>
+        <div class="plc-label">SL</div>
+        <div class="plc-price" style="color:#ff3b30">${_fmtPrice(sl)}</div>
+        <div class="plc-dist" style="color:#ff3b30">${_fmtPrice(slDist)} away · ${slDistPct}%</div>
       </div>
 
     </div>
@@ -338,16 +324,22 @@ function _buildTradeCardHTML(t) {
     ? healthWarnings[0]
     : ''
 
-  const priceLadder = tp ? _buildPriceLadder(entry, sl, tp, current, isLong) : ''
+  const priceLadder = tp ? _buildPriceLadder(entry, sl, tp, current, isLong, t.trade_id) : ''
   const sparkline   = _buildSparkline(symbol)
 
   return `
-    <div class="trade-card glass-strong rounded-apple overflow-hidden" id="ft-trade-${t.trade_id}" data-symbol="${symbol}" data-entry="${entry}" data-sl="${sl}" data-tp="${tp || 0}" data-islong="${isLong}">
+    <div class="trade-card glass-strong rounded-apple overflow-hidden"
+         id="ft-trade-${t.trade_id}"
+         data-symbol="${symbol}"
+         data-entry="${entry}"
+         data-sl="${sl}"
+         data-tp="${tp || 0}"
+         data-islong="${isLong}">
 
       <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-          <div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
               <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
               <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
                 ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
@@ -359,10 +351,11 @@ function _buildTradeCardHTML(t) {
                 ${healthEmoji} ${healthLabel}
               </span>
             </div>
-            <div style="display:flex;align-items:center;gap:12px">
+
+            <div style="display:flex;align-items:center;gap:16px">
               <div>
-                <div data-pnl style="font-size:22px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
-                <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
+                <div data-pnl style="font-size:24px;font-weight:700;font-family:monospace;color:${pnlColor};line-height:1">${pnlStr}</div>
+                <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor};margin-top:2px">${pnlPctStr}</div>
               </div>
               <div style="font-size:11px;color:#6e6e73;line-height:1.8">
                 <div>Open <strong style="color:#1d1d1f">${duration}</strong></div>
@@ -370,13 +363,14 @@ function _buildTradeCardHTML(t) {
               </div>
             </div>
           </div>
-          <div style="flex-shrink:0;opacity:0.9" id="sparkline-${t.trade_id}">
+
+          <div style="flex-shrink:0" id="sparkline-${t.trade_id}">
             ${sparkline}
           </div>
         </div>
 
         ${healthDetail ? `
-        <div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
+        <div style="margin-top:10px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
           ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
         </div>` : ''}
       </div>
@@ -393,7 +387,7 @@ function _buildTradeCardHTML(t) {
           </div>
           <div style="background:rgba(0,0,0,0.04);border-radius:8px;padding:10px">
             <div class="section-label" style="margin-bottom:4px">Current</div>
-            <div data-current-price style="font-family:monospace;font-weight:600;font-size:12px;color:${pnlColor}">${_fmtPrice(current)}</div>
+            <div style="font-family:monospace;font-weight:600;font-size:12px;color:${pnlColor}">${_fmtPrice(current)}</div>
           </div>
           <div style="background:rgba(0,0,0,0.04);border-radius:8px;padding:10px">
             <div class="section-label" style="margin-bottom:4px">Stop</div>
@@ -432,80 +426,73 @@ function _buildTradeCardHTML(t) {
 function updateTradeCardPrice(symbol, price) {
   const cards = document.querySelectorAll(`[data-symbol="${symbol}"]`)
   cards.forEach(card => {
-    const entry  = parseFloat(card.dataset.entry || 0)
-    const sl     = parseFloat(card.dataset.sl || 0)
-    const tp     = parseFloat(card.dataset.tp || 0)
-    const isLong = card.dataset.islong === 'true'
+    const entry   = parseFloat(card.dataset.entry || 0)
+    const sl      = parseFloat(card.dataset.sl || 0)
+    const tp      = parseFloat(card.dataset.tp || 0)
+    const isLong  = card.dataset.islong === 'true'
+    const tradeId = card.id.replace('ft-trade-', '')
 
-    const inProfit   = isLong ? price > entry : price < entry
-    const priceColor = inProfit ? '#248a3d' : '#c0392b'
+    const inProfit     = isLong ? price > entry : price < entry
+    const profitColor  = inProfit ? '#248a3d'              : '#c0392b'
+    const profitBg     = inProfit ? 'rgba(52,199,89,0.08)' : 'rgba(255,59,48,0.08)'
+    const profitBorder = inProfit ? 'rgba(52,199,89,0.25)' : 'rgba(255,59,48,0.25)'
+
     const movePct    = entry > 0 ? ((isLong ? price - entry : entry - price) / entry * 100) : 0
-    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
     const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
 
-    const priceEls = card.querySelectorAll('[data-current-price]')
-    priceEls.forEach(el => {
-      el.textContent = _fmtPrice(price)
-      el.style.color = priceColor
-    })
+    const pnlEl    = card.querySelector('[data-pnl]')
+    const pnlPctEl = card.querySelector('[data-pnl-pct]')
 
-    const moveEls = card.querySelectorAll('[data-move-pct]')
-    moveEls.forEach(el => {
-      el.textContent = movePctStr
-      el.style.color = moveColor
-    })
+    const nowPriceEl = document.getElementById(`now-price-${tradeId}`)
+    const nowMoveEl  = document.getElementById(`now-move-${tradeId}`)
+    const nowRowEl   = document.getElementById(`now-row-${tradeId}`)
+    const barTpEl    = document.getElementById(`bar-tp-${tradeId}`)
+    const barSlEl    = document.getElementById(`bar-sl-${tradeId}`)
+    const barPctEl   = document.getElementById(`bar-pct-${tradeId}`)
 
-    const tradeId   = card.id.replace('ft-trade-', '')
-    const sparkEl   = document.getElementById(`sparkline-${tradeId}`)
-    if (sparkEl) sparkEl.innerHTML = _buildSparkline(symbol)
+    if (nowPriceEl) {
+      nowPriceEl.textContent = _fmtPrice(price)
+      nowPriceEl.style.color = profitColor
+    }
 
-    if (tp) {
+    if (nowMoveEl) {
+      nowMoveEl.textContent = movePctStr + ' from entry'
+      nowMoveEl.style.color = moveColor
+    }
+
+    if (nowRowEl) {
+      nowRowEl.style.background   = profitBg
+      nowRowEl.style.borderColor  = profitBorder
+    }
+
+    if (tp && entry) {
       const totalRange   = Math.abs(tp - entry)
+      const slRange      = Math.abs(sl - entry)
       const currentMove  = Math.abs(price - entry)
-      const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)).toFixed(0) : 0
-      const progColor    = inProfit ? '#34c759' : '#ff3b30'
+      const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)) : 0
+      const progressToSl = slRange   > 0 ? Math.min(100, (currentMove / slRange   * 100)) : 0
 
-      const progBar = card.querySelector('.price-ladder-progress div div')
-      if (progBar) {
-        progBar.style.width      = progressToTp + '%'
-        progBar.style.background = progColor
+      if (barTpEl) {
+        barTpEl.style.width      = inProfit ? progressToTp.toFixed(1) + '%' : '0%'
+        barTpEl.style.boxShadow  = inProfit ? '0 0 6px rgba(52,199,89,0.5)' : 'none'
       }
 
-      const progPct = card.querySelector('.price-ladder-progress span:last-child')
-      if (progPct) {
-        progPct.textContent = progressToTp + '%'
-        progPct.style.color = progColor
+      if (barSlEl) {
+        barSlEl.style.width      = !inProfit ? progressToSl.toFixed(1) + '%' : '0%'
+        barSlEl.style.boxShadow  = !inProfit ? '0 0 6px rgba(255,59,48,0.5)' : 'none'
       }
 
-      const fillEl = card.querySelector('.price-ladder-fill')
-      if (fillEl) {
-        const allPrices  = [sl, entry, price, tp]
-        const minPrice   = Math.min(...allPrices)
-        const maxPrice   = Math.max(...allPrices)
-        const priceRange = maxPrice - minPrice || 1
-
-        const entryPct   = (entry   - minPrice) / priceRange * 100
-        const currentPct = (price   - minPrice) / priceRange * 100
-        const fillColor  = inProfit ? 'rgba(52,199,89,0.15)'  : 'rgba(255,59,48,0.15)'
-        const fillBorder = inProfit ? 'rgba(52,199,89,0.4)'   : 'rgba(255,59,48,0.4)'
-
-        fillEl.style.top        = (100 - Math.max(currentPct, entryPct)) + '%'
-        fillEl.style.height     = Math.abs(currentPct - entryPct) + '%'
-        fillEl.style.background = fillColor
-        fillEl.style.borderLeft = `2px solid ${fillBorder}`
-        fillEl.style.borderRight= `2px solid ${fillBorder}`
-      }
-
-      const currentRow = card.querySelector('.price-ladder-current')
-      if (currentRow) {
-        const allPrices  = [sl, entry, price, tp]
-        const minPrice   = Math.min(...allPrices)
-        const maxPrice   = Math.max(...allPrices)
-        const priceRange = maxPrice - minPrice || 1
-        const currentPct = (price - minPrice) / priceRange * 100
-        currentRow.style.top = (100 - currentPct) + '%'
+      if (barPctEl) {
+        barPctEl.textContent = inProfit
+          ? progressToTp.toFixed(1) + '% to TP'
+          : progressToSl.toFixed(1) + '% to SL'
+        barPctEl.style.color = profitColor
       }
     }
+
+    const sparkEl = document.getElementById(`sparkline-${tradeId}`)
+    if (sparkEl) sparkEl.innerHTML = _buildSparkline(symbol)
   })
 }
 
@@ -538,7 +525,7 @@ function renderFtTrades(trades) {
   )
 
   Object.keys(window._binanceWsSockets || {}).forEach(key => {
-    const sym = key.replace('usdt', 'USDT').toUpperCase()
+    const sym = key.toUpperCase().replace('USDT', '') + 'USDT'
     if (!activeSymbols.includes(sym)) stopBinanceTickerWs(sym)
   })
 
@@ -662,7 +649,7 @@ function _updateRadarCard(el, r) {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between">
       <span style="font-size:10px;font-weight:700;color:${r.grade_color}">${r.grade} · ${r.score}</span>
-            <span style="font-size:10px;font-family:monospace;color:${r.change_color}">${r.change}</span>
+      <span style="font-size:10px;font-family:monospace;color:${r.change_color}">${r.change}</span>
     </div>
     <div style="font-size:10px;font-family:monospace;color:#6e6e73;margin-top:2px">${r.price}</div>
     ${r.confidence ? `<div style="font-size:10px;margin-top:2px;color:${r.grade_color}80">${r.confidence}</div>` : ''}
