@@ -110,22 +110,6 @@ function _buildTradeCardHTML(t) {
     hour: '2-digit', minute: '2-digit'
   }) + ' IST' : '--'
 
-  let progressPct   = 0
-  let progressColor = '#ff3b30'
-  let progressLabel = 'At entry'
-
-  if (tp && entry) {
-    const totalDist  = Math.abs(tp - entry)
-    const curDist    = isLong ? (current - entry) : (entry - current)
-    progressPct      = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
-    progressColor    = progressPct > 0 ? '#34c759' : '#ff3b30'
-    progressLabel    = progressPct > 0
-      ? `${progressPct.toFixed(0)}% to TP`
-      : `${Math.abs(progressPct).toFixed(0)}% toward SL`
-  }
-
-  const progressWidth = Math.max(progressPct, 1.5)
-
   const health         = t.health || null
   const healthState    = health ? health.state : null
   const healthColor    = { 'HEALTHY': '#248a3d', 'WARNING': '#e8820c', 'INVALIDATED': '#ff3b30' }[healthState] || '#6e6e73'
@@ -165,18 +149,6 @@ function _buildTradeCardHTML(t) {
           ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
         </div>` : ''}
       </div>
-
-      ${tp ? `
-      <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:#6e6e73;font-family:monospace;margin-bottom:6px">
-          <span>${fmtP(entry)}</span>
-          <span>${progressLabel}</span>
-          <span>${fmtP(tp)}</span>
-        </div>
-        <div class="progress-track" style="height:6px">
-          <div style="height:100%;border-radius:100px;width:${progressWidth}%;background:${progressColor};transition:width 0.5s"></div>
-        </div>
-      </div>` : ''}
 
       <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
         <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
