@@ -650,64 +650,64 @@ function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
     },
   })
 
-  const candleSeries = chart.addCandlestickSeries({
-      upColor:          '#34c759',
-      downColor:        '#ff3b30',
-      borderUpColor:    '#34c759',
-      borderDownColor:  '#ff3b30',
-      wickUpColor:      '#34c759',
-      wickDownColor:    '#ff3b30',
+  const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor:          '#34c759',
+    downColor:        '#ff3b30',
+    borderUpColor:    '#34c759',
+    borderDownColor:  '#ff3b30',
+    wickUpColor:      '#34c759',
+    wickDownColor:    '#ff3b30',
   })
 
-  const volumeSeries = chart.addHistogramSeries({
-      color:        '#21262d',
-      priceFormat:  { type: 'volume' },
-      priceScaleId: 'volume',
-      scaleMargins: { top: 0.85, bottom: 0 },
+  const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+    color:        '#21262d',
+    priceFormat:  { type: 'volume' },
+    priceScaleId: 'volume',
+    scaleMargins: { top: 0.85, bottom: 0 },
   })
 
   const priceLinesMap = {}
 
   if (entry) {
     priceLinesMap.entry = candleSeries.createPriceLine({
-      price:     entry,
-      color:     '#0071e3',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dashed,
+      price:            entry,
+      color:            '#0071e3',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Dashed,
       axisLabelVisible: true,
-      title: `Entry ${entry.toFixed(4)}`,
+      title:            `Entry ${entry.toFixed(4)}`,
     })
   }
 
   if (sl) {
     priceLinesMap.sl = candleSeries.createPriceLine({
-      price:     sl,
-      color:     '#ff3b30',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Solid,
+      price:            sl,
+      color:            '#ff3b30',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: `SL ${sl.toFixed(4)}`,
+      title:            `SL ${sl.toFixed(4)}`,
     })
   }
 
   if (tp) {
     priceLinesMap.tp = candleSeries.createPriceLine({
-      price:     tp,
-      color:     '#34c759',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Solid,
+      price:            tp,
+      color:            '#34c759',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Solid,
       axisLabelVisible: true,
-      title: `TP ${tp.toFixed(4)}`,
+      title:            `TP ${tp.toFixed(4)}`,
     })
   }
 
   priceLinesMap.current = candleSeries.createPriceLine({
-    price:     entry || 0,
-    color:     '#ff9500',
-    lineWidth: 1,
-    lineStyle: LightweightCharts.LineStyle.Dotted,
+    price:            entry || 0,
+    color:            '#ff9500',
+    lineWidth:        1,
+    lineStyle:        LightweightCharts.LineStyle.Dotted,
     axisLabelVisible: true,
-    title: 'Now',
+    title:            'Now',
   })
 
   _tradeCharts[containerId] = {
