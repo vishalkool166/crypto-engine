@@ -52,6 +52,7 @@ async def send_for_approval(
             db.flush()
             db.refresh(post)
             post_id = post.id
+            db.commit()
 
         if chart_path and os.path.exists(chart_path):
             await _send_photo(
@@ -128,6 +129,7 @@ async def send_commentary_for_approval(draft: dict) -> bool:
             db.flush()
             db.refresh(post)
             post_id = post.id
+            db.commit()
 
         char_count = len(twitter_draft)
         char_color = "✅" if char_count <= 280 else "⚠️"
@@ -299,8 +301,8 @@ async def handle_regen_post(post_id: int):
             if not post:
                 await send(f"⚠️ Post #{post_id} not found.")
                 return
-            signal_id  = post.signal_id
-            chart_path = post.chart_path
+            signal_id     = post.signal_id
+            chart_path    = post.chart_path
             is_commentary = signal_id is None
 
         await send("🔄 Regenerating draft...")
