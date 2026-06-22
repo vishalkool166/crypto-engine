@@ -47,13 +47,13 @@ body {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.4; transform: scale(1.5); }
+}
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.3; }
-}
-@keyframes pulse-ring {
-  0%   { transform: scale(1);   opacity: 1; }
-  100% { transform: scale(2.5); opacity: 0; }
 }
 
 .animate-slide-up  { animation: slide-up 0.4s ease; }
@@ -260,117 +260,24 @@ body {
   box-shadow: 0 20px 60px rgba(0,0,0,0.2);
 }
 
-
-/* ── Price Ladder ─────────────────────────────────────── */
-
-.price-ladder {
-  position: relative;
-  height: 240px;
-  margin: 0 4px 40px 4px;
-}
-
-.price-ladder-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  transform: translateY(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 2;
-}
-
-.price-ladder-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 190px;
-  flex-shrink: 0;
-}
-
-.price-ladder-tag {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 100px;
-  border: 1px solid;
-  white-space: nowrap;
-  flex-shrink: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Inter, sans-serif;
-}
-
-.price-ladder-value {
-  font-family: 'SF Mono', 'JetBrains Mono', monospace;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.price-ladder-line {
-  flex: 1;
-  height: 1.5px;
-  border-radius: 100px;
-}
-
-.price-ladder-line-current {
-  height: 2px;
-  box-shadow: 0 0 8px rgba(255,149,0,0.6);
-}
-
-.price-ladder-dist {
-  font-size: 10px;
-  font-weight: 500;
-  white-space: nowrap;
-  flex-shrink: 0;
-  width: 130px;
-  text-align: right;
-  color: #6e6e73;
-}
-
-.price-ladder-fill {
-  position: absolute;
-  left: 190px;
-  right: 130px;
-  z-index: 1;
-  transition: top 0.25s ease, height 0.25s ease,
-              background 0.3s ease, border-color 0.3s ease;
-  border-radius: 2px;
-  pointer-events: none;
-}
-
-.price-ladder-progress {
-  position: absolute;
-  bottom: -36px;
-  left: 0;
-  right: 0;
-}
-
-.price-ladder-current {
-  transition: top 0.15s ease;
-  z-index: 3;
-}
-
-
-.sparkline-wrap {
+.live-dot {
   display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: 3px;
   vertical-align: middle;
-  opacity: 0.9;
+  animation: pulse-dot 1.5s infinite;
 }
 
-.sparkline-wrap svg {
-  display: block;
-  overflow: visible;
+.tc-bar-left {
+  height: 100%;
+  border-radius: 100px 0 0 100px;
+  transition: width 0.4s cubic-bezier(0.4,0,0.2,1), box-shadow 0.3s ease;
 }
 
-
-@keyframes sparkline-pulse {
-  0%   { r: 2;   opacity: 1; }
-  50%  { r: 3.5; opacity: 0.5; }
-  100% { r: 2;   opacity: 1; }
-}
-
-
-.ladder-now {
-  background: rgba(255,149,0,0.06);
-  border-radius: 8px;
+.tc-bar-right {
+  height: 100%;
+  border-radius: 0 100px 100px 0;
+  transition: width 0.4s cubic-bezier(0.4,0,0.2,1), box-shadow 0.3s ease;
 }
