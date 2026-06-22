@@ -131,6 +131,29 @@ function _fmtP(v) {
   } catch(e) { return '--' }
 }
 
+function _calcBarMetrics(entry, sl, tp, current, isLong) {
+  const inProfit     = isLong ? current > entry : current < entry
+  const totalRange   = tp ? Math.abs(tp - entry) : 0
+  const slRange      = Math.abs(sl - entry)
+  const totalBarRange = slRange + totalRange
+  const entryPosPct  = totalBarRange > 0 ? (slRange / totalBarRange * 100) : 50
+  const currentMove  = Math.abs(current - entry)
+  const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)) : 0
+  const progressToSl = slRange   > 0 ? Math.min(100, (currentMove / slRange   * 100)) : 0
+  const tpFillWidth  = inProfit  && tp ? (progressToTp / 100) * (100 - entryPosPct) : 0
+  const slFillWidth  = !inProfit && tp ? (progressToSl / 100) * entryPosPct          : 0
+  const profitColor  = inProfit ? '#248a3d' : '#c0392b'
+  const barPctText   = tp
+    ? (inProfit ? progressToTp.toFixed(1) + '% to TP' : progressToSl.toFixed(1) + '% to SL')
+    : '--'
+
+  return {
+    inProfit, totalRange, slRange, totalBarRange,
+    entryPosPct, progressToTp, progressToSl,
+    tpFillWidth, slFillWidth, profitColor, barPctText
+  }
+}
+
 function _buildTradeCardHTML(t) {
   const isLong   = !t.is_short
   const dirColor = isLong ? '#248a3d' : '#c0392b'
@@ -166,28 +189,16 @@ function _buildTradeCardHTML(t) {
                     : healthState === 'WARNING'     && hWarnings.length ? hWarnings[0]
                     : ''
 
-  const inProfit    = isLong ? current > entry : current < entry
-  const profitColor = inProfit ? '#248a3d' : '#c0392b'
-  const movePct     = entry > 0 ? ((isLong ? current - entry : entry - current) / entry * 100) : 0
-  const movePctStr  = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
-  const moveColor   = movePct >= 0 ? '#248a3d' : '#c0392b'
+  const bar = _calcBarMetrics(entry, sl, tp || entry, current, isLong)
+
+  const movePct    = entry > 0 ? ((isLong ? current - entry : entry - current) / entry * 100) : 0
+  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
+  const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
 
   const slDist    = Math.abs(current - sl)
   const slDistPct = current > 0 ? (slDist / current * 100).toFixed(2) : '0'
   const tpDist    = tp ? Math.abs(tp - current) : 0
   const tpDistPct = tp && current > 0 ? (tpDist / current * 100).toFixed(2) : '0'
-
-  const totalRange   = tp ? Math.abs(tp - entry) : 0
-  const slRange      = Math.abs(sl - entry)
-  const currentMove  = Math.abs(current - entry)
-  const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)) : 0
-  const progressToSl = slRange   > 0 ? Math.min(100, (currentMove / slRange   * 100)) : 0
-
-  const barLeftWidth  = (!inProfit && tp) ? progressToSl.toFixed(1) : '0'
-  const barRightWidth = (inProfit  && tp) ? progressToTp.toFixed(1) : '0'
-  const barPctText    = tp
-    ? (inProfit ? progressToTp.toFixed(1) + '% to TP' : progressToSl.toFixed(1) + '% to SL')
-    : '--'
 
   return `
     <div class="trade-card glass-strong rounded-apple overflow-hidden"
@@ -245,9 +256,8 @@ function _buildTradeCardHTML(t) {
           <div class="section-label mb-1.5">NOW</div>
           <div class="num font-semibold text-sm flex items-center gap-1"
                id="now-price-${t.trade_id}"
-               style="color:${profitColor}">
-            ${_fmtP(current)}
-            <span class="live-dot" style="background:${profitColor}"></span>
+               style="color:${bar.profitColor}">
+            ${_fmtP(current)}<span class="live-dot" style="background:${bar.profitColor}"></span>
           </div>
           <div class="num text-[10px] mt-0.5"
                id="now-move-${t.trade_id}"
@@ -275,26 +285,35 @@ function _buildTradeCardHTML(t) {
         <div class="flex items-center justify-between mb-2">
           <div class="flex items-center gap-2">
             <span class="text-[10px] font-semibold text-apple-red">SL ◄</span>
-            <span class="text-[9px] text-apple-secondary uppercase tracking-wider">progress</span>
+            <span class="text-[9px] text-apple-secondary uppercase tracking-wider">position</span>
             <span class="text-[10px] font-semibold text-apple-green">► TP</span>
           </div>
           <span id="bar-pct-${t.trade_id}"
                 class="num text-[10px] font-bold"
-                style="color:${profitColor}">
-            ${barPctText}
+                style="color:${bar.profitColor}">
+            ${bar.barPctText}
           </span>
         </div>
-        <div class="relative h-2 bg-black/[0.06] rounded-full overflow-hidden flex">
+        <div class="relative h-2 rounded-full overflow-hidden bg-black/[0.06]">
           <div id="bar-sl-${t.trade_id}"
-               class="tc-bar-left"
-               style="width:${barLeftWidth}%;background:#ff3b30;${!inProfit ? 'box-shadow:0 0 6px rgba(255,59,48,0.4)' : ''}">
+               class="absolute top-0 bottom-0 left-0 rounded-l-full transition-all duration-300"
+               style="width:${bar.slFillWidth.toFixed(1)}%;background:#ff3b30;${!bar.inProfit ? 'box-shadow:0 0 6px rgba(255,59,48,0.4)' : ''}">
           </div>
-          <div class="flex-1"></div>
           <div id="bar-tp-${t.trade_id}"
-               class="tc-bar-right"
-               style="width:${barRightWidth}%;background:#34c759;${inProfit ? 'box-shadow:0 0 6px rgba(52,199,89,0.4)' : ''}">
+               class="absolute top-0 bottom-0 right-0 rounded-r-full transition-all duration-300"
+               style="width:${bar.tpFillWidth.toFixed(1)}%;background:#34c759;${bar.inProfit ? 'box-shadow:0 0 6px rgba(52,199,89,0.4)' : ''}">
           </div>
-          <div class="absolute left-1/2 top-0 bottom-0 w-px bg-black/20 -translate-x-1/2"></div>
+          <div class="absolute top-0 bottom-0 w-px bg-black/20"
+               id="entry-mark-${t.trade_id}"
+               style="left:${bar.entryPosPct.toFixed(1)}%">
+          </div>
+        </div>
+        <div class="flex justify-between mt-1.5">
+          <span class="num text-[9px] text-apple-secondary">${_fmtP(sl)}</span>
+          <span class="num text-[9px] text-apple-secondary font-semibold" style="color:${bar.profitColor}">
+            ${_fmtP(current)}
+          </span>
+          <span class="num text-[9px] text-apple-secondary">${_fmtP(tp)}</span>
         </div>
       </div>` : ''}
 
@@ -335,23 +354,23 @@ function updateTradeCardPrice(symbol, price) {
     const isLong  = card.dataset.islong === 'true'
     const tradeId = card.id.replace('ft-trade-', '')
 
-    const inProfit    = isLong ? price > entry : price < entry
-    const profitColor = inProfit ? '#248a3d' : '#c0392b'
-    const movePct     = entry > 0 ? ((isLong ? price - entry : entry - price) / entry * 100) : 0
-    const movePctStr  = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
-    const moveColor   = movePct >= 0 ? '#248a3d' : '#c0392b'
+    const bar        = _calcBarMetrics(entry, sl, tp || entry, price, isLong)
+    const movePct    = entry > 0 ? ((isLong ? price - entry : entry - price) / entry * 100) : 0
+    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(3) + '%'
+    const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
 
-    const nowPriceEl = document.getElementById(`now-price-${tradeId}`)
-    const nowMoveEl  = document.getElementById(`now-move-${tradeId}`)
-    const barTpEl    = document.getElementById(`bar-tp-${tradeId}`)
-    const barSlEl    = document.getElementById(`bar-sl-${tradeId}`)
-    const barPctEl   = document.getElementById(`bar-pct-${tradeId}`)
+    const nowPriceEl  = document.getElementById(`now-price-${tradeId}`)
+    const nowMoveEl   = document.getElementById(`now-move-${tradeId}`)
+    const barTpEl     = document.getElementById(`bar-tp-${tradeId}`)
+    const barSlEl     = document.getElementById(`bar-sl-${tradeId}`)
+    const barPctEl    = document.getElementById(`bar-pct-${tradeId}`)
+    const entryMarkEl = document.getElementById(`entry-mark-${tradeId}`)
 
     if (nowPriceEl) {
       const dot = nowPriceEl.querySelector('.live-dot')
-      nowPriceEl.childNodes[0].textContent = _fmtP(price) + ' '
-      nowPriceEl.style.color = profitColor
-      if (dot) dot.style.background = profitColor
+      nowPriceEl.firstChild.textContent = _fmtP(price)
+      nowPriceEl.style.color = bar.profitColor
+      if (dot) dot.style.background = bar.profitColor
     }
 
     if (nowMoveEl) {
@@ -359,26 +378,27 @@ function updateTradeCardPrice(symbol, price) {
       nowMoveEl.style.color = moveColor
     }
 
-    if (tp && entry) {
-      const totalRange   = Math.abs(tp - entry)
-      const slRange      = Math.abs(sl - entry)
-      const currentMove  = Math.abs(price - entry)
-      const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)) : 0
-      const progressToSl = slRange   > 0 ? Math.min(100, (currentMove / slRange   * 100)) : 0
-
+    if (tp) {
       if (barTpEl) {
-        barTpEl.style.width      = inProfit ? progressToTp.toFixed(1) + '%' : '0%'
-        barTpEl.style.boxShadow  = inProfit ? '0 0 6px rgba(52,199,89,0.4)' : 'none'
+        barTpEl.style.width      = bar.tpFillWidth.toFixed(1) + '%'
+        barTpEl.style.boxShadow  = bar.inProfit ? '0 0 6px rgba(52,199,89,0.4)' : 'none'
       }
       if (barSlEl) {
-        barSlEl.style.width      = !inProfit ? progressToSl.toFixed(1) + '%' : '0%'
-        barSlEl.style.boxShadow  = !inProfit ? '0 0 6px rgba(255,59,48,0.4)' : 'none'
+        barSlEl.style.width      = bar.slFillWidth.toFixed(1) + '%'
+        barSlEl.style.boxShadow  = !bar.inProfit ? '0 0 6px rgba(255,59,48,0.4)' : 'none'
       }
       if (barPctEl) {
-        barPctEl.textContent = inProfit
-          ? progressToTp.toFixed(1) + '% to TP'
-          : progressToSl.toFixed(1) + '% to SL'
-        barPctEl.style.color = profitColor
+        barPctEl.textContent = bar.barPctText
+        barPctEl.style.color = bar.profitColor
+      }
+      if (entryMarkEl) {
+        entryMarkEl.style.left = bar.entryPosPct.toFixed(1) + '%'
+      }
+
+      const curPriceEl = card.querySelector(`#bar-tp-${tradeId}`)?.parentElement?.nextElementSibling?.querySelector('.num.text-\\[9px\\].font-semibold')
+      if (curPriceEl) {
+        curPriceEl.textContent = _fmtP(price)
+        curPriceEl.style.color = bar.profitColor
       }
     }
   })
@@ -422,7 +442,7 @@ function renderFtTrades(trades) {
   }
 
   trades.forEach(t => {
-    const coin   = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
+    const coin = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
     startBinanceTickerWs(coin + 'USDT')
   })
 }
