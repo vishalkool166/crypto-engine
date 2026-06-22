@@ -651,19 +651,19 @@ function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
   })
 
   const candleSeries = chart.addCandlestickSeries({
-    upColor:          '#34c759',
-    downColor:        '#ff3b30',
-    borderUpColor:    '#34c759',
-    borderDownColor:  '#ff3b30',
-    wickUpColor:      '#34c759',
-    wickDownColor:    '#ff3b30',
+      upColor:          '#34c759',
+      downColor:        '#ff3b30',
+      borderUpColor:    '#34c759',
+      borderDownColor:  '#ff3b30',
+      wickUpColor:      '#34c759',
+      wickDownColor:    '#ff3b30',
   })
 
   const volumeSeries = chart.addHistogramSeries({
-    color:      '#21262d',
-    priceFormat: { type: 'volume' },
-    priceScaleId: 'volume',
-    scaleMargins: { top: 0.85, bottom: 0 },
+      color:        '#21262d',
+      priceFormat:  { type: 'volume' },
+      priceScaleId: 'volume',
+      scaleMargins: { top: 0.85, bottom: 0 },
   })
 
   const priceLinesMap = {}
