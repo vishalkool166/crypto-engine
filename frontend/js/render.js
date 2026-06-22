@@ -69,12 +69,171 @@ function renderModeToggle(mode) {
   const btn = $id('mode-toggle-btn')
   if (!btn) return
 
-  const isLive = mode === 'live'
-  btn.dataset.mode    = mode
-  btn.textContent     = isLive ? '🔴 LIVE' : '🔵 PAPER'
+  const isLive          = mode === 'live'
+  btn.dataset.mode      = mode
+  btn.textContent       = isLive ? '🔴 LIVE' : '🔵 PAPER'
   btn.style.background  = isLive ? 'rgba(255,59,48,0.1)'  : 'rgba(0,113,227,0.1)'
   btn.style.color       = isLive ? '#ff3b30'               : '#0071e3'
   btn.style.borderColor = isLive ? 'rgba(255,59,48,0.2)'  : 'rgba(0,113,227,0.2)'
+}
+
+function _buildTradeCardHTML(t) {
+  const isLong    = !t.is_short
+  const dirColor  = isLong ? '#248a3d' : '#c0392b'
+  const dirEmoji  = isLong ? '📈' : '📉'
+  const pnl       = parseFloat(t.profit_abs || 0)
+  const pnlPct    = parseFloat(t.profit_ratio || 0) * 100
+  const pnlColor  = pnl >= 0 ? '#248a3d' : '#c0392b'
+  const pnlStr    = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)
+  const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
+  const pair      = t.pair || '--'
+  const coin      = pair.replace('/USDT:USDT', '').replace('/USDT', '')
+  const entry     = parseFloat(t.open_rate || 0)
+  const current   = parseFloat(t.current_rate || 0)
+  const sl        = parseFloat(t.stop_loss_abs || 0)
+  const stake     = parseFloat(t.stake_amount || 0)
+  const leverage  = t.leverage || 1
+  const tp        = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : null
+
+  const fmtP = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+
+  const movePct    = entry > 0 ? ((current - entry) / entry * 100) : 0
+  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+  const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
+
+  const distSl    = Math.abs(current - sl)
+  const distSlPct = current > 0 ? (distSl / current * 100).toFixed(2) : '0'
+
+  const openDate = t.open_date ? new Date(t.open_date).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour12: true,
+    day: '2-digit', month: 'short',
+    hour: '2-digit', minute: '2-digit'
+  }) + ' IST' : '--'
+
+  let progressPct   = 0
+  let progressColor = '#ff3b30'
+  let progressLabel = 'At entry'
+
+  if (tp && entry) {
+    const totalDist = Math.abs(tp - entry)
+    const curDist   = isLong ? (current - entry) : (entry - current)
+    progressPct     = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
+    progressColor   = progressPct > 0 ? '#34c759' : '#ff3b30'
+    progressLabel   = progressPct > 0
+      ? `${progressPct.toFixed(0)}% to TP`
+      : `${Math.abs(progressPct).toFixed(0)}% toward SL`
+  }
+
+  const health         = t.health || null
+  const healthState    = health ? health.state : null
+  const healthColor    = { 'HEALTHY': '#248a3d', 'WARNING': '#e8820c', 'INVALIDATED': '#ff3b30' }[healthState] || '#6e6e73'
+  const healthEmoji    = { 'HEALTHY': '✅', 'WARNING': '⚠️', 'INVALIDATED': '🚨' }[healthState] || '⏳'
+  const healthLabel    = healthState || 'Checking...'
+  const healthFailures = health ? (health.failures || []) : []
+  const healthWarnings = health ? (health.warnings || []) : []
+  const healthDetail   = healthState === 'INVALIDATED' && healthFailures.length
+    ? healthFailures[0]
+    : healthState === 'WARNING' && healthWarnings.length
+    ? healthWarnings[0]
+    : ''
+
+  return `
+    <div class="glass-strong rounded-apple overflow-hidden trade-card" id="ft-trade-${t.trade_id}">
+      <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
+            <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
+              ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
+            </span>
+            <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
+              #${t.trade_id} · ${leverage}x
+            </span>
+            <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;color:${healthColor};background:${healthColor}15;border:1px solid ${healthColor}40">
+              ${healthEmoji} ${healthLabel}
+            </span>
+          </div>
+          <div style="text-align:right">
+            <div data-pnl style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
+            <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
+          </div>
+        </div>
+        ${healthDetail ? `
+        <div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
+          ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
+        </div>` : ''}
+      </div>
+
+      ${tp ? `
+      <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:#6e6e73;font-family:monospace;margin-bottom:6px">
+          <span>${fmtP(entry)}</span>
+          <span>${progressLabel}</span>
+          <span>${fmtP(tp)}</span>
+        </div>
+        <div class="progress-track" style="height:6px">
+          <div style="height:100%;border-radius:100px;width:${progressPct}%;background:${progressColor};transition:width 0.5s"></div>
+        </div>
+      </div>` : ''}
+
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+          <div class="section-label" style="margin-bottom:4px">Current</div>
+          <div data-current style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
+          <div data-move style="font-size:10px;margin-top:2px;font-family:monospace;color:${moveColor}">${movePctStr}</div>
+        </div>
+        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+          <div class="section-label" style="margin-bottom:4px">Entry</div>
+          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#0071e3">${fmtP(entry)}</div>
+        </div>
+        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
+          <div class="section-label" style="margin-bottom:4px">Stop Loss</div>
+          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#ff3b30">${fmtP(sl)}</div>
+          <div style="font-size:10px;margin-top:2px;color:#6e6e73">${distSlPct}% away</div>
+        </div>
+        <div style="padding:10px 12px">
+          <div class="section-label" style="margin-bottom:4px">${tp ? 'TP' : 'Stake'}</div>
+          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#34c759">${tp ? fmtP(tp) : '$' + stake.toFixed(2)}</div>
+        </div>
+      </div>
+
+      ${health && (healthFailures.length > 1 || healthWarnings.length > 0) ? `
+      <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div class="section-label" style="margin-bottom:6px">Trade Health</div>
+        <div style="font-size:11px;line-height:1.8">
+          ${healthFailures.map(f => `<div style="color:#ff3b30">✘ ${f}</div>`).join('')}
+          ${healthWarnings.slice(0,3).map(w => `<div style="color:#e8820c">⚠ ${w}</div>`).join('')}
+          ${health.checks ? health.checks.slice(0,2).map(c => `<div style="color:#248a3d">✔ ${c}</div>`).join('') : ''}
+        </div>
+      </div>` : ''}
+
+      <div style="padding:12px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
+          ${['15m','1h','4h','1d'].map(tf => `
+            <button
+              data-chart-btn="chart-${t.trade_id}"
+              data-tf="${tf}"
+              onclick="switchChartTf('chart-${t.trade_id}','${coin}','${tf}',${entry},${sl},${tp || 0})"
+              style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(0,0,0,0.1);transition:all 0.15s;background:${tf === '4h' ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'};color:${tf === '4h' ? '#0071e3' : '#6e6e73'}">
+              ${tf}
+            </button>`).join('')}
+        </div>
+        <div id="chart-${t.trade_id}" style="width:100%;height:280px;border-radius:8px;overflow:hidden;background:#0d1117"></div>
+      </div>
+
+      <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div style="font-size:11px;color:#6e6e73">
+          Opened: <strong style="color:#1d1d1f">${openDate}</strong>
+          · Stake: <strong style="color:#1d1d1f">$${stake.toFixed(2)}</strong>
+        </div>
+        <button
+          onclick="ftForceSell(${t.trade_id})"
+          style="padding:6px 14px;border-radius:10px;border:1px solid rgba(255,59,48,0.2);background:rgba(255,59,48,0.06);color:#ff3b30;font-size:12px;font-weight:600;cursor:pointer">
+          🔴 Force Sell
+        </button>
+      </div>
+    </div>
+  `
 }
 
 function renderFtTrades(trades) {
@@ -88,6 +247,10 @@ function renderFtTrades(trades) {
     grid.classList.add('hidden')
     grid.innerHTML = ''
     if (count) count.textContent = 'via Freqtrade · 0 open'
+    Object.keys(_tradeCharts).forEach(id => {
+      try { _tradeCharts[id].chart.destroy() } catch(e) {}
+      delete _tradeCharts[id]
+    })
     return
   }
 
@@ -95,194 +258,27 @@ function renderFtTrades(trades) {
   grid.classList.remove('hidden')
   if (count) count.textContent = `via Freqtrade · ${trades.length} open`
 
-  grid.innerHTML = trades.map(t => {
-    const isLong    = !t.is_short
-    const dirColor  = isLong ? '#248a3d' : '#c0392b'
-    const dirEmoji  = isLong ? '📈' : '📉'
-    const pnl       = parseFloat(t.profit_abs || 0)
-    const pnlPct    = parseFloat(t.profit_ratio || 0) * 100
-    const pnlColor  = pnl >= 0 ? '#248a3d' : '#c0392b'
-    const pnlStr    = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)
-    const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
-    const pair      = t.pair || '--'
-    const coin      = pair.replace('/USDT:USDT', '').replace('/USDT', '')
-    const entry     = parseFloat(t.open_rate || 0)
-    const current   = parseFloat(t.current_rate || 0)
-    const sl        = parseFloat(t.stop_loss_abs || 0)
-    const stake     = parseFloat(t.stake_amount || 0)
-    const leverage  = t.leverage || 1
+  const newIds      = trades.map(t => t.trade_id).sort().join(',')
+  const existingIds = [...grid.querySelectorAll('[id^="ft-trade-"]')]
+    .map(el => el.id.replace('ft-trade-', '')).sort().join(',')
 
-    const fmtP = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
+  if (newIds !== existingIds) {
+    Object.keys(_tradeCharts).forEach(id => {
+      try { _tradeCharts[id].chart.destroy() } catch(e) {}
+      delete _tradeCharts[id]
+    })
 
-    const movePct    = entry > 0 ? ((current - entry) / entry * 100) : 0
-    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
-    const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
-
-    const distSl    = Math.abs(current - sl)
-    const distSlPct = current > 0 ? (distSl / current * 100).toFixed(2) : '0'
-
-    const openDate = t.open_date ? new Date(t.open_date).toLocaleString('en-IN', {
-      timeZone: 'Asia/Kolkata', hour12: true,
-      day: '2-digit', month: 'short',
-      hour: '2-digit', minute: '2-digit'
-    }) + ' IST' : '--'
-
-    const tp = t.tp1 || null
-
-    let progressPct   = 0
-    let progressColor = '#ff3b30'
-    let progressLabel = 'At entry'
-
-    if (tp && entry) {
-      const totalDist = Math.abs(tp - entry)
-      const curDist   = isLong ? (current - entry) : (entry - current)
-      progressPct     = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
-      progressColor   = progressPct > 0 ? '#34c759' : '#ff3b30'
-      progressLabel   = progressPct > 0
-        ? `${progressPct.toFixed(0)}% to TP`
-        : `${Math.abs(progressPct).toFixed(0)}% toward SL`
-    }
-
-    const health      = t.health || null
-    const healthState = health ? health.state : null
-
-    const healthColor = {
-      'HEALTHY':     '#248a3d',
-      'WARNING':     '#e8820c',
-      'INVALIDATED': '#ff3b30'
-    }[healthState] || '#6e6e73'
-
-    const healthEmoji = {
-      'HEALTHY':     '✅',
-      'WARNING':     '⚠️',
-      'INVALIDATED': '🚨'
-    }[healthState] || '⏳'
-
-    const healthLabel = healthState || 'Checking...'
-
-    const healthFailures = health ? (health.failures || []) : []
-    const healthWarnings = health ? (health.warnings || []) : []
-
-    const healthDetail = healthState === 'INVALIDATED' && healthFailures.length
-      ? healthFailures[0]
-      : healthState === 'WARNING' && healthWarnings.length
-      ? healthWarnings[0]
-      : ''
-
-    return `
-      <div class="glass-strong rounded-apple overflow-hidden trade-card" id="ft-trade-${t.trade_id}">
-        <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
-              <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
-                ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
-              </span>
-              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
-                #${t.trade_id} · ${leverage}x
-              </span>
-              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;color:${healthColor};background:${healthColor}15;border:1px solid ${healthColor}40">
-                ${healthEmoji} ${healthLabel}
-              </span>
-            </div>
-            <div style="text-align:right">
-              <div data-pnl style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
-              <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
-            </div>
-          </div>
-          ${healthDetail ? `
-          <div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
-            ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
-          </div>` : ''}
-        </div>
-
-        ${tp ? `
-        <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-          <div style="display:flex;justify-content:space-between;font-size:10px;color:#6e6e73;font-family:monospace;margin-bottom:6px">
-            <span>${fmtP(entry)}</span>
-            <span>${progressLabel}</span>
-            <span>${fmtP(tp)}</span>
-          </div>
-          <div class="progress-track" style="height:6px">
-            <div style="height:100%;border-radius:100px;width:${progressPct}%;background:${progressColor};transition:width 0.5s"></div>
-          </div>
-        </div>` : ''}
-
-        <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
-          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-            <div class="section-label" style="margin-bottom:4px">Current</div>
-            <div data-current style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
-            <div data-move style="font-size:10px;margin-top:2px;font-family:monospace;color:${moveColor}">${movePctStr}</div>
-          </div>
-          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-            <div class="section-label" style="margin-bottom:4px">Entry</div>
-            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#0071e3">${fmtP(entry)}</div>
-          </div>
-          <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-            <div class="section-label" style="margin-bottom:4px">Stop Loss</div>
-            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#ff3b30">${fmtP(sl)}</div>
-            <div style="font-size:10px;margin-top:2px;color:#6e6e73">${distSlPct}% away</div>
-          </div>
-          <div style="padding:10px 12px">
-            <div class="section-label" style="margin-bottom:4px">${tp ? 'TP' : 'Stake'}</div>
-            <div style="font-weight:600;font-family:monospace;font-size:13px;color:#34c759">${tp ? fmtP(tp) : '$' + stake.toFixed(2)}</div>
-          </div>
-        </div>
-
-        ${health && (healthFailures.length > 1 || healthWarnings.length > 0) ? `
-        <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-          <div class="section-label" style="margin-bottom:6px">Trade Health</div>
-          <div style="font-size:11px;line-height:1.8">
-            ${healthFailures.map(f => `<div style="color:#ff3b30">✘ ${f}</div>`).join('')}
-            ${healthWarnings.slice(0,3).map(w => `<div style="color:#e8820c">⚠ ${w}</div>`).join('')}
-            ${health.checks ? health.checks.slice(0,2).map(c => `<div style="color:#248a3d">✔ ${c}</div>`).join('') : ''}
-          </div>
-        </div>` : ''}
-
-        <div style="padding:12px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-            ${['15m','1h','4h','1d'].map(t => `
-              <button
-                data-chart-btn="chart-${t.trade_id}"
-                data-tf="${t}"
-                onclick="switchChartTf('chart-${t.trade_id}','${coin}','${t}',${entry},${sl},${tp || 0})"
-                style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(0,0,0,0.1);transition:all 0.15s;background:${t === '4h' ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'};color:${t === '4h' ? '#0071e3' : '#6e6e73'}">
-                ${t}
-              </button>`).join('')}
-          </div>
-          <div id="chart-${t.trade_id}" style="width:100%;height:280px;border-radius:8px;overflow:hidden"></div>
-        </div>
-
-        <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-          <div style="font-size:11px;color:#6e6e73">
-            Opened: <strong style="color:#1d1d1f">${openDate}</strong>
-            · Stake: <strong style="color:#1d1d1f">$${stake.toFixed(2)}</strong>
-          </div>
-          <button
-            onclick="ftForceSell(${t.trade_id})"
-            style="padding:6px 14px;border-radius:10px;border:1px solid rgba(255,59,48,0.2);background:rgba(255,59,48,0.06);color:#ff3b30;font-size:12px;font-weight:600;cursor:pointer">
-            🔴 Force Sell
-          </button>
-        </div>
-      </div>
-    `
-  }).join('')
+    grid.innerHTML = trades.map(t => _buildTradeCardHTML(t)).join('')
 
     trades.forEach(t => {
-    const coin   = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
-    const entry  = parseFloat(t.open_rate || 0)
-    const sl     = parseFloat(t.stop_loss_abs || 0)
-    const tp     = t.tp1 || 0
-
-    setTimeout(() => {
-      _createTradeChart(
-        `chart-${t.trade_id}`,
-        coin, '4h',
-        entry, sl, tp
-      )
-    }, 100)
-  })
-  
+      const coin        = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
+      const entry       = parseFloat(t.open_rate || 0)
+      const sl          = parseFloat(t.stop_loss_abs || 0)
+      const tp          = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : 0
+      const containerId = `chart-${t.trade_id}`
+      setTimeout(() => _createTradeChart(containerId, coin, '4h', entry, sl, tp), 100)
+    })
+  }
 }
 
 function renderFtProfit(profit) {
@@ -356,7 +352,6 @@ function renderRadar(radar) {
   })
 
   grid.innerHTML = ''
-
   sorted.forEach(r => {
     const card = _createRadarCard(r)
     grid.appendChild(card)
@@ -622,108 +617,188 @@ function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
   if (!container) return null
 
   if (_tradeCharts[containerId]) {
-    try { _tradeCharts[containerId].chart.remove() } catch(e) {}
+    try { _tradeCharts[containerId].chart.destroy() } catch(e) {}
     delete _tradeCharts[containerId]
   }
 
-  const chart = LightweightCharts.createChart(container, {
-    width:  container.clientWidth || 600,
-    height: 280,
-    layout: {
-      background: { color: '#0d1117' },
-      textColor:  '#e6edf3',
-    },
-    grid: {
-      vertLines:   { color: '#21262d' },
-      horzLines:   { color: '#21262d' },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-    },
-    rightPriceScale: {
-      borderColor: '#21262d',
-    },
-    timeScale: {
-      borderColor:     '#21262d',
-      timeVisible:     true,
-      secondsVisible:  false,
-    },
-  })
+  container.innerHTML = ''
+  const canvas = document.createElement('canvas')
+  canvas.style.cssText = 'width:100%;height:100%'
+  container.appendChild(canvas)
+  const ctx = canvas.getContext('2d')
 
-  const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor:          '#34c759',
-    downColor:        '#ff3b30',
-    borderUpColor:    '#34c759',
-    borderDownColor:  '#ff3b30',
-    wickUpColor:      '#34c759',
-    wickDownColor:    '#ff3b30',
-  })
-
-  const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
-    color:        '#21262d',
-    priceFormat:  { type: 'volume' },
-    priceScaleId: 'volume',
-    scaleMargins: { top: 0.85, bottom: 0 },
-  })
-
-  const priceLinesMap = {}
+  const annotations = {}
 
   if (entry) {
-    priceLinesMap.entry = candleSeries.createPriceLine({
-      price:            entry,
-      color:            '#0071e3',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title:            `Entry ${entry.toFixed(4)}`,
-    })
+    annotations.entryLine = {
+      type:        'line',
+      yMin:        entry,
+      yMax:        entry,
+      borderColor: '#0071e3',
+      borderWidth: 1,
+      borderDash:  [4, 4],
+      label: {
+        display:         true,
+        content:         `Entry $${entry.toFixed(4)}`,
+        position:        'end',
+        color:           '#0071e3',
+        font:            { size: 9, weight: '600' },
+        padding:         3,
+        backgroundColor: 'rgba(0,113,227,0.15)',
+      }
+    }
   }
 
   if (sl) {
-    priceLinesMap.sl = candleSeries.createPriceLine({
-      price:            sl,
-      color:            '#ff3b30',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title:            `SL ${sl.toFixed(4)}`,
-    })
+    annotations.slLine = {
+      type:        'line',
+      yMin:        sl,
+      yMax:        sl,
+      borderColor: '#ff3b30',
+      borderWidth: 1,
+      borderDash:  [],
+      label: {
+        display:         true,
+        content:         `SL $${sl.toFixed(4)}`,
+        position:        'end',
+        color:           '#ff3b30',
+        font:            { size: 9, weight: '600' },
+        padding:         3,
+        backgroundColor: 'rgba(255,59,48,0.15)',
+      }
+    }
   }
 
   if (tp) {
-    priceLinesMap.tp = candleSeries.createPriceLine({
-      price:            tp,
-      color:            '#34c759',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title:            `TP ${tp.toFixed(4)}`,
-    })
+    annotations.tpLine = {
+      type:        'line',
+      yMin:        tp,
+      yMax:        tp,
+      borderColor: '#34c759',
+      borderWidth: 1,
+      borderDash:  [],
+      label: {
+        display:         true,
+        content:         `TP $${tp.toFixed(4)}`,
+        position:        'end',
+        color:           '#34c759',
+        font:            { size: 9, weight: '600' },
+        padding:         3,
+        backgroundColor: 'rgba(52,199,89,0.15)',
+      }
+    }
   }
 
-  priceLinesMap.current = candleSeries.createPriceLine({
-    price:            entry || 0,
-    color:            '#ff9500',
-    lineWidth:        1,
-    lineStyle:        LightweightCharts.LineStyle.Dotted,
-    axisLabelVisible: true,
-    title:            'Now',
+  annotations.nowLine = {
+    type:        'line',
+    yMin:        entry || 0,
+    yMax:        entry || 0,
+    borderColor: '#ff9500',
+    borderWidth: 1,
+    borderDash:  [2, 2],
+    label: {
+      display:         true,
+      content:         `Now $${(entry || 0).toFixed(4)}`,
+      position:        'start',
+      color:           '#ff9500',
+      font:            { size: 9, weight: '600' },
+      padding:         3,
+      backgroundColor: 'rgba(255,149,0,0.15)',
+    }
+  }
+
+  const chart = new Chart(ctx, {
+    type: 'candlestick',
+    data: { datasets: [] },
+    options: {
+      responsive:          true,
+      maintainAspectRatio: false,
+      animation:           false,
+      interaction:         { intersect: false, mode: 'index' },
+      layout: { padding: { top: 10, right: 60, bottom: 0, left: 0 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: 'rgba(13,17,23,0.95)',
+          titleColor:      '#e6edf3',
+          bodyColor:       '#8b949e',
+          borderColor:     '#30363d',
+          borderWidth:     1,
+          padding:         10,
+          cornerRadius:    8,
+          callbacks: {
+            title: items => {
+              if (!items[0]?.raw) return ''
+              return new Date(items[0].raw.x).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata', hour12: true,
+                day: '2-digit', month: 'short',
+                hour: '2-digit', minute: '2-digit'
+              }) + ' IST'
+            },
+            label: item => {
+              const d = item.raw
+              if (!d) return ''
+              if (d.o !== undefined) {
+                return [
+                  ` O: $${parseFloat(d.o).toFixed(4)}`,
+                  ` H: $${parseFloat(d.h).toFixed(4)}`,
+                  ` L: $${parseFloat(d.l).toFixed(4)}`,
+                  ` C: $${parseFloat(d.c).toFixed(4)}`,
+                ]
+              }
+              if (d.y !== undefined) return ` Vol: ${parseFloat(d.y).toLocaleString()}`
+              return ''
+            }
+          }
+        },
+        annotation: { annotations }
+      },
+      scales: {
+        x: {
+          type: 'timeseries',
+          ticks: {
+            maxTicksLimit: 6,
+            color:         '#8b949e',
+            font:          { size: 9 },
+            maxRotation:   0,
+          },
+          grid: { color: '#21262d' }
+        },
+        y: {
+          position: 'right',
+          ticks: {
+            color: '#8b949e',
+            font:  { size: 9 },
+            callback: v => '$' + parseFloat(v).toFixed(4)
+          },
+          grid: { color: '#21262d' }
+        },
+        volume: {
+          position: 'left',
+          ticks:    { display: false },
+          grid:     { display: false },
+        }
+      }
+    },
+    plugins: [{
+      id: 'darkBg',
+      beforeDraw: ch => {
+        const { ctx: c, chartArea } = ch
+        if (!chartArea) return
+        c.save()
+        c.fillStyle = '#0d1117'
+        c.fillRect(0, 0, ch.width, ch.height)
+        c.restore()
+      }
+    }]
   })
 
-  _tradeCharts[containerId] = {
-    chart,
-    candleSeries,
-    volumeSeries,
-    priceLinesMap,
-    coin,
-    tf
-  }
+  _tradeCharts[containerId] = { chart, coin, tf, entry, sl, tp }
 
   _loadChartData(containerId, coin, tf)
 
   return _tradeCharts[containerId]
 }
-
 
 async function _loadChartData(containerId, coin, tf) {
   try {
@@ -735,37 +810,73 @@ async function _loadChartData(containerId, coin, tf) {
     const chartObj = _tradeCharts[containerId]
     if (!chartObj) return
 
-    chartObj.candleSeries.setData(data.map(c => ({
-      time:  c.time,
-      open:  c.open,
-      high:  c.high,
-      low:   c.low,
-      close: c.close
-    })))
+    const candles = data.map(c => ({
+      x: c.time * 1000,
+      o: c.open,
+      h: c.high,
+      l: c.low,
+      c: c.close
+    }))
 
-    chartObj.volumeSeries.setData(data.map(c => ({
-      time:  c.time,
-      value: c.volume,
+    const volumes = data.map(c => ({
+      x:     c.time * 1000,
+      y:     c.volume,
       color: c.close >= c.open ? 'rgba(52,199,89,0.3)' : 'rgba(255,59,48,0.3)'
-    })))
+    }))
 
-    chartObj.chart.timeScale().fitContent()
+    const maxVol = Math.max(...data.map(c => c.volume))
+
+    chartObj.chart.data.datasets = [
+      {
+        type:  'candlestick',
+        label: coin,
+        data:  candles,
+        color: {
+          up:        '#34c759',
+          down:      '#ff3b30',
+          unchanged: '#8b949e'
+        },
+        borderColor: {
+          up:        '#34c759',
+          down:      '#ff3b30',
+          unchanged: '#8b949e'
+        },
+        yAxisID: 'y',
+        order:   1
+      },
+      {
+        type:            'bar',
+        label:           'Volume',
+        data:            volumes,
+        backgroundColor: volumes.map(v => v.color),
+        borderWidth:     0,
+        borderRadius:    2,
+        yAxisID:         'volume',
+        order:           2
+      }
+    ]
+
+    chartObj.chart.options.scales.volume.max = maxVol / 0.15
+    chartObj.chart.update('none')
 
   } catch(e) {
     console.error('Chart data load error:', e)
   }
 }
 
-
 function updateChartPrice(containerId, price) {
   const chartObj = _tradeCharts[containerId]
   if (!chartObj) return
-  if (!chartObj.priceLinesMap.current) return
   try {
-    chartObj.priceLinesMap.current.applyOptions({ price })
+    const annotations = chartObj.chart.options.plugins.annotation.annotations
+    if (annotations.nowLine) {
+      annotations.nowLine.yMin          = price
+      annotations.nowLine.yMax          = price
+      annotations.nowLine.label.content = `Now $${price.toFixed(4)}`
+      chartObj.chart.update('none')
+    }
   } catch(e) {}
 }
-
 
 function switchChartTf(containerId, coin, tf, entry, sl, tp) {
   const chartObj = _tradeCharts[containerId]
@@ -773,10 +884,8 @@ function switchChartTf(containerId, coin, tf, entry, sl, tp) {
 
   const btns = document.querySelectorAll(`[data-chart-btn="${containerId}"]`)
   btns.forEach(b => {
-    b.style.background = b.dataset.tf === tf
-      ? 'rgba(0,113,227,0.2)'
-      : 'rgba(0,0,0,0.1)'
-    b.style.color = b.dataset.tf === tf ? '#0071e3' : '#6e6e73'
+    b.style.background = b.dataset.tf === tf ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'
+    b.style.color      = b.dataset.tf === tf ? '#0071e3'              : '#8b949e'
   })
 
   chartObj.tf   = tf
