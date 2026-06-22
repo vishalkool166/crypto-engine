@@ -35,31 +35,19 @@ function applyFtUpdate(data) {
 
     if (Array.isArray(data.status)) {
       data.status.forEach(t => {
-        const current  = parseFloat(t.current_rate || 0)
-        const entry    = parseFloat(t.open_rate || 0)
         const pnl      = parseFloat(t.profit_abs || 0)
         const pnlPct   = parseFloat(t.profit_ratio || 0) * 100
         const pnlColor = pnl >= 0 ? '#248a3d' : '#c0392b'
         const pnlStr   = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(4)
         const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
-        const movePct  = entry > 0 ? ((current - entry) / entry * 100) : 0
-        const moveStr  = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
-        const moveColor = movePct >= 0 ? '#248a3d' : '#c0392b'
 
-        const card = $id(`ft-trade-${t.trade_id}`)
+        const card = document.getElementById(`ft-trade-${t.trade_id}`)
         if (card) {
-          const pnlEl     = card.querySelector('[data-pnl]')
-          const pnlPctEl  = card.querySelector('[data-pnl-pct]')
-          const curEl     = card.querySelector('[data-current]')
-          const moveEl    = card.querySelector('[data-move]')
-
-          if (pnlEl)    { pnlEl.textContent    = pnlStr;                        pnlEl.style.color    = pnlColor }
-          if (pnlPctEl) { pnlPctEl.textContent = pnlPctStr;                     pnlPctEl.style.color = pnlColor }
-          if (curEl)    { curEl.textContent     = '$' + current.toFixed(4);      curEl.style.color    = pnlColor }
-          if (moveEl)   { moveEl.textContent    = moveStr;                       moveEl.style.color   = moveColor }
+          const pnlEl    = card.querySelector('[data-pnl]')
+          const pnlPctEl = card.querySelector('[data-pnl-pct]')
+          if (pnlEl)    { pnlEl.textContent    = pnlStr;    pnlEl.style.color    = pnlColor }
+          if (pnlPctEl) { pnlPctEl.textContent = pnlPctStr; pnlPctEl.style.color = pnlColor }
         }
-
-        updateChartPrice(`chart-${t.trade_id}`, current)
       })
     }
   }
@@ -92,8 +80,8 @@ async function fetchDashboard() {
 
 
 function setApiStatus(ok) {
-  const dot  = $id('status-dot')
-  const text = $id('api-error-banner')
+  const dot  = document.getElementById('status-dot')
+  const text = document.getElementById('api-error-banner')
   if (dot)  dot.style.background = ok ? null : '#ff3b30'
   if (text) text.style.display   = ok ? 'none' : 'flex'
 }
@@ -103,7 +91,7 @@ async function triggerScan() {
   if (S.scanning) return
 
   S.scanning = true
-  const btn  = $id('scan-btn')
+  const btn  = document.getElementById('scan-btn')
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Scanning...' }
 
   renderStatusBar(S.data)
@@ -161,7 +149,7 @@ async function fetchCoinDetail(coin) {
 
 
 async function addCoin(coinOverride = null) {
-  const inp  = $id('coin-add-input')
+  const inp  = document.getElementById('coin-add-input')
   const coin = (coinOverride || (inp ? inp.value : '')).trim().toUpperCase().replace('USDT', '').replace('/', '')
   if (!coin) return
 
@@ -255,8 +243,8 @@ function stopFtPolling() {
 
 
 async function ftStartStop() {
-  const btn       = $id('ft-start-btn')
-  const badge     = $id('ft-status-badge')
+  const btn       = document.getElementById('ft-start-btn')
+  const badge     = document.getElementById('ft-status-badge')
   const isRunning = badge && badge.dataset.running === 'true'
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳...' }

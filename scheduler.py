@@ -21,36 +21,12 @@ async def job_scan():
         log.error(f"Scan job error: {e}")
 
 
-async def job_morning_briefing():
-    try:
-        from alerts.briefing import send_morning_briefing
-        await send_morning_briefing()
-    except Exception as e:
-        log.error(f"Morning briefing error: {e}")
-
-
-async def job_evening_briefing():
-    try:
-        from alerts.briefing import send_evening_briefing
-        await send_evening_briefing()
-    except Exception as e:
-        log.error(f"Evening briefing error: {e}")
-
-
 async def job_ml_check():
     try:
         from ml.eligibility import check_and_train_if_ready
         check_and_train_if_ready()
     except Exception as e:
         log.error(f"ML check job error: {e}")
-
-
-async def job_engagement_update():
-    try:
-        from content.publisher import update_all_engagement
-        await update_all_engagement()
-    except Exception as e:
-        log.error(f"Engagement update job error: {e}")
 
 
 async def job_sync_outcomes():
@@ -69,6 +45,14 @@ async def job_health_check():
         await run_health_checks()
     except Exception as e:
         log.error(f"Health check job error: {e}")
+
+
+async def job_purge_content():
+    try:
+        from content.approval_flow import purge_old_content
+        purge_old_content(days=7)
+    except Exception as e:
+        log.error(f"Content purge job error: {e}")
 
 
 def get_next_scan_time() -> str:
@@ -113,30 +97,9 @@ def start_scheduler():
     )
 
     scheduler.add_job(
-        job_morning_briefing,
-        trigger=CronTrigger(hour=8, minute=0, timezone="UTC"),
-        id="morning_briefing",
-        replace_existing=True
-    )
-
-    scheduler.add_job(
-        job_evening_briefing,
-        trigger=CronTrigger(hour=13, minute=0, timezone="UTC"),
-        id="evening_briefing",
-        replace_existing=True
-    )
-
-    scheduler.add_job(
         job_ml_check,
         trigger=IntervalTrigger(hours=1),
         id="ml_check",
-        replace_existing=True
-    )
-
-    scheduler.add_job(
-        job_engagement_update,
-        trigger=IntervalTrigger(hours=6),
-        id="engagement_update",
         replace_existing=True
     )
 
@@ -154,15 +117,21 @@ def start_scheduler():
         replace_existing=True
     )
 
+    scheduler.add_job(
+        job_purge_content,
+        trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id="purge_content",
+        replace_existing=True
+    )
+
     scheduler.start()
     log.info(
         f"Scheduler started — "
         f"scan::00/:15/:30/:45 — "
-        f"morning:08:00 UTC — "
-        f"evening:13:00 UTC — "
         f"health:1m — "
         f"sync:30m — "
         f"ml:1h — "
+        f"purge:03:00 UTC — "
         f"next scan:{get_next_scan_time()}"
     )
 

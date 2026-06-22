@@ -32,8 +32,8 @@ function renderFtHeader(balance, profit) {
 }
 
 function renderFtBotStatus(status, botState) {
-  const badge = $id('ft-status-badge')
-  const btn   = $id('ft-start-btn')
+  const badge = document.getElementById('ft-status-badge')
+  const btn   = document.getElementById('ft-start-btn')
   if (!badge) return
 
   const isRunning = botState === 'running'
@@ -66,7 +66,7 @@ function renderFtBotStatus(status, botState) {
 }
 
 function renderModeToggle(mode) {
-  const btn = $id('mode-toggle-btn')
+  const btn = document.getElementById('mode-toggle-btn')
   if (!btn) return
 
   const isLive          = mode === 'live'
@@ -76,6 +76,231 @@ function renderModeToggle(mode) {
   btn.style.color       = isLive ? '#ff3b30'               : '#0071e3'
   btn.style.borderColor = isLive ? 'rgba(255,59,48,0.2)'  : 'rgba(0,113,227,0.2)'
 }
+
+
+function _parseOpenDate(dateStr) {
+  if (!dateStr) return null
+  try {
+    const str = dateStr.toString().trim()
+    let dt
+
+    if (str.includes('T')) {
+      dt = new Date(str.endsWith('Z') ? str : str + '+00:00')
+    } else if (str.includes(' ')) {
+      dt = new Date(str.replace(' ', 'T') + '+00:00')
+    } else {
+      dt = new Date(str)
+    }
+
+    return isNaN(dt.getTime()) ? null : dt
+  } catch(e) {
+    return null
+  }
+}
+
+
+function _formatIST(dt) {
+  if (!dt) return '--'
+  try {
+    return dt.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour12:   true,
+      day:      '2-digit',
+      month:    'short',
+      hour:     '2-digit',
+      minute:   '2-digit'
+    }) + ' IST'
+  } catch(e) {
+    return '--'
+  }
+}
+
+
+function _formatDuration(dt) {
+  if (!dt) return '--'
+  try {
+    const diffMs   = Date.now() - dt.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    if (diffMins < 1)   return 'Just opened'
+    if (diffMins < 60)  return `${diffMins}m`
+    const hrs  = Math.floor(diffMins / 60)
+    const mins = diffMins % 60
+    if (hrs < 24) return `${hrs}h ${mins}m`
+    const days = Math.floor(hrs / 24)
+    const remH = hrs % 24
+    return `${days}d ${remH}h`
+  } catch(e) {
+    return '--'
+  }
+}
+
+
+function _fmtPrice(v) {
+  if (v === null || v === undefined || v === 0) return '--'
+  try {
+    const n = parseFloat(v)
+    if (isNaN(n)) return '--'
+    if (n >= 10000)  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (n >= 1000)   return '$' + n.toFixed(2)
+    if (n >= 100)    return '$' + n.toFixed(3)
+    if (n >= 1)      return '$' + n.toFixed(4)
+    if (n >= 0.1)    return '$' + n.toFixed(5)
+    if (n >= 0.01)   return '$' + n.toFixed(6)
+    if (n >= 0.001)  return '$' + n.toFixed(7)
+    return '$' + n.toFixed(8)
+  } catch(e) {
+    return '--'
+  }
+}
+
+
+function _buildSparkline(symbol) {
+  const history = getPriceHistory(symbol)
+  if (history.length < 2) {
+    return `<svg width="80" height="24" viewBox="0 0 80 24">
+      <line x1="0" y1="12" x2="80" y2="12" stroke="rgba(110,110,115,0.3)" stroke-width="1" stroke-dasharray="2,2"/>
+    </svg>`
+  }
+
+  const prices  = history.map(h => h.price)
+  const minP    = Math.min(...prices)
+  const maxP    = Math.max(...prices)
+  const range   = maxP - minP || 1
+  const w       = 80
+  const h       = 24
+  const pad     = 2
+
+  const points = prices.map((p, i) => {
+    const x = pad + (i / (prices.length - 1)) * (w - pad * 2)
+    const y = h - pad - ((p - minP) / range) * (h - pad * 2)
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+
+  const first = prices[0]
+  const last  = prices[prices.length - 1]
+  const color = last >= first ? '#34c759' : '#ff3b30'
+
+  const firstX = pad
+  const firstY = h - pad - ((first - minP) / range) * (h - pad * 2)
+  const lastX  = w - pad
+  const lastY  = h - pad - ((last - minP) / range) * (h - pad * 2)
+
+  const areaPoints = `${firstX},${h - pad} ${points} ${lastX},${h - pad}`
+
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <defs>
+      <linearGradient id="sg-${symbol}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.4"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0.05"/>
+      </linearGradient>
+    </defs>
+    <polygon points="${areaPoints}" fill="url(#sg-${symbol})"/>
+    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX}" cy="${lastY}" r="2.5" fill="${color}">
+      <animate attributeName="r" values="2;3.5;2" dur="1.5s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;0.6;1" dur="1.5s" repeatCount="indefinite"/>
+    </circle>
+  </svg>`
+}
+
+
+function _buildPriceLadder(entry, sl, tp, currentPrice, isLong) {
+  if (!entry || !sl || !tp) return ''
+
+  const allPrices  = [sl, entry, currentPrice || entry, tp]
+  const minPrice   = Math.min(...allPrices)
+  const maxPrice   = Math.max(...allPrices)
+  const priceRange = maxPrice - minPrice || 1
+
+  function priceToPct(price) {
+    return ((price - minPrice) / priceRange * 100).toFixed(2)
+  }
+
+  const tpPct      = parseFloat(priceToPct(tp))
+  const entryPct   = parseFloat(priceToPct(entry))
+  const slPct      = parseFloat(priceToPct(sl))
+  const currentPct = parseFloat(priceToPct(currentPrice || entry))
+
+  const inProfit   = currentPrice ? (isLong ? currentPrice > entry : currentPrice < entry) : false
+  const fillColor  = inProfit ? 'rgba(52,199,89,0.15)' : 'rgba(255,59,48,0.15)'
+  const fillBorder = inProfit ? 'rgba(52,199,89,0.4)'  : 'rgba(255,59,48,0.4)'
+
+  const slDist  = currentPrice ? Math.abs(currentPrice - sl)  : Math.abs(entry - sl)
+  const tpDist  = currentPrice ? Math.abs(tp - currentPrice)  : Math.abs(tp - entry)
+  const slDistPct = currentPrice ? (Math.abs(currentPrice - sl)  / currentPrice * 100).toFixed(2) : '0'
+  const tpDistPct = currentPrice ? (Math.abs(tp - currentPrice)  / currentPrice * 100).toFixed(2) : '0'
+
+  const totalRange    = Math.abs(tp - entry)
+  const currentMove   = currentPrice ? Math.abs(currentPrice - entry) : 0
+  const progressToTp  = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)).toFixed(0) : 0
+  const progressColor = inProfit ? '#34c759' : '#ff3b30'
+
+  const movePct    = currentPrice && entry ? ((isLong ? currentPrice - entry : entry - currentPrice) / entry * 100) : 0
+  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+  const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
+
+  return `
+    <div class="price-ladder">
+
+      <div class="price-ladder-row" style="top:${100 - tpPct}%">
+        <div class="price-ladder-label tp">
+          <span class="price-ladder-tag" style="background:rgba(52,199,89,0.15);color:#34c759;border-color:rgba(52,199,89,0.3)">🎯 TP</span>
+          <span class="price-ladder-value" style="color:#34c759">${_fmtPrice(tp)}</span>
+        </div>
+        <div class="price-ladder-line" style="background:#34c759"></div>
+        <div class="price-ladder-dist" style="color:#34c759">$${tpDist.toFixed(4)} away · ${tpDistPct}%</div>
+      </div>
+
+      <div class="price-ladder-fill" style="
+        top:${100 - Math.max(currentPct, entryPct)}%;
+        height:${Math.abs(currentPct - entryPct)}%;
+        background:${fillColor};
+        border-left:2px solid ${fillBorder};
+        border-right:2px solid ${fillBorder};
+      "></div>
+
+      <div class="price-ladder-row price-ladder-current" id="ladder-current" style="top:${100 - currentPct}%">
+        <div class="price-ladder-label current">
+          <span class="price-ladder-tag" style="background:rgba(255,149,0,0.15);color:#ff9500;border-color:rgba(255,149,0,0.3)">
+            ● NOW
+          </span>
+          <span class="price-ladder-value" style="color:#ff9500" data-current-price>${_fmtPrice(currentPrice || entry)}</span>
+          <span style="font-size:10px;font-weight:600;color:${moveColor};margin-left:4px" data-move-pct>${movePctStr}</span>
+        </div>
+        <div class="price-ladder-line price-ladder-line-current" style="background:#ff9500"></div>
+      </div>
+
+      <div class="price-ladder-row" style="top:${100 - entryPct}%">
+        <div class="price-ladder-label entry">
+          <span class="price-ladder-tag" style="background:rgba(0,113,227,0.15);color:#0071e3;border-color:rgba(0,113,227,0.3)">⚡ ENTRY</span>
+          <span class="price-ladder-value" style="color:#0071e3">${_fmtPrice(entry)}</span>
+        </div>
+        <div class="price-ladder-line" style="background:#0071e3;opacity:0.6;border-top:1px dashed #0071e3"></div>
+      </div>
+
+      <div class="price-ladder-row" style="top:${100 - slPct}%">
+        <div class="price-ladder-label sl">
+          <span class="price-ladder-tag" style="background:rgba(255,59,48,0.15);color:#ff3b30;border-color:rgba(255,59,48,0.3)">🛡 SL</span>
+          <span class="price-ladder-value" style="color:#ff3b30">${_fmtPrice(sl)}</span>
+        </div>
+        <div class="price-ladder-line" style="background:#ff3b30"></div>
+        <div class="price-ladder-dist" style="color:#ff3b30">$${slDist.toFixed(4)} away · ${slDistPct}%</div>
+      </div>
+
+      <div class="price-ladder-progress">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:10px;color:#6e6e73">Progress to TP</span>
+          <span style="font-size:10px;font-weight:700;color:${progressColor}">${progressToTp}%</span>
+        </div>
+        <div style="height:4px;background:rgba(0,0,0,0.08);border-radius:100px;overflow:hidden">
+          <div style="height:100%;width:${progressToTp}%;background:${progressColor};border-radius:100px;transition:width 0.5s ease"></div>
+        </div>
+      </div>
+
+    </div>
+  `
+}
+
 
 function _buildTradeCardHTML(t) {
   const isLong    = !t.is_short
@@ -88,27 +313,17 @@ function _buildTradeCardHTML(t) {
   const pnlPctStr = (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%'
   const pair      = t.pair || '--'
   const coin      = pair.replace('/USDT:USDT', '').replace('/USDT', '')
+  const symbol    = coin + 'USDT'
   const entry     = parseFloat(t.open_rate || 0)
-  const current   = parseFloat(t.current_rate || 0)
+  const current   = parseFloat(t.current_rate || entry)
   const sl        = t.sl_signal ? parseFloat(t.sl_signal) : parseFloat(t.stop_loss_abs || 0)
   const stake     = parseFloat(t.stake_amount || 0)
   const leverage  = t.leverage || 1
   const tp        = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : null
 
-  const fmtP = v => v ? '$' + parseFloat(v).toFixed(4) : '--'
-
-  const movePct    = entry > 0 ? ((current - entry) / entry * 100) : 0
-  const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
-  const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
-
-  const distSl    = Math.abs(current - sl)
-  const distSlPct = current > 0 ? (distSl / current * 100).toFixed(2) : '0'
-
-  const openDate = t.open_date ? new Date(t.open_date).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata', hour12: true,
-    day: '2-digit', month: 'short',
-    hour: '2-digit', minute: '2-digit'
-  }) + ' IST' : '--'
+  const openDt   = _parseOpenDate(t.open_date)
+  const openIST  = _formatIST(openDt)
+  const duration = _formatDuration(openDt)
 
   const health         = t.health || null
   const healthState    = health ? health.state : null
@@ -123,57 +338,73 @@ function _buildTradeCardHTML(t) {
     ? healthWarnings[0]
     : ''
 
+  const priceLadder = tp ? _buildPriceLadder(entry, sl, tp, current, isLong) : ''
+  const sparkline   = _buildSparkline(symbol)
+
   return `
-    <div class="glass-strong rounded-apple overflow-hidden trade-card" id="ft-trade-${t.trade_id}">
+    <div class="trade-card glass-strong rounded-apple overflow-hidden" id="ft-trade-${t.trade_id}" data-symbol="${symbol}" data-entry="${entry}" data-sl="${sl}" data-tp="${tp || 0}" data-islong="${isLong}">
+
       <div style="padding:14px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
-            <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
-              ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
-            </span>
-            <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
-              #${t.trade_id} · ${leverage}x
-            </span>
-            <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;color:${healthColor};background:${healthColor}15;border:1px solid ${healthColor}40">
-              ${healthEmoji} ${healthLabel}
-            </span>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+              <span style="font-size:20px;font-weight:700;color:${dirColor}">${coin}</span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;color:${dirColor};background:${dirColor}15;border:1px solid ${dirColor}40">
+                ${dirEmoji} ${isLong ? 'LONG' : 'SHORT'}
+              </span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500;background:rgba(0,0,0,0.05);color:#6e6e73">
+                #${t.trade_id} · ${leverage}x
+              </span>
+              <span style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;color:${healthColor};background:${healthColor}15;border:1px solid ${healthColor}40">
+                ${healthEmoji} ${healthLabel}
+              </span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div>
+                <div data-pnl style="font-size:22px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
+                <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
+              </div>
+              <div style="font-size:11px;color:#6e6e73;line-height:1.8">
+                <div>Open <strong style="color:#1d1d1f">${duration}</strong></div>
+                <div style="font-size:10px">${openIST}</div>
+              </div>
+            </div>
           </div>
-          <div style="text-align:right">
-            <div data-pnl style="font-size:26px;font-weight:700;font-family:monospace;color:${pnlColor}">${pnlStr}</div>
-            <div data-pnl-pct style="font-size:11px;font-family:monospace;color:${pnlColor}">${pnlPctStr}</div>
+          <div style="flex-shrink:0;opacity:0.9" id="sparkline-${t.trade_id}">
+            ${sparkline}
           </div>
         </div>
+
         ${healthDetail ? `
         <div style="margin-top:8px;padding:6px 10px;border-radius:8px;background:${healthColor}10;border:1px solid ${healthColor}25;font-size:11px;color:${healthColor}">
           ${healthState === 'INVALIDATED' ? '✘' : '⚠'} ${healthDetail}
         </div>` : ''}
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid rgba(0,0,0,0.06)">
-        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-          <div class="section-label" style="margin-bottom:4px">Current</div>
-          <div data-current style="font-weight:600;font-family:monospace;font-size:13px;color:${pnlColor}">${fmtP(current)}</div>
-          <div data-move style="font-size:10px;margin-top:2px;font-family:monospace;color:${moveColor}">${movePctStr}</div>
+      ${priceLadder ? `
+      <div style="padding:16px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        ${priceLadder}
+      </div>` : `
+      <div style="padding:12px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          <div style="background:rgba(0,0,0,0.04);border-radius:8px;padding:10px">
+            <div class="section-label" style="margin-bottom:4px">Entry</div>
+            <div style="font-family:monospace;font-weight:600;font-size:12px;color:#0071e3">${_fmtPrice(entry)}</div>
+          </div>
+          <div style="background:rgba(0,0,0,0.04);border-radius:8px;padding:10px">
+            <div class="section-label" style="margin-bottom:4px">Current</div>
+            <div data-current-price style="font-family:monospace;font-weight:600;font-size:12px;color:${pnlColor}">${_fmtPrice(current)}</div>
+          </div>
+          <div style="background:rgba(0,0,0,0.04);border-radius:8px;padding:10px">
+            <div class="section-label" style="margin-bottom:4px">Stop</div>
+            <div style="font-family:monospace;font-weight:600;font-size:12px;color:#ff3b30">${_fmtPrice(sl)}</div>
+          </div>
         </div>
-        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-          <div class="section-label" style="margin-bottom:4px">Entry</div>
-          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#0071e3">${fmtP(entry)}</div>
-        </div>
-        <div style="padding:10px 12px;border-right:1px solid rgba(0,0,0,0.06)">
-          <div class="section-label" style="margin-bottom:4px">Stop Loss</div>
-          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#ff3b30">${fmtP(sl)}</div>
-          <div style="font-size:10px;margin-top:2px;color:#6e6e73">${distSlPct}% away</div>
-        </div>
-        <div style="padding:10px 12px">
-          <div class="section-label" style="margin-bottom:4px">${tp ? 'TP' : 'Stake'}</div>
-          <div style="font-weight:600;font-family:monospace;font-size:13px;color:#34c759">${tp ? fmtP(tp) : '$' + stake.toFixed(2)}</div>
-        </div>
-      </div>
+      </div>`}
 
       ${health && (healthFailures.length > 1 || healthWarnings.length > 0) ? `
       <div style="padding:10px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-        <div class="section-label" style="margin-bottom:6px">Trade Health</div>
+        <div class="section-label" style="margin-bottom:6px">Health Detail</div>
         <div style="font-size:11px;line-height:1.8">
           ${healthFailures.map(f => `<div style="color:#ff3b30">✘ ${f}</div>`).join('')}
           ${healthWarnings.slice(0,3).map(w => `<div style="color:#e8820c">⚠ ${w}</div>`).join('')}
@@ -181,24 +412,10 @@ function _buildTradeCardHTML(t) {
         </div>
       </div>` : ''}
 
-      <div style="padding:12px 18px;border-bottom:1px solid rgba(0,0,0,0.06)">
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">
-          ${['15m','1h','4h','1d'].map(tf => `
-            <button
-              data-chart-btn="chart-${t.trade_id}"
-              data-tf="${tf}"
-              onclick="switchChartTf('chart-${t.trade_id}','${coin}','${tf}',${entry},${sl},${tp || 0})"
-              style="padding:3px 10px;border-radius:100px;font-size:11px;font-weight:600;cursor:pointer;border:1px solid rgba(0,0,0,0.1);transition:all 0.15s;background:${tf === '4h' ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'};color:${tf === '4h' ? '#0071e3' : '#6e6e73'}">
-              ${tf}
-            </button>`).join('')}
-        </div>
-        <div id="chart-${t.trade_id}" style="width:100%;height:280px;border-radius:8px;overflow:hidden;background:#0d1117"></div>
-      </div>
-
       <div style="padding:10px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div style="font-size:11px;color:#6e6e73">
-          Opened: <strong style="color:#1d1d1f">${openDate}</strong>
-          · Stake: <strong style="color:#1d1d1f">$${stake.toFixed(2)}</strong>
+          Stake: <strong style="color:#1d1d1f">$${stake.toFixed(2)}</strong>
+          · Leverage: <strong style="color:#1d1d1f">${leverage}x</strong>
         </div>
         <button
           onclick="ftForceSell(${t.trade_id})"
@@ -206,14 +423,97 @@ function _buildTradeCardHTML(t) {
           🔴 Force Sell
         </button>
       </div>
+
     </div>
   `
 }
 
+
+function updateTradeCardPrice(symbol, price) {
+  const cards = document.querySelectorAll(`[data-symbol="${symbol}"]`)
+  cards.forEach(card => {
+    const entry  = parseFloat(card.dataset.entry || 0)
+    const sl     = parseFloat(card.dataset.sl || 0)
+    const tp     = parseFloat(card.dataset.tp || 0)
+    const isLong = card.dataset.islong === 'true'
+
+    const inProfit   = isLong ? price > entry : price < entry
+    const priceColor = inProfit ? '#248a3d' : '#c0392b'
+    const movePct    = entry > 0 ? ((isLong ? price - entry : entry - price) / entry * 100) : 0
+    const movePctStr = (movePct >= 0 ? '+' : '') + movePct.toFixed(2) + '%'
+    const moveColor  = movePct >= 0 ? '#248a3d' : '#c0392b'
+
+    const priceEls = card.querySelectorAll('[data-current-price]')
+    priceEls.forEach(el => {
+      el.textContent = _fmtPrice(price)
+      el.style.color = priceColor
+    })
+
+    const moveEls = card.querySelectorAll('[data-move-pct]')
+    moveEls.forEach(el => {
+      el.textContent = movePctStr
+      el.style.color = moveColor
+    })
+
+    const tradeId   = card.id.replace('ft-trade-', '')
+    const sparkEl   = document.getElementById(`sparkline-${tradeId}`)
+    if (sparkEl) sparkEl.innerHTML = _buildSparkline(symbol)
+
+    if (tp) {
+      const totalRange   = Math.abs(tp - entry)
+      const currentMove  = Math.abs(price - entry)
+      const progressToTp = totalRange > 0 ? Math.min(100, (currentMove / totalRange * 100)).toFixed(0) : 0
+      const progColor    = inProfit ? '#34c759' : '#ff3b30'
+
+      const progBar = card.querySelector('.price-ladder-progress div div')
+      if (progBar) {
+        progBar.style.width      = progressToTp + '%'
+        progBar.style.background = progColor
+      }
+
+      const progPct = card.querySelector('.price-ladder-progress span:last-child')
+      if (progPct) {
+        progPct.textContent = progressToTp + '%'
+        progPct.style.color = progColor
+      }
+
+      const fillEl = card.querySelector('.price-ladder-fill')
+      if (fillEl) {
+        const allPrices  = [sl, entry, price, tp]
+        const minPrice   = Math.min(...allPrices)
+        const maxPrice   = Math.max(...allPrices)
+        const priceRange = maxPrice - minPrice || 1
+
+        const entryPct   = (entry   - minPrice) / priceRange * 100
+        const currentPct = (price   - minPrice) / priceRange * 100
+        const fillColor  = inProfit ? 'rgba(52,199,89,0.15)'  : 'rgba(255,59,48,0.15)'
+        const fillBorder = inProfit ? 'rgba(52,199,89,0.4)'   : 'rgba(255,59,48,0.4)'
+
+        fillEl.style.top        = (100 - Math.max(currentPct, entryPct)) + '%'
+        fillEl.style.height     = Math.abs(currentPct - entryPct) + '%'
+        fillEl.style.background = fillColor
+        fillEl.style.borderLeft = `2px solid ${fillBorder}`
+        fillEl.style.borderRight= `2px solid ${fillBorder}`
+      }
+
+      const currentRow = card.querySelector('.price-ladder-current')
+      if (currentRow) {
+        const allPrices  = [sl, entry, price, tp]
+        const minPrice   = Math.min(...allPrices)
+        const maxPrice   = Math.max(...allPrices)
+        const priceRange = maxPrice - minPrice || 1
+        const currentPct = (price - minPrice) / priceRange * 100
+        currentRow.style.top = (100 - currentPct) + '%'
+      }
+    }
+  })
+}
+
+
 function renderFtTrades(trades) {
-  const empty = $id('ft-trades-empty')
-  const grid  = $id('ft-trades-grid')
-  const count = $id('ft-trade-count')
+  const empty = document.getElementById('ft-trades-empty')
+  const grid  = document.getElementById('ft-trades-grid')
+  const count = document.getElementById('ft-trade-count')
   if (!grid) return
 
   if (!trades || !Array.isArray(trades) || trades.length === 0) {
@@ -221,10 +521,7 @@ function renderFtTrades(trades) {
     grid.classList.add('hidden')
     grid.innerHTML = ''
     if (count) count.textContent = 'via Freqtrade · 0 open'
-    Object.keys(_tradeCharts).forEach(id => {
-      try { _tradeCharts[id].chart.remove() } catch(e) {}
-      delete _tradeCharts[id]
-    })
+    stopAllBinanceWs()
     return
   }
 
@@ -236,24 +533,26 @@ function renderFtTrades(trades) {
   const existingIds = [...grid.querySelectorAll('[id^="ft-trade-"]')]
     .map(el => el.id.replace('ft-trade-', '')).sort().join(',')
 
+  const activeSymbols = trades.map(t =>
+    (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '') + 'USDT'
+  )
+
+  Object.keys(window._binanceWsSockets || {}).forEach(key => {
+    const sym = key.replace('usdt', 'USDT').toUpperCase()
+    if (!activeSymbols.includes(sym)) stopBinanceTickerWs(sym)
+  })
+
   if (newIds !== existingIds) {
-    Object.keys(_tradeCharts).forEach(id => {
-      try { _tradeCharts[id].chart.remove() } catch(e) {}
-      delete _tradeCharts[id]
-    })
-
     grid.innerHTML = trades.map(t => _buildTradeCardHTML(t)).join('')
-
-    trades.forEach(t => {
-      const coin        = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
-      const entry       = parseFloat(t.open_rate || 0)
-      const sl          = t.sl_signal ? parseFloat(t.sl_signal) : parseFloat(t.stop_loss_abs || 0)
-      const tp          = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : 0
-      const containerId = `chart-${t.trade_id}`
-      setTimeout(() => _createTradeChart(containerId, coin, '4h', entry, sl, tp), 100)
-    })
   }
+
+  trades.forEach(t => {
+    const coin   = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
+    const symbol = coin + 'USDT'
+    startBinanceTickerWs(symbol)
+  })
 }
+
 
 function renderFtProfit(profit) {
   if (!profit) return
@@ -275,11 +574,12 @@ function renderFtProfit(profit) {
   $set('ft-worst-trade', { text: worst.toFixed(2) + '%',        color: '#c0392b' })
 }
 
+
 function renderStatusBar(d) {
-  const dot  = $id('status-dot')
-  const text = $id('status-text')
-  const sub  = $id('status-sub')
-  const lst  = $id('last-scan-time')
+  const dot  = document.getElementById('status-dot')
+  const text = document.getElementById('status-text')
+  const sub  = document.getElementById('status-sub')
+  const lst  = document.getElementById('last-scan-time')
 
   if (S.scanning) {
     if (dot)  dot.style.background = '#0071e3'
@@ -302,8 +602,9 @@ function renderStatusBar(d) {
   }
 }
 
+
 function renderRadar(radar) {
-  const grid = $id('radar-grid')
+  const grid = document.getElementById('radar-grid')
   if (!grid) return
 
   if (!radar || !radar.length) {
@@ -331,19 +632,21 @@ function renderRadar(radar) {
     grid.appendChild(card)
   })
 
-  const upd = $id('radar-updated')
+  const upd = document.getElementById('radar-updated')
   if (upd) upd.textContent = 'Updated ' + _nowIST()
 }
+
 
 function _createRadarCard(r) {
   const div = document.createElement('div')
   div.id        = `radar-${r.coin}`
   div.className = 'radar-card glass rounded-apple-sm'
-  div.style.cssText = `padding:12px;position:relative;overflow:hidden;border-top:3px solid ${r.grade_color}`
+  div.style.cssText = `padding:12px;position:relative;overflow:hidden;border-top:3px solid ${r.grade_color};cursor:pointer`
   div.onclick   = () => showCoinDetail(r.coin)
   _updateRadarCard(div, r)
   return div
 }
+
 
 function _updateRadarCard(el, r) {
   el.style.borderTopColor = r.grade_color
@@ -359,7 +662,7 @@ function _updateRadarCard(el, r) {
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between">
       <span style="font-size:10px;font-weight:700;color:${r.grade_color}">${r.grade} · ${r.score}</span>
-      <span style="font-size:10px;font-family:monospace;color:${r.change_color}">${r.change}</span>
+            <span style="font-size:10px;font-family:monospace;color:${r.change_color}">${r.change}</span>
     </div>
     <div style="font-size:10px;font-family:monospace;color:#6e6e73;margin-top:2px">${r.price}</div>
     ${r.confidence ? `<div style="font-size:10px;margin-top:2px;color:${r.grade_color}80">${r.confidence}</div>` : ''}
@@ -367,14 +670,16 @@ function _updateRadarCard(el, r) {
   `
 }
 
+
 function _nowIST() {
   return new Date().toLocaleTimeString('en-IN', {
     hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata'
   }) + ' IST'
 }
 
+
 function renderSignalQueue(queue) {
-  const wrap = $id('signal-queue')
+  const wrap = document.getElementById('signal-queue')
   if (!wrap) return
 
   if (!queue || !queue.length) {
@@ -422,6 +727,7 @@ function renderSignalQueue(queue) {
   `).join('')
 }
 
+
 function renderPerformance(p) {
   if (!p) return
   $set('perf-wr',       { text: p.win_rate,      color: p.win_rate_color })
@@ -445,8 +751,9 @@ function renderPerformance(p) {
   $set('b-detail',      { text: p.b_detail || '0W · 0L · 0 trades · paper only' })
 }
 
+
 function renderHistory(history) {
-  const list = $id('history-list')
+  const list = document.getElementById('history-list')
   if (!list) return
 
   if (!history || !history.length) {
@@ -475,9 +782,10 @@ function renderHistory(history) {
   }).join('')
 }
 
+
 function renderCoinUniverse(coins) {
-  const wrap  = $id('coin-universe-pills')
-  const count = $id('coin-count')
+  const wrap  = document.getElementById('coin-universe-pills')
+  const count = document.getElementById('coin-count')
   if (!wrap) return
 
   if (!coins || !coins.length) {
@@ -515,10 +823,11 @@ function renderCoinUniverse(coins) {
   }).join('')
 }
 
+
 function showCoinPillDetail(c) {
-  const title   = $id('modal-title')
-  const body    = $id('modal-body')
-  const overlay = $id('modal-overlay')
+  const title   = document.getElementById('modal-title')
+  const body    = document.getElementById('modal-body')
+  const overlay = document.getElementById('modal-overlay')
 
   const gc     = c.grade_color || '#6e6e73'
   const volStr = c.volume_24h
@@ -582,168 +891,4 @@ function showCoinPillDetail(c) {
 
   overlay.classList.remove('hidden')
   overlay.classList.add('flex')
-}
-
-const _tradeCharts = {}
-
-function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
-  const container = document.getElementById(containerId)
-  if (!container) return null
-
-  if (_tradeCharts[containerId]) {
-    try { _tradeCharts[containerId].chart.remove() } catch(e) {}
-    delete _tradeCharts[containerId]
-  }
-
-  const chart = LightweightCharts.createChart(container, {
-    width:  container.clientWidth || 600,
-    height: 280,
-    layout: {
-      background: { color: '#0d1117' },
-      textColor:  '#e6edf3',
-    },
-    grid: {
-      vertLines: { color: '#21262d' },
-      horzLines: { color: '#21262d' },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-    },
-    rightPriceScale: {
-      borderColor: '#21262d',
-    },
-    timeScale: {
-      borderColor:    '#21262d',
-      timeVisible:    true,
-      secondsVisible: false,
-    },
-  })
-
-  const candleSeries = chart.addCandlestickSeries({
-    upColor:         '#34c759',
-    downColor:       '#ff3b30',
-    borderUpColor:   '#34c759',
-    borderDownColor: '#ff3b30',
-    wickUpColor:     '#34c759',
-    wickDownColor:   '#ff3b30',
-  })
-
-  const volumeSeries = chart.addHistogramSeries({
-    color:        '#21262d',
-    priceFormat:  { type: 'volume' },
-    priceScaleId: 'volume',
-    scaleMargins: { top: 0.85, bottom: 0 },
-  })
-
-  const priceLinesMap = {}
-
-  if (entry) {
-    priceLinesMap.entry = candleSeries.createPriceLine({
-      price:            entry,
-      color:            '#0071e3',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Dashed,
-      axisLabelVisible: true,
-      title:            `Entry ${entry.toFixed(4)}`,
-    })
-  }
-
-  if (sl) {
-    priceLinesMap.sl = candleSeries.createPriceLine({
-      price:            sl,
-      color:            '#ff3b30',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title:            `SL ${sl.toFixed(4)}`,
-    })
-  }
-
-  if (tp) {
-    priceLinesMap.tp = candleSeries.createPriceLine({
-      price:            tp,
-      color:            '#34c759',
-      lineWidth:        1,
-      lineStyle:        LightweightCharts.LineStyle.Solid,
-      axisLabelVisible: true,
-      title:            `TP ${tp.toFixed(4)}`,
-    })
-  }
-
-  priceLinesMap.current = candleSeries.createPriceLine({
-    price:            entry || 0,
-    color:            '#ff9500',
-    lineWidth:        1,
-    lineStyle:        LightweightCharts.LineStyle.Dotted,
-    axisLabelVisible: true,
-    title:            'Now',
-  })
-
-  _tradeCharts[containerId] = {
-    chart,
-    candleSeries,
-    volumeSeries,
-    priceLinesMap,
-    coin,
-    tf
-  }
-
-  _loadChartData(containerId, coin, tf)
-
-  return _tradeCharts[containerId]
-}
-
-async function _loadChartData(containerId, coin, tf) {
-  try {
-    const res = await fetch(`/api/candles/${coin}/${tf}`)
-    if (!res.ok) return
-    const data = await res.json()
-    if (!data || !data.length) return
-
-    const chartObj = _tradeCharts[containerId]
-    if (!chartObj) return
-
-    chartObj.candleSeries.setData(data.map(c => ({
-      time:  c.time,
-      open:  c.open,
-      high:  c.high,
-      low:   c.low,
-      close: c.close
-    })))
-
-    chartObj.volumeSeries.setData(data.map(c => ({
-      time:  c.time,
-      value: c.volume,
-      color: c.close >= c.open ? 'rgba(52,199,89,0.3)' : 'rgba(255,59,48,0.3)'
-    })))
-
-    chartObj.chart.timeScale().fitContent()
-
-  } catch(e) {
-    console.error('Chart data load error:', e)
-  }
-}
-
-function updateChartPrice(containerId, price) {
-  const chartObj = _tradeCharts[containerId]
-  if (!chartObj) return
-  if (!chartObj.priceLinesMap.current) return
-  try {
-    chartObj.priceLinesMap.current.applyOptions({ price })
-  } catch(e) {}
-}
-
-function switchChartTf(containerId, coin, tf, entry, sl, tp) {
-  const chartObj = _tradeCharts[containerId]
-  if (!chartObj) return
-
-  const btns = document.querySelectorAll(`[data-chart-btn="${containerId}"]`)
-  btns.forEach(b => {
-    b.style.background = b.dataset.tf === tf ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'
-    b.style.color      = b.dataset.tf === tf ? '#0071e3'              : '#6e6e73'
-  })
-
-  chartObj.tf   = tf
-  chartObj.coin = coin
-  _loadChartData(containerId, coin, tf)
 }

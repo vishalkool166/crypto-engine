@@ -5,6 +5,10 @@ const WS_DASHBOARD_URL = `${window.location.origin.replace('https','wss').replac
 let _dashSocket    = null
 let _dashReconnect = null
 
+const _binanceWsSockets = {}
+const _priceHistory     = {}
+const MAX_PRICE_POINTS  = 60
+
 
 function startDashboardSocket() {
   if (_dashSocket && (_dashSocket.readyState === WebSocket.CONNECTING || _dashSocket.readyState === WebSocket.OPEN)) return
@@ -75,4 +79,78 @@ function _cleanupDash() {
     _dashSocket.close()
     _dashSocket = null
   }
+}
+
+
+function startBinanceTickerWs(symbol) {
+  const key = symbol.toLowerCase()
+
+  if (_binanceWsSockets[key]) return
+
+  const url = `wss://fstream.binance.com/ws/${key}@aggTrade`
+  const ws  = new WebSocket(url)
+
+  ws.onopen = () => {
+    console.log(`Binance WS connected: ${symbol}`)
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const d     = JSON.parse(event.data)
+      const price = parseFloat(d.p)
+      const time  = d.T
+
+      if (!price || !time) return
+
+      if (!_priceHistory[key]) _priceHistory[key] = []
+
+      _priceHistory[key].push({ time, price })
+
+      if (_priceHistory[key].length > MAX_PRICE_POINTS) {
+        _priceHistory[key].shift()
+      }
+
+      updateTradeCardPrice(symbol, price)
+
+    } catch(e) {}
+  }
+
+  ws.onclose = () => {
+    delete _binanceWsSockets[key]
+    setTimeout(() => startBinanceTickerWs(symbol), 5000)
+  }
+
+  ws.onerror = () => {
+    ws.close()
+  }
+
+  _binanceWsSockets[key] = ws
+}
+
+
+function stopBinanceTickerWs(symbol) {
+  const key = symbol.toLowerCase()
+  if (_binanceWsSockets[key]) {
+    _binanceWsSockets[key].onclose = null
+    _binanceWsSockets[key].close()
+    delete _binanceWsSockets[key]
+  }
+  delete _priceHistory[key]
+}
+
+
+function stopAllBinanceWs() {
+  Object.keys(_binanceWsSockets).forEach(key => {
+    try {
+      _binanceWsSockets[key].onclose = null
+      _binanceWsSockets[key].close()
+    } catch(e) {}
+  })
+  Object.keys(_binanceWsSockets).forEach(k => delete _binanceWsSockets[k])
+  Object.keys(_priceHistory).forEach(k => delete _priceHistory[k])
+}
+
+
+function getPriceHistory(symbol) {
+  return _priceHistory[symbol.toLowerCase()] || []
 }

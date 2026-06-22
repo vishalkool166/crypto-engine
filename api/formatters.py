@@ -49,10 +49,13 @@ def fmt_price(n) -> str:
         return "--"
     try:
         n = float(n)
-        if n >= 1000:  return f"${n:,.2f}"
-        if n >= 100:   return f"${n:.2f}"
+        if n >= 10000: return f"${n:,.2f}"
+        if n >= 1000:  return f"${n:.2f}"
+        if n >= 100:   return f"${n:.3f}"
         if n >= 1:     return f"${n:.4f}"
+        if n >= 0.1:   return f"${n:.5f}"
         if n >= 0.01:  return f"${n:.6f}"
+        if n >= 0.001: return f"${n:.7f}"
         return f"${n:.8f}"
     except Exception:
         return "--"
@@ -85,8 +88,16 @@ def fmt_duration(opened_at) -> str:
         return "--"
     try:
         if isinstance(opened_at, str):
-            opened_at = datetime.fromisoformat(opened_at.replace("Z", "+00:00"))
-        diff       = datetime.now(timezone.utc) - opened_at.replace(tzinfo=timezone.utc)
+            s = opened_at.strip()
+            if 'T' in s:
+                s = s if s.endswith('Z') or '+' in s[10:] else s + '+00:00'
+                s = s.replace('Z', '+00:00')
+            else:
+                s = s.replace(' ', 'T') + '+00:00'
+            opened_at = datetime.fromisoformat(s)
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        diff       = datetime.now(timezone.utc) - opened_at
         total_mins = int(diff.total_seconds() / 60)
         hrs        = total_mins // 60
         mins       = total_mins % 60
@@ -358,7 +369,7 @@ def build_radar_data(results: list) -> list:
             "confidence":     expl.get("confidence_label", ""),
             "ml_probability": ml_prob,
             "actual_rr":      r.get("actual_rr", 0),
-            "tp_mult":        r.get("tp_mult", 2.0),
+            "tp_mult":        r.get("tp_mult", 1.5),
         })
 
     return radar
@@ -401,7 +412,7 @@ def build_signal_queue(results: list) -> list:
             "no_trade_reason":  expl.get("no_trade_reason", ""),
             "ml_probability":   r.get("ml_probability"),
             "actual_rr":        r.get("actual_rr", 0),
-            "tp_mult":          r.get("tp_mult", 2.0),
+            "tp_mult":          r.get("tp_mult", 1.5),
         })
 
     return queue

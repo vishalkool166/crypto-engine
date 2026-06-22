@@ -218,8 +218,7 @@ async def lifespan(app: FastAPI):
         f"Coins:    `{len(cfg.COINS)} coins`\n"
         f"Grades:   `{grades}`\n"
         f"Webhook:  `✅ Active`\n"
-        f"Scan:     `every :00/:15/:30/:45 UTC`\n"
-        f"Briefing: `08:00 UTC (London) · 13:00 UTC (NY)`\n\n"
+        f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
 

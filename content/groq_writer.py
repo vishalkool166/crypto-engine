@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from database import SessionLocal, Signal as SignalModel
 
 log = logging.getLogger(__name__)
@@ -8,24 +9,26 @@ log = logging.getLogger(__name__)
 _SIGNAL_PROMPT = """You are a crypto trading analyst writing for Twitter/X for Signal Engine v5.
 
 RULES:
-- Maximum 280 characters for twitter_draft
+- Maximum 270 characters total including hashtags
 - Be specific — use actual prices, grades, scores from the signal
-- No financial advice disclaimers in the post
+- No financial advice disclaimers
 - No "I" statements
 - Include coin, direction, key level, and why it matters
-- End with 2-3 relevant hashtags
-- long_draft is 500-800 characters with full thesis and key levels
+- End with exactly 3 relevant hashtags on a new line
+- Pick the most fitting tone based on signal context: professional, educational, humor, witty, or quirky
+- Make it feel human, not robotic
+- One single finalized post — no drafts, no versions
 
-TONE INSTRUCTIONS:
+TONE GUIDE:
 - professional: factual, data-driven, concise, hedge fund analyst voice
-- educational: explain the setup for beginners, use simple analogies, teach while informing
-- humor: witty, slightly sarcastic, crypto twitter native voice, punchy one-liners, still includes real data. Examples: "BTC just hunted every stop below $60k and now wants to moon. Classic. Entry 61200 SL 59800. #Bitcoin" or "Smart money swept the lows, grabbed liquidity, now acting surprised it bounced. Entry confirmed. #Crypto"
+- educational: explain the setup for beginners, use simple analogies
+- humor: dry wit, sarcastic, crypto twitter native, punchy one-liners
+- witty: clever wordplay, sharp observation, still includes real data
+- quirky: unexpected angle, personality-driven, memorable
 
 OUTPUT FORMAT (JSON only, no other text):
 {
-  "twitter_draft": "...",
-  "long_draft": "...",
-  "hashtags": ["#BTC", "#CryptoTrading"],
+  "post": "...",
   "tone_used": "professional"
 }"""
 
@@ -33,48 +36,37 @@ OUTPUT FORMAT (JSON only, no other text):
 _COMMENTARY_PROMPT = """You are a witty crypto market commentator writing for Twitter/X for Signal Engine v5.
 
 RULES:
-- Maximum 280 characters for twitter_draft
+- Maximum 270 characters total including hashtags
 - Write about what the MARKET IS DOING right now — not trade signals
-- No entry/SL/TP levels — this is commentary not a signal
+- No entry/SL/TP levels
 - Be conversational, observational, sometimes educational
-- Reference actual market data provided (regime, funding, fear/greed, session)
-- End with 1-2 relevant hashtags
-- long_draft is 300-500 characters expanding on the observation
-
-TONE INSTRUCTIONS:
-- humor: dry wit, sarcastic observation, crypto meme energy, relatable to traders
-  Examples:
-  "Market regime: choppy. ADX: 12. Translation: nobody knows anything right now. #Crypto"
-  "Funding at 0.09%. Someone out there is very confident. History suggests otherwise. #Bitcoin"
-  "It's Sunday. Liquidity left the building. Stop hunts incoming. You have been warned. #CryptoTrading"
-  "Fear & Greed at 18. Last time it was this low, people were calling $10k BTC. Just saying. #Crypto"
-  "London session opened. Market immediately did nothing. Respect the process. #CryptoTrading"
-- educational: explain what the current condition means for traders in simple terms, use analogies
-- professional: factual market state observation, what it means technically
+- Reference actual market data provided
+- End with exactly 3 relevant hashtags on a new line
+- Pick the most fitting tone: humor, educational, witty, quirky, or professional
+- One single finalized post — no drafts, no versions
 
 OUTPUT FORMAT (JSON only, no other text):
 {
-  "twitter_draft": "...",
-  "long_draft": "...",
-  "hashtags": ["#Crypto", "#CryptoTrading"],
-  "tone_used": "humor",
-  "post_type": "commentary"
+  "post": "...",
+  "tone_used": "humor"
 }"""
 
 
-_SIGNAL_TONES = [
-    "professional", "professional", "professional",
-    "professional", "professional", "professional",
-    "professional", "educational", "educational",
-    "humor"
-]
+def _pick_tone_hint(signal_data: dict) -> str:
+    score   = signal_data.get("score", 0)
+    grade   = signal_data.get("grade", "F")
+    session = signal_data.get("session", "")
+    regime  = signal_data.get("regime", "")
 
-_COMMENTARY_TONES = [
-    "humor", "humor", "humor", "humor",
-    "educational", "educational",
-    "professional", "professional",
-    "humor", "humor"
-]
+    if grade == "A+" and score >= 90:
+        return "punchy/witty — this is a strong signal, make it exciting"
+    if "London/NY" in session:
+        return "professional — peak session, institutional feel"
+    if "CHOP" in regime.upper():
+        return "humor — market is choppy, be sarcastic about it"
+    if score >= 80:
+        return "educational — strong setup, good teaching moment"
+    return "mixed — pick whatever fits best"
 
 
 async def generate_post_draft(signal_id: int) -> dict | None:
@@ -121,7 +113,12 @@ async def generate_post_draft(signal_id: int) -> dict | None:
         except Exception:
             pass
 
-        tone = _SIGNAL_TONES[signal_id % len(_SIGNAL_TONES)]
+        tone_hint = _pick_tone_hint({
+            "score":   signal.score or 0,
+            "grade":   signal.grade or "F",
+            "session": signal.session or "",
+            "regime":  signal.regime or ""
+        })
 
         signal_context = f"""
 Signal Data:
@@ -133,20 +130,16 @@ Signal Data:
 - Session: {signal.session or '--'}
 - Entry: {signal.entry}
 - Stop Loss: {signal.sl}
-- TP1: {signal.tp1}
-- TP2: {signal.tp2}
+- TP: {signal.tp1}
 - SL%: {f'{signal.sl_pct:.2f}%' if signal.sl_pct else '--'}
 - Risk/Reward: {rr}
 - Top Confluence Factors: {top_factors_str}
 - Sweep Score: {signal.sweep_score}/12
 - Displacement Score: {signal.disp_score}/11
-- Market Score: {signal.market_score}/100
-- Entry Score: {signal.entry_score}/100
 
-Thesis:
-{signal.notes or 'Strong confluence setup with institutional footprint confirmed.'}
+Tone hint: {tone_hint}
 
-Tone: {tone}
+Write ONE finalized post under 270 chars including hashtags.
 """
 
         client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
@@ -157,8 +150,8 @@ Tone: {tone}
                 {"role": "system", "content": _SIGNAL_PROMPT},
                 {"role": "user",   "content": signal_context}
             ],
-            max_tokens  = 600,
-            temperature = 0.7,
+            max_tokens  = 300,
+            temperature = 0.8,
         )
 
         raw = response.choices[0].message.content.strip()
@@ -170,32 +163,28 @@ Tone: {tone}
         except Exception:
             result = {}
 
-        if not result.get("twitter_draft"):
-            result = {
-                "twitter_draft": f"{signal.coin}USDT {signal.direction} — Grade {signal.grade} signal. Score {signal.score}/100. Entry {signal.entry:.4f} | SL {signal.sl:.4f} | TP1 {signal.tp1:.4f} #Crypto #{signal.coin}",
-                "long_draft":    f"{signal.coin}USDT {signal.direction} setup. Grade {signal.grade} with {signal.score}/100 confluence. Regime: {signal.regime}. Entry: {signal.entry} | SL: {signal.sl} | TP1: {signal.tp1} | TP2: {signal.tp2}. R:R {rr}.",
-                "hashtags":      [f"#{signal.coin}", "#CryptoTrading", "#SignalEngine"],
-                "tone_used":     tone
-            }
+        post = result.get("post", "")
 
-        twitter_draft = result.get("twitter_draft", "")
-        if len(twitter_draft) > 280:
-            result["twitter_draft"] = twitter_draft[:277] + "..."
+        if not post:
+            post = (
+                f"{signal.coin}USDT {signal.direction} — Grade {signal.grade} · Score {signal.score}/100\n"
+                f"Entry {signal.entry:.4f} | SL {signal.sl:.4f} | TP {signal.tp1:.4f} | R:R {rr}\n"
+                f"#{signal.coin} #CryptoTrading #SmartMoney"
+            )
 
-        result["signal_id"] = signal_id
-        result["coin"]      = signal.coin
-        result["direction"] = signal.direction
-        result["grade"]     = signal.grade
-        result["score"]     = signal.score
-        result["post_type"] = "signal"
+        if len(post) > 270:
+            post = post[:267] + "..."
 
-        log.info(
-            f"Signal draft generated: {signal.coin} {signal.direction} "
-            f"Grade:{signal.grade} tone:{tone} "
-            f"chars:{len(result['twitter_draft'])}"
-        )
-
-        return result
+        return {
+            "post":      post,
+            "tone_used": result.get("tone_used", "mixed"),
+            "signal_id": signal_id,
+            "coin":      signal.coin,
+            "direction": signal.direction,
+            "grade":     signal.grade,
+            "score":     signal.score,
+            "post_type": "signal"
+        }
 
     except Exception as e:
         log.error(f"Post draft generation error signal {signal_id}: {e}")
@@ -209,8 +198,6 @@ async def generate_commentary_draft(context: dict) -> dict | None:
 
         if not cfg.GROQ_API_KEY:
             return None
-
-        tone = _COMMENTARY_TONES[int(time.time()) % len(_COMMENTARY_TONES)]
 
         regime      = context.get("regime", "--")
         session     = context.get("session", "--")
@@ -227,6 +214,12 @@ async def generate_commentary_draft(context: dict) -> dict | None:
             for c in top_coins[:3]
         ) if top_coins else "no coins with data"
 
+        tone_hint = "humor" if "chop" in regime.lower() else "mixed"
+        if fg_val <= 20:
+            tone_hint = "educational — extreme fear, explain what it means"
+        elif fg_val >= 80:
+            tone_hint = "witty — extreme greed, be cautious but clever"
+
         market_context = f"""
 Current Market Conditions:
 - Dominant Regime: {regime}
@@ -237,12 +230,10 @@ Current Market Conditions:
 - Trigger: {reason_code}
 - Top Coins Scanned: {coins_str}
 
-Write a commentary post about what the market is doing right now.
-Do NOT give trade signals or entry/SL/TP levels.
-Be observational, witty, or educational about the current market state.
-Make it feel timely and human — like a trader watching the market right now.
+Tone hint: {tone_hint}
 
-Tone: {tone}
+Write ONE finalized commentary post under 270 chars including hashtags.
+Do NOT give trade signals or entry/SL/TP levels.
 """
 
         client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
@@ -253,7 +244,7 @@ Tone: {tone}
                 {"role": "system", "content": _COMMENTARY_PROMPT},
                 {"role": "user",   "content": market_context}
             ],
-            max_tokens  = 400,
+            max_tokens  = 300,
             temperature = 0.9,
         )
 
@@ -266,35 +257,125 @@ Tone: {tone}
         except Exception:
             result = {}
 
-        if not result.get("twitter_draft"):
-            result = {
-                "twitter_draft": f"Market scanning {len(top_coins)} coins. {reason}. {session} session. Regime: {regime}. Patience. #CryptoTrading",
-                "long_draft":    f"Current market state: {regime} regime during {session}. Fear & Greed at {fg_val} ({fg_label}). Average funding {funding_avg:.4f}%. No high-conviction setups detected. Waiting for cleaner conditions.",
-                "hashtags":      ["#CryptoTrading", "#Crypto"],
-                "tone_used":     tone,
-                "post_type":     "commentary"
-            }
+        post = result.get("post", "")
 
-        twitter_draft = result.get("twitter_draft", "")
-        if len(twitter_draft) > 280:
-            result["twitter_draft"] = twitter_draft[:277] + "..."
+        if not post:
+            post = (
+                f"Market scanning {len(top_coins)} coins. {reason}. "
+                f"{session} · Regime: {regime} · F&G: {fg_val} ({fg_label})\n"
+                f"#CryptoTrading #Crypto #Bitcoin"
+            )
 
-        result["post_type"] = "commentary"
-        result["signal_id"] = None
-        result["coin"]      = "MARKET"
-        result["direction"] = "--"
-        result["grade"]     = "--"
-        result["score"]     = 0
+        if len(post) > 270:
+            post = post[:267] + "..."
 
-        log.info(
-            f"Commentary draft generated: tone:{tone} "
-            f"chars:{len(result['twitter_draft'])}"
-        )
-
-        return result
+        return {
+            "post":      post,
+            "tone_used": result.get("tone_used", "mixed"),
+            "post_type": "commentary",
+            "signal_id": None,
+            "coin":      "MARKET",
+            "direction": "--",
+            "grade":     "--",
+            "score":     0
+        }
 
     except Exception as e:
         log.error(f"Commentary draft generation error: {e}")
+        return None
+
+
+async def generate_brief_post(context: dict) -> dict | None:
+    try:
+        from config import cfg
+        from groq import AsyncGroq
+
+        if not cfg.GROQ_API_KEY:
+            return None
+
+        _BRIEF_PROMPT = """You are a crypto market analyst writing a morning/evening market brief for Twitter/X.
+
+RULES:
+- Maximum 270 characters total including hashtags
+- Summarize current market state: regime, session, top setups, sentiment
+- Mention BTC direction, fear/greed, and 1-2 top coins if available
+- End with exactly 3 hashtags
+- Tone: informative but engaging, like a trader's morning note
+- One single finalized post
+
+OUTPUT FORMAT (JSON only):
+{
+  "post": "...",
+  "tone_used": "professional"
+}"""
+
+        regime     = context.get("regime", "--")
+        session    = context.get("session", "--")
+        fg_val     = context.get("fg_val", 50)
+        fg_label   = context.get("fg_label", "Neutral")
+        btc_change = context.get("btc_change", 0)
+        top_coins  = context.get("top_coins", [])
+        time_label = context.get("time_label", "Morning")
+
+        coins_str = ", ".join(
+            f"{c['coin']} Grade {c['grade']}"
+            for c in top_coins[:2]
+        ) if top_coins else "no setups"
+
+        brief_context = f"""
+{time_label} Brief Data:
+- BTC 24h: {'+' if btc_change >= 0 else ''}{btc_change:.2f}%
+- Regime: {regime}
+- Session: {session}
+- Fear & Greed: {fg_val}/100 — {fg_label}
+- Top Setups: {coins_str}
+
+Write ONE finalized market brief post under 270 chars.
+"""
+
+        client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
+
+        response = await client.chat.completions.create(
+            model    = "llama-3.3-70b-versatile",
+            messages = [
+                {"role": "system", "content": _BRIEF_PROMPT},
+                {"role": "user",   "content": brief_context}
+            ],
+            max_tokens  = 300,
+            temperature = 0.7,
+        )
+
+        raw = response.choices[0].message.content.strip()
+
+        try:
+            start  = raw.find("{")
+            end    = raw.rfind("}") + 1
+            result = json.loads(raw[start:end]) if start >= 0 and end > start else {}
+        except Exception:
+            result = {}
+
+        post = result.get("post", "")
+
+        if not post:
+            sign = "+" if btc_change >= 0 else ""
+            post = (
+                f"{time_label} Brief: BTC {sign}{btc_change:.2f}% · "
+                f"Regime: {regime} · F&G: {fg_val} ({fg_label})\n"
+                f"Top setups: {coins_str}\n"
+                f"#Bitcoin #CryptoTrading #Crypto"
+            )
+
+        if len(post) > 270:
+            post = post[:267] + "..."
+
+        return {
+            "post":      post,
+            "tone_used": result.get("tone_used", "professional"),
+            "post_type": "brief"
+        }
+
+    except Exception as e:
+        log.error(f"Brief post generation error: {e}")
         return None
 
 

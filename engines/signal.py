@@ -41,9 +41,9 @@ TIERS = {
 }
 
 GRADE_TP_MULTIPLIER = {
-    "A+": 2.5,
-    "A":  2.0,
-    "B":  1.5,
+    "A+": 1.8,
+    "A":  1.5,
+    "B":  1.2,
 }
 
 GRADE_RISK_PCT = {
@@ -178,7 +178,7 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
     if btc_score < cfg.B_GRADE_BTC_SCORE_MIN:
         return False, f"BTC score {btc_score} too low — BTC conflicting"
 
-    hard_blocks = no_trade.get("hard_blocks", [])
+    hard_blocks  = no_trade.get("hard_blocks", [])
     entry_blocks = no_trade.get("entry_blocks", [])
 
     non_session_hard = [
@@ -199,7 +199,7 @@ def dynamic_risk_pct(grade: str) -> float:
 
 
 def get_tp_multiplier(grade: str) -> float:
-    return GRADE_TP_MULTIPLIER.get(grade, 1.5)
+    return GRADE_TP_MULTIPLIER.get(grade, 1.2)
 
 
 def check_15m_entry(
@@ -575,11 +575,11 @@ def run_no_trade_engine(
         soft("⚠️", "4H structure conflicts daily",
              "Wait for 4H structure to align.", 3)
 
-    market_hard_blocked  = len(market_blocks) > 0 and any(
+    market_hard_blocked = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks
     )
-    entry_hard_blocked   = len(entry_blocks) > 0
-    portfolio_blocked    = len(portfolio_blocks) > 0
+    entry_hard_blocked  = len(entry_blocks) > 0
+    portfolio_blocked   = len(portfolio_blocks) > 0
 
     adj_score = max(0, base_score - score_penalty)
 
@@ -615,6 +615,62 @@ def run_no_trade_engine(
         "portfolio_blocked": portfolio_blocked,
         "final_tier":        final_tier
     }
+
+
+def _calculate_tp(
+    is_long:    bool,
+    entry:      float,
+    sl:         float,
+    grade:      str,
+    swings:     dict,
+    key_levels: dict,
+    d1d:        dict
+) -> float:
+    sl_dist  = abs(entry - sl)
+    tp_mult  = get_tp_multiplier(grade)
+    max_tp   = entry + sl_dist * tp_mult if is_long else entry - sl_dist * tp_mult
+
+    structure_candidates = []
+
+    if is_long:
+        if swings.get("last_high"):
+            structure_candidates.append(swings["last_high"]["price"])
+        if key_levels.get("pdh"):
+            structure_candidates.append(key_levels["pdh"])
+        if key_levels.get("pwh"):
+            structure_candidates.append(key_levels["pwh"])
+        vah = d1d.get("vah")
+        if vah and vah > entry:
+            structure_candidates.append(vah)
+
+        valid_structure = [
+            c for c in structure_candidates
+            if entry < c <= max_tp
+        ]
+
+        if valid_structure:
+            return min(valid_structure)
+        return max_tp
+
+    else:
+        if swings.get("last_low"):
+            structure_candidates.append(swings["last_low"]["price"])
+        if key_levels.get("pdl"):
+            structure_candidates.append(key_levels["pdl"])
+        if key_levels.get("pwl"):
+            structure_candidates.append(key_levels["pwl"])
+        val = d1d.get("val")
+        if val and val < entry:
+            structure_candidates.append(val)
+
+        valid_structure = [
+            c for c in structure_candidates
+            if max_tp <= c < entry
+        ]
+
+        if valid_structure:
+            return max(valid_structure)
+        return max_tp
 
 
 def generate_signal(
@@ -835,61 +891,24 @@ def generate_signal(
 
     sl_dist = abs(entry - sl)
     sl_pct  = sl_dist / entry * 100
-
     tp_mult = get_tp_multiplier(grade_label)
 
-    if is_long:
-        tp_candidates = []
+    tp1 = _calculate_tp(
+        is_long    = is_long,
+        entry      = entry,
+        sl         = sl,
+        grade      = grade_label,
+        swings     = swings,
+        key_levels = key_levels,
+        d1d        = d1d
+    )
 
-        if swings.get("last_high"):
-            tp_candidates.append(swings["last_high"]["price"])
-        if key_levels.get("pdh"):
-            tp_candidates.append(key_levels["pdh"])
-        if key_levels.get("pwh"):
-            tp_candidates.append(key_levels["pwh"])
-        vah = d1d.get("vah")
-        if vah and vah > entry:
-            tp_candidates.append(vah)
-
-        min_tp = entry + sl_dist * tp_mult
-        tp_candidates = [c for c in tp_candidates if c > entry + sl_dist * 0.8]
-
-        if tp_candidates:
-            nearest_structure = min(tp_candidates)
-            tp1 = min(nearest_structure, min_tp * 1.5)
-            tp1 = max(tp1, min_tp)
-        else:
-            tp1 = min_tp
-
-    else:
-        tp_candidates = []
-
-        if swings.get("last_low"):
-            tp_candidates.append(swings["last_low"]["price"])
-        if key_levels.get("pdl"):
-            tp_candidates.append(key_levels["pdl"])
-        if key_levels.get("pwl"):
-            tp_candidates.append(key_levels["pwl"])
-        val = d1d.get("val")
-        if val and val < entry:
-            tp_candidates.append(val)
-
-        min_tp = entry - sl_dist * tp_mult
-        tp_candidates = [c for c in tp_candidates if c < entry - sl_dist * 0.8]
-
-        if tp_candidates:
-            nearest_structure = max(tp_candidates)
-            tp1 = max(nearest_structure, min_tp * 0.67)
-            tp1 = min(tp1, min_tp)
-        else:
-            tp1 = min_tp
+    actual_rr = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0
 
     risk_pct = dynamic_risk_pct(grade_label)
     risk_amt = capital * risk_pct
     pos_size = risk_amt / (sl_pct / 100)
     margin   = pos_size / leverage
-
-    actual_rr = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0
 
     result = {
         **base,

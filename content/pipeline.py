@@ -85,50 +85,11 @@ async def run_content_pipeline(signal_id: int):
             log.error(f"Groq writer error signal {signal_id}: {e}")
             return
 
-        if cfg.CONTENT_AUTO_APPROVE:
-            try:
-                from content.publisher import post_to_twitter
-                from database import SessionLocal, ContentPost
-
-                twitter_draft = draft.get("twitter_draft", "")
-
-                with SessionLocal() as db:
-                    post = ContentPost(
-                        signal_id     = signal_id,
-                        chart_path    = chart_path,
-                        twitter_draft = twitter_draft,
-                        long_draft    = draft.get("long_draft", ""),
-                        hashtags      = str(draft.get("hashtags", [])),
-                        tone_used     = draft.get("tone_used", "professional"),
-                        status        = "pending",
-                        platform      = "twitter"
-                    )
-                    db.add(post)
-                    db.flush()
-                    db.refresh(post)
-                    post_id = post.id
-
-                result = await post_to_twitter(
-                    post_id    = post_id,
-                    text       = twitter_draft,
-                    chart_path = chart_path
-                )
-
-                if result.get("success"):
-                    from alerts.telegram import send
-                    await send(
-                        f"✅ *Auto-Posted to Twitter*\n\n"
-                        f"Signal #{signal_id}\n"
-                        f"Tweet: {result.get('tweet_url', '--')}"
-                    )
-            except Exception as e:
-                log.error(f"Auto-approve error signal {signal_id}: {e}")
-        else:
-            try:
-                from content.approval_flow import send_for_approval
-                await send_for_approval(signal_id, chart_path, draft)
-            except Exception as e:
-                log.error(f"Approval flow error signal {signal_id}: {e}")
+        try:
+            from content.approval_flow import send_for_approval
+            await send_for_approval(signal_id, chart_path, draft)
+        except Exception as e:
+            log.error(f"Approval flow error signal {signal_id}: {e}")
 
         log.info(f"Content pipeline complete: signal {signal_id}")
 

@@ -1,9 +1,47 @@
 import logging
 import os
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from database import SessionLocal, ContentPost, Signal as SignalModel
 
 log = logging.getLogger(__name__)
+
+_COOLDOWN_HOURS_SAME_DIR  = 12
+_COOLDOWN_HOURS_GRADE_UP  = 6
+
+
+def _check_duplicate_cooldown(coin: str, direction: str, grade: str) -> tuple[bool, str]:
+    try:
+        with SessionLocal() as db:
+            pending_signal = db.query(SignalModel).filter(
+                SignalModel.coin      == coin,
+                SignalModel.direction == direction,
+                SignalModel.outcome   == "pending"
+            ).first()
+
+            if pending_signal:
+                return True, f"{coin} {direction} trade still pending — no duplicate post"
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=_COOLDOWN_HOURS_SAME_DIR)
+
+            recent = db.query(ContentPost).join(
+                SignalModel, ContentPost.signal_id == SignalModel.id
+            ).filter(
+                SignalModel.coin      == coin,
+                SignalModel.direction == direction,
+                ContentPost.created_at >= cutoff
+            ).first()
+
+            if recent:
+                elapsed = datetime.now(timezone.utc) - recent.created_at.replace(tzinfo=timezone.utc)
+                hours_left = _COOLDOWN_HOURS_SAME_DIR - (elapsed.total_seconds() / 3600)
+                return True, f"{coin} {direction} posted {elapsed.seconds // 3600}h ago — cooldown {hours_left:.1f}h remaining"
+
+        return False, ""
+
+    except Exception as e:
+        log.error(f"Duplicate cooldown check error: {e}")
+        return False, ""
 
 
 async def send_for_approval(
@@ -19,14 +57,17 @@ async def send_for_approval(
             log.error("Telegram not configured")
             return False
 
-        twitter_draft = draft.get("twitter_draft", "")
-        long_draft    = draft.get("long_draft", "")
-        hashtags      = str(draft.get("hashtags", []))
-        tone_used     = draft.get("tone_used", "professional")
-        coin          = draft.get("coin", "--")
-        direction     = draft.get("direction", "--")
-        grade         = draft.get("grade", "--")
-        score         = draft.get("score", 0)
+        post      = draft.get("post", "")
+        tone_used = draft.get("tone_used", "mixed")
+        coin      = draft.get("coin", "--")
+        direction = draft.get("direction", "--")
+        grade     = draft.get("grade", "--")
+        score     = draft.get("score", 0)
+
+        blocked, reason = _check_duplicate_cooldown(coin, direction, grade)
+        if blocked:
+            log.info(f"Content blocked — duplicate: {reason}")
+            return False
 
         with SessionLocal() as db:
             existing = db.query(ContentPost).filter(
@@ -38,63 +79,49 @@ async def send_for_approval(
                 log.info(f"Content post already pending for signal {signal_id}")
                 return False
 
-            post = ContentPost(
+            db_post = ContentPost(
                 signal_id     = signal_id,
                 chart_path    = chart_path,
-                twitter_draft = twitter_draft,
-                long_draft    = long_draft,
-                hashtags      = hashtags,
+                twitter_draft = post,
+                long_draft    = None,
+                hashtags      = None,
                 tone_used     = tone_used,
                 status        = "pending",
                 platform      = "twitter"
             )
-            db.add(post)
+            db.add(db_post)
             db.flush()
-            db.refresh(post)
-            post_id = post.id
+            db.refresh(db_post)
+            post_id = db_post.id
             db.commit()
 
         if chart_path and os.path.exists(chart_path):
             await _send_photo(
                 chat_id    = cfg.TELEGRAM_CHAT_ID,
                 photo_path = chart_path,
-                caption    = f"📊 *{coin}USDT {direction}* — Grade `{grade}` · Score `{score}/100`"
+                caption    = f"📊 {coin}USDT {direction} — Grade `{grade}` · Score `{score}/100`"
             )
 
-        char_count = len(twitter_draft)
-        char_color = "✅" if char_count <= 280 else "⚠️"
+        char_count = len(post)
+        char_color = "✅" if char_count <= 270 else "⚠️"
 
         message = (
-            f"📝 *New Signal Post Ready*\n\n"
+            f"📝 *Post Ready — #{post_id}*\n\n"
             f"*{coin}USDT {direction}* — Grade `{grade}` · Score `{score}/100`\n"
-            f"Tone: `{tone_used}`\n\n"
+            f"Tone: `{tone_used}` · {char_color} `{char_count}/270`\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"*Twitter Draft* {char_color} `{char_count}/280`:\n\n"
-            f"{twitter_draft}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"*Long Form:*\n\n"
-            f"{long_draft[:300]}{'...' if len(long_draft) > 300 else ''}\n"
+            f"{post}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"_Copy and post manually. Reply `/discard {post_id}` to delete._"
         )
 
-        keyboard = [
-            [
-                {"text": "✅ Approve & Post",  "callback_data": f"approve_post:{post_id}"},
-                {"text": "❌ Discard",          "callback_data": f"discard_post:{post_id}"}
-            ],
-            [
-                {"text": "✏️ Edit Draft",       "callback_data": f"edit_post:{post_id}"},
-                {"text": "🔄 Regenerate",       "callback_data": f"regen_post:{post_id}"}
-            ]
-        ]
-
         await _post("sendMessage", {
-            "chat_id":      cfg.TELEGRAM_CHAT_ID,
-            "text":         message,
-            "parse_mode":   "Markdown",
-            "reply_markup": {"inline_keyboard": keyboard}
+            "chat_id":    cfg.TELEGRAM_CHAT_ID,
+            "text":       message,
+            "parse_mode": "Markdown"
         })
 
-        log.info(f"Approval message sent for post {post_id} signal {signal_id}")
+        log.info(f"Post sent to Telegram: post {post_id} signal {signal_id}")
         return True
 
     except Exception as e:
@@ -110,64 +137,103 @@ async def send_commentary_for_approval(draft: dict) -> bool:
         if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
             return False
 
-        twitter_draft = draft.get("twitter_draft", "")
-        long_draft    = draft.get("long_draft", "")
-        tone_used     = draft.get("tone_used", "humor")
+        post      = draft.get("post", "")
+        tone_used = draft.get("tone_used", "mixed")
 
         with SessionLocal() as db:
-            post = ContentPost(
+            db_post = ContentPost(
                 signal_id     = None,
                 chart_path    = None,
-                twitter_draft = twitter_draft,
-                long_draft    = long_draft,
-                hashtags      = str(draft.get("hashtags", [])),
+                twitter_draft = post,
+                long_draft    = None,
+                hashtags      = None,
                 tone_used     = tone_used,
                 status        = "pending",
                 platform      = "twitter"
             )
-            db.add(post)
+            db.add(db_post)
             db.flush()
-            db.refresh(post)
-            post_id = post.id
+            db.refresh(db_post)
+            post_id = db_post.id
             db.commit()
 
-        char_count = len(twitter_draft)
-        char_color = "✅" if char_count <= 280 else "⚠️"
+        char_count = len(post)
+        char_color = "✅" if char_count <= 270 else "⚠️"
 
         message = (
-            f"💬 *Market Commentary Ready*\n\n"
-            f"Type: `commentary` · Tone: `{tone_used}`\n\n"
+            f"💬 *Commentary Ready — #{post_id}*\n\n"
+            f"Tone: `{tone_used}` · {char_color} `{char_count}/270`\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"*Draft* {char_color} `{char_count}/280`:\n\n"
-            f"{twitter_draft}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"*Long Form:*\n\n"
-            f"{long_draft[:300]}{'...' if len(long_draft) > 300 else ''}\n"
+            f"{post}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"_Copy and post manually. Reply `/discard {post_id}` to delete._"
         )
 
-        keyboard = [
-            [
-                {"text": "✅ Approve & Post",  "callback_data": f"approve_post:{post_id}"},
-                {"text": "❌ Discard",          "callback_data": f"discard_post:{post_id}"}
-            ],
-            [
-                {"text": "✏️ Edit Draft",       "callback_data": f"edit_post:{post_id}"},
-                {"text": "🔄 Regenerate",       "callback_data": f"regen_post:{post_id}"}
-            ]
-        ]
-
         await _post("sendMessage", {
-            "chat_id":      cfg.TELEGRAM_CHAT_ID,
-            "text":         message,
-            "parse_mode":   "Markdown",
-            "reply_markup": {"inline_keyboard": keyboard}
+            "chat_id":    cfg.TELEGRAM_CHAT_ID,
+            "text":       message,
+            "parse_mode": "Markdown"
         })
 
-        log.info(f"Commentary approval sent: post {post_id}")
+        log.info(f"Commentary post sent: post {post_id}")
         return True
 
     except Exception as e:
         log.error(f"send_commentary_for_approval error: {e}")
+        return False
+
+
+async def send_brief_for_approval(draft: dict) -> bool:
+    try:
+        from alerts.telegram import _post
+        from config import cfg
+
+        if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
+            return False
+
+        post      = draft.get("post", "")
+        tone_used = draft.get("tone_used", "professional")
+
+        with SessionLocal() as db:
+            db_post = ContentPost(
+                signal_id     = None,
+                chart_path    = None,
+                twitter_draft = post,
+                long_draft    = None,
+                hashtags      = None,
+                tone_used     = tone_used,
+                status        = "pending",
+                platform      = "twitter"
+            )
+            db.add(db_post)
+            db.flush()
+            db.refresh(db_post)
+            post_id = db_post.id
+            db.commit()
+
+        char_count = len(post)
+        char_color = "✅" if char_count <= 270 else "⚠️"
+
+        message = (
+            f"🌅 *Market Brief Ready — #{post_id}*\n\n"
+            f"Tone: `{tone_used}` · {char_color} `{char_count}/270`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{post}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"_Copy and post manually. Reply `/discard {post_id}` to delete._"
+        )
+
+        await _post("sendMessage", {
+            "chat_id":    cfg.TELEGRAM_CHAT_ID,
+            "text":       message,
+            "parse_mode": "Markdown"
+        })
+
+        log.info(f"Brief post sent: post {post_id}")
+        return True
+
+    except Exception as e:
+        log.error(f"send_brief_for_approval error: {e}")
         return False
 
 
@@ -198,191 +264,42 @@ async def _send_photo(chat_id: str, photo_path: str, caption: str = ""):
         log.error(f"Send photo error: {e}")
 
 
-async def handle_approve_post(post_id: int):
+async def discard_post(post_id: int) -> bool:
     try:
-        from alerts.telegram import send
-        from content.publisher import post_to_twitter
-
         with SessionLocal() as db:
             post = db.query(ContentPost).filter(
                 ContentPost.id == post_id
             ).first()
 
             if not post:
-                await send(f"⚠️ Post #{post_id} not found.")
-                return
-
-            if post.status != "pending":
-                await send(f"⚠️ Post #{post_id} already {post.status}.")
-                return
-
-            draft_text = post.edited_text or post.twitter_draft
-            chart_path = post.chart_path
-            signal_id  = post.signal_id
-
-        await send(f"⏳ Posting to Twitter...")
-
-        result = await post_to_twitter(
-            post_id    = post_id,
-            text       = draft_text,
-            chart_path = chart_path
-        )
-
-        if result.get("success"):
-            tweet_id = result.get("tweet_id", "")
-            await send(
-                f"✅ *Posted to Twitter*\n\n"
-                f"Post #{post_id}"
-                f"{f' · Signal #{signal_id}' if signal_id else ' · Commentary'}\n"
-                f"Tweet ID: `{tweet_id}`\n"
-                f"[View Tweet](https://twitter.com/i/web/status/{tweet_id})"
-            )
-        else:
-            await send(
-                f"❌ *Twitter Post Failed*\n\n"
-                f"Post #{post_id}\n"
-                f"Reason: `{result.get('reason', 'Unknown error')}`"
-            )
-
-    except Exception as e:
-        log.error(f"handle_approve_post error: {e}")
-        from alerts.telegram import send
-        await send(f"❌ Approve failed: `{str(e)}`")
-
-
-async def handle_discard_post(post_id: int):
-    try:
-        from alerts.telegram import send
-
-        with SessionLocal() as db:
-            post = db.query(ContentPost).filter(
-                ContentPost.id == post_id
-            ).first()
-
-            if not post:
-                await send(f"⚠️ Post #{post_id} not found.")
-                return
+                return False
 
             post.status = "discarded"
             db.commit()
 
-        await send(f"🗑️ Post #{post_id} discarded.")
         log.info(f"Post {post_id} discarded")
-
-    except Exception as e:
-        log.error(f"handle_discard_post error: {e}")
-
-
-async def handle_edit_post(post_id: int):
-    try:
-        from alerts.telegram import send
-        import runtime_state as rs
-
-        rs.set("pending_edit_post_id", post_id)
-
-        await send(
-            f"✏️ *Edit Post #{post_id}*\n\n"
-            f"Send your edited tweet text now.\n"
-            f"Must be under 280 characters.\n\n"
-            f"Send /canceledit to cancel."
-        )
-    except Exception as e:
-        log.error(f"handle_edit_post error: {e}")
-
-
-async def handle_regen_post(post_id: int):
-    try:
-        from alerts.telegram import send
-
-        with SessionLocal() as db:
-            post = db.query(ContentPost).filter(
-                ContentPost.id == post_id
-            ).first()
-            if not post:
-                await send(f"⚠️ Post #{post_id} not found.")
-                return
-            signal_id     = post.signal_id
-            chart_path    = post.chart_path
-            is_commentary = signal_id is None
-
-        await send("🔄 Regenerating draft...")
-
-        if is_commentary:
-            await send("⚠️ Cannot regenerate commentary without market context. Discard and wait for next scan.")
-            return
-
-        from content.groq_writer import generate_post_draft
-        new_draft = await generate_post_draft(signal_id)
-
-        if not new_draft:
-            await send("❌ Regeneration failed.")
-            return
-
-        with SessionLocal() as db:
-            post = db.query(ContentPost).filter(
-                ContentPost.id == post_id
-            ).first()
-            if post:
-                post.twitter_draft = new_draft.get("twitter_draft", post.twitter_draft)
-                post.long_draft    = new_draft.get("long_draft",    post.long_draft)
-                post.tone_used     = new_draft.get("tone_used",     post.tone_used)
-                post.edited_text   = None
-                db.commit()
-
-        await send_for_approval(signal_id, chart_path, new_draft)
-
-    except Exception as e:
-        log.error(f"handle_regen_post error: {e}")
-
-
-async def apply_edit_to_post(post_id: int, new_text: str):
-    try:
-        from alerts.telegram import send, _post
-        from config import cfg
-
-        if len(new_text) > 280:
-            await send(
-                f"⚠️ Text too long: `{len(new_text)}/280` characters.\n"
-                f"Please shorten and try again."
-            )
-            return False
-
-        with SessionLocal() as db:
-            post = db.query(ContentPost).filter(
-                ContentPost.id == post_id
-            ).first()
-            if not post:
-                await send(f"⚠️ Post #{post_id} not found.")
-                return False
-
-            post.edited_text = new_text
-            db.commit()
-
-        await send(
-            f"✅ *Draft Updated*\n\n"
-            f"Post #{post_id} · `{len(new_text)}/280` chars\n\n"
-            f"{new_text}"
-        )
-
-        keyboard = [
-            [
-                {"text": "✅ Approve & Post", "callback_data": f"approve_post:{post_id}"},
-                {"text": "❌ Discard",         "callback_data": f"discard_post:{post_id}"}
-            ]
-        ]
-
-        await _post("sendMessage", {
-            "chat_id":      cfg.TELEGRAM_CHAT_ID,
-            "text":         "Tap to post your edited draft:",
-            "parse_mode":   "Markdown",
-            "reply_markup": {"inline_keyboard": keyboard}
-        })
-
         return True
 
     except Exception as e:
-        log.error(f"apply_edit_to_post error: {e}")
+        log.error(f"discard_post error: {e}")
         return False
+
+
+async def get_post_text(post_id: int) -> str | None:
+    try:
+        with SessionLocal() as db:
+            post = db.query(ContentPost).filter(
+                ContentPost.id == post_id
+            ).first()
+
+            if not post:
+                return None
+
+            return post.twitter_draft
+
+    except Exception as e:
+        log.error(f"get_post_text error: {e}")
+        return None
 
 
 async def get_pending_posts() -> list:
@@ -406,7 +323,7 @@ async def get_pending_posts() -> list:
                     "coin":          signal.coin      if signal else "MARKET",
                     "direction":     signal.direction if signal else "--",
                     "grade":         signal.grade     if signal else "--",
-                    "twitter_draft": p.twitter_draft,
+                    "post":          p.twitter_draft or "",
                     "tone_used":     p.tone_used,
                     "post_type":     "signal" if p.signal_id else "commentary",
                     "created_at":    p.created_at.isoformat() if p.created_at else "--",
@@ -418,3 +335,48 @@ async def get_pending_posts() -> list:
     except Exception as e:
         log.error(f"get_pending_posts error: {e}")
         return []
+
+
+def purge_old_content(days: int = 7):
+    try:
+        import os
+        from pathlib import Path
+
+        cutoff_db    = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff_chart = datetime.now(timezone.utc) - timedelta(hours=48)
+
+        with SessionLocal() as db:
+            old_posts = db.query(ContentPost).filter(
+                ContentPost.created_at <= cutoff_db,
+                ContentPost.status.in_(["discarded", "posted"])
+            ).all()
+
+            deleted_db = 0
+            for post in old_posts:
+                if post.chart_path and os.path.exists(post.chart_path):
+                    try:
+                        os.remove(post.chart_path)
+                    except Exception:
+                        pass
+                db.delete(post)
+                deleted_db += 1
+
+            db.commit()
+
+        chart_dir = Path("content/charts")
+        deleted_charts = 0
+        if chart_dir.exists():
+            for f in chart_dir.iterdir():
+                if f.is_file() and f.suffix == ".png":
+                    mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+                    if mtime < cutoff_chart:
+                        try:
+                            f.unlink()
+                            deleted_charts += 1
+                        except Exception:
+                            pass
+
+        log.info(f"Purge complete: {deleted_db} db records, {deleted_charts} chart images deleted")
+
+    except Exception as e:
+        log.error(f"purge_old_content error: {e}")

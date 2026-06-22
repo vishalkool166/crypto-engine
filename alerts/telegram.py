@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import Request
 from config import cfg
 from database import SessionLocal, get_session
-from alerts.utils import now_ist, grade_accuracy_str, categorize_results
+from alerts.utils import now_ist, categorize_results
 from data.cache import cache
 from engines.signal import get_session as get_trading_session
 
@@ -41,29 +41,6 @@ def _is_skipped(coin: str) -> bool:
     return True
 
 
-def _mins_until(target_hour: int, target_min: int = 0) -> tuple[int, int]:
-    now  = datetime.now(timezone.utc)
-    next = now.replace(hour=target_hour, minute=target_min, second=0, microsecond=0)
-    if now >= next:
-        next += timedelta(days=1)
-    total = int((next - now).total_seconds() / 60)
-    return total // 60, total % 60
-
-
-def _fmt_mins(dt: datetime) -> str:
-    now = datetime.now(timezone.utc)
-    m   = int((dt - now).total_seconds() / 60)
-    return f"{m // 60}h {m % 60}m"
-
-
-def _next_dt(hour: int, minute: int = 0) -> datetime:
-    now = datetime.now(timezone.utc)
-    dt  = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if now >= dt:
-        dt += timedelta(days=1)
-    return dt
-
-
 def _get_cached(coin: str) -> dict | None:
     return cache.get_raw(f"signal_{coin}")
 
@@ -80,18 +57,6 @@ def _all_cached_signals() -> list:
 def _get_stats() -> tuple[dict, dict]:
     from alerts.scanner import get_db_stats
     return get_db_stats(), {}
-
-
-def _signal_keyboard(coin: str) -> list:
-    return [
-        [
-            {"text": "📊 Factors", "callback_data": f"factors:{coin}"},
-            {"text": "⚠️ Risks",   "callback_data": f"risks:{coin}"}
-        ],
-        [
-            {"text": "❌ Skip",    "callback_data": f"skip:{coin}"}
-        ]
-    ]
 
 
 def _grade_block(label: str, data: dict) -> str:
@@ -155,22 +120,6 @@ def _split_message(text: str, limit: int = 4000) -> list[str]:
     return chunks
 
 
-async def send_with_keyboard(message: str, keyboard: list):
-    await _post("sendMessage", {
-        "chat_id":      cfg.TELEGRAM_CHAT_ID,
-        "text":         message,
-        "parse_mode":   "Markdown",
-        "reply_markup": {"inline_keyboard": keyboard}
-    })
-
-
-async def answer_callback(callback_id: str, text: str = ""):
-    await _post("answerCallbackQuery", {
-        "callback_query_id": callback_id,
-        "text":              text
-    })
-
-
 async def register_webhook():
     webhook_url = f"{DOMAIN}/webhook/telegram"
     try:
@@ -194,38 +143,32 @@ async def register_webhook():
 
 async def register_commands():
     commands = [
-        {"command": "status",     "description": "Bot status + last scan"},
-        {"command": "btc",        "description": "BTC analysis"},
-        {"command": "coin",       "description": "Any coin analysis — /coin ETH"},
-        {"command": "regime",     "description": "Regime across coins"},
-        {"command": "funding",    "description": "Funding rates"},
-        {"command": "fear",       "description": "Fear & greed index"},
-        {"command": "pnl",        "description": "All time PnL"},
-        {"command": "history",    "description": "Last 5 signals"},
-        {"command": "stats",      "description": "Full all time stats"},
-        {"command": "streak",     "description": "Win/loss streak"},
-        {"command": "grade",      "description": "Grade accuracy"},
-        {"command": "session",    "description": "Current session"},
-        {"command": "daily",      "description": "Daily summary"},
-        {"command": "next",       "description": "Next scan + session times"},
-        {"command": "scan",       "description": "Trigger manual scan"},
-        {"command": "queue",      "description": "Best signal in cache"},
-        {"command": "mode",       "description": "Current bot config"},
-        {"command": "brief",      "description": "Morning briefing now"},
-        {"command": "evening",    "description": "Evening briefing now"},
-        {"command": "backtest",   "description": "Backtest a coin — /backtest BTC"},
-        {"command": "factors",    "description": "Factor analysis"},
-        {"command": "debrief",    "description": "Last signal debrief"},
-        {"command": "ml",         "description": "ML model status"},
-        {"command": "sync",       "description": "Sync Freqtrade outcomes"},
-        {"command": "ftstatus",   "description": "Freqtrade open trades"},
-        {"command": "ftbalance",  "description": "Freqtrade balance"},
-        {"command": "ftprofit",   "description": "Freqtrade profit summary"},
-        {"command": "ftstart",    "description": "Start Freqtrade bot"},
-        {"command": "ftstop",     "description": "Stop Freqtrade bot"},
-        {"command": "pending",    "description": "Posts awaiting approval"},
-        {"command": "content",    "description": "Content posting stats"},
-        {"command": "help",       "description": "Full command list"},
+        {"command": "status",    "description": "Bot status overview"},
+        {"command": "queue",     "description": "Top 3 signals right now"},
+        {"command": "scan",      "description": "Trigger manual scan"},
+        {"command": "health",    "description": "All open trades health"},
+        {"command": "ftstatus",  "description": "Freqtrade open trades"},
+        {"command": "ftbalance", "description": "Freqtrade balance"},
+        {"command": "ftprofit",  "description": "Freqtrade profit summary"},
+        {"command": "ftstart",   "description": "Start Freqtrade bot"},
+        {"command": "ftstop",    "description": "Stop Freqtrade bot"},
+        {"command": "sync",      "description": "Sync Freqtrade outcomes"},
+        {"command": "btc",       "description": "BTC analysis"},
+        {"command": "coin",      "description": "Any coin analysis — /coin ETH"},
+        {"command": "funding",   "description": "Funding rates"},
+        {"command": "fear",      "description": "Fear and greed index"},
+        {"command": "pending",   "description": "Posts waiting — reply #N to see full text"},
+        {"command": "brief",     "description": "Generate market brief post"},
+        {"command": "discard",   "description": "Delete a post — /discard 5"},
+        {"command": "pnl",       "description": "All time PnL"},
+        {"command": "daily",     "description": "Today summary"},
+        {"command": "stats",     "description": "Full all time stats"},
+        {"command": "grade",     "description": "Grade accuracy"},
+        {"command": "history",   "description": "Last 5 signals"},
+        {"command": "backtest",  "description": "Backtest a coin — /backtest BTC"},
+        {"command": "ml",        "description": "ML model status"},
+        {"command": "mode",      "description": "Current bot config"},
+        {"command": "help",      "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
@@ -250,10 +193,6 @@ async def handle_webhook(request: Request):
     try:
         data = await request.json()
 
-        if "callback_query" in data:
-            await _handle_callback(data["callback_query"])
-            return
-
         msg     = data.get("message", {})
         text    = msg.get("text", "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -267,117 +206,8 @@ async def handle_webhook(request: Request):
         log.error(f"Webhook handler error: {e}")
 
 
-async def _handle_callback(callback: dict):
-    callback_id = callback.get("id", "")
-    data        = callback.get("data", "")
-    chat_id     = str(callback.get("from", {}).get("id", ""))
-
-    if chat_id != str(cfg.TELEGRAM_CHAT_ID):
-        await answer_callback(callback_id, "Unauthorized")
-        return
-
-    await answer_callback(callback_id)
-
-    if ":" not in data:
-        return
-
-    action, value = data.split(":", 1)
-
-    signal_handlers = {
-        "factors": _cb_show_factors,
-        "risks":   _cb_show_risks,
-        "skip":    _cb_skip_signal,
-    }
-
-    if action in signal_handlers:
-        await signal_handlers[action](value)
-        return
-
-    try:
-        post_id = int(value)
-    except ValueError:
-        return
-
-    if action == "approve_post":
-        from content.approval_flow import handle_approve_post
-        await handle_approve_post(post_id)
-    elif action == "discard_post":
-        from content.approval_flow import handle_discard_post
-        await handle_discard_post(post_id)
-    elif action == "edit_post":
-        from content.approval_flow import handle_edit_post
-        await handle_edit_post(post_id)
-    elif action == "regen_post":
-        from content.approval_flow import handle_regen_post
-        await handle_regen_post(post_id)
-
-
-async def _cb_show_factors(coin: str):
-    cached = _get_cached(coin)
-    if not cached:
-        await send(f"⚠️ No cached data for {coin}. Run /scan first.")
-        return
-
-    wconf   = cached.get("wconf", {})
-    factors = wconf.get("factors", [])
-    score   = cached.get("score", 0)
-
-    if not factors:
-        await send(f"No factor data for {coin}.")
-        return
-
-    lines = [
-        f"📊 *Confluence Factors — {coin}USDT*\n",
-        f"Score: `{score}/100` · Earned: `{wconf.get('total_earned',0)}/{wconf.get('max_possible',0)}`\n"
-    ]
-    for f in factors:
-        pct  = round(f["earned"] / f["max"] * 100) if f["max"] > 0 else 0
-        icon = "✅" if f["pass"] else "❌"
-        bar  = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        lines.append(f"{icon} *{f['label']}*\n`{bar}` {f['earned']}/{f['max']}\n_{f.get('detail', '')}_\n")
-
-    await send("\n".join(lines))
-
-
-async def _cb_show_risks(coin: str):
-    cached = _get_cached(coin)
-    if not cached:
-        await send(f"⚠️ No cached data for {coin}.")
-        return
-
-    expl  = cached.get("explanation", {})
-    softs = (cached.get("no_trade", {}) or {}).get("soft_blocks", [])
-    lines = [f"⚠️ *Risk Analysis — {coin}USDT*\n"]
-
-    if expl.get("risk_thesis"):
-        lines += ["*Risk Factors:*", expl["risk_thesis"]]
-
-    if softs:
-        lines.append("\n*Score Penalties:*")
-        for s in softs:
-            lines.append(f"⚠ {s['reason']} `(-{s.get('penalty',0)}pts)`")
-
-    if len(lines) == 1:
-        lines.append("No significant risk factors identified.")
-
-    await send("\n".join(lines))
-
-
-async def _cb_skip_signal(coin: str):
-    _skip_reasons[coin] = time.time()
-    await send(f"⏭ *{coin} signal skipped*\n\nExpires in 1 hour.")
-
-
 async def _handle_command(text: str, chat_id: str = ""):
     t = text.lower().strip()
-
-    import runtime_state as rs
-    pending_edit_id = rs.get("pending_edit_post_id")
-    if pending_edit_id and not t.startswith("/"):
-        from content.approval_flow import apply_edit_to_post
-        rs.set("pending_edit_post_id", None)
-        await apply_edit_to_post(int(pending_edit_id), text)
-        return
 
     if t.startswith("/coin"):
         parts = t.split()
@@ -407,9 +237,24 @@ async def _handle_command(text: str, chat_id: str = ""):
             await send(f"⚠️ Usage: `/backtest BTC`")
         return
 
-    if t == "/canceledit":
-        rs.set("pending_edit_post_id", None)
-        await send("✅ Edit cancelled.")
+    if t.startswith("/discard"):
+        parts = t.split()
+        if len(parts) > 1:
+            try:
+                post_id = int(parts[1].replace("#", ""))
+                await _cmd_discard(post_id)
+            except ValueError:
+                await send("⚠️ Usage: `/discard 5`")
+        else:
+            await send("⚠️ Usage: `/discard 5`")
+        return
+
+    if t.startswith("#") and len(t) > 1:
+        try:
+            post_id = int(t.replace("#", "").strip())
+            await _cmd_show_post(post_id)
+        except ValueError:
+            pass
         return
 
     handlers = {
@@ -420,20 +265,13 @@ async def _handle_command(text: str, chat_id: str = ""):
         "/scan":      _cmd_scan,
         "/help":      _cmd_help,
         "/btc":       _cmd_btc,
-        "/regime":    _cmd_regime,
         "/funding":   _cmd_funding,
         "/fear":      _cmd_fear,
         "/history":   _cmd_history,
         "/stats":     _cmd_stats,
-        "/streak":    _cmd_streak,
         "/grade":     _cmd_grade,
-        "/session":   _cmd_session,
-        "/next":      _cmd_next,
         "/mode":      _cmd_mode,
         "/brief":     _cmd_brief,
-        "/evening":   _cmd_evening,
-        "/factors":   _cmd_factors,
-        "/debrief":   _cmd_debrief,
         "/ml":        _cmd_ml,
         "/sync":      _cmd_sync,
         "/ftstatus":  _cmd_ft_status,
@@ -442,7 +280,7 @@ async def _handle_command(text: str, chat_id: str = ""):
         "/ftstart":   _cmd_ft_start,
         "/ftstop":    _cmd_ft_stop,
         "/pending":   _cmd_pending,
-        "/content":   _cmd_content,
+        "/health":    _cmd_health,
     }
 
     if t.startswith("/"):
@@ -504,18 +342,18 @@ async def _cmd_coin(coin: str):
         await send(f"No data for `{coin}`. Run /scan first.")
         return
 
-    market   = cached.get("market", {})
-    grade    = cached.get("grade", "F")
-    dir_     = cached.get("direction", "--")
-    score    = cached.get("score", 0)
-    sweep    = cached.get("sweep", {})
-    disp     = cached.get("displacement", {})
-    retest   = cached.get("retest", {})
-    d1d      = cached.get("d1d", {})
-    expl     = cached.get("explanation", {})
-    ml_prob  = cached.get("ml_probability")
+    market    = cached.get("market", {})
+    grade     = cached.get("grade", "F")
+    dir_      = cached.get("direction", "--")
+    score     = cached.get("score", 0)
+    sweep     = cached.get("sweep", {})
+    disp      = cached.get("displacement", {})
+    retest    = cached.get("retest", {})
+    d1d       = cached.get("d1d", {})
+    expl      = cached.get("explanation", {})
+    ml_prob   = cached.get("ml_probability")
     actual_rr = cached.get("actual_rr", 0)
-    tp_mult  = cached.get("tp_mult", 2.0)
+    tp_mult   = cached.get("tp_mult", 1.5)
 
     price   = market.get("price", 0)
     change  = market.get("change24", 0)
@@ -525,10 +363,10 @@ async def _cmd_coin(coin: str):
     rsi     = d1d.get("rsi")
     adx     = d1d.get("adx")
 
-    sig    = cached.get("signal", {})
-    entry  = sig.get("entry")
-    sl     = sig.get("sl")
-    tp1    = sig.get("tp1")
+    sig   = cached.get("signal", {})
+    entry = sig.get("entry")
+    sl    = sig.get("sl")
+    tp1   = sig.get("tp1")
 
     base = (
         f"📊 *{coin}USDT Analysis*\n"
@@ -571,20 +409,6 @@ async def _cmd_coin(coin: str):
     )
 
     await send(base)
-
-
-async def _cmd_regime():
-    coins = cfg.COINS[:8]
-    lines = [f"📈 *Market Regime — Top {len(coins)} Coins*\n_{_now_ist()}_\n"]
-    for coin in coins:
-        cached = _get_cached(coin)
-        if not cached:
-            lines.append(f"`{coin}` — no data")
-            continue
-        dir_ = cached.get("direction", "--")
-        em   = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
-        lines.append(f"{em} `{coin}` — {cached.get('regime','--')} · Grade {cached.get('grade','F')}")
-    await send("\n".join(lines))
 
 
 async def _cmd_funding():
@@ -712,43 +536,6 @@ async def _cmd_stats():
     )
 
 
-async def _cmd_streak():
-    from database import Signal as SignalModel
-    with get_session() as db:
-        signals = db.query(SignalModel).filter(
-            SignalModel.outcome.in_(["win", "loss"])
-        ).order_by(SignalModel.timestamp.desc()).all()
-
-    if not signals:
-        await send("📊 No closed signals yet.")
-        return
-
-    current_streak = 0
-    current_type   = signals[0].outcome
-    for s in signals:
-        if s.outcome == current_type:
-            current_streak += 1
-        else:
-            break
-
-    max_wins = max_losses = cur_w = cur_l = 0
-    for s in reversed(signals):
-        if s.outcome == "win":
-            cur_w += 1; cur_l  = 0
-        else:
-            cur_l += 1; cur_w  = 0
-        max_wins   = max(max_wins,   cur_w)
-        max_losses = max(max_losses, cur_l)
-
-    emoji = "🔥" if current_type == "win" else "❄️"
-    await send(
-        f"🔢 *Streak Report*\n\n"
-        f"Current: {emoji} `{current_streak} {current_type}s`\n\n"
-        f"Max wins:   `{max_wins} in a row`\n"
-        f"Max losses: `{max_losses} in a row`\n"
-    )
-
-
 async def _cmd_grade():
     stats, _ = _get_stats()
     bg       = stats.get("by_grade", {}) if stats else {}
@@ -762,42 +549,8 @@ async def _cmd_grade():
     )
 
 
-async def _cmd_session():
-    session   = get_trading_session()
-    hrs, mins = _mins_until(8)
-    now_utc   = datetime.now(timezone.utc)
-    await send(
-        f"🕐 *Session Status*\n"
-        f"_{_now_ist()}_\n\n"
-        f"Current:   `{session['name']}`\n"
-        f"Quality:   `{session['quality']}`\n"
-        f"Entries:   {'✅' if session['tradeable'] else '🚫'} `{'ALLOWED' if session['tradeable'] else 'BLOCKED'}`\n"
-        f"Score:     `{session['score']}/9`\n\n"
-        f"_{session['desc']}_\n\n"
-        f"London open in: `{hrs}h {mins}m`\n"
-        f"UTC now: `{now_utc.strftime('%H:%M')}`"
-    )
-
-
-async def _cmd_next():
-    from scheduler import get_next_scan_time
-    session = get_trading_session()
-    next_s  = get_next_scan_time()
-    london  = _next_dt(8)
-    ny      = _next_dt(13)
-    await send(
-        f"⏱ *Next Events*\n"
-        f"_{_now_ist()}_\n\n"
-        f"Next scan:      `{next_s}`\n"
-        f"London open:    `08:00 UTC` · `13:30 IST` (in {_fmt_mins(london)})\n"
-        f"NY open:        `13:00 UTC` · `18:30 IST` (in {_fmt_mins(ny)})\n\n"
-        f"Current session: `{session['name']}`\n"
-        f"Entries: `{'✅ ALLOWED' if session['tradeable'] else '🚫 BLOCKED'}`"
-    )
-
-
 async def _cmd_mode():
-    mode = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
     grades = ', '.join(cfg.MIN_GRADE_TO_TRADE)
     await send(
         f"⚙️ *Bot Configuration*\n\n"
@@ -813,165 +566,66 @@ async def _cmd_mode():
 
 
 async def _cmd_brief():
-    from alerts.briefing import send_morning_briefing
-    await send("🌅 Generating morning briefing...")
-    await send_morning_briefing()
-
-
-async def _cmd_evening():
-    from alerts.briefing import send_evening_briefing
-    await send("🌆 Generating evening briefing...")
-    await send_evening_briefing()
-
-
-async def _cmd_factors():
-    from backtest.factor_analysis import run_factor_analysis
-    await send("⏳ Running factor analysis...")
-    result = run_factor_analysis()
-
-    if "error" in result:
-        await send(f"⚠️ *Factor Analysis*\n\n{result['error']}")
-        return
-
-    total = result.get("total", 0)
-    wr    = result.get("overall_wr", 0)
-    top   = result.get("top_factors", [])
-    weak  = result.get("weak_factors", [])
-
-    lines = [f"🔬 *Factor Analysis*\n", f"Trades: `{total}` · WR: `{wr}%`\n"]
-
-    if top:
-        lines.append("*Strong Edge:*")
-        for f in top[:3]:
-            lines.append(f"✅ `{f['factor']}` — edge: `+{f['edge']}%`")
-
-    if weak:
-        lines.append("\n*Weak/No Edge:*")
-        for f in weak[:3]:
-            lines.append(f"⚠️ `{f['factor']}` — edge: `{f['edge']}%`")
-
-    await send("\n".join(lines))
-
-
-async def _cmd_backtest(coin: str):
-    from backtest.engine import run_backtest
-    await send(f"⏳ Running backtest for `{coin}`...")
+    await send("⏳ Generating market brief...")
     try:
-        loop   = asyncio.get_running_loop()
-        result = await asyncio.wait_for(
-            loop.run_in_executor(
-                None, lambda: run_backtest(
-                    coin=coin,
-                    capital=cfg.CAPITAL,
-                    leverage=10
-                )
-            ),
-            timeout=120.0
-        )
-        if "error" in result:
-            await send(f"❌ Backtest failed: `{result['error']}`")
+        from data.fetcher import get_fear_greed
+        from data.cache import cache
+
+        fg = {"value": 50, "label": "Neutral"}
+        try:
+            fg = await get_fear_greed()
+        except Exception:
+            pass
+
+        cached_results = _all_cached_signals()
+        cached_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+        top_coins = []
+        for r in cached_results[:3]:
+            top_coins.append({
+                "coin":  r.get("coin", "--"),
+                "grade": r.get("grade", "F"),
+                "score": r.get("score", 0)
+            })
+
+        btc_cached = cache.get_raw("signal_BTC")
+        btc_change = 0.0
+        if btc_cached:
+            btc_change = btc_cached.get("market", {}).get("change24", 0)
+
+        regimes = [r.get("regime", "") for r in cached_results if r.get("regime")]
+        regime  = max(set(regimes), key=regimes.count) if regimes else "Unknown"
+
+        sessions = [r.get("session", "") for r in cached_results if r.get("session")]
+        session  = sessions[0] if sessions else "Unknown"
+
+        now  = datetime.now(timezone.utc)
+        hour = now.hour
+        time_label = "Morning" if hour < 12 else "Evening" if hour >= 17 else "Midday"
+
+        context = {
+            "regime":     regime,
+            "session":    session,
+            "fg_val":     fg.get("value", 50),
+            "fg_label":   fg.get("label", "Neutral"),
+            "btc_change": btc_change,
+            "top_coins":  top_coins,
+            "time_label": time_label
+        }
+
+        from content.groq_writer import generate_brief_post
+        draft = await generate_brief_post(context)
+
+        if not draft:
+            await send("❌ Brief generation failed.")
             return
 
-        bg = result.get("by_grade", {})
-        pb = result.get("phase_breakdown", {})
-        await send(
-            f"📊 *Backtest — {coin}USDT*\n\n"
-            f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
-            f"Signals:  `{result.get('total_signals', 0)}`\n"
-            f"Trades:   `{result.get('total_trades', 0)}`\n"
-            f"Win Rate: `{result.get('win_rate', 0)}%`\n"
-            f"PnL:      `${result.get('total_pnl', 0)}`\n"
-            f"Max DD:   `{result.get('max_drawdown', 0)}%`\n\n"
-            f"TP hit: `{pb.get('tp1_hit_rate', 0)}%`\n\n"
-            f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
-            f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
-            f"B:  `{bg.get('B',{}).get('win_rate',0)}% WR` · `{bg.get('B',{}).get('trades',0)} trades`\n"
-        )
-    except asyncio.TimeoutError:
-        await send(f"❌ Backtest timed out after 120s")
+        from content.approval_flow import send_brief_for_approval
+        await send_brief_for_approval(draft)
+
     except Exception as e:
-        await send(f"❌ Backtest error: `{str(e)}`")
-
-
-async def _cmd_debrief():
-    from database import Signal as SignalModel
-    with get_session() as db:
-        signal = db.query(SignalModel).filter(
-            SignalModel.outcome.in_(["win", "loss"])
-        ).order_by(SignalModel.timestamp.desc()).first()
-
-    if not signal:
-        await send("📋 No closed signals yet.")
-        return
-
-    cached   = _get_cached(signal.coin)
-    expl     = cached.get("explanation", {}) if cached else {}
-    pnl_str  = f"+${signal.pnl:.4f}" if (signal.pnl or 0) >= 0 else f"-${abs(signal.pnl or 0):.4f}"
-    result_emoji = "✅" if signal.outcome == "win" else "❌"
-    ts_ist   = signal.timestamp.astimezone(IST).strftime("%d %b %I:%M %p IST") if signal.timestamp else "--"
-
-    await send(
-        f"📋 *Signal Debrief — {signal.coin}USDT {signal.direction}*\n"
-        f"_{ts_ist}_\n\n"
-        f"Result: {result_emoji} `{signal.outcome.upper()}` — `{pnl_str}`\n"
-        f"Grade:  `{signal.grade}`\n"
-        f"Score:  `{signal.score}/100`\n\n"
-        f"Entry: `{signal.entry}` · SL: `{signal.sl}` · TP: `{signal.tp1}`\n\n"
-        f"{expl.get('thesis', 'No thesis data available')}\n\n"
-        f"Type /stats for full performance"
-    )
-
-
-async def _cmd_scan():
-    await send("🔍 *Manual Scan Started*\n\nScanning all coins...\nThis takes 1-2 minutes.")
-    try:
-        from alerts.scanner import scan_all_coins
-        await scan_all_coins()
-    except Exception as e:
-        await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
-
-
-async def _cmd_queue():
-    best       = None
-    best_score = 0
-
-    for cached in _all_cached_signals():
-        if _is_skipped(cached.get("coin", "")):
-            continue
-        score = cached.get("score", 0)
-        grade = cached.get("grade", "F")
-        if score > best_score and grade in cfg.MIN_GRADE_TO_TRADE:
-            best       = cached
-            best_score = score
-
-    if not best:
-        await send("📋 *Signal Queue*\n\nNo signals in cache.\nUse /scan to scan now.")
-        return
-
-    sig      = best.get("signal", {})
-    coin     = best.get("coin", "?")
-    ml_prob  = best.get("ml_probability")
-    actual_rr = best.get("actual_rr", 0)
-    tp_mult  = best.get("tp_mult", 2.0)
-
-    ml_line = ""
-    if ml_prob is not None:
-        ml_icon = "✅" if ml_prob >= 0.65 else "❌"
-        ml_line = f"ML Prob: {ml_icon} `{ml_prob*100:.1f}%`\n"
-
-    await send_with_keyboard(
-        f"📋 *Next Signal — Grade {best['grade']}*\n\n"
-        f"Coin:  `{coin}USDT`\n"
-        f"Dir:   `{best['direction']}`\n"
-        f"Score: `{best['score']}/100`\n"
-        f"{ml_line}\n"
-        f"Entry: `{sig.get('entry', '--')}`\n"
-        f"SL:    `{sig.get('sl', '--')}`\n"
-        f"TP:    `{sig.get('tp1', '--')}` ({tp_mult}x risk)\n"
-        f"R:R:   `1:{actual_rr}`\n\n"
-        f"Signal forwarded to Freqtrade for execution.",
-        keyboard=_signal_keyboard(coin)
-    )
+        log.error(f"Brief command error: {e}")
+        await send(f"❌ Brief failed: `{str(e)}`")
 
 
 async def _cmd_ml():
@@ -1012,7 +666,7 @@ async def _cmd_sync():
     await send("🔄 *Syncing Freqtrade outcomes...*")
     try:
         from trade.sync import sync_freqtrade_outcomes
-        result = await sync_freqtrade_outcomes()
+        result    = await sync_freqtrade_outcomes()
         synced    = result.get("synced", 0)
         unmatched = result.get("unmatched", 0)
         total     = result.get("total", 0)
@@ -1090,37 +744,41 @@ async def _cmd_ft_status():
         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
         side    = "📈 LONG" if not t.get("is_short") else "📉 SHORT"
 
+        open_date = t.get("open_date", "")
+        duration  = "--"
+        try:
+            if open_date:
+                s = open_date.strip()
+                s = s.replace(' ', 'T') + '+00:00' if 'T' not in s else s
+                s = s.replace('Z', '+00:00')
+                open_dt  = datetime.fromisoformat(s)
+                diff     = datetime.now(timezone.utc) - open_dt
+                mins     = int(diff.total_seconds() / 60)
+                hrs      = mins // 60
+                rem_mins = mins % 60
+                duration = f"{hrs}h {rem_mins}m" if hrs > 0 else f"{mins}m"
+        except Exception:
+            pass
+
         try:
             from trade.health_monitor import get_health_from_redis
-            health      = get_health_from_redis(coin)
+            health       = get_health_from_redis(coin)
             health_state = health.get("state", "UNKNOWN") if health else "Checking..."
             health_emoji = {
                 "HEALTHY":     "✅",
                 "WARNING":     "⚠️",
                 "INVALIDATED": "🚨"
             }.get(health_state, "⏳")
-            failures = health.get("failures", []) if health else []
-            warnings = health.get("warnings", []) if health else []
         except Exception:
             health_state = "Checking..."
             health_emoji = "⏳"
-            failures     = []
-            warnings     = []
 
         lines.append(
             f"{side} `{pair}`\n"
             f"Entry: `{t.get('open_rate')}` · Current: `{t.get('current_rate')}`\n"
-            f"PnL: `{pnl_str}` ({pnl_pct:.2f}%)\n"
-            f"SL: `{t.get('stop_loss_abs')}`\n"
+            f"PnL: `{pnl_str}` ({pnl_pct:.2f}%) · Open: `{duration}`\n"
             f"Health: {health_emoji} `{health_state}`\n"
         )
-
-        if failures:
-            lines.append(f"✘ _{failures[0]}_")
-        elif warnings:
-            lines.append(f"⚠ _{warnings[0]}_")
-
-        lines.append("")
 
     await send("\n".join(lines))
 
@@ -1183,95 +841,242 @@ async def _cmd_ft_stop():
     await send(f"⏹ *Freqtrade Stopped*\n\nStatus: `{data.get('status', 'unknown')}`")
 
 
+async def _cmd_health():
+    data = await _ft_api_get("/status")
+    if data is None:
+        await send("❌ Freqtrade unavailable")
+        return
+
+    if not data or not isinstance(data, list):
+        await send(f"💚 *Trade Health*\n_{_now_ist()}_\n\nNo open trades.")
+        return
+
+    lines = [f"💚 *Trade Health — {len(data)} Open*\n_{_now_ist()}_\n"]
+
+    for t in data:
+        pair  = t.get("pair", "--")
+        coin  = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+        pnl   = float(t.get("profit_abs", 0))
+        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+        side  = "📈" if not t.get("is_short") else "📉"
+
+        try:
+            from trade.health_monitor import get_health_from_redis
+            health       = get_health_from_redis(coin)
+            health_state = health.get("state", "UNKNOWN") if health else "Checking..."
+            health_emoji = {
+                "HEALTHY":     "✅",
+                "WARNING":     "⚠️",
+                "INVALIDATED": "🚨"
+            }.get(health_state, "⏳")
+            failures = health.get("failures", []) if health else []
+            warnings = health.get("warnings", []) if health else []
+        except Exception:
+            health_state = "Checking..."
+            health_emoji = "⏳"
+            failures     = []
+            warnings     = []
+
+        lines.append(f"{side} `{coin}` — {health_emoji} `{health_state}` · `{pnl_str}`")
+
+        if failures:
+            lines.append(f"  ✘ _{failures[0]}_")
+        elif warnings:
+            lines.append(f"  ⚠ _{warnings[0]}_")
+
+        lines.append("")
+
+    await send("\n".join(lines))
+
+
 async def _cmd_pending():
     from content.approval_flow import get_pending_posts
     posts = await get_pending_posts()
 
     if not posts:
-        await send("📋 *Pending Posts*\n\nNo posts awaiting approval.")
+        await send("📋 *Pending Posts*\n\nNo posts waiting.\n\nUse /brief to generate a market post.")
         return
 
     lines = [f"📋 *Pending Posts — {len(posts)}*\n"]
+    lines.append("_Reply `#N` to see full text of post N_\n")
+
     for p in posts:
         post_type = p.get("post_type", "signal")
         icon      = "📊" if post_type == "signal" else "💬"
+        coin      = p.get("coin", "MARKET")
+        direction = p.get("direction", "--")
+        grade     = p.get("grade", "--")
+        post_text = p.get("post", "")
+        preview   = post_text[:80] + "..." if len(post_text) > 80 else post_text
+
         lines.append(
-            f"{icon} *#{p['post_id']}* — `{p['coin']}USDT {p['direction']}` Grade `{p['grade']}`\n"
-            f"_{p['twitter_draft'][:100]}..._\n"
+            f"{icon} *#{p['post_id']}*"
+            f"{f' — `{coin}USDT {direction}` Grade `{grade}`' if post_type == 'signal' else ' — Market Commentary'}\n"
+            f"_{preview}_\n"
+        )
+
+    lines.append("_Use `/discard N` to delete a post_")
+    await send("\n".join(lines))
+
+
+async def _cmd_show_post(post_id: int):
+    from content.approval_flow import get_post_text
+    text = await get_post_text(post_id)
+
+    if not text:
+        await send(f"⚠️ Post #{post_id} not found.")
+        return
+
+    char_count = len(text)
+    char_color = "✅" if char_count <= 270 else "⚠️"
+
+    await send(
+        f"📝 *Post #{post_id}* {char_color} `{char_count}/270`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{text}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"_Copy and post manually on Twitter._\n"
+        f"_Use `/discard {post_id}` to delete._"
+    )
+
+
+async def _cmd_discard(post_id: int):
+    from content.approval_flow import discard_post
+    success = await discard_post(post_id)
+    if success:
+        await send(f"🗑️ Post #{post_id} deleted.")
+    else:
+        await send(f"⚠️ Post #{post_id} not found.")
+
+
+async def _cmd_backtest(coin: str):
+    from backtest.engine import run_backtest
+    await send(f"⏳ Running backtest for `{coin}`...")
+    try:
+        loop   = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: run_backtest(
+                    coin=coin,
+                    capital=cfg.CAPITAL,
+                    leverage=10
+                )
+            ),
+            timeout=120.0
+        )
+        if "error" in result:
+            await send(f"❌ Backtest failed: `{result['error']}`")
+            return
+
+        bg = result.get("by_grade", {})
+        pb = result.get("phase_breakdown", {})
+        await send(
+            f"📊 *Backtest — {coin}USDT*\n\n"
+            f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
+            f"Signals:  `{result.get('total_signals', 0)}`\n"
+            f"Trades:   `{result.get('total_trades', 0)}`\n"
+            f"Win Rate: `{result.get('win_rate', 0)}%`\n"
+            f"PnL:      `${result.get('total_pnl', 0)}`\n"
+            f"Max DD:   `{result.get('max_drawdown', 0)}%`\n\n"
+            f"TP hit: `{pb.get('tp1_hit_rate', 0)}%`\n\n"
+            f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
+            f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
+            f"B:  `{bg.get('B',{}).get('win_rate',0)}% WR` · `{bg.get('B',{}).get('trades',0)} trades`\n"
+        )
+    except asyncio.TimeoutError:
+        await send(f"❌ Backtest timed out after 120s")
+    except Exception as e:
+        await send(f"❌ Backtest error: `{str(e)}`")
+
+
+async def _cmd_scan():
+    await send("🔍 *Manual Scan Started*\n\nScanning all coins...\nThis takes 1-2 minutes.")
+    try:
+        from alerts.scanner import scan_all_coins
+        await scan_all_coins()
+    except Exception as e:
+        await send(f"❌ *Scan Failed*\n\n`{str(e)}`")
+
+
+async def _cmd_queue():
+    cached_results = _all_cached_signals()
+    tradeable = [
+        r for r in cached_results
+        if r.get("grade") in cfg.MIN_GRADE_TO_TRADE and
+        r.get("direction") in ["LONG", "SHORT"] and
+        not _is_skipped(r.get("coin", ""))
+    ]
+    tradeable.sort(key=lambda x: x.get("score", 0), reverse=True)
+    top3 = tradeable[:3]
+
+    if not top3:
+        await send("📋 *Signal Queue*\n\nNo signals in cache.\nUse /scan to scan now.")
+        return
+
+    lines = [f"📋 *Signal Queue — {len(top3)} Signal(s)*\n_{_now_ist()}_\n"]
+
+    for r in top3:
+        sig       = r.get("signal", {})
+        coin      = r.get("coin", "?")
+        grade     = r.get("grade", "?")
+        direction = r.get("direction", "?")
+        score     = r.get("score", 0)
+        ml_prob   = r.get("ml_probability")
+        actual_rr = r.get("actual_rr", 0)
+        tp_mult   = r.get("tp_mult", 1.5)
+        emoji     = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
+        dir_emoji = "📈" if direction == "LONG" else "📉"
+
+        ml_line = ""
+        if ml_prob is not None:
+            ml_icon = "✅" if ml_prob >= 0.65 else "❌"
+            ml_line = f"ML: {ml_icon} `{ml_prob*100:.1f}%` · "
+
+        lines.append(
+            f"{emoji} *{coin}USDT* — Grade `{grade}` ({score}/100)\n"
+            f"{dir_emoji} {direction} · {ml_line}R:R `1:{actual_rr}`\n"
+            f"Entry: `{sig.get('entry', '--')}` · SL: `{sig.get('sl', '--')}` · TP: `{sig.get('tp1', '--')}` ({tp_mult}x)\n"
+            f"_Signal forwarded to Freqtrade_\n"
         )
 
     await send("\n".join(lines))
 
 
-async def _cmd_content():
-    from content.publisher import get_posting_stats
-    stats = get_posting_stats()
-
-    if not stats:
-        await send("📊 No content stats yet.")
-        return
-
-    await send(
-        f"📊 *Content Stats*\n\n"
-        f"Total posts:       `{stats.get('total', 0)}`\n"
-        f"Signal posts:      `{stats.get('signal_posts', 0)}`\n"
-        f"Commentary posts:  `{stats.get('commentary_posts', 0)}`\n"
-        f"Posted:            `{stats.get('posted', 0)}`\n"
-        f"Pending:           `{stats.get('pending', 0)}`\n"
-        f"Discarded:         `{stats.get('discarded', 0)}`\n\n"
-        f"*Engagement*\n"
-        f"Total likes:    `{stats.get('total_likes', 0)}`\n"
-        f"Total retweets: `{stats.get('total_retweets', 0)}`\n"
-        f"Total views:    `{stats.get('total_views', 0)}`\n\n"
-        f"*Averages per post*\n"
-        f"Avg likes:    `{stats.get('avg_likes', 0)}`\n"
-        f"Avg retweets: `{stats.get('avg_retweets', 0)}`\n"
-        f"Avg views:    `{stats.get('avg_views', 0)}`\n"
-    )
-
-
 async def _cmd_help():
     await send(
         "🤖 *Signal Engine v5 — Commands*\n\n"
-        "*STATUS*\n"
-        "/status  — bot status + last scan\n"
-        "/mode    — current config\n"
-        "/next    — next scan + session times\n"
-        "/session — current session\n\n"
-        "*MARKET*\n"
-        "/btc         — BTC analysis\n"
-        "/coin ETH    — any coin analysis\n"
-        "/regime      — regime across coins\n"
-        "/funding     — funding rates\n"
-        "/fear        — fear & greed index\n\n"
-        "*SIGNALS*\n"
+        "*ESSENTIALS*\n"
+        "/status  — bot status overview\n"
+        "/queue   — top 3 signals right now\n"
         "/scan    — trigger manual scan\n"
-        "/queue   — best signal in cache\n"
-        "/brief   — morning briefing (London open)\n"
-        "/evening — evening briefing (NY open)\n\n"
-        "*PERFORMANCE*\n"
-        "/pnl     — all time PnL\n"
-        "/history — last 5 signals\n"
-        "/stats   — full all time stats\n"
-        "/streak  — win/loss streak\n"
-        "/grade   — grade accuracy\n"
-        "/daily   — daily summary\n\n"
-        "*ANALYSIS*\n"
-        "/backtest BTC — backtest a coin\n"
-        "/factors      — factor analysis\n"
-        "/debrief      — last signal debrief\n\n"
-        "*ML*\n"
-        "/ml      — ML model status\n"
-        "/sync    — sync Freqtrade outcomes\n\n"
+        "/health  — all open trades health\n\n"
         "*FREQTRADE*\n"
         "/ftstatus   — open trades\n"
         "/ftbalance  — balance\n"
         "/ftprofit   — profit summary\n"
         "/ftstart    — start bot\n"
-        "/ftstop     — stop bot\n\n"
+        "/ftstop     — stop bot\n"
+        "/sync       — sync outcomes\n\n"
+        "*MARKET*\n"
+        "/btc         — BTC analysis\n"
+        "/coin ETH    — any coin analysis\n"
+        "/funding     — funding rates\n"
+        "/fear        — fear & greed index\n\n"
         "*CONTENT*\n"
-        "/pending — posts awaiting approval\n"
-        "/content — posting stats\n\n"
+        "/pending     — posts waiting\n"
+        "/brief       — generate market post\n"
+        "#N           — see full text of post N\n"
+        "/discard N   — delete post N\n\n"
+        "*PERFORMANCE*\n"
+        "/pnl     — all time PnL\n"
+        "/daily   — today summary\n"
+        "/stats   — full all time stats\n"
+        "/grade   — grade accuracy\n"
+        "/history — last 5 signals\n"
+        "/backtest BTC — backtest a coin\n\n"
+        "*OTHER*\n"
+        "/ml      — ML model status\n"
+        "/mode    — bot config\n"
         "/help    — this message\n"
     )
 
@@ -1300,7 +1105,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
     sl_pct    = signal.get("sl_pct", 0)
     risk_amt  = signal.get("risk_amt", 0)
     pos_size  = signal.get("pos_size", 0)
-    tp_mult   = signal.get("tp_mult", 2.0)
+    tp_mult   = signal.get("tp_mult", 1.5)
     actual_rr = signal.get("actual_rr", 0)
     emoji     = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
     dir_emoji = "📈" if direction == "LONG" else "📉"
@@ -1319,7 +1124,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
     if grade == "B":
         grade_note = "_Grade B — paper mode only · quality filter passed_\n\n"
 
-    await send_with_keyboard(
+    await send(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
@@ -1338,8 +1143,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         f"Size:    `${pos_size:.2f}`\n\n"
         f"{grade_note}"
         f"{chr(10) + '*Why:* ' + thesis + chr(10) if thesis else ''}"
-        f"_Signal forwarded to Freqtrade for execution._",
-        keyboard=_signal_keyboard(coin)
+        f"_Signal forwarded to Freqtrade for execution._"
     )
 
 

@@ -95,10 +95,10 @@ function showSignalDetail(h) {
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
-      ${_detailCell('Entry', fmt(h.entry_price), '#0071e3')}
-      ${_detailCell('Stop',  fmt(h.sl_price),    '#ff3b30')}
-      ${_detailCell('TP',    fmt(h.tp1_price),   '#34c759')}
-      ${_detailCell('Risk',  fmt(h.risk_amt),    '#ff3b30')}
+      ${_detailCell('Entry',    fmt(h.entry_price), '#0071e3')}
+      ${_detailCell('Stop',     fmt(h.sl_price),    '#ff3b30')}
+      ${_detailCell('TP',       fmt(h.tp1_price),   '#34c759')}
+      ${_detailCell('Risk',     fmt(h.risk_amt),    '#ff3b30')}
       ${_detailCell('Size',     fmt(h.position_size), '#1d1d1f')}
       ${_detailCell('Leverage', (h.leverage || '--'), '#1d1d1f')}
       ${_detailCell('Score',    (h.score_at_entry ? h.score_at_entry + '/100' : '--'), '#0071e3')}
@@ -136,7 +136,7 @@ function _renderModalData(coin, data, title, body) {
   const ob      = data.d4h?.order_blocks || {}
   const ml_prob = data.ml_probability
   const actual_rr = data.actual_rr || 0
-  const tp_mult   = data.tp_mult || 2.0
+  const tp_mult   = data.tp_mult || 1.5
 
   const gc = gradeColor(grade)
 
@@ -147,7 +147,7 @@ function _renderModalData(coin, data, title, body) {
       <div style="background:rgba(0,0,0,0.04);border-radius:12px;padding:12px">
         <div class="section-label" style="margin-bottom:8px">Market</div>
         <div style="font-family:monospace;font-weight:700;font-size:14px;color:#1d1d1f">
-          ${market.price ? '$' + Number(market.price).toLocaleString() : '--'}
+          ${market.price ? fmtPrice(market.price) : '--'}
           <span style="font-size:12px;font-weight:600;margin-left:4px;color:${(market.change24||0)>=0?'#34c759':'#ff3b30'}">
             ${(market.change24||0)>=0?'+':''}${Number(market.change24||0).toFixed(2)}%
           </span>
@@ -274,7 +274,7 @@ function _levelCell(label, val, color) {
     <div>
       <div class="section-label" style="margin-bottom:4px">${label}</div>
       <div style="font-family:monospace;font-weight:600;font-size:12px;color:${color}">
-        ${val ? '$'+Number(val).toFixed(4) : '--'}
+        ${val ? fmtPrice(parseFloat(val)) : '--'}
       </div>
     </div>`
 }
