@@ -151,7 +151,8 @@ async def _ft_ws_listener():
 
             async with websockets.connect(
                 ws_url,
-                ping_interval = None,
+                ping_interval = 20,
+                ping_timeout  = 10,
                 close_timeout = 5,
                 open_timeout  = 10
             ) as ws:
@@ -163,41 +164,21 @@ async def _ft_ws_listener():
                     "data": ["trade", "entry_fill", "exit_fill", "status"]
                 }))
 
-                async def _heartbeat():
-                    while True:
-                        await asyncio.sleep(5)
-                        try:
-                            await ws.send(json.dumps({"type": "ping"}))
-                        except Exception:
-                            break
-
-                heartbeat_task = asyncio.create_task(_heartbeat())
-
-                try:
-                    async for message in ws:
-                        try:
-                            data     = json.loads(message)
-                            msg_type = data.get("type", "")
-
-                            if msg_type == "pong":
-                                continue
-
-                            log.debug(f"FT WS event: {msg_type}")
-
-                            for cb in _trade_event_callbacks:
-                                try:
-                                    await cb(msg_type, data.get("data", {}))
-                                except Exception as e:
-                                    log.error(f"FT WS callback error: {e}")
-
-                        except Exception as e:
-                            log.error(f"FT WS message parse error: {e}")
-                finally:
-                    heartbeat_task.cancel()
+                async for message in ws:
                     try:
-                        await heartbeat_task
-                    except asyncio.CancelledError:
-                        pass
+                        data     = json.loads(message)
+                        msg_type = data.get("type", "")
+
+                        log.debug(f"FT WS event: {msg_type}")
+
+                        for cb in _trade_event_callbacks:
+                            try:
+                                await cb(msg_type, data.get("data", {}))
+                            except Exception as e:
+                                log.error(f"FT WS callback error: {e}")
+
+                    except Exception as e:
+                        log.error(f"FT WS message parse error: {e}")
 
         except websockets.exceptions.ConnectionClosedError as e:
             _ft_ws_connected = False
