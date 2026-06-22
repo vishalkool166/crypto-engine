@@ -11,10 +11,10 @@ from auth import is_authenticated
 log    = logging.getLogger(__name__)
 router = APIRouter()
 
-_ft_token:   str                  = None
-_http_client: httpx.AsyncClient   = None
-_ft_ws_task:  asyncio.Task        = None
-_ft_ws_connected: bool            = False
+_ft_token:        str                = None
+_http_client:     httpx.AsyncClient  = None
+_ft_ws_task:      asyncio.Task       = None
+_ft_ws_connected: bool               = False
 
 _trade_event_callbacks = []
 
@@ -36,7 +36,7 @@ async def _get_http_client() -> httpx.AsyncClient:
 
 
 async def _get_ft_token() -> str:
-    global _ft_token
+    global _ft_token, _http_client
     if _ft_token:
         try:
             client = await _get_http_client()
@@ -48,7 +48,7 @@ async def _get_ft_token() -> str:
             if r.status_code == 200:
                 return _ft_token
         except Exception:
-            pass
+            _http_client = None
 
     try:
         client = await _get_http_client()
@@ -66,6 +66,7 @@ async def _get_ft_token() -> str:
             return None
     except Exception as e:
         log.error(f"Freqtrade token error: {e}")
+        _http_client = None
         return None
 
 
@@ -134,7 +135,7 @@ async def _ft_delete(path: str) -> dict:
 
 
 async def _ft_ws_listener():
-    global _ft_ws_connected
+    global _ft_ws_connected, _ft_token
     while True:
         try:
             token = await _get_ft_token()
@@ -150,9 +151,9 @@ async def _ft_ws_listener():
 
             async with websockets.connect(
                 ws_url,
-                ping_interval = 20,
-                ping_timeout  = 10,
-                close_timeout = 5
+                ping_interval = None,
+                close_timeout = 5,
+                open_timeout  = 10
             ) as ws:
                 _ft_ws_connected = True
                 log.info("FT WS: connected ✅")
@@ -162,22 +163,51 @@ async def _ft_ws_listener():
                     "data": ["trade", "entry_fill", "exit_fill", "status"]
                 }))
 
-                async for message in ws:
+                async def _heartbeat():
+                    while True:
+                        await asyncio.sleep(5)
+                        try:
+                            await ws.send(json.dumps({"type": "ping"}))
+                        except Exception:
+                            break
+
+                heartbeat_task = asyncio.create_task(_heartbeat())
+
+                try:
+                    async for message in ws:
+                        try:
+                            data     = json.loads(message)
+                            msg_type = data.get("type", "")
+
+                            if msg_type == "pong":
+                                continue
+
+                            log.debug(f"FT WS event: {msg_type}")
+
+                            for cb in _trade_event_callbacks:
+                                try:
+                                    await cb(msg_type, data.get("data", {}))
+                                except Exception as e:
+                                    log.error(f"FT WS callback error: {e}")
+
+                        except Exception as e:
+                            log.error(f"FT WS message parse error: {e}")
+                finally:
+                    heartbeat_task.cancel()
                     try:
-                        data = json.loads(message)
-                        msg_type = data.get("type", "")
+                        await heartbeat_task
+                    except asyncio.CancelledError:
+                        pass
 
-                        log.debug(f"FT WS event: {msg_type}")
-
-                        for cb in _trade_event_callbacks:
-                            try:
-                                await cb(msg_type, data.get("data", {}))
-                            except Exception as e:
-                                log.error(f"FT WS callback error: {e}")
-
-                    except Exception as e:
-                        log.error(f"FT WS message parse error: {e}")
-
+        except websockets.exceptions.ConnectionClosedError as e:
+            _ft_ws_connected = False
+            log.warning(f"FT WS connection closed: {e} — retrying in 5s")
+            await asyncio.sleep(5)
+        except websockets.exceptions.InvalidStatusCode as e:
+            _ft_ws_connected = False
+            _ft_token = None
+            log.warning(f"FT WS invalid status (token expired?): {e} — retrying in 10s")
+            await asyncio.sleep(10)
         except Exception as e:
             _ft_ws_connected = False
             log.warning(f"FT WS disconnected: {e} — retrying in 5s")
