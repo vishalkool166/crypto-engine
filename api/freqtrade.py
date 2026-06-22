@@ -1,5 +1,8 @@
+import asyncio
+import json
 import logging
 import httpx
+import websockets
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from config import cfg
@@ -8,7 +11,16 @@ from auth import is_authenticated
 log    = logging.getLogger(__name__)
 router = APIRouter()
 
-_ft_token: str = None
+_ft_token:   str                  = None
+_http_client: httpx.AsyncClient   = None
+_ft_ws_task:  asyncio.Task        = None
+_ft_ws_connected: bool            = False
+
+_trade_event_callbacks = []
+
+
+def on_ft_event(callback):
+    _trade_event_callbacks.append(callback)
 
 
 def _auth(request: Request):
@@ -16,56 +28,63 @@ def _auth(request: Request):
         raise HTTPException(401, "Unauthorized")
 
 
+async def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=10)
+    return _http_client
+
+
 async def _get_ft_token() -> str:
     global _ft_token
     if _ft_token:
         try:
-            async with httpx.AsyncClient() as client:
-                r = await client.get(
-                    f"{cfg.FREQTRADE_URL}/api/v1/ping",
-                    headers={"Authorization": f"Bearer {_ft_token}"},
-                    timeout=5
-                )
-                if r.status_code == 200:
-                    return _ft_token
+            client = await _get_http_client()
+            r = await client.get(
+                f"{cfg.FREQTRADE_URL}/api/v1/ping",
+                headers={"Authorization": f"Bearer {_ft_token}"},
+                timeout=5
+            )
+            if r.status_code == 200:
+                return _ft_token
         except Exception:
             pass
 
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{cfg.FREQTRADE_URL}/api/v1/token/login",
-                auth=(cfg.FREQTRADE_USERNAME, cfg.FREQTRADE_PASSWORD),
-                timeout=5
-            )
-            if r.status_code == 200:
-                _ft_token = r.json().get("access_token")
-                log.info("Freqtrade token refreshed")
-                return _ft_token
-            else:
-                log.error(f"Freqtrade login failed: {r.text}")
-                return None
+        client = await _get_http_client()
+        r = await client.post(
+            f"{cfg.FREQTRADE_URL}/api/v1/token/login",
+            auth=(cfg.FREQTRADE_USERNAME, cfg.FREQTRADE_PASSWORD),
+            timeout=5
+        )
+        if r.status_code == 200:
+            _ft_token = r.json().get("access_token")
+            log.info("Freqtrade token refreshed")
+            return _ft_token
+        else:
+            log.error(f"Freqtrade login failed: {r.text}")
+            return None
     except Exception as e:
         log.error(f"Freqtrade token error: {e}")
         return None
 
 
 async def _ft_get(path: str) -> dict:
+    global _ft_token
     token = await _get_ft_token()
     if not token:
         raise HTTPException(503, "Freqtrade unavailable")
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{cfg.FREQTRADE_URL}/api/v1{path}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            if r.status_code == 401:
-                global _ft_token
-                _ft_token = None
-                raise HTTPException(503, "Freqtrade auth failed")
-            return r.json()
+        client = await _get_http_client()
+        r = await client.get(
+            f"{cfg.FREQTRADE_URL}/api/v1{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if r.status_code == 401:
+            _ft_token = None
+            raise HTTPException(503, "Freqtrade auth failed")
+        return r.json()
     except HTTPException:
         raise
     except Exception as e:
@@ -74,22 +93,22 @@ async def _ft_get(path: str) -> dict:
 
 
 async def _ft_post(path: str, body: dict = None) -> dict:
+    global _ft_token
     token = await _get_ft_token()
     if not token:
         raise HTTPException(503, "Freqtrade unavailable")
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{cfg.FREQTRADE_URL}/api/v1{path}",
-                headers={"Authorization": f"Bearer {token}"},
-                json=body or {},
-                timeout=10
-            )
-            if r.status_code == 401:
-                global _ft_token
-                _ft_token = None
-                raise HTTPException(503, "Freqtrade auth failed")
-            return r.json()
+        client = await _get_http_client()
+        r = await client.post(
+            f"{cfg.FREQTRADE_URL}/api/v1{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            json=body or {},
+            timeout=10
+        )
+        if r.status_code == 401:
+            _ft_token = None
+            raise HTTPException(503, "Freqtrade auth failed")
+        return r.json()
     except HTTPException:
         raise
     except Exception as e:
@@ -102,16 +121,91 @@ async def _ft_delete(path: str) -> dict:
     if not token:
         raise HTTPException(503, "Freqtrade unavailable")
     try:
-        async with httpx.AsyncClient() as client:
-            r = await client.delete(
-                f"{cfg.FREQTRADE_URL}/api/v1{path}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            return r.json()
+        client = await _get_http_client()
+        r = await client.delete(
+            f"{cfg.FREQTRADE_URL}/api/v1{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        return r.json()
     except Exception as e:
         log.error(f"Freqtrade DELETE {path} error: {e}")
         raise HTTPException(503, f"Freqtrade unavailable: {e}")
+
+
+async def _ft_ws_listener():
+    global _ft_ws_connected
+    while True:
+        try:
+            token = await _get_ft_token()
+            if not token:
+                log.warning("FT WS: no token — retrying in 10s")
+                await asyncio.sleep(10)
+                continue
+
+            ws_url = cfg.FREQTRADE_URL.replace("http://", "ws://").replace("https://", "wss://")
+            ws_url = f"{ws_url}/api/v1/message/ws?token={token}"
+
+            log.info(f"FT WS: connecting to {ws_url[:60]}...")
+
+            async with websockets.connect(
+                ws_url,
+                ping_interval = 20,
+                ping_timeout  = 10,
+                close_timeout = 5
+            ) as ws:
+                _ft_ws_connected = True
+                log.info("FT WS: connected ✅")
+
+                await ws.send(json.dumps({
+                    "type": "subscribe",
+                    "data": ["trade", "entry_fill", "exit_fill", "status"]
+                }))
+
+                async for message in ws:
+                    try:
+                        data = json.loads(message)
+                        msg_type = data.get("type", "")
+
+                        log.debug(f"FT WS event: {msg_type}")
+
+                        for cb in _trade_event_callbacks:
+                            try:
+                                await cb(msg_type, data.get("data", {}))
+                            except Exception as e:
+                                log.error(f"FT WS callback error: {e}")
+
+                    except Exception as e:
+                        log.error(f"FT WS message parse error: {e}")
+
+        except Exception as e:
+            _ft_ws_connected = False
+            log.warning(f"FT WS disconnected: {e} — retrying in 5s")
+            await asyncio.sleep(5)
+
+
+async def start_ft_ws():
+    global _ft_ws_task
+    if _ft_ws_task and not _ft_ws_task.done():
+        return
+    _ft_ws_task = asyncio.create_task(_ft_ws_listener())
+    log.info("FT WS listener started")
+
+
+async def stop_ft_ws():
+    global _ft_ws_task, _http_client, _ft_ws_connected
+    if _ft_ws_task:
+        _ft_ws_task.cancel()
+        try:
+            await _ft_ws_task
+        except asyncio.CancelledError:
+            pass
+        _ft_ws_task = None
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+    _ft_ws_connected = False
+    log.info("FT WS listener stopped")
 
 
 @router.get("/ft/status")
@@ -254,7 +348,7 @@ async def ft_forcesell(request: Request):
         tradeid = body.get("tradeid")
         if not tradeid:
             raise HTTPException(400, "tradeid required")
-        data = await _ft_post(f"/forcesell", {"tradeid": str(tradeid)})
+        data = await _ft_post("/forcesell", {"tradeid": str(tradeid)})
         return JSONResponse(content=data)
     except HTTPException:
         raise
@@ -276,25 +370,88 @@ async def ft_delete_trade(request: Request, tradeid: int):
 
 @router.get("/ft/summary")
 async def ft_summary(request: Request):
-    """Single endpoint that returns everything needed for dashboard."""
     _auth(request)
     try:
-        import asyncio
-        status, profit, balance, daily = await asyncio.gather(
+        from database import SessionLocal
+        from database import Signal as SignalModel
+
+        status, profit, balance, daily, config = await asyncio.gather(
             _ft_get("/status"),
             _ft_get("/profit"),
             _ft_get("/balance"),
             _ft_get("/daily?timescale=7"),
+            _ft_get("/show_config"),
             return_exceptions=True
         )
 
+        bot_state = "unknown"
+        if not isinstance(config, Exception) and config:
+            bot_state = config.get("state", "unknown")
+
+        trades_with_health = []
+        if not isinstance(status, Exception) and status and isinstance(status, list):
+
+            tp1_map = {}
+            sl_map  = {}
+
+            try:
+                with SessionLocal() as db:
+                    for trade in status:
+                        pair      = trade.get("pair", "")
+                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                        is_short  = trade.get("is_short", False)
+                        direction = "SHORT" if is_short else "LONG"
+
+                        signal = db.query(SignalModel).filter(
+                            SignalModel.coin      == coin,
+                            SignalModel.direction == direction,
+                            SignalModel.outcome   == "pending"
+                        ).order_by(SignalModel.timestamp.desc()).first()
+
+                        if not signal:
+                            signal = db.query(SignalModel).filter(
+                                SignalModel.coin      == coin,
+                                SignalModel.direction == direction
+                            ).order_by(SignalModel.timestamp.desc()).first()
+
+                        if signal:
+                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
+                            if signal.sl:  sl_map[coin]  = float(signal.sl)
+
+            except Exception as e:
+                log.warning(f"tp1/sl fetch error: {e}")
+
+            for trade in status:
+                pair = trade.get("pair", "")
+                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+
+                health = None
+                try:
+                    from trade.health_monitor import get_health_from_redis
+                    health = get_health_from_redis(coin)
+                except Exception:
+                    pass
+
+                trade_copy              = dict(trade)
+                trade_copy["health"]    = health
+                trade_copy["tp1"]       = tp1_map.get(coin, None)
+                trade_copy["sl_signal"] = sl_map.get(coin, None)
+                trades_with_health.append(trade_copy)
+
         return JSONResponse(content={
-            "status":  status  if not isinstance(status,  Exception) else [],
-            "profit":  profit  if not isinstance(profit,  Exception) else {},
-            "balance": balance if not isinstance(balance, Exception) else {},
-            "daily":   daily   if not isinstance(daily,   Exception) else [],
+            "status":    trades_with_health,
+            "profit":    profit    if not isinstance(profit,    Exception) else {},
+            "balance":   balance   if not isinstance(balance,   Exception) else {},
+            "daily":     daily     if not isinstance(daily,     Exception) else [],
+            "bot_state": bot_state
         })
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@router.get("/ft/ws_status")
+async def ft_ws_status(request: Request):
+    _auth(request)
+    return JSONResponse(content={"connected": _ft_ws_connected})

@@ -20,6 +20,11 @@ function startDashboardSocket() {
     try {
       const d = JSON.parse(event.data)
 
+      if (d.type === 'ft_update') {
+        applyFtUpdate(d)
+        return
+      }
+
       if (d.type === 'dashboard') {
         applyAndRender(d)
         return
@@ -31,9 +36,9 @@ function startDashboardSocket() {
       }
 
       if (
-        d.type === 'trade_opened'  ||
-        d.type === 'trade_closed'  ||
-        d.type === 'health_changed'||
+        d.type === 'trade_opened'   ||
+        d.type === 'trade_closed'   ||
+        d.type === 'health_changed' ||
         d.type === 'scan_complete'
       ) {
         fetchDashboard()

@@ -13,7 +13,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from api.routes       import router, build_dashboard_payload
-from api.freqtrade    import router as ft_router
+from api.freqtrade    import router as ft_router, start_ft_ws, stop_ft_ws, on_ft_event
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
 from alerts.telegram  import send, register_webhook, handle_webhook
@@ -27,6 +27,7 @@ logging.basicConfig(
 )
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
+logging.getLogger("websockets").setLevel(logging.WARNING)
 
 log       = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="frontend")
@@ -66,6 +67,111 @@ async def push_event(event_type: str, data: dict = None):
         log.error(f"push_event error: {e}")
 
 
+async def _push_ft_update(event_type: str, data: dict = None):
+    if not _dashboard_clients:
+        return
+    try:
+        from api.freqtrade import _ft_get
+        from database import SessionLocal
+        from database import Signal as SignalModel
+
+        status, profit, balance, config = await asyncio.gather(
+            _ft_get("/status"),
+            _ft_get("/profit"),
+            _ft_get("/balance"),
+            _ft_get("/show_config"),
+            return_exceptions=True
+        )
+
+        bot_state = "unknown"
+        if not isinstance(config, Exception) and config:
+            bot_state = config.get("state", "unknown")
+
+        trades_with_health = []
+        if not isinstance(status, Exception) and status and isinstance(status, list):
+
+            tp1_map = {}
+            sl_map  = {}
+
+            try:
+                with SessionLocal() as db:
+                    for trade in status:
+                        pair      = trade.get("pair", "")
+                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                        is_short  = trade.get("is_short", False)
+                        direction = "SHORT" if is_short else "LONG"
+
+                        signal = db.query(SignalModel).filter(
+                            SignalModel.coin      == coin,
+                            SignalModel.direction == direction,
+                            SignalModel.outcome   == "pending"
+                        ).order_by(SignalModel.timestamp.desc()).first()
+
+                        if not signal:
+                            signal = db.query(SignalModel).filter(
+                                SignalModel.coin      == coin,
+                                SignalModel.direction == direction
+                            ).order_by(SignalModel.timestamp.desc()).first()
+
+                        if signal:
+                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
+                            if signal.sl:  sl_map[coin]  = float(signal.sl)
+
+            except Exception as e:
+                log.warning(f"ft push tp1/sl error: {e}")
+
+            for trade in status:
+                pair = trade.get("pair", "")
+                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+
+                health = None
+                try:
+                    from trade.health_monitor import get_health_from_redis
+                    health = get_health_from_redis(coin)
+                except Exception:
+                    pass
+
+                trade_copy              = dict(trade)
+                trade_copy["health"]    = health
+                trade_copy["tp1"]       = tp1_map.get(coin, None)
+                trade_copy["sl_signal"] = sl_map.get(coin, None)
+                trades_with_health.append(trade_copy)
+
+        payload = json.dumps({
+            "type":      "ft_update",
+            "event":     event_type,
+            "status":    trades_with_health,
+            "profit":    profit    if not isinstance(profit,    Exception) else {},
+            "balance":   balance   if not isinstance(balance,   Exception) else {},
+            "bot_state": bot_state
+        })
+
+        dead = set()
+        for ws in _dashboard_clients:
+            try:
+                await ws.send_text(payload)
+            except Exception:
+                dead.add(ws)
+        _dashboard_clients.difference_update(dead)
+
+    except Exception as e:
+        log.error(f"_push_ft_update error: {e}")
+
+
+async def _on_ft_event(event_type: str, data: dict):
+    log.info(f"FT event received: {event_type}")
+
+    push_types = {
+        "entry_fill",
+        "exit_fill",
+        "trade",
+        "status",
+    }
+
+    if event_type in push_types:
+        await _push_ft_update(event_type, data)
+
+
 async def _dashboard_push_loop():
     while True:
         await asyncio.sleep(5)
@@ -81,6 +187,7 @@ async def lifespan(app: FastAPI):
     _bootstrap_secrets()
 
     on_event(push_event)
+    on_ft_event(_on_ft_event)
 
     from auth import setup_status
     status = setup_status()
@@ -99,6 +206,8 @@ async def lifespan(app: FastAPI):
 
     from alerts.telegram import register_commands
     await register_commands()
+
+    await start_ft_ws()
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
@@ -127,6 +236,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    await stop_ft_ws()
     stop_scheduler()
 
     await send("🔴 *Signal Engine v5 Stopped*")
