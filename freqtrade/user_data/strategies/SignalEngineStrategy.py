@@ -9,7 +9,7 @@ from pandas import DataFrame
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL    = None
+REDIS_URL     = None
 _redis_client = None
 
 
@@ -29,7 +29,6 @@ def _get_redis():
         )
         client.ping()
         _redis_client = client
-        logger.info(f"Freqtrade Redis connected: {REDIS_URL}")
         return _redis_client
     except Exception as e:
         logger.error(f"Freqtrade Redis connection failed: {e}")
@@ -55,6 +54,49 @@ def _get_signal(coin: str) -> dict | None:
         return None
 
 
+def _get_trade_levels(coin: str) -> dict | None:
+    try:
+        r = _get_redis()
+        if not r:
+            return None
+        data = r.get(f"trade_levels:{coin}")
+        if not data:
+            return None
+        return json.loads(data)
+    except Exception as e:
+        logger.error(f"Redis trade_levels read failed {coin}: {e}")
+        return None
+
+
+def _save_trade_levels(coin: str, signal: dict):
+    try:
+        r = _get_redis()
+        if not r:
+            return
+        payload = json.dumps({
+            "tp1":      signal.get("tp1"),
+            "stoploss": signal.get("stoploss"),
+            "side":     signal.get("side"),
+            "grade":    signal.get("grade"),
+            "entry":    signal.get("entry"),
+        })
+        r.setex(f"trade_levels:{coin}", 864000, payload)
+        logger.info(f"Saved trade levels for {coin}: tp1={signal.get('tp1')} sl={signal.get('stoploss')}")
+    except Exception as e:
+        logger.error(f"Failed to save trade levels {coin}: {e}")
+
+
+def _clear_trade_levels(coin: str):
+    try:
+        r = _get_redis()
+        if not r:
+            return
+        r.delete(f"trade_levels:{coin}")
+        logger.info(f"Cleared trade levels for {coin}")
+    except Exception as e:
+        logger.error(f"Failed to clear trade levels {coin}: {e}")
+
+
 def _push_candles_to_redis(coin: str, tf: str, df: DataFrame):
     try:
         r = _get_redis()
@@ -62,7 +104,6 @@ def _push_candles_to_redis(coin: str, tf: str, df: DataFrame):
             return
         key = f"candles:{coin}USDT:{tf}"
         r.setex(key, 900, df.to_json())
-        logger.debug(f"Candles pushed to Redis: {key} ({len(df)} rows)")
     except Exception as e:
         logger.error(f"Redis candle push failed {coin} {tf}: {e}")
 
@@ -211,8 +252,6 @@ class SignalEngineStrategy(IStrategy):
                             _push_ls_ratio_to_redis(coin, long_pct, short_pct)
                     except Exception as e:
                         logger.warning(f"LS ratio push failed {coin}: {e}")
-                else:
-                    logger.debug(f"Skipping LS ratio in dry_run: {coin}")
 
             except Exception as e:
                 logger.error(f"bot_loop_start error for {pair}: {e}")
@@ -278,9 +317,8 @@ class SignalEngineStrategy(IStrategy):
         **kwargs
     ) -> float:
         coin = pair.replace("/USDT", "").replace(":USDT", "")
-
         try:
-            signal = _get_signal(coin)
+            signal = _get_signal(coin) or _get_trade_levels(coin)
             if not signal:
                 return self.stoploss
 
@@ -289,11 +327,13 @@ class SignalEngineStrategy(IStrategy):
                 return self.stoploss
 
             if trade.is_short:
-                sl_pct = (stoploss_price - trade.open_rate) / trade.open_rate
+                sl_pct = -abs((stoploss_price - trade.open_rate) / trade.open_rate)
             else:
                 sl_pct = (stoploss_price - trade.open_rate) / trade.open_rate
 
             sl_pct = max(-0.99, min(-0.001, sl_pct))
+            logger.info(f"custom_stoploss {coin} {'SHORT' if trade.is_short else 'LONG'}: "
+                        f"sl_price:{stoploss_price} open:{trade.open_rate} sl_pct:{sl_pct:.4f}")
             return sl_pct
 
         except Exception as e:
@@ -310,9 +350,8 @@ class SignalEngineStrategy(IStrategy):
         **kwargs
     ) -> Optional[str]:
         coin = pair.replace("/USDT", "").replace(":USDT", "")
-
         try:
-            signal = _get_signal(coin)
+            signal = _get_signal(coin) or _get_trade_levels(coin)
             if not signal:
                 return None
 
@@ -330,7 +369,6 @@ class SignalEngineStrategy(IStrategy):
 
         except Exception as e:
             logger.error(f"custom_exit error {coin}: {e}")
-
         return None
 
     def confirm_trade_entry(
@@ -346,7 +384,6 @@ class SignalEngineStrategy(IStrategy):
         **kwargs
     ) -> bool:
         coin = pair.replace("/USDT", "").replace(":USDT", "")
-
         try:
             signal = _get_signal(coin)
             if not signal:
@@ -372,6 +409,8 @@ class SignalEngineStrategy(IStrategy):
                     )
                     return False
 
+            _save_trade_levels(coin, signal)
+
             logger.info(
                 f"confirm_trade_entry: approved {coin} {side} "
                 f"grade:{grade} rate:{rate} entry:{entry_price}"
@@ -381,3 +420,20 @@ class SignalEngineStrategy(IStrategy):
         except Exception as e:
             logger.error(f"confirm_trade_entry error {coin}: {e}")
             return False
+
+    def confirm_trade_exit(
+        self,
+        pair:           str,
+        trade:          Trade,
+        order_type:     str,
+        amount:         float,
+        rate:           float,
+        time_in_force:  str,
+        exit_reason:    str,
+        current_time:   datetime,
+        **kwargs
+    ) -> bool:
+        coin = pair.replace("/USDT", "").replace(":USDT", "")
+        _clear_trade_levels(coin)
+        logger.info(f"confirm_trade_exit: {coin} reason:{exit_reason} rate:{rate}")
+        return True

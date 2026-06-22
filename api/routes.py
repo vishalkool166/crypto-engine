@@ -839,34 +839,36 @@ async def ft_summary(request: Request):
 
         trades_with_health = []
         if not isinstance(status, Exception) and status and isinstance(status, list):
-            
-            open_coins = []
-            for trade in status:
-                pair = trade.get("pair", "")
-                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                open_coins.append(coin)
 
             tp1_map = {}
-            if open_coins:
-                try:
-                    with SessionLocal() as db:
-                        for coin in open_coins:
+            sl_map  = {}
+
+            try:
+                with SessionLocal() as db:
+                    for trade in status:
+                        pair      = trade.get("pair", "")
+                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                        is_short  = trade.get("is_short", False)
+                        direction = "SHORT" if is_short else "LONG"
+
+                        signal = db.query(SignalModel).filter(
+                            SignalModel.coin      == coin,
+                            SignalModel.direction == direction,
+                            SignalModel.outcome   == "pending"
+                        ).order_by(SignalModel.timestamp.desc()).first()
+
+                        if not signal:
                             signal = db.query(SignalModel).filter(
-                                SignalModel.coin    == coin,
-                                SignalModel.outcome == "pending"
+                                SignalModel.coin      == coin,
+                                SignalModel.direction == direction
                             ).order_by(SignalModel.timestamp.desc()).first()
 
-                            if signal and signal.tp1:
-                                tp1_map[coin] = float(signal.tp1)
-                            else:
-                                # Fallback — get latest signal regardless of outcome
-                                signal = db.query(SignalModel).filter(
-                                    SignalModel.coin == coin
-                                ).order_by(SignalModel.timestamp.desc()).first()
-                                if signal and signal.tp1:
-                                    tp1_map[coin] = float(signal.tp1)
-                except Exception as e:
-                    log.warning(f"tp1 fetch error: {e}")
+                        if signal:
+                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
+                            if signal.sl:  sl_map[coin]  = float(signal.sl)
+
+            except Exception as e:
+                log.warning(f"tp1/sl fetch error: {e}")
 
             for trade in status:
                 pair = trade.get("pair", "")
@@ -879,9 +881,10 @@ async def ft_summary(request: Request):
                 except Exception:
                     pass
 
-                trade_copy         = dict(trade)
-                trade_copy["health"] = health
-                trade_copy["tp1"]    = tp1_map.get(coin, None)
+                trade_copy              = dict(trade)
+                trade_copy["health"]    = health
+                trade_copy["tp1"]       = tp1_map.get(coin, None)
+                trade_copy["sl_signal"] = sl_map.get(coin, None)
                 trades_with_health.append(trade_copy)
 
         return JSONResponse(content={

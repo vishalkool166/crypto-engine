@@ -90,7 +90,7 @@ function _buildTradeCardHTML(t) {
   const coin      = pair.replace('/USDT:USDT', '').replace('/USDT', '')
   const entry     = parseFloat(t.open_rate || 0)
   const current   = parseFloat(t.current_rate || 0)
-  const sl        = parseFloat(t.stop_loss_abs || 0)
+  const sl        = t.sl_signal ? parseFloat(t.sl_signal) : parseFloat(t.stop_loss_abs || 0)
   const stake     = parseFloat(t.stake_amount || 0)
   const leverage  = t.leverage || 1
   const tp        = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : null
@@ -115,14 +115,16 @@ function _buildTradeCardHTML(t) {
   let progressLabel = 'At entry'
 
   if (tp && entry) {
-    const totalDist = Math.abs(tp - entry)
-    const curDist   = isLong ? (current - entry) : (entry - current)
-    progressPct     = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
-    progressColor   = progressPct > 0 ? '#34c759' : '#ff3b30'
-    progressLabel   = progressPct > 0
+    const totalDist  = Math.abs(tp - entry)
+    const curDist    = isLong ? (current - entry) : (entry - current)
+    progressPct      = totalDist > 0 ? Math.max(0, Math.min(100, curDist / totalDist * 100)) : 0
+    progressColor    = progressPct > 0 ? '#34c759' : '#ff3b30'
+    progressLabel    = progressPct > 0
       ? `${progressPct.toFixed(0)}% to TP`
       : `${Math.abs(progressPct).toFixed(0)}% toward SL`
   }
+
+  const progressWidth = Math.max(progressPct, 1.5)
 
   const health         = t.health || null
   const healthState    = health ? health.state : null
@@ -172,7 +174,7 @@ function _buildTradeCardHTML(t) {
           <span>${fmtP(tp)}</span>
         </div>
         <div class="progress-track" style="height:6px">
-          <div style="height:100%;border-radius:100px;width:${progressPct}%;background:${progressColor};transition:width 0.5s"></div>
+          <div style="height:100%;border-radius:100px;width:${progressWidth}%;background:${progressColor};transition:width 0.5s"></div>
         </div>
       </div>` : ''}
 
@@ -248,7 +250,7 @@ function renderFtTrades(trades) {
     grid.innerHTML = ''
     if (count) count.textContent = 'via Freqtrade · 0 open'
     Object.keys(_tradeCharts).forEach(id => {
-      try { _tradeCharts[id].chart.destroy() } catch(e) {}
+      try { _tradeCharts[id].chart.remove() } catch(e) {}
       delete _tradeCharts[id]
     })
     return
@@ -264,7 +266,7 @@ function renderFtTrades(trades) {
 
   if (newIds !== existingIds) {
     Object.keys(_tradeCharts).forEach(id => {
-      try { _tradeCharts[id].chart.destroy() } catch(e) {}
+      try { _tradeCharts[id].chart.remove() } catch(e) {}
       delete _tradeCharts[id]
     })
 
@@ -273,7 +275,7 @@ function renderFtTrades(trades) {
     trades.forEach(t => {
       const coin        = (t.pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
       const entry       = parseFloat(t.open_rate || 0)
-      const sl          = parseFloat(t.stop_loss_abs || 0)
+      const sl          = t.sl_signal ? parseFloat(t.sl_signal) : parseFloat(t.stop_loss_abs || 0)
       const tp          = (t.tp1 !== undefined && t.tp1 !== null && t.tp1 !== 0) ? parseFloat(t.tp1) : 0
       const containerId = `chart-${t.trade_id}`
       setTimeout(() => _createTradeChart(containerId, coin, '4h', entry, sl, tp), 100)
@@ -617,183 +619,102 @@ function _createTradeChart(containerId, coin, tf, entry, sl, tp) {
   if (!container) return null
 
   if (_tradeCharts[containerId]) {
-    try { _tradeCharts[containerId].chart.destroy() } catch(e) {}
+    try { _tradeCharts[containerId].chart.remove() } catch(e) {}
     delete _tradeCharts[containerId]
   }
 
-  container.innerHTML = ''
-  const canvas = document.createElement('canvas')
-  canvas.style.cssText = 'width:100%;height:100%'
-  container.appendChild(canvas)
-  const ctx = canvas.getContext('2d')
+  const chart = LightweightCharts.createChart(container, {
+    width:  container.clientWidth || 600,
+    height: 280,
+    layout: {
+      background: { color: '#0d1117' },
+      textColor:  '#e6edf3',
+    },
+    grid: {
+      vertLines: { color: '#21262d' },
+      horzLines: { color: '#21262d' },
+    },
+    crosshair: {
+      mode: LightweightCharts.CrosshairMode.Normal,
+    },
+    rightPriceScale: {
+      borderColor: '#21262d',
+    },
+    timeScale: {
+      borderColor:    '#21262d',
+      timeVisible:    true,
+      secondsVisible: false,
+    },
+  })
 
-  const annotations = {}
+  const candleSeries = chart.addCandlestickSeries({
+    upColor:         '#34c759',
+    downColor:       '#ff3b30',
+    borderUpColor:   '#34c759',
+    borderDownColor: '#ff3b30',
+    wickUpColor:     '#34c759',
+    wickDownColor:   '#ff3b30',
+  })
+
+  const volumeSeries = chart.addHistogramSeries({
+    color:        '#21262d',
+    priceFormat:  { type: 'volume' },
+    priceScaleId: 'volume',
+    scaleMargins: { top: 0.85, bottom: 0 },
+  })
+
+  const priceLinesMap = {}
 
   if (entry) {
-    annotations.entryLine = {
-      type:        'line',
-      yMin:        entry,
-      yMax:        entry,
-      borderColor: '#0071e3',
-      borderWidth: 1,
-      borderDash:  [4, 4],
-      label: {
-        display:         true,
-        content:         `Entry $${entry.toFixed(4)}`,
-        position:        'end',
-        color:           '#0071e3',
-        font:            { size: 9, weight: '600' },
-        padding:         3,
-        backgroundColor: 'rgba(0,113,227,0.15)',
-      }
-    }
+    priceLinesMap.entry = candleSeries.createPriceLine({
+      price:            entry,
+      color:            '#0071e3',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title:            `Entry ${entry.toFixed(4)}`,
+    })
   }
 
   if (sl) {
-    annotations.slLine = {
-      type:        'line',
-      yMin:        sl,
-      yMax:        sl,
-      borderColor: '#ff3b30',
-      borderWidth: 1,
-      borderDash:  [],
-      label: {
-        display:         true,
-        content:         `SL $${sl.toFixed(4)}`,
-        position:        'end',
-        color:           '#ff3b30',
-        font:            { size: 9, weight: '600' },
-        padding:         3,
-        backgroundColor: 'rgba(255,59,48,0.15)',
-      }
-    }
+    priceLinesMap.sl = candleSeries.createPriceLine({
+      price:            sl,
+      color:            '#ff3b30',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title:            `SL ${sl.toFixed(4)}`,
+    })
   }
 
   if (tp) {
-    annotations.tpLine = {
-      type:        'line',
-      yMin:        tp,
-      yMax:        tp,
-      borderColor: '#34c759',
-      borderWidth: 1,
-      borderDash:  [],
-      label: {
-        display:         true,
-        content:         `TP $${tp.toFixed(4)}`,
-        position:        'end',
-        color:           '#34c759',
-        font:            { size: 9, weight: '600' },
-        padding:         3,
-        backgroundColor: 'rgba(52,199,89,0.15)',
-      }
-    }
+    priceLinesMap.tp = candleSeries.createPriceLine({
+      price:            tp,
+      color:            '#34c759',
+      lineWidth:        1,
+      lineStyle:        LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true,
+      title:            `TP ${tp.toFixed(4)}`,
+    })
   }
 
-  annotations.nowLine = {
-    type:        'line',
-    yMin:        entry || 0,
-    yMax:        entry || 0,
-    borderColor: '#ff9500',
-    borderWidth: 1,
-    borderDash:  [2, 2],
-    label: {
-      display:         true,
-      content:         `Now $${(entry || 0).toFixed(4)}`,
-      position:        'start',
-      color:           '#ff9500',
-      font:            { size: 9, weight: '600' },
-      padding:         3,
-      backgroundColor: 'rgba(255,149,0,0.15)',
-    }
-  }
-
-  const chart = new Chart(ctx, {
-    type: 'candlestick',
-    data: { datasets: [] },
-    options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      animation:           false,
-      interaction:         { intersect: false, mode: 'index' },
-      layout: { padding: { top: 10, right: 60, bottom: 0, left: 0 } },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: 'rgba(13,17,23,0.95)',
-          titleColor:      '#e6edf3',
-          bodyColor:       '#8b949e',
-          borderColor:     '#30363d',
-          borderWidth:     1,
-          padding:         10,
-          cornerRadius:    8,
-          callbacks: {
-            title: items => {
-              if (!items[0]?.raw) return ''
-              return new Date(items[0].raw.x).toLocaleString('en-IN', {
-                timeZone: 'Asia/Kolkata', hour12: true,
-                day: '2-digit', month: 'short',
-                hour: '2-digit', minute: '2-digit'
-              }) + ' IST'
-            },
-            label: item => {
-              const d = item.raw
-              if (!d) return ''
-              if (d.o !== undefined) {
-                return [
-                  ` O: $${parseFloat(d.o).toFixed(4)}`,
-                  ` H: $${parseFloat(d.h).toFixed(4)}`,
-                  ` L: $${parseFloat(d.l).toFixed(4)}`,
-                  ` C: $${parseFloat(d.c).toFixed(4)}`,
-                ]
-              }
-              if (d.y !== undefined) return ` Vol: ${parseFloat(d.y).toLocaleString()}`
-              return ''
-            }
-          }
-        },
-        annotation: { annotations }
-      },
-      scales: {
-        x: {
-          type: 'timeseries',
-          ticks: {
-            maxTicksLimit: 6,
-            color:         '#8b949e',
-            font:          { size: 9 },
-            maxRotation:   0,
-          },
-          grid: { color: '#21262d' }
-        },
-        y: {
-          position: 'right',
-          ticks: {
-            color: '#8b949e',
-            font:  { size: 9 },
-            callback: v => '$' + parseFloat(v).toFixed(4)
-          },
-          grid: { color: '#21262d' }
-        },
-        volume: {
-          position: 'left',
-          ticks:    { display: false },
-          grid:     { display: false },
-        }
-      }
-    },
-    plugins: [{
-      id: 'darkBg',
-      beforeDraw: ch => {
-        const { ctx: c, chartArea } = ch
-        if (!chartArea) return
-        c.save()
-        c.fillStyle = '#0d1117'
-        c.fillRect(0, 0, ch.width, ch.height)
-        c.restore()
-      }
-    }]
+  priceLinesMap.current = candleSeries.createPriceLine({
+    price:            entry || 0,
+    color:            '#ff9500',
+    lineWidth:        1,
+    lineStyle:        LightweightCharts.LineStyle.Dotted,
+    axisLabelVisible: true,
+    title:            'Now',
   })
 
-  _tradeCharts[containerId] = { chart, coin, tf, entry, sl, tp }
+  _tradeCharts[containerId] = {
+    chart,
+    candleSeries,
+    volumeSeries,
+    priceLinesMap,
+    coin,
+    tf
+  }
 
   _loadChartData(containerId, coin, tf)
 
@@ -810,54 +731,21 @@ async function _loadChartData(containerId, coin, tf) {
     const chartObj = _tradeCharts[containerId]
     if (!chartObj) return
 
-    const candles = data.map(c => ({
-      x: c.time * 1000,
-      o: c.open,
-      h: c.high,
-      l: c.low,
-      c: c.close
-    }))
+    chartObj.candleSeries.setData(data.map(c => ({
+      time:  c.time,
+      open:  c.open,
+      high:  c.high,
+      low:   c.low,
+      close: c.close
+    })))
 
-    const volumes = data.map(c => ({
-      x:     c.time * 1000,
-      y:     c.volume,
+    chartObj.volumeSeries.setData(data.map(c => ({
+      time:  c.time,
+      value: c.volume,
       color: c.close >= c.open ? 'rgba(52,199,89,0.3)' : 'rgba(255,59,48,0.3)'
-    }))
+    })))
 
-    const maxVol = Math.max(...data.map(c => c.volume))
-
-    chartObj.chart.data.datasets = [
-      {
-        type:  'candlestick',
-        label: coin,
-        data:  candles,
-        color: {
-          up:        '#34c759',
-          down:      '#ff3b30',
-          unchanged: '#8b949e'
-        },
-        borderColor: {
-          up:        '#34c759',
-          down:      '#ff3b30',
-          unchanged: '#8b949e'
-        },
-        yAxisID: 'y',
-        order:   1
-      },
-      {
-        type:            'bar',
-        label:           'Volume',
-        data:            volumes,
-        backgroundColor: volumes.map(v => v.color),
-        borderWidth:     0,
-        borderRadius:    2,
-        yAxisID:         'volume',
-        order:           2
-      }
-    ]
-
-    chartObj.chart.options.scales.volume.max = maxVol / 0.15
-    chartObj.chart.update('none')
+    chartObj.chart.timeScale().fitContent()
 
   } catch(e) {
     console.error('Chart data load error:', e)
@@ -867,14 +755,9 @@ async function _loadChartData(containerId, coin, tf) {
 function updateChartPrice(containerId, price) {
   const chartObj = _tradeCharts[containerId]
   if (!chartObj) return
+  if (!chartObj.priceLinesMap.current) return
   try {
-    const annotations = chartObj.chart.options.plugins.annotation.annotations
-    if (annotations.nowLine) {
-      annotations.nowLine.yMin          = price
-      annotations.nowLine.yMax          = price
-      annotations.nowLine.label.content = `Now $${price.toFixed(4)}`
-      chartObj.chart.update('none')
-    }
+    chartObj.priceLinesMap.current.applyOptions({ price })
   } catch(e) {}
 }
 
@@ -885,7 +768,7 @@ function switchChartTf(containerId, coin, tf, entry, sl, tp) {
   const btns = document.querySelectorAll(`[data-chart-btn="${containerId}"]`)
   btns.forEach(b => {
     b.style.background = b.dataset.tf === tf ? 'rgba(0,113,227,0.2)' : 'rgba(0,0,0,0.1)'
-    b.style.color      = b.dataset.tf === tf ? '#0071e3'              : '#8b949e'
+    b.style.color      = b.dataset.tf === tf ? '#0071e3'              : '#6e6e73'
   })
 
   chartObj.tf   = tf

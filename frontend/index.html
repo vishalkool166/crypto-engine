@@ -7,9 +7,7 @@
 <title>Signal Engine v5</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-chart-financial@0.1.1/dist/chartjs-chart-financial.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <link rel="stylesheet" href="/css/app.css">
 <script>
 tailwind.config = {
@@ -41,8 +39,8 @@ tailwind.config = {
         'apple-xs': '8px'
       },
       boxShadow: {
-        apple:     '0 2px 20px rgba(0,0,0,0.08)',
-        'apple-md':'0 8px 32px rgba(0,0,0,0.12)',
+        apple:      '0 2px 20px rgba(0,0,0,0.08)',
+        'apple-md': '0 8px 32px rgba(0,0,0,0.12)',
       }
     }
   }
@@ -58,7 +56,6 @@ tailwind.config = {
   ⚠️ API connection lost — retrying...
 </div>
 
-<!-- OTP MODAL for mode toggle -->
 <div id="otp-modal-overlay"
      style="display:none;position:fixed;inset:0;z-index:50;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:20px">
   <div style="background:rgba(255,255,255,0.95);border-radius:20px;padding:32px;max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
@@ -109,7 +106,6 @@ tailwind.config = {
 
 <div class="max-w-[1360px] mx-auto px-4 py-4 space-y-3">
 
-  <!-- HEADER -->
   <header class="glass rounded-apple px-5 py-3 flex items-center justify-between gap-4 flex-wrap">
     <div class="flex items-center gap-3">
       <div class="w-9 h-9 rounded-apple-sm bg-gradient-to-br from-apple-blue to-blue-600 flex items-center justify-center text-white text-base shadow-apple">⚡</div>
@@ -182,7 +178,6 @@ tailwind.config = {
     </div>
   </header>
 
-  <!-- STATUS BAR -->
   <div class="glass rounded-apple px-5 py-2.5 flex items-center justify-between gap-3 flex-wrap">
     <div class="flex items-center gap-3">
       <div class="w-2.5 h-2.5 rounded-full" id="status-dot" style="background:#6e6e73"></div>
@@ -201,13 +196,10 @@ tailwind.config = {
     </div>
   </div>
 
-  <!-- MAIN GRID -->
   <div class="grid grid-cols-1 xl:grid-cols-[1fr_300px] gap-3">
 
-    <!-- LEFT -->
     <div class="space-y-3">
 
-      <!-- ACTIVE TRADES -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">⚡ Active Trades</h2>
@@ -221,7 +213,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- MARKET RADAR -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">📡 Market Radar</h2>
@@ -237,7 +228,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- PERFORMANCE STRIP -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="grid grid-cols-5 divide-x divide-black/6">
           <div class="p-4">
@@ -268,7 +258,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- COIN UNIVERSE -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider flex-wrap gap-2">
           <h2 class="section-label">🌐 Coin Universe <span id="coin-count" class="text-apple-secondary font-normal normal-case tracking-normal text-[10px]"></span></h2>
@@ -295,7 +284,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- BOTTOM GRID -->
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <section class="glass rounded-apple overflow-hidden">
           <div class="flex items-center justify-between px-5 py-3 border-b divider">
@@ -319,10 +307,8 @@ tailwind.config = {
       </div>
     </div>
 
-    <!-- RIGHT -->
     <div class="space-y-3">
 
-      <!-- SIGNAL QUEUE -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">🎯 Signal Queue</h2>
@@ -333,7 +319,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- FREQTRADE PROFIT SUMMARY -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">💰 Profit Summary</h2>
@@ -371,7 +356,6 @@ tailwind.config = {
         </div>
       </section>
 
-      <!-- GRADE BREAKDOWN -->
       <section class="glass rounded-apple overflow-hidden">
         <div class="flex items-center justify-between px-5 py-3 border-b divider">
           <h2 class="section-label">🏆 Grade Breakdown</h2>
@@ -461,12 +445,12 @@ function showModeToggle() {
   const inp     = $id('otp-modal-input')
   const tgBtn   = $id('otp-tg-btn')
 
-  title.textContent       = `Switch to ${newMode.toUpperCase()} mode`
-  desc.textContent        = `Enter your 6-digit authenticator code to confirm`
-  errEl.style.display     = 'none'
-  inp.value               = ''
-  tgBtn.disabled          = false
-  tgBtn.textContent       = '📱 Send code to Telegram'
+  title.textContent   = `Switch to ${newMode.toUpperCase()} mode`
+  desc.textContent    = `Enter your 6-digit authenticator code to confirm`
+  errEl.style.display = 'none'
+  inp.value           = ''
+  tgBtn.disabled      = false
+  tgBtn.textContent   = '📱 Send code to Telegram'
 
   overlay.style.display = 'flex'
   setTimeout(() => inp.focus(), 100)
@@ -519,8 +503,8 @@ async function confirmModeToggle() {
     return
   }
 
-  btn.disabled    = true
-  btn.textContent = '⏳...'
+  btn.disabled        = true
+  btn.textContent     = '⏳...'
   errEl.style.display = 'none'
 
   try {
