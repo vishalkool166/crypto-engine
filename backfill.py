@@ -7,12 +7,6 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format="%(asctime)s — %(levelname)s — %(message)s")
 log = logging.getLogger(__name__)
 
-COINS = [
-    "BTC", "ETH", "DOGE", "SOL", "ADA", "AVAX", "BNB", "XRP",
-    "LINK", "DOT", "ATOM", "INJ", "ARB", "OP", "SUI", "NEAR",
-    "UNI", "XLM", "LTC", "APT", "TIA", "WIF", "PUMP", "HYPE"
-]
-
 TIMEFRAMES = ["4h", "1h"]
 
 TARGET_CANDLES = {
@@ -21,6 +15,19 @@ TARGET_CANDLES = {
 }
 
 SLEEP_BETWEEN = 0.5
+
+
+def get_coins_from_db() -> list:
+    try:
+        from database import SessionLocal, CoinConfig
+        with SessionLocal() as db:
+            rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+            coins = [r.coin for r in rows]
+            log.info(f"Loaded {len(coins)} coins from DB: {coins}")
+            return coins
+    except Exception as e:
+        log.error(f"Failed to load coins from DB: {e}")
+        return []
 
 
 async def fetch_page(exchange, coin: str, tf: str, since: int, limit: int = 1000) -> list:
@@ -64,9 +71,9 @@ async def backfill_coin(exchange, coin: str, tf: str, target: int):
         log.error(f"DB query error {coin} {tf}: {e}")
         return
 
-    needed    = target - current_count
-    pages     = (needed // 1000) + 2
-    fetch_ts  = oldest_ts
+    needed   = target - current_count
+    pages    = (needed // 1000) + 2
+    fetch_ts = oldest_ts
 
     log.info(f"{coin} {tf}: fetching {needed} more candles ({pages} pages)")
 
@@ -114,7 +121,7 @@ def _tf_ms(tf: str) -> int:
     return mapping.get(tf, 3600000)
 
 
-async def main():
+async def run_backfill(coins: list = None):
     import ccxt.async_support as ccxt_async
     from dotenv import load_dotenv
     import os
@@ -128,9 +135,16 @@ async def main():
     })
 
     try:
-        log.info(f"Starting backfill — {len(COINS)} coins × {len(TIMEFRAMES)} timeframes")
+        if not coins:
+            coins = get_coins_from_db()
 
-        for coin in COINS:
+        if not coins:
+            log.error("No coins found — aborting")
+            return
+
+        log.info(f"Starting backfill — {len(coins)} coins × {len(TIMEFRAMES)} timeframes")
+
+        for coin in coins:
             for tf in TIMEFRAMES:
                 target = TARGET_CANDLES.get(tf, 3000)
                 try:
@@ -146,4 +160,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_backfill())

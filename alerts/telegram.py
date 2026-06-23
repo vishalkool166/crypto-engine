@@ -166,6 +166,7 @@ async def register_commands():
         {"command": "grade",     "description": "Grade accuracy"},
         {"command": "history",   "description": "Last 5 signals"},
         {"command": "backtest",  "description": "Backtest a coin — /backtest BTC"},
+        {"command": "backfill", "description": "Backfill historical candle data"},
         {"command": "ml",        "description": "ML model status"},
         {"command": "mode",      "description": "Current bot config"},
         {"command": "help",      "description": "Full command list"},
@@ -205,6 +206,14 @@ async def handle_webhook(request: Request):
     except Exception as e:
         log.error(f"Webhook handler error: {e}")
 
+async def _cmd_backfill():
+    await send("⏳ *Backfill started...*\n\nFetching historical data for all coins. Takes 3-5 minutes.")
+    try:
+        import asyncio
+        from backfill import run_backfill
+        asyncio.create_task(run_backfill())
+    except Exception as e:
+        await send(f"❌ Backfill failed: `{str(e)}`")
 
 async def _handle_command(text: str, chat_id: str = ""):
     t = text.lower().strip()
@@ -274,6 +283,7 @@ async def _handle_command(text: str, chat_id: str = ""):
         "/brief":     _cmd_brief,
         "/ml":        _cmd_ml,
         "/sync":      _cmd_sync,
+        "/backfill":  _cmd_backfill,
         "/ftstatus":  _cmd_ft_status,
         "/ftbalance": _cmd_ft_balance,
         "/ftprofit":  _cmd_ft_profit,

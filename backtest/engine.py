@@ -9,6 +9,7 @@ from engines.retest import detect_retest
 from engines.confluence import score_confluence
 from engines.signal import get_session, run_no_trade_engine, generate_signal
 from config import cfg
+from datetime import timezone
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +156,15 @@ def run_backtest(
     if df_1w is None or len(df_1w) < 20:
         return {"error": f"Not enough 1W data for {coin}."}
 
+    is_btc = coin == "BTC"
+
+    df_btc_1d = None
+    df_btc_4h = None
+
+    if not is_btc:
+        df_btc_1d = load_candles("BTC", "1d", limit=1000)
+        df_btc_4h = load_candles("BTC", "4h", limit=2000)
+
     log.info(f"Data loaded: {coin} 1D:{len(df_1d)} 4H:{len(df_4h)} 1H:{len(df_1h)} 1W:{len(df_1w)}")
 
     trades      = []
@@ -186,6 +196,24 @@ def run_backtest(
             if not price or price <= 0:
                 continue
 
+            if is_btc:
+                btc_data    = d1d
+                btc_4h_data = d4h
+                btc_inst    = assess_btc_stability(d1d)
+            else:
+                btc_1d_window = _align_window(df_btc_1d, current_ts, window) if df_btc_1d is not None else None
+                btc_4h_window = _align_window(df_btc_4h, current_ts, window) if df_btc_4h is not None else None
+
+                btc_data = calculate_all(btc_1d_window) if (
+                    btc_1d_window is not None and len(btc_1d_window) >= 50
+                ) else None
+
+                btc_4h_data = calculate_all(btc_4h_window) if (
+                    btc_4h_window is not None and len(btc_4h_window) >= 50
+                ) else None
+
+                btc_inst = assess_btc_stability(btc_data) if btc_data else assess_btc_stability(d1d)
+
             key_levels = {
                 "pdh": float(d1d_window.iloc[-2]["high"])  if len(d1d_window) >= 2 else 0,
                 "pdl": float(d1d_window.iloc[-2]["low"])   if len(d1d_window) >= 2 else 0,
@@ -215,37 +243,40 @@ def run_backtest(
             }
 
             news_filter = {"clear": True, "blocked": False, "warning": False, "alerts": []}
-            btc_inst    = assess_btc_stability(d1d)
-            session     = get_session(current_time=current_ts.to_pydatetime().replace(tzinfo=__import__('datetime').timezone.utc))
-            regime      = detect_regime(d1d, d4h)
+
+            ct      = current_ts.to_pydatetime().replace(tzinfo=timezone.utc)
+            session = get_session(current_time=ct)
+            regime  = detect_regime(d1d, d4h)
 
             sweep = detect_sweep(
                 d1d_window, key_levels,
                 d1d.get("atr", 0), d1d["swings"]
             )
-            disp = detect_displacement(d4h_window, d4h.get("atr", 0))
+            disp   = detect_displacement(d4h_window, d4h.get("atr", 0))
             retest = detect_retest(d4h_window, d4h, sweep, disp)
 
             wconf = score_confluence(
                 d1w, d1d, d4h, d1h,
                 market, key_levels,
-                session, d1d,
+                session, btc_data,
                 btc_inst, regime,
                 sweep, disp,
                 retest, oi_matrix,
-                coin
+                coin,
+                btc_4h=btc_4h_data
             )
 
             no_trade = run_no_trade_engine(
                 regime, d1d, d4h,
                 market, session,
                 sweep, disp,
-                retest, d1d,
+                retest, btc_data,
                 btc_inst, oi_matrix,
                 news_filter,
                 wconf["norm_score"],
                 coin=coin,
-                d1w=d1w
+                d1w=d1w,
+                wconf=wconf
             )
 
             signal = generate_signal(
