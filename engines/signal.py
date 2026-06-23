@@ -62,8 +62,9 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
     return {**TIERS["F"], "label": "F"}
 
 
-def get_session(vol_ratio: float = 1.0) -> dict:
-    now        = datetime.now(timezone.utc)
+def get_session(vol_ratio: float = 1.0, current_time=None) -> dict:
+    from datetime import datetime, timezone
+    now        = current_time if current_time else datetime.now(timezone.utc)
     hour       = now.hour + now.minute / 60
     weekday    = now.weekday()
     is_weekend = weekday >= 5

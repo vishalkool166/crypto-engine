@@ -216,7 +216,7 @@ def run_backtest(
 
             news_filter = {"clear": True, "blocked": False, "warning": False, "alerts": []}
             btc_inst    = assess_btc_stability(d1d)
-            session     = get_session()
+            session     = get_session(current_time=current_ts.to_pydatetime().replace(tzinfo=__import__('datetime').timezone.utc))
             regime      = detect_regime(d1d, d4h)
 
             sweep = detect_sweep(
