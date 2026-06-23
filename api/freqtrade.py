@@ -149,13 +149,13 @@ async def ft_force_enter(
         pair = f"{coin}/USDT:USDT"
 
         body = {
-            "pair":        pair,
-            "side":        side,
-            "price":       entry,
+            "pair":         pair,
+            "side":         side,
+            "price":        entry,
             "stake_amount": stake,
-            "leverage":    leverage,
-            "stoploss":    sl,
-            "tp":          tp,
+            "leverage":     leverage,
+            "stoploss":     sl,
+            "tp":           tp,
         }
 
         if signal_id:
@@ -202,6 +202,18 @@ async def ft_open_trade_count() -> int:
         return len(status)
     except Exception:
         return 0
+
+
+def _parse_signal_id_from_tag(enter_tag: str) -> int | None:
+    try:
+        if not enter_tag or not enter_tag.startswith("SE_"):
+            return None
+        parts = enter_tag.split("_")
+        if len(parts) >= 3:
+            return int(parts[-1])
+        return None
+    except Exception:
+        return None
 
 
 async def _ft_ws_listener():
@@ -453,8 +465,7 @@ async def ft_delete_trade(request: Request, tradeid: int):
 async def ft_summary(request: Request):
     _auth(request)
     try:
-        from database import SessionLocal
-        from database import Signal as SignalModel
+        from database import SessionLocal, Signal as SignalModel
 
         status, profit, balance, daily, config = await asyncio.gather(
             _ft_get("/status"),
@@ -480,20 +491,24 @@ async def ft_summary(request: Request):
                     for trade in status:
                         pair      = trade.get("pair", "")
                         coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                        is_short  = trade.get("is_short", False)
-                        direction = "SHORT" if is_short else "LONG"
+                        enter_tag = trade.get("enter_tag", "")
+                        signal_id = _parse_signal_id_from_tag(enter_tag)
 
-                        signal = db.query(SignalModel).filter(
-                            SignalModel.coin      == coin,
-                            SignalModel.direction == direction,
-                            SignalModel.outcome   == "pending"
-                        ).order_by(SignalModel.timestamp.desc()).first()
+                        signal = None
+
+                        if signal_id:
+                            signal = db.query(SignalModel).filter(
+                                SignalModel.id == signal_id
+                            ).first()
 
                         if not signal:
+                            is_short  = trade.get("is_short", False)
+                            direction = "SHORT" if is_short else "LONG"
                             signal = db.query(SignalModel).filter(
                                 SignalModel.coin      == coin,
-                                SignalModel.direction == direction
-                            ).order_by(SignalModel.timestamp.desc()).first()
+                                SignalModel.direction == direction,
+                                SignalModel.outcome   == "pending"
+                            ).order_by(SignalModel.timestamp.asc()).first()
 
                         if signal:
                             if signal.tp1: tp1_map[coin] = float(signal.tp1)

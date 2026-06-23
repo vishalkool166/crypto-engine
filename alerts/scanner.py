@@ -29,6 +29,8 @@ MAX_ENTRY_DEVIATION = 0.01
 _scan_running   = False
 _scan_semaphore = asyncio.Semaphore(3)
 
+_pending_forceenter: list = []
+
 
 def _interpret_oi(market: dict) -> dict:
     fund = market["funding"] * 100
@@ -178,20 +180,65 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
 
 
-async def _send_to_freqtrade(signal: dict, coin: str, db_id: int) -> bool:
-    try:
-        from api.freqtrade import ft_force_enter, ft_has_open_trade, ft_open_trade_count
+async def _execute_priority_entries():
+    global _pending_forceenter
 
-        if await ft_has_open_trade(coin):
-            log.info(f"Skipping forceenter — {coin} already has open trade")
-            return False
+    if not _pending_forceenter:
+        return
+
+    try:
+        from api.freqtrade import ft_open_trade_count, ft_has_open_trade
 
         open_count = await ft_open_trade_count()
         max_trades = cfg.MAX_TRADES_PER_DAY
-        if open_count >= max_trades:
-            log.info(f"Skipping forceenter — max open trades reached ({open_count}/{max_trades})")
-            return False
+        available  = max_trades - open_count
 
+        if available <= 0:
+            log.info(f"No slots available — {open_count}/{max_trades} open")
+            _pending_forceenter = []
+            return
+
+        grade_order = {"A+": 0, "A": 1, "B": 2}
+        sorted_signals = sorted(
+            _pending_forceenter,
+            key=lambda x: (grade_order.get(x["grade"], 99), -x["score"])
+        )
+
+        entered = 0
+        for item in sorted_signals:
+            if entered >= available:
+                break
+
+            coin = item["coin"]
+
+            if await ft_has_open_trade(coin):
+                log.info(f"Skipping forceenter — {coin} already has open trade")
+                continue
+
+            open_count = await ft_open_trade_count()
+            if open_count >= max_trades:
+                log.info(f"Max trades reached — stopping entries")
+                break
+
+            result = await _do_forceenter(item)
+            if result:
+                entered += 1
+
+        log.info(f"Priority entries complete — {entered} trades opened")
+
+    except Exception as e:
+        log.error(f"_execute_priority_entries error: {e}")
+    finally:
+        _pending_forceenter = []
+
+
+async def _do_forceenter(item: dict) -> bool:
+    try:
+        from api.freqtrade import ft_force_enter
+
+        coin      = item["coin"]
+        signal    = item["signal"]
+        db_id     = item["db_id"]
         direction = signal.get("direction", "")
         side      = "short" if direction == "SHORT" else "long"
         entry     = float(signal.get("entry", 0))
@@ -200,8 +247,7 @@ async def _send_to_freqtrade(signal: dict, coin: str, db_id: int) -> bool:
         grade     = signal.get("grade", "")
         risk_amt  = float(signal.get("risk_amt", 0))
         leverage  = cfg.LEVERAGE
-
-        stake = risk_amt * leverage
+        stake     = risk_amt * leverage
 
         if not entry or not sl or not tp:
             log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
@@ -220,14 +266,17 @@ async def _send_to_freqtrade(signal: dict, coin: str, db_id: int) -> bool:
         )
 
         if result.get("success"):
-            log.info(f"Trade opened via forceenter: {coin} {direction} trade_id:{result.get('trade_id')}")
+            log.info(
+                f"Trade opened: {coin} {direction} Grade:{grade} "
+                f"trade_id:{result.get('trade_id')}"
+            )
             return True
         else:
             log.error(f"forceenter failed: {coin} — {result.get('error')}")
             return False
 
     except Exception as e:
-        log.error(f"_send_to_freqtrade error {coin}: {e}")
+        log.error(f"_do_forceenter error {item.get('coin')}: {e}")
         return False
 
 
@@ -400,21 +449,13 @@ async def _analyze_coin_inner(
             ml_passed, ml_prob = _check_ml_gate(signal, wconf)
 
             if ml_passed:
-                asyncio.create_task(
-                    _send_to_freqtrade(signal, coin, db_id)
-                )
-                log.info(
-                    f"Signal forwarded to Freqtrade via forceenter: {coin} "
-                    f"Grade:{signal.get('grade')} "
-                    f"ML_prob:{ml_prob:.2f} "
-                    f"RR:{signal.get('actual_rr')}"
-                )
-            else:
-                log.info(
-                    f"Signal ML-filtered: {coin} "
-                    f"Grade:{signal.get('grade')} "
-                    f"ML_prob:{ml_prob:.2f} — not forwarded"
-                )
+                _pending_forceenter.append({
+                    "coin":    coin,
+                    "grade":   signal.get("grade"),
+                    "score":   signal.get("score", 0),
+                    "signal":  signal,
+                    "db_id":   db_id,
+                })
 
     result = {
         "coin":              coin,
@@ -468,14 +509,15 @@ async def _analyze_coin_inner(
 
 
 async def scan_all_coins() -> list:
-    global _scan_running
+    global _scan_running, _pending_forceenter
 
     if _scan_running:
         log.info("Scan already running — skipping")
         return []
 
-    _scan_running = True
-    results       = []
+    _scan_running       = True
+    _pending_forceenter = []
+    results             = []
 
     try:
         log.info(f"Scan started — {len(cfg.COINS)} coins")
@@ -504,6 +546,8 @@ async def scan_all_coins() -> list:
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         _write_active_pairs_to_redis()
+
+        await _execute_priority_entries()
 
         tradeable = [
             r for r in results

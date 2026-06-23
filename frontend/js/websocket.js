@@ -153,7 +153,7 @@ function startBinanceTickerWs(symbol) {
       updateTradeCardPrice(symbol, price)
 
     } catch(e) {}
-  }, 1000)
+  }, 5000)
 
   _binanceWsSockets[key] = {
     readyState: 1,
