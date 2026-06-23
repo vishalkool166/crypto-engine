@@ -121,13 +121,23 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
 
     try:
-        factor_scores_json = None
-        if wconf and wconf.get("factors"):
-            factor_scores_json = json.dumps({
-                f["key"]: f["earned"] for f in wconf["factors"]
-            })
-
         with get_session() as db:
+            existing = db.query(SignalModel).filter(
+                SignalModel.coin      == coin,
+                SignalModel.direction == signal["direction"],
+                SignalModel.outcome   == "pending"
+            ).first()
+
+            if existing:
+                log.debug(f"Skipping duplicate signal — {coin} {signal['direction']} already pending id:{existing.id}")
+                return existing.id
+
+            factor_scores_json = None
+            if wconf and wconf.get("factors"):
+                factor_scores_json = json.dumps({
+                    f["key"]: f["earned"] for f in wconf["factors"]
+                })
+
             row = SignalModel(
                 coin          = coin,
                 direction     = signal["direction"],

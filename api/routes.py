@@ -1045,11 +1045,22 @@ async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 1
     except Exception as e:
         log.error(f"Binance proxy error: {e}")
         raise HTTPException(500, str(e))
-    
+
+
 @router.get("/proxy/binance/price")
 async def proxy_binance_price(request: Request, symbol: str):
     _auth(request)
     try:
+        from redis_client import get_redis
+        import json
+
+        r = get_redis()
+        if r:
+            data = r.get(f"ticker:{symbol.upper()}")
+            if data:
+                parsed = json.loads(data)
+                return JSONResponse(content={"price": str(parsed.get("last", 0))})
+
         async with httpx.AsyncClient() as client:
             res = await client.get(
                 "https://fapi.binance.com/fapi/v1/ticker/price",

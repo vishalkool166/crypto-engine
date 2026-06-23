@@ -53,11 +53,16 @@ async def sync_freqtrade_outcomes() -> dict:
                     direction  = "SHORT" if is_short else "LONG"
                     trade_id   = ft_trade.get("trade_id")
 
-                    log.info(
-                        f"Processing: {coin} {direction} "
-                        f"entry:{open_rate} exit:{close_rate} "
-                        f"pnl:{profit_abs} trade_id:{trade_id}"
-                    )
+                    ft_trade_tag = f"ft_trade_id:{trade_id}"
+
+                    already_synced = db.query(SignalModel).filter(
+                        SignalModel.notes.contains(ft_trade_tag)
+                    ).first()
+
+                    if already_synced:
+                        skipped += 1
+                        log.debug(f"Skipping already synced ft_trade_id:{trade_id}")
+                        continue
 
                     open_date_str = ft_trade.get("open_date", "")
                     try:
@@ -83,10 +88,7 @@ async def sync_freqtrade_outcomes() -> dict:
 
                     if not existing:
                         unmatched += 1
-                        log.warning(
-                            f"No pending signal for {coin} {direction} "
-                            f"trade_id:{trade_id}"
-                        )
+                        log.warning(f"No pending signal for {coin} {direction} trade_id:{trade_id}")
                         continue
 
                     best_match = None
@@ -108,21 +110,9 @@ async def sync_freqtrade_outcomes() -> dict:
 
                     if not best_match and existing:
                         best_match = existing[0]
-                        log.info(
-                            f"Using most recent signal for {coin} "
-                            f"signal_id:{best_match.id}"
-                        )
 
                     if not best_match:
                         unmatched += 1
-                        continue
-
-                    if best_match.outcome != "pending":
-                        skipped += 1
-                        log.info(
-                            f"Skipping already synced signal "
-                            f"id:{best_match.id} outcome:{best_match.outcome}"
-                        )
                         continue
 
                     outcome = "win" if profit_abs > 0 else "loss"
@@ -130,6 +120,7 @@ async def sync_freqtrade_outcomes() -> dict:
                     best_match.outcome    = outcome
                     best_match.pnl        = round(profit_abs, 6)
                     best_match.exit_price = close_rate
+                    best_match.notes      = ft_trade_tag
 
                     db.commit()
                     synced += 1
@@ -138,14 +129,11 @@ async def sync_freqtrade_outcomes() -> dict:
                         f"Synced: {coin} {direction} "
                         f"entry:{open_rate} exit:{close_rate} "
                         f"pnl:{profit_abs:.4f} outcome:{outcome} "
-                        f"signal_id:{best_match.id}"
+                        f"signal_id:{best_match.id} ft_trade_id:{trade_id}"
                     )
 
                 except Exception as e:
-                    log.error(
-                        f"Error syncing trade "
-                        f"{ft_trade.get('trade_id')}: {e}"
-                    )
+                    log.error(f"Error syncing trade {ft_trade.get('trade_id')}: {e}")
                     continue
 
         result = {
