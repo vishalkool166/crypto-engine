@@ -708,6 +708,14 @@ async def toggle_coin(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
+    
+async def _backfill_new_coin(coin: str):
+    try:
+        from backfill import run_backfill
+        await run_backfill(coins=[coin])
+        log.info(f"Backfill complete for new coin: {coin}")
+    except Exception as e:
+        log.error(f"Auto backfill failed for {coin}: {e}")
 
 
 @router.post("/coins/add")
@@ -763,6 +771,7 @@ async def add_coin(request: Request):
                 msg = f"{coin} added"
 
         cfg.COINS = []
+        asyncio.create_task(_backfill_new_coin(coin))
 
         if coin not in cfg._FALLBACK_COINS:
             cfg._FALLBACK_COINS.append(coin)
