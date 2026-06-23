@@ -43,31 +43,32 @@
     "use_order_book": true,
     "order_book_top": 1
   },
-    "pairlists": [
-        {
-        "method": "RemotePairList",
-        "pairlist_url": "http://signal-engine:8000/api/coins/active",
-        "refresh_period": 60,
-        "read_timeout": 60,
-        "keep_last_successful_refresh": true,
-        "number_assets": 30
-        }
-    ],
-    "api_server": {
-        "enabled": true,
-        "listen_ip_address": "0.0.0.0",
-        "listen_port": 8080,
-        "verbosity": "error",
-        "enable_openapi": false,
-        "jwt_secret_key": "somethingRandomSomethingRandom123",
-        "ws_token": "somethingRandomSomethingRandom456",
-        "username": "admin",
-        "password": "Kool@0224"
-    },
-    "telegram": {
-        "enabled": false,
-        "token": "disabled",
-        "chat_id": "disabled"
+  "pairlists": [
+    {
+      "method": "RemotePairList",
+      "pairlist_url": "http://signal-engine:8000/api/coins/active",
+      "refresh_period": 60,
+      "read_timeout": 60,
+      "keep_last_successful_refresh": true,
+      "number_assets": 30
+    }
+  ],
+  "force_entry_enable": true,
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "0.0.0.0",
+    "listen_port": 8080,
+    "verbosity": "error",
+    "enable_openapi": false,
+    "jwt_secret_key": "somethingRandomSomethingRandom123",
+    "ws_token": "somethingRandomSomethingRandom456",
+    "username": "admin",
+    "password": "Kool@0224"
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "disabled",
+    "chat_id": "disabled"
   },
   "internals": {
     "process_throttle_secs": 5

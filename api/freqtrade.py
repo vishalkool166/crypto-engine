@@ -134,6 +134,76 @@ async def _ft_delete(path: str) -> dict:
         raise HTTPException(503, f"Freqtrade unavailable: {e}")
 
 
+async def ft_force_enter(
+    coin:      str,
+    side:      str,
+    entry:     float,
+    sl:        float,
+    tp:        float,
+    leverage:  int,
+    stake:     float,
+    signal_id: int = None,
+    grade:     str = ""
+) -> dict:
+    try:
+        pair = f"{coin}/USDT:USDT"
+
+        body = {
+            "pair":        pair,
+            "side":        side,
+            "price":       entry,
+            "stake_amount": stake,
+            "leverage":    leverage,
+            "stoploss":    sl,
+            "tp":          tp,
+        }
+
+        if signal_id:
+            body["enter_tag"] = f"SE_{grade}_{signal_id}"
+
+        result = await _ft_post("/forceenter", body)
+
+        if result and result.get("trade_id"):
+            log.info(
+                f"Freqtrade forceenter success: {coin} {side} "
+                f"trade_id:{result['trade_id']} "
+                f"entry:{entry} sl:{sl} tp:{tp} leverage:{leverage}"
+            )
+            return {"success": True, "trade_id": result["trade_id"], "result": result}
+        else:
+            log.error(f"Freqtrade forceenter failed: {coin} {side} response:{result}")
+            return {"success": False, "error": str(result)}
+
+    except Exception as e:
+        log.error(f"ft_force_enter error {coin}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def ft_has_open_trade(coin: str) -> bool:
+    try:
+        status = await _ft_get("/status")
+        if not status or not isinstance(status, list):
+            return False
+        for t in status:
+            pair = t.get("pair", "")
+            c    = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+            if c == coin:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+async def ft_open_trade_count() -> int:
+    try:
+        status = await _ft_get("/status")
+        if not status or not isinstance(status, list):
+            return 0
+        return len(status)
+    except Exception:
+        return 0
+
+
 async def _ft_ws_listener():
     global _ft_ws_connected, _ft_token
     while True:

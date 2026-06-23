@@ -1,5 +1,4 @@
 import json
-import time
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,20 +8,19 @@ from pandas import DataFrame
 
 logger = logging.getLogger(__name__)
 
-REDIS_URL     = None
 _redis_client = None
 
 
 def _get_redis():
-    global _redis_client, REDIS_URL
+    global _redis_client
     if _redis_client is not None:
         return _redis_client
     try:
         import redis
         import os
-        REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+        url = os.getenv("REDIS_URL", "redis://localhost:6379")
         client = redis.from_url(
-            REDIS_URL,
+            url,
             decode_responses=True,
             socket_connect_timeout=3,
             socket_timeout=3
@@ -31,70 +29,8 @@ def _get_redis():
         _redis_client = client
         return _redis_client
     except Exception as e:
-        logger.error(f"Freqtrade Redis connection failed: {e}")
+        logger.error(f"Redis connection failed: {e}")
         return None
-
-
-def _get_signal(coin: str) -> dict | None:
-    try:
-        r = _get_redis()
-        if not r:
-            return None
-        key  = f"signal:{coin}USDT"
-        data = r.get(key)
-        if not data:
-            return None
-        sig = json.loads(data)
-        if time.time() > sig.get("valid_until", 0):
-            logger.info(f"Signal expired for {coin}")
-            return None
-        return sig
-    except Exception as e:
-        logger.error(f"Redis signal read failed {coin}: {e}")
-        return None
-
-
-def _get_trade_levels(coin: str) -> dict | None:
-    try:
-        r = _get_redis()
-        if not r:
-            return None
-        data = r.get(f"trade_levels:{coin}")
-        if not data:
-            return None
-        return json.loads(data)
-    except Exception as e:
-        logger.error(f"Redis trade_levels read failed {coin}: {e}")
-        return None
-
-
-def _save_trade_levels(coin: str, signal: dict):
-    try:
-        r = _get_redis()
-        if not r:
-            return
-        payload = json.dumps({
-            "tp1":      signal.get("tp1"),
-            "stoploss": signal.get("stoploss"),
-            "side":     signal.get("side"),
-            "grade":    signal.get("grade"),
-            "entry":    signal.get("entry"),
-        })
-        r.setex(f"trade_levels:{coin}", 864000, payload)
-        logger.info(f"Saved trade levels for {coin}: tp1={signal.get('tp1')} sl={signal.get('stoploss')}")
-    except Exception as e:
-        logger.error(f"Failed to save trade levels {coin}: {e}")
-
-
-def _clear_trade_levels(coin: str):
-    try:
-        r = _get_redis()
-        if not r:
-            return
-        r.delete(f"trade_levels:{coin}")
-        logger.info(f"Cleared trade levels for {coin}")
-    except Exception as e:
-        logger.error(f"Failed to clear trade levels {coin}: {e}")
 
 
 def _push_candles_to_redis(coin: str, tf: str, df: DataFrame):
@@ -174,7 +110,7 @@ class SignalEngineStrategy(IStrategy):
 
     minimal_roi = {"0": 100}
 
-    process_only_new_candles = True
+    process_only_new_candles = False
     use_exit_signal          = False
     exit_profit_only         = False
 
@@ -185,6 +121,13 @@ class SignalEngineStrategy(IStrategy):
             for tf in ["1w", "1d", "4h", "1h", "15m"]:
                 inf.append((pair, tf))
         return inf
+
+    def leverage(self, pair: str, current_time: datetime, current_rate: float,
+                 proposed_leverage: float, max_leverage: float, entry_tag: Optional[str],
+                 side: str, **kwargs) -> float:
+        import os
+        leverage = int(os.getenv("LEVERAGE", 10))
+        return min(float(leverage), max_leverage)
 
     def bot_loop_start(self, **kwargs):
         pairs   = self.dp.current_whitelist()
@@ -260,180 +203,11 @@ class SignalEngineStrategy(IStrategy):
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        pair = metadata.get("pair", "")
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-
         dataframe["enter_long"]  = 0
         dataframe["enter_short"] = 0
-
-        try:
-            signal = _get_signal(coin)
-            if not signal:
-                return dataframe
-
-            if signal.get("grade") not in ["A+", "A", "B"]:
-                return dataframe
-
-            side = signal.get("side", "")
-
-            if side == "long":
-                dataframe.loc[dataframe.index[-1], "enter_long"] = 1
-                logger.info(
-                    f"Entry signal LONG: {coin} "
-                    f"Grade:{signal.get('grade')} "
-                    f"Score:{signal.get('score')} "
-                    f"Entry:{signal.get('entry')} "
-                    f"TP:{signal.get('tp1')} "
-                    f"RR:1:{signal.get('actual_rr', '--')}"
-                )
-            elif side == "short":
-                dataframe.loc[dataframe.index[-1], "enter_short"] = 1
-                logger.info(
-                    f"Entry signal SHORT: {coin} "
-                    f"Grade:{signal.get('grade')} "
-                    f"Score:{signal.get('score')} "
-                    f"Entry:{signal.get('entry')} "
-                    f"TP:{signal.get('tp1')} "
-                    f"RR:1:{signal.get('actual_rr', '--')}"
-                )
-
-        except Exception as e:
-            logger.error(f"populate_entry_trend error {coin}: {e}")
-
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe["exit_long"]  = 0
         dataframe["exit_short"] = 0
         return dataframe
-
-    def custom_stoploss(
-        self,
-        pair:           str,
-        trade:          Trade,
-        current_time:   datetime,
-        current_rate:   float,
-        current_profit: float,
-        **kwargs
-    ) -> float:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-        try:
-            signal = _get_signal(coin) or _get_trade_levels(coin)
-            if not signal:
-                return self.stoploss
-
-            stoploss_price = float(signal.get("stoploss", 0))
-            if not stoploss_price or not trade.open_rate:
-                return self.stoploss
-
-            if trade.is_short:
-                sl_pct = -abs((stoploss_price - trade.open_rate) / trade.open_rate)
-            else:
-                sl_pct = (stoploss_price - trade.open_rate) / trade.open_rate
-
-            sl_pct = max(-0.99, min(-0.001, sl_pct))
-            logger.info(f"custom_stoploss {coin} {'SHORT' if trade.is_short else 'LONG'}: "
-                        f"sl_price:{stoploss_price} open:{trade.open_rate} sl_pct:{sl_pct:.4f}")
-            return sl_pct
-
-        except Exception as e:
-            logger.error(f"custom_stoploss error {coin}: {e}")
-            return self.stoploss
-
-    def custom_exit(
-        self,
-        pair:           str,
-        trade:          Trade,
-        current_time:   datetime,
-        current_rate:   float,
-        current_profit: float,
-        **kwargs
-    ) -> Optional[str]:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-        try:
-            signal = _get_signal(coin) or _get_trade_levels(coin)
-            if not signal:
-                return None
-
-            tp = float(signal.get("tp1", 0))
-            if not tp:
-                return None
-
-            if not trade.is_short and current_rate >= tp:
-                logger.info(f"TP hit LONG: {coin} current:{current_rate} tp:{tp}")
-                return "tp_hit"
-
-            if trade.is_short and current_rate <= tp:
-                logger.info(f"TP hit SHORT: {coin} current:{current_rate} tp:{tp}")
-                return "tp_hit"
-
-        except Exception as e:
-            logger.error(f"custom_exit error {coin}: {e}")
-        return None
-
-    def confirm_trade_entry(
-        self,
-        pair:           str,
-        order_type:     str,
-        amount:         float,
-        rate:           float,
-        time_in_force:  str,
-        current_time:   datetime,
-        entry_tag:      Optional[str],
-        side:           str,
-        **kwargs
-    ) -> bool:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-        try:
-            signal = _get_signal(coin)
-            if not signal:
-                logger.warning(f"confirm_trade_entry: no signal for {coin} — rejecting")
-                return False
-
-            if time.time() > signal.get("valid_until", 0):
-                logger.warning(f"confirm_trade_entry: signal expired for {coin} — rejecting")
-                return False
-
-            grade = signal.get("grade", "F")
-            if grade not in ["A+", "A", "B"]:
-                logger.warning(f"confirm_trade_entry: grade {grade} not tradeable — rejecting")
-                return False
-
-            entry_price = float(signal.get("entry", 0))
-            if entry_price and rate:
-                deviation = abs(rate - entry_price) / entry_price
-                if deviation > 0.005:
-                    logger.warning(
-                        f"confirm_trade_entry: entry too stale for {coin} "
-                        f"— deviation {deviation*100:.2f}% > 0.5% — rejecting"
-                    )
-                    return False
-
-            _save_trade_levels(coin, signal)
-
-            logger.info(
-                f"confirm_trade_entry: approved {coin} {side} "
-                f"grade:{grade} rate:{rate} entry:{entry_price}"
-            )
-            return True
-
-        except Exception as e:
-            logger.error(f"confirm_trade_entry error {coin}: {e}")
-            return False
-
-    def confirm_trade_exit(
-        self,
-        pair:           str,
-        trade:          Trade,
-        order_type:     str,
-        amount:         float,
-        rate:           float,
-        time_in_force:  str,
-        exit_reason:    str,
-        current_time:   datetime,
-        **kwargs
-    ) -> bool:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-        _clear_trade_levels(coin)
-        logger.info(f"confirm_trade_exit: {coin} reason:{exit_reason} rate:{rate}")
-        return True

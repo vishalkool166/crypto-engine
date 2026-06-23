@@ -95,49 +95,6 @@ def _extract_key_levels(d1d_df, d1w_df) -> dict:
     }
 
 
-def _write_signal_to_redis(signal: dict, coin: str, regime: str,
-                            session: str, db_id: int):
-    try:
-        from redis_client import get_redis
-        r = get_redis()
-        if not r:
-            return
-
-        direction = signal.get("direction", "")
-        side      = "long" if direction == "LONG" else "short"
-
-        payload = {
-            "symbol":              f"{coin}USDT",
-            "side":                side,
-            "entry":               signal.get("entry", 0),
-            "stoploss":            signal.get("sl", 0),
-            "tp1":                 signal.get("tp1", 0),
-            "tp2":                 None,
-            "grade":               signal.get("grade", "F"),
-            "score":               signal.get("score", 0),
-            "valid_until":         int(time.time()) + 900,
-            "entry_deviation_pct": 0.0,
-            "signal_id":           db_id,
-            "regime":              regime,
-            "session":             session,
-            "cached_at":           time.time(),
-            "ml_probability":      signal.get("ml_probability", None),
-            "tp_mult":             signal.get("tp_mult", 2.0),
-            "actual_rr":           signal.get("actual_rr", 0)
-        }
-
-        key = f"signal:{coin}USDT"
-        r.setex(key, 900, json.dumps(payload))
-        log.info(
-            f"Signal written to Redis: {key} "
-            f"Grade:{signal.get('grade')} {direction} "
-            f"TP:{signal.get('tp1')} RR:{signal.get('actual_rr')}"
-        )
-
-    except Exception as e:
-        log.error(f"Redis signal write failed {coin}: {e}")
-
-
 def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
     if not cfg.ML_ENABLED:
         return True, 1.0
@@ -211,6 +168,59 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
 
 
+async def _send_to_freqtrade(signal: dict, coin: str, db_id: int) -> bool:
+    try:
+        from api.freqtrade import ft_force_enter, ft_has_open_trade, ft_open_trade_count
+
+        if await ft_has_open_trade(coin):
+            log.info(f"Skipping forceenter — {coin} already has open trade")
+            return False
+
+        open_count = await ft_open_trade_count()
+        max_trades = cfg.MAX_TRADES_PER_DAY
+        if open_count >= max_trades:
+            log.info(f"Skipping forceenter — max open trades reached ({open_count}/{max_trades})")
+            return False
+
+        direction = signal.get("direction", "")
+        side      = "short" if direction == "SHORT" else "long"
+        entry     = float(signal.get("entry", 0))
+        sl        = float(signal.get("sl", 0))
+        tp        = float(signal.get("tp1", 0))
+        grade     = signal.get("grade", "")
+        risk_amt  = float(signal.get("risk_amt", 0))
+        leverage  = cfg.LEVERAGE
+
+        stake = risk_amt * leverage
+
+        if not entry or not sl or not tp:
+            log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
+            return False
+
+        result = await ft_force_enter(
+            coin      = coin,
+            side      = side,
+            entry     = entry,
+            sl        = sl,
+            tp        = tp,
+            leverage  = leverage,
+            stake     = stake,
+            signal_id = db_id,
+            grade     = grade
+        )
+
+        if result.get("success"):
+            log.info(f"Trade opened via forceenter: {coin} {direction} trade_id:{result.get('trade_id')}")
+            return True
+        else:
+            log.error(f"forceenter failed: {coin} — {result.get('error')}")
+            return False
+
+    except Exception as e:
+        log.error(f"_send_to_freqtrade error {coin}: {e}")
+        return False
+
+
 async def analyze_coin(
     coin:     str,
     capital:  float = None,
@@ -227,7 +237,7 @@ async def _analyze_coin_inner(
 ) -> dict:
 
     capital  = capital  or cfg.CAPITAL
-    leverage = leverage or 10
+    leverage = leverage or cfg.LEVERAGE
 
     cached = cache.get(f"signal_{coin}")
     if cached:
@@ -380,15 +390,11 @@ async def _analyze_coin_inner(
             ml_passed, ml_prob = _check_ml_gate(signal, wconf)
 
             if ml_passed:
-                _write_signal_to_redis(
-                    signal  = signal,
-                    coin    = coin,
-                    regime  = regime["label"],
-                    session = session["name"],
-                    db_id   = db_id
+                asyncio.create_task(
+                    _send_to_freqtrade(signal, coin, db_id)
                 )
                 log.info(
-                    f"Signal forwarded to Freqtrade: {coin} "
+                    f"Signal forwarded to Freqtrade via forceenter: {coin} "
                     f"Grade:{signal.get('grade')} "
                     f"ML_prob:{ml_prob:.2f} "
                     f"RR:{signal.get('actual_rr')}"
