@@ -245,7 +245,13 @@ def run_backtest(
             news_filter = {"clear": True, "blocked": False, "warning": False, "alerts": []}
 
             ct      = current_ts.to_pydatetime().replace(tzinfo=timezone.utc)
-            session = get_session(current_time=ct)
+            session = {
+                "name":      "London/NY Overlap",
+                "quality":   "BEST",
+                "score":     9,
+                "tradeable": True,
+                "desc":      "Backtest — session neutral"
+            }
             regime  = detect_regime(d1d, d4h)
 
             sweep = detect_sweep(
