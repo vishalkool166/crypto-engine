@@ -130,32 +130,24 @@ async function _backfillPriceHistory(symbol) {
 
 function startBinanceTickerWs(symbol) {
   const key = symbol.toLowerCase()
-
   if (_binanceWsSockets[key]) return
+
+  console.log(`Starting price polling for: ${symbol}`)
 
   _backfillPriceHistory(symbol)
 
-  // ✅ CHANGED: use backend proxy instead of direct Binance WebSocket
-  const wsBase = window.location.origin.replace('https', 'wss').replace('http', 'ws')
-  const url    = `${wsBase}/ws/binance/${symbol}`
-  const ws     = new WebSocket(url)
-
-  ws.onopen = () => {
-    console.log(`Binance WS connected (proxied): ${symbol}`)
-  }
-
-  ws.onmessage = (event) => {
+  const interval = setInterval(async () => {
     try {
-      const d     = JSON.parse(event.data)
-      const price = parseFloat(d.p)
-      const time  = d.T
+      const res = await fetch(`/api/proxy/binance/price?symbol=${symbol}`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (!data.price) return
 
-      if (!price || !time) return
+      const price = parseFloat(data.price)
+      const time  = Date.now()
 
       if (!_priceHistory[key]) _priceHistory[key] = []
-
       _priceHistory[key].push({ time, price })
-
       if (_priceHistory[key].length > MAX_PRICE_POINTS) {
         _priceHistory[key].shift()
       }
@@ -163,25 +155,19 @@ function startBinanceTickerWs(symbol) {
       updateTradeCardPrice(symbol, price)
 
     } catch(e) {}
-  }
+  }, 1000)
 
-  ws.onclose = () => {
-    delete _binanceWsSockets[key]
-    setTimeout(() => startBinanceTickerWs(symbol), 5000)
+  _binanceWsSockets[key] = {
+    readyState: 1,
+    close:      () => clearInterval(interval),
+    onclose:    null
   }
-
-  ws.onerror = () => {
-    ws.close()
-  }
-
-  _binanceWsSockets[key] = ws
 }
 
 
 function stopBinanceTickerWs(symbol) {
   const key = symbol.toLowerCase()
   if (_binanceWsSockets[key]) {
-    _binanceWsSockets[key].onclose = null
     _binanceWsSockets[key].close()
     delete _binanceWsSockets[key]
   }
@@ -192,7 +178,6 @@ function stopBinanceTickerWs(symbol) {
 function stopAllBinanceWs() {
   Object.keys(_binanceWsSockets).forEach(key => {
     try {
-      _binanceWsSockets[key].onclose = null
       _binanceWsSockets[key].close()
     } catch(e) {}
   })

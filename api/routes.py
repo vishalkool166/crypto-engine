@@ -1045,3 +1045,18 @@ async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 1
     except Exception as e:
         log.error(f"Binance proxy error: {e}")
         raise HTTPException(500, str(e))
+    
+@router.get("/proxy/binance/price")
+async def proxy_binance_price(request: Request, symbol: str):
+    _auth(request)
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                "https://fapi.binance.com/fapi/v1/ticker/price",
+                params  = {"symbol": symbol.upper()},
+                timeout = 5.0
+            )
+            return JSONResponse(content=res.json())
+    except Exception as e:
+        log.error(f"Binance price proxy error: {e}")
+        raise HTTPException(500, str(e))
