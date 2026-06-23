@@ -63,11 +63,10 @@ def load_candles(
         rows = db.query(Candle).filter(
             and_(
                 Candle.coin      == coin,
-                Candle.timeframe == timeframe
+                Candle.timeframe == timeframe,
+                Candle.timestamp >= 1000000000000
             )
-        ).order_by(
-            Candle.timestamp.desc()
-        ).limit(limit).all()
+        ).order_by(Candle.timestamp.desc()).limit(limit).all()
 
         if not rows:
             return None
