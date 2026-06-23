@@ -87,7 +87,7 @@ async function _backfillPriceHistory(symbol) {
     const key = symbol.toLowerCase()
     if (_priceHistory[key] && _priceHistory[key].length >= 10) return
 
-    const url = `https://fapi.binance.com/fapi/v1/aggTrades?symbol=${symbol}&limit=100`
+    const url = `/api/proxy/binance/aggTrades?symbol=${symbol}&limit=100`
     const res = await fetch(url)
     if (!res.ok) return
 
@@ -135,11 +135,13 @@ function startBinanceTickerWs(symbol) {
 
   _backfillPriceHistory(symbol)
 
-  const url = `wss://fstream.binance.com/ws/${key}@aggTrade`
-  const ws  = new WebSocket(url)
+  // ✅ CHANGED: use backend proxy instead of direct Binance WebSocket
+  const wsBase = window.location.origin.replace('https', 'wss').replace('http', 'ws')
+  const url    = `${wsBase}/ws/binance/${symbol}`
+  const ws     = new WebSocket(url)
 
   ws.onopen = () => {
-    console.log(`Binance WS connected: ${symbol}`)
+    console.log(`Binance WS connected (proxied): ${symbol}`)
   }
 
   ws.onmessage = (event) => {

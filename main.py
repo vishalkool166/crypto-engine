@@ -1,8 +1,10 @@
+'use strict'
 import asyncio
 import hashlib
 import json
 import logging
 import uvicorn
+import websockets as ws_lib
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -469,6 +471,23 @@ async def dashboard_websocket(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         _dashboard_clients.discard(websocket)
+
+
+@app.websocket("/ws/binance/{symbol}")
+async def binance_ws_proxy(websocket: WebSocket, symbol: str):
+    await websocket.accept()
+    binance_url = f"wss://fstream.binance.com/ws/{symbol.lower()}@aggTrade"
+    try:
+        async with ws_lib.connect(binance_url) as binance_ws:
+            async for message in binance_ws:
+                await websocket.send_text(message)
+    except Exception as e:
+        log.error(f"Binance WS proxy error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.post("/webhook/telegram")

@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from api.formatters import (
     build_signal_queue, build_history_data, build_header_data
 )
 import runtime_state as rs
+import httpx
 
 log     = logging.getLogger(__name__)
 router  = APIRouter()
@@ -980,7 +982,8 @@ async def ft_forcesell(request: Request):
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
-    
+
+
 @router.get("/candles/{coin}/{tf}")
 async def get_candles(request: Request, coin: str, tf: str):
     _auth(request)
@@ -1024,4 +1027,21 @@ async def get_candles(request: Request, coin: str, tf: str):
 
     except Exception as e:
         log.error(f"Candles endpoint error {coin} {tf}: {e}")
+        raise HTTPException(500, str(e))
+
+@router.get("/proxy/binance/aggTrades")
+async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 100):
+    _auth(request)
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                "https://fapi.binance.com/fapi/v1/aggTrades",
+                params  = {"symbol": symbol.upper(), "limit": limit},
+                timeout = 10.0
+            )
+            return JSONResponse(content=res.json())
+    except httpx.TimeoutException:
+        raise HTTPException(504, "Binance API timeout")
+    except Exception as e:
+        log.error(f"Binance proxy error: {e}")
         raise HTTPException(500, str(e))
