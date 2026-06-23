@@ -1037,6 +1037,176 @@ async def get_candles(request: Request, coin: str, tf: str):
     except Exception as e:
         log.error(f"Candles endpoint error {coin} {tf}: {e}")
         raise HTTPException(500, str(e))
+    
+@router.get("/backtest-signal/{coin}")
+async def backtest_signal(request: Request, coin: str, date: str = None):
+    _auth(request)
+    coin = coin.upper()
+
+    try:
+        from data.store import load_candles
+        from engines.indicators import calculate_all
+        from engines.regime import detect_regime, assess_btc_stability
+        from engines.sweep import detect_sweep
+        from engines.displacement import detect_displacement
+        from engines.retest import detect_retest
+        from engines.confluence import score_confluence
+        from engines.signal import run_no_trade_engine, generate_signal
+        from datetime import timezone
+        import pandas as pd
+
+        if not date:
+            raise HTTPException(400, "date parameter required (YYYY-MM-DD)")
+
+        cache_key = f"backtest_signal:{coin}:{date}"
+        from redis_client import get_redis
+        import json
+        r = get_redis()
+        if r:
+            cached = r.get(cache_key)
+            if cached:
+                return JSONResponse(content=json.loads(cached))
+
+        target_ts = pd.Timestamp(date, tz="UTC")
+
+        df_1d = load_candles(coin, "1d", limit=1000)
+        df_4h = load_candles(coin, "4h", limit=2000)
+        df_1h = load_candles(coin, "1h", limit=2000)
+        df_1w = load_candles(coin, "1w", limit=500)
+
+        if df_1d is None or df_4h is None or df_1h is None or df_1w is None:
+            raise HTTPException(404, f"Insufficient data for {coin}")
+
+        window = 200
+
+        d1d_w = df_1d[df_1d.index < target_ts].iloc[-window:]
+        d4h_w = df_4h[df_4h.index < target_ts].iloc[-window:]
+        d1h_w = df_1h[df_1h.index < target_ts].iloc[-window:]
+        d1w_w = df_1w[df_1w.index < target_ts].iloc[-100:]
+
+        if len(d1d_w) < 50 or len(d4h_w) < 50 or len(d1h_w) < 50 or len(d1w_w) < 10:
+            raise HTTPException(404, f"Not enough historical data for {coin} at {date}")
+
+        is_btc = coin == "BTC"
+
+        if is_btc:
+            btc_data    = calculate_all(d1d_w)
+            btc_4h_data = calculate_all(d4h_w)
+        else:
+            df_btc_1d = load_candles("BTC", "1d", limit=1000)
+            df_btc_4h = load_candles("BTC", "4h", limit=2000)
+            btc_1d_w  = df_btc_1d[df_btc_1d.index < target_ts].iloc[-window:] if df_btc_1d is not None else None
+            btc_4h_w  = df_btc_4h[df_btc_4h.index < target_ts].iloc[-window:] if df_btc_4h is not None else None
+            btc_data    = calculate_all(btc_1d_w) if btc_1d_w is not None and len(btc_1d_w) >= 50 else None
+            btc_4h_data = calculate_all(btc_4h_w) if btc_4h_w is not None and len(btc_4h_w) >= 50 else None
+
+        d1d = calculate_all(d1d_w)
+        d4h = calculate_all(d4h_w)
+        d1h = calculate_all(d1h_w)
+        d1w = calculate_all(d1w_w)
+
+        btc_inst = assess_btc_stability(btc_data) if btc_data else assess_btc_stability(d1d)
+
+        price      = d1d["price"]
+        prev_close = float(d1d_w.iloc[-2]["close"]) if len(d1d_w) >= 2 else price
+
+        market = {
+            "price":       price,
+            "change24":    (price - prev_close) / prev_close * 100 if prev_close > 0 else 0,
+            "funding":     0.0,
+            "oi":          0.0,
+            "oi_change":   0.0,
+            "long_ratio":  50.0,
+            "short_ratio": 50.0,
+            "fear_greed":  {"value": 50, "label": "Neutral"}
+        }
+
+        oi_matrix = {
+            "primary_score":    5,
+            "primary_label":    "Neutral",
+            "funding_score":    6,
+            "funding_warning":  "",
+            "crowding_warning": ""
+        }
+
+        news_filter = {"clear": True, "blocked": False, "warning": False, "alerts": []}
+
+        key_levels = {
+            "pdh": float(d1d_w.iloc[-2]["high"])  if len(d1d_w) >= 2 else 0,
+            "pdl": float(d1d_w.iloc[-2]["low"])   if len(d1d_w) >= 2 else 0,
+            "pdc": float(d1d_w.iloc[-2]["close"]) if len(d1d_w) >= 2 else 0,
+            "pwh": float(d1w_w.iloc[-2]["high"])  if len(d1w_w) >= 2 else 0,
+            "pwl": float(d1w_w.iloc[-2]["low"])   if len(d1w_w) >= 2 else 0,
+        }
+
+        session = {
+            "name":      "London/NY Overlap",
+            "quality":   "BEST",
+            "score":     9,
+            "tradeable": True,
+            "desc":      "Backtest neutral"
+        }
+
+        regime = detect_regime(d1d, d4h)
+        sweep  = detect_sweep(d1d_w, key_levels, d1d.get("atr", 0), d1d["swings"])
+        disp   = detect_displacement(d4h_w, d4h.get("atr", 0))
+        retest = detect_retest(d4h_w, d4h, sweep, disp)
+
+        wconf = score_confluence(
+            d1w, d1d, d4h, d1h,
+            market, key_levels,
+            session, btc_data,
+            btc_inst, regime,
+            sweep, disp,
+            retest, oi_matrix,
+            coin,
+            btc_4h=btc_4h_data
+        )
+
+        no_trade = run_no_trade_engine(
+            regime, d1d, d4h,
+            market, session,
+            sweep, disp,
+            retest, btc_data,
+            btc_inst, oi_matrix,
+            news_filter,
+            wconf["norm_score"],
+            coin=coin,
+            d1w=d1w,
+            wconf=wconf
+        )
+
+        signal = generate_signal(
+            d1d, d4h,
+            wconf, no_trade,
+            market, key_levels,
+            cfg.CAPITAL, cfg.LEVERAGE,
+            d1w=d1w
+        )
+
+        result = {
+            "coin":      coin,
+            "date":      date,
+            "grade":     signal.get("grade"),
+            "direction": signal.get("direction"),
+            "score":     signal.get("score", 0),
+            "entry":     signal.get("entry"),
+            "sl":        signal.get("sl"),
+            "stoploss":  signal.get("sl"),
+            "tp1":       signal.get("tp1"),
+            "signal_id": f"{coin}_{date}",
+        }
+
+        if r:
+            r.setex(cache_key, 86400, json.dumps(make_serializable(result)))
+
+        return JSONResponse(content=make_serializable(result))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
 
 @router.get("/proxy/binance/aggTrades")
 async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 100):
