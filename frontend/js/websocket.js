@@ -132,8 +132,6 @@ function startBinanceTickerWs(symbol) {
   const key = symbol.toLowerCase()
   if (_binanceWsSockets[key]) return
 
-  console.log(`Starting price polling for: ${symbol}`)
-
   _backfillPriceHistory(symbol)
 
   const interval = setInterval(async () => {
