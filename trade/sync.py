@@ -9,25 +9,25 @@ async def sync_freqtrade_outcomes() -> dict:
         from api.freqtrade import _ft_get
         from database import SessionLocal, Signal as SignalModel
 
-        data = await _ft_get("/trades/history?limit=100")
+        data = await _ft_get("/trades?limit=100")
 
         if not data:
-            log.warning("No trade history data from Freqtrade")
+            log.warning("No trade data from Freqtrade")
             return {"synced": 0, "unmatched": 0, "error": "No data"}
 
         if isinstance(data, list):
-            closed_trades = data
+            all_trades = data
         elif isinstance(data, dict):
-            closed_trades = data.get("trades", [])
+            all_trades = data.get("trades", [])
         else:
-            closed_trades = []
+            all_trades = []
 
-        if not closed_trades:
-            log.info("No closed trades in Freqtrade history yet")
+        if not all_trades:
+            log.info("No trades in Freqtrade yet")
             return {"synced": 0, "unmatched": 0, "total": 0}
 
         closed_trades = [
-            t for t in closed_trades
+            t for t in all_trades
             if not t.get("is_open", True) and t.get("close_rate")
         ]
 
