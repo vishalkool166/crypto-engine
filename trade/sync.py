@@ -1,40 +1,41 @@
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
 
 async def sync_freqtrade_outcomes() -> dict:
-    """
-    Reads closed trades from Freqtrade API.
-    Matches them to Signal table records.
-    Updates Signal.outcome, Signal.pnl, Signal.exit_price.
-    Returns sync report.
-    """
     try:
         from api.freqtrade import _ft_get
         from database import SessionLocal, Signal as SignalModel
 
-        data = await _ft_get("/trades?limit=100")
+        data = await _ft_get("/trades/history?limit=100")
+
         if not data:
-            log.warning("No trade data from Freqtrade")
+            log.warning("No trade history data from Freqtrade")
             return {"synced": 0, "unmatched": 0, "error": "No data"}
 
-        trades = data.get("trades", [])
-        if not trades:
-            log.info("No closed trades in Freqtrade yet")
-            return {"synced": 0, "unmatched": 0}
+        if isinstance(data, list):
+            closed_trades = data
+        elif isinstance(data, dict):
+            closed_trades = data.get("trades", [])
+        else:
+            closed_trades = []
+
+        if not closed_trades:
+            log.info("No closed trades in Freqtrade history yet")
+            return {"synced": 0, "unmatched": 0, "total": 0}
 
         closed_trades = [
-            t for t in trades
-            if not t.get("is_open", True)
+            t for t in closed_trades
+            if not t.get("is_open", True) and t.get("close_rate")
         ]
 
         if not closed_trades:
             log.info("No closed trades to sync")
-            return {"synced": 0, "unmatched": 0}
+            return {"synced": 0, "unmatched": 0, "total": 0}
 
-        log.info(f"Syncing {len(closed_trades)} closed Freqtrade trades")
+        log.info(f"Found {len(closed_trades)} closed trades to sync")
 
         synced    = 0
         unmatched = 0
@@ -45,17 +46,26 @@ async def sync_freqtrade_outcomes() -> dict:
                 try:
                     pair       = ft_trade.get("pair", "")
                     coin       = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                    open_rate  = float(ft_trade.get("open_rate", 0))
+                    open_rate  = float(ft_trade.get("open_rate",  0))
                     close_rate = float(ft_trade.get("close_rate", 0))
                     profit_abs = float(ft_trade.get("profit_abs", 0))
                     is_short   = ft_trade.get("is_short", False)
                     direction  = "SHORT" if is_short else "LONG"
+                    trade_id   = ft_trade.get("trade_id")
+
+                    log.info(
+                        f"Processing: {coin} {direction} "
+                        f"entry:{open_rate} exit:{close_rate} "
+                        f"pnl:{profit_abs} trade_id:{trade_id}"
+                    )
 
                     open_date_str = ft_trade.get("open_date", "")
                     try:
                         open_dt = datetime.fromisoformat(
                             open_date_str.replace("Z", "+00:00")
                         )
+                        if open_dt.tzinfo is None:
+                            open_dt = open_dt.replace(tzinfo=timezone.utc)
                     except Exception:
                         open_dt = None
 
@@ -63,48 +73,56 @@ async def sync_freqtrade_outcomes() -> dict:
                         SignalModel.coin      == coin,
                         SignalModel.direction == direction,
                         SignalModel.outcome   == "pending"
-                    ).all()
+                    ).order_by(SignalModel.timestamp.desc()).all()
+
+                    if not existing:
+                        existing = db.query(SignalModel).filter(
+                            SignalModel.coin    == coin,
+                            SignalModel.outcome == "pending"
+                        ).order_by(SignalModel.timestamp.desc()).all()
 
                     if not existing:
                         unmatched += 1
-                        log.debug(f"No pending signal found for {coin} {direction}")
+                        log.warning(
+                            f"No pending signal for {coin} {direction} "
+                            f"trade_id:{trade_id}"
+                        )
                         continue
 
                     best_match = None
-                    best_score = float("inf")
 
-                    for sig in existing:
-                        if not sig.entry:
-                            continue
-
-                        price_diff = abs(sig.entry - open_rate) / open_rate
-
-                        if price_diff > 0.02:
-                            continue
-
-                        time_score = 0
-                        if open_dt and sig.timestamp:
+                    if open_dt:
+                        best_score = float("inf")
+                        for sig in existing:
+                            if not sig.timestamp:
+                                continue
                             sig_ts = sig.timestamp
                             if sig_ts.tzinfo is None:
                                 sig_ts = sig_ts.replace(tzinfo=timezone.utc)
+                            if sig_ts > open_dt:
+                                continue
                             time_diff = abs((open_dt - sig_ts).total_seconds())
-                            time_score = time_diff
-                        else:
-                            time_score = price_diff * 10000
+                            if time_diff < best_score:
+                                best_score = time_diff
+                                best_match = sig
 
-                        combined = price_diff * 1000 + time_score / 3600
-
-                        if combined < best_score:
-                            best_score = combined
-                            best_match = sig
+                    if not best_match and existing:
+                        best_match = existing[0]
+                        log.info(
+                            f"Using most recent signal for {coin} "
+                            f"signal_id:{best_match.id}"
+                        )
 
                     if not best_match:
                         unmatched += 1
-                        log.debug(f"No price match for {coin} {direction} entry:{open_rate}")
                         continue
 
                     if best_match.outcome != "pending":
                         skipped += 1
+                        log.info(
+                            f"Skipping already synced signal "
+                            f"id:{best_match.id} outcome:{best_match.outcome}"
+                        )
                         continue
 
                     outcome = "win" if profit_abs > 0 else "loss"
@@ -124,7 +142,10 @@ async def sync_freqtrade_outcomes() -> dict:
                     )
 
                 except Exception as e:
-                    log.error(f"Error syncing trade {ft_trade.get('trade_id')}: {e}")
+                    log.error(
+                        f"Error syncing trade "
+                        f"{ft_trade.get('trade_id')}: {e}"
+                    )
                     continue
 
         result = {
@@ -143,7 +164,6 @@ async def sync_freqtrade_outcomes() -> dict:
 
 
 async def get_sync_status() -> dict:
-    """Returns current sync status for health endpoint."""
     try:
         from database import SessionLocal, Signal as SignalModel
 
