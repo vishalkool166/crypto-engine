@@ -31,7 +31,6 @@ def _simulate_trade_4h(
     entry:       float,
     sl:          float,
     tp1:         float,
-    tp2:         float,
     max_candles: int = 120
 ) -> dict:
 
@@ -47,7 +46,6 @@ def _simulate_trade_4h(
             "candles":     0,
             "reason":      "Not enough future data",
             "tp1_hit":     False,
-            "tp2_hit":     False
         }
 
     for j, (ts, c) in enumerate(future.iterrows()):
@@ -57,7 +55,6 @@ def _simulate_trade_4h(
 
         sl_hit      = (l <= sl)  if is_long else (h >= sl)
         tp1_hit_now = (h >= tp1) if is_long else (l <= tp1)
-        tp2_hit_now = (h >= tp2) if is_long else (l <= tp2)
 
         if not tp1_hit:
             both_in_candle = sl_hit and tp1_hit_now
@@ -71,7 +68,6 @@ def _simulate_trade_4h(
                     "candles":     j + 1,
                     "reason":      "SL gap" if gap_sl else "SL before TP1",
                     "tp1_hit":     False,
-                    "tp2_hit":     False
                 }
 
             if sl_hit:
@@ -82,7 +78,6 @@ def _simulate_trade_4h(
                     "candles":     j + 1,
                     "reason":      "SL hit",
                     "tp1_hit":     False,
-                    "tp2_hit":     False
                 }
 
             if tp1_hit_now:
@@ -101,18 +96,6 @@ def _simulate_trade_4h(
                     "candles":     j + 1,
                     "reason":      "TP1 + BE stop",
                     "tp1_hit":     True,
-                    "tp2_hit":     False
-                }
-
-            if tp2_hit_now:
-                return {
-                    "outcome":     "win",
-                    "exit_price":  tp2,
-                    "exit_candle": j,
-                    "candles":     j + 1,
-                    "reason":      "TP2 hit",
-                    "tp1_hit":     True,
-                    "tp2_hit":     True
                 }
 
     last_close = float(future.iloc[-1]["close"])
@@ -123,7 +106,6 @@ def _simulate_trade_4h(
         "candles":     len(future),
         "reason":      f"Timeout {len(future)} candles",
         "tp1_hit":     tp1_hit,
-        "tp2_hit":     False
     }
 
 
@@ -132,7 +114,6 @@ def _calculate_pnl(
     entry:      float,
     exit_price: float,
     pos_size:   float,
-    outcome:    str
 ) -> float:
     TAKER_FEE = 0.0006
 
@@ -290,11 +271,10 @@ def run_backtest(
                 continue
 
             entry = price
-            sl    = signal["sl"]
-            tp1   = signal["tp1"]
-            tp2   = signal["tp2"]
+            sl    = signal.get("sl")
+            tp1   = signal.get("tp1")
 
-            if not sl or not tp1 or not tp2:
+            if not sl or not tp1:
                 continue
 
             if direction == "LONG":
@@ -305,14 +285,12 @@ def run_backtest(
                     continue
 
             sim = _simulate_trade_4h(
-                df_4h       = df_4h,
-                current_ts  = current_ts,
-                direction   = direction,
-                entry       = entry,
-                sl          = sl,
-                tp1         = tp1,
-                tp2         = tp2,
-                max_candles = 120
+                df_4h      = df_4h,
+                current_ts = current_ts,
+                direction  = direction,
+                entry      = entry,
+                sl         = sl,
+                tp1        = tp1,
             )
 
             outcome    = sim["outcome"]
@@ -330,7 +308,6 @@ def run_backtest(
                 entry      = entry,
                 exit_price = exit_price,
                 pos_size   = pos_size,
-                outcome    = outcome
             )
 
             equity      += pnl
@@ -348,7 +325,6 @@ def run_backtest(
                 "entry":       round(entry, 6),
                 "sl":          round(sl, 6),
                 "tp1":         round(tp1, 6),
-                "tp2":         round(tp2, 6),
                 "exit_price":  round(exit_price, 6),
                 "outcome":     outcome,
                 "pnl":         pnl,
@@ -358,7 +334,6 @@ def run_backtest(
                 "candles":     sim.get("candles"),
                 "reason":      sim.get("reason", ""),
                 "tp1_hit":     sim.get("tp1_hit", False),
-                "tp2_hit":     sim.get("tp2_hit", False),
                 "regime":      regime.get("label", ""),
                 "session":     session.get("name", "")
             })
