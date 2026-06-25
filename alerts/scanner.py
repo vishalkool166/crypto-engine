@@ -12,7 +12,6 @@ from engines.sweep import detect_sweep
 from engines.displacement import detect_displacement
 from engines.retest import detect_retest
 from engines.confluence import score_confluence
-from engines.staleness import assess_setup_staleness
 from engines.signal import (
     get_tier, get_session as get_trading_session,
     run_no_trade_engine, generate_signal
@@ -462,15 +461,6 @@ async def _analyze_coin_inner(
 
     oi_matrix = _interpret_oi(market)
 
-    staleness = assess_setup_staleness(
-        sweep        = sweep,
-        displacement = disp,
-        retest       = retest,
-        regime       = regime,
-        atr          = d4h.get("atr") or d1d.get("atr") or market["price"] * 0.015,
-        price        = market["price"]
-    )
-
     wconf = score_confluence(
         d1w, d1d, d4h, d1h,
         market, key_levels,
@@ -490,10 +480,9 @@ async def _analyze_coin_inner(
         btc_inst, oi_matrix,
         news_filter,
         wconf["norm_score"],
-        coin      = coin,
-        d1w       = d1w,
-        wconf     = wconf,
-        staleness = staleness
+        coin  = coin,
+        d1w   = d1w,
+        wconf = wconf
     )
 
     signal = generate_signal(
@@ -515,8 +504,7 @@ async def _analyze_coin_inner(
         regime       = regime,
         session      = session,
         d1w          = d1w,
-        d1h          = d1h,
-        staleness    = staleness
+        d1h          = d1h
     )
 
     signal["sweep_score"] = sweep.get("score", 0)
@@ -584,7 +572,6 @@ async def _analyze_coin_inner(
         "ml_probability":    signal.get("ml_probability", None),
         "actual_rr":         signal.get("actual_rr", 0),
         "tp_mult":           signal.get("tp_mult", 2.0),
-        "staleness":         staleness,
         "cached_at":         time.time(),
         "data_quality": {
             tf: {
