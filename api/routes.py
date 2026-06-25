@@ -897,168 +897,6 @@ async def validate_coin(request: Request, coin: str):
         raise HTTPException(500, str(e))
 
 
-@router.get("/ft/summary")
-async def ft_summary(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_get
-        status, profit, balance, daily, config = await asyncio.gather(
-            _ft_get("/status"),
-            _ft_get("/profit"),
-            _ft_get("/balance"),
-            _ft_get("/daily?timescale=7"),
-            _ft_get("/show_config"),
-            return_exceptions=True
-        )
-
-        bot_state = "unknown"
-        if not isinstance(config, Exception) and config:
-            bot_state = config.get("state", "unknown")
-
-        trades_with_health = []
-        if not isinstance(status, Exception) and status and isinstance(status, list):
-            tp1_map = {}
-            sl_map  = {}
-
-            try:
-                with SessionLocal() as db:
-                    for trade in status:
-                        pair      = trade.get("pair", "")
-                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                        is_short  = trade.get("is_short", False)
-                        direction = "SHORT" if is_short else "LONG"
-
-                        signal = db.query(SignalModel).filter(
-                            SignalModel.coin      == coin,
-                            SignalModel.direction == direction,
-                            SignalModel.outcome   == "pending"
-                        ).order_by(SignalModel.timestamp.desc()).first()
-
-                        if not signal:
-                            signal = db.query(SignalModel).filter(
-                                SignalModel.coin      == coin,
-                                SignalModel.direction == direction
-                            ).order_by(SignalModel.timestamp.desc()).first()
-
-                        if signal:
-                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
-                            if signal.sl:  sl_map[coin]  = float(signal.sl)
-
-            except Exception as e:
-                log.warning(f"tp1/sl fetch error: {e}")
-
-            for trade in status:
-                pair = trade.get("pair", "")
-                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-
-                health = None
-                try:
-                    from trade.health_monitor import get_health_from_redis
-                    health = get_health_from_redis(coin)
-                except Exception:
-                    pass
-
-                trade_copy              = dict(trade)
-                trade_copy["health"]    = health
-                trade_copy["tp1"]       = tp1_map.get(coin, None)
-                trade_copy["sl_signal"] = sl_map.get(coin, None)
-                trades_with_health.append(trade_copy)
-
-        return JSONResponse(content={
-            "status":    trades_with_health,
-            "profit":    profit    if not isinstance(profit,    Exception) else {},
-            "balance":   balance   if not isinstance(balance,   Exception) else {},
-            "daily":     daily     if not isinstance(daily,     Exception) else [],
-            "bot_state": bot_state
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.get("/ft/status")
-async def ft_status(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_get
-        data = await _ft_get("/status")
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.get("/ft/profit")
-async def ft_profit(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_get
-        data = await _ft_get("/profit")
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.get("/ft/balance")
-async def ft_balance(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_get
-        data = await _ft_get("/balance")
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.post("/ft/start")
-async def ft_start(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_post
-        data = await _ft_post("/start")
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.post("/ft/stop")
-async def ft_stop(request: Request):
-    _auth(request)
-    try:
-        from api.freqtrade import _ft_post
-        data = await _ft_post("/stop")
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@router.post("/ft/forcesell")
-async def ft_forcesell(request: Request):
-    _auth(request)
-    try:
-        body    = await request.json()
-        tradeid = body.get("tradeid")
-        if not tradeid:
-            raise HTTPException(400, "tradeid required")
-        from api.freqtrade import _ft_post
-        data = await _ft_post("/forcesell", {"tradeid": str(tradeid)})
-        return JSONResponse(content=data)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
 @router.get("/candles/{coin}/{tf}")
 async def get_candles(request: Request, coin: str, tf: str):
     _auth(request)
@@ -1211,7 +1049,7 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         regime = detect_regime(d1d, d4h)
         sweep  = detect_sweep(d1d_w, key_levels, d1d.get("atr", 0), d1d["swings"])
         disp   = detect_displacement(d4h_w, d4h.get("atr", 0))
-        retest = detect_retest(d4h_w, d4h, sweep, disp)
+        retest = detect_retest(d4h_w, d4h, sweep, disp, d1h=d1h, d1d=d1d)
 
         wconf = score_confluence(
             d1w, d1d, d4h, d1h,
@@ -1232,9 +1070,9 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             btc_inst, oi_matrix,
             news_filter,
             wconf["norm_score"],
-            coin=coin,
-            d1w=d1w,
-            wconf=wconf
+            coin  = coin,
+            d1w   = d1w,
+            wconf = wconf
         )
 
         signal = generate_signal(
@@ -1242,7 +1080,8 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             wconf, no_trade,
             market, key_levels,
             cfg.CAPITAL, cfg.LEVERAGE,
-            d1w=d1w
+            d1w = d1w,
+            d1h = d1h
         )
 
         result = {
