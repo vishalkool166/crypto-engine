@@ -22,6 +22,14 @@ ENTRY_OPPORTUNITY_KEYS = [
     "order_blocks",
 ]
 
+NON_NEGOTIABLES = [
+    "market_regime",
+    "weekly_filter",
+    "liquidity_sweep",
+    "displacement",
+    "retest_confirmation",
+]
+
 
 def _get_btc_correlation(coin: str) -> float:
     try:
@@ -408,19 +416,51 @@ def score_confluence(
         (entry_earned / entry_max) * 100
     ) if entry_max > 0 else 0
 
-    btc_factor = next((f for f in factors if f["key"] == "btc_alignment"), None)
+    non_neg_results = {}
+    for key in NON_NEGOTIABLES:
+        factor = next((f for f in factors if f["key"] == key), None)
+        if factor:
+            non_neg_results[key] = {
+                "passed": factor["pass"],
+                "earned": factor["earned"],
+                "max":    factor["max"],
+                "detail": factor["detail"]
+            }
+
+    non_neg_passed  = all(v["passed"] for v in non_neg_results.values())
+    non_neg_failed  = [k for k, v in non_neg_results.items() if not v["passed"]]
+
+    quality_earned = sum(
+        f["earned"] for f in factors
+        if f["key"] not in NON_NEGOTIABLES
+    )
+    quality_max = sum(
+        W[k] for k in W
+        if k not in NON_NEGOTIABLES
+    )
+    quality_score = round(
+        (quality_earned / quality_max) * 100
+    ) if quality_max > 0 else 0
+
+    btc_factor    = next((f for f in factors if f["key"] == "btc_alignment"), None)
     btc_score_val = btc_factor["earned"] if btc_factor else 0
 
     return {
-        "factors":       factors,
-        "total_earned":  total,
-        "max_possible":  max_weight,
-        "norm_score":    norm_score,
-        "market_score":  market_score,
-        "entry_score":   entry_score,
-        "market_earned": market_earned,
-        "market_max":    market_max,
-        "entry_earned":  entry_earned,
-        "entry_max":     entry_max,
-        "btc_score":     btc_score_val,
+        "factors":           factors,
+        "total_earned":      total,
+        "max_possible":      max_weight,
+        "norm_score":        norm_score,
+        "market_score":      market_score,
+        "entry_score":       entry_score,
+        "market_earned":     market_earned,
+        "market_max":        market_max,
+        "entry_earned":      entry_earned,
+        "entry_max":         entry_max,
+        "btc_score":         btc_score_val,
+        "non_neg_passed":    non_neg_passed,
+        "non_neg_failed":    non_neg_failed,
+        "non_neg_results":   non_neg_results,
+        "quality_score":     quality_score,
+        "quality_earned":    quality_earned,
+        "quality_max":       quality_max,
     }

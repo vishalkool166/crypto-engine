@@ -118,19 +118,21 @@ def detect_retest(
     def _empty_zone_result(status, label, desc, score, failed=False):
         fallback_price = price
         return {
-            "status":    status,
-            "label":     label,
-            "desc":      desc,
-            "score":     score,
-            "confirmed": False,
-            "failed":    failed,
-            "zone_type": "",
+            "status":       status,
+            "label":        label,
+            "desc":         desc,
+            "score":        score,
+            "confirmed":    False,
+            "failed":       failed,
+            "zone_type":    "",
             "zone": {
                 "top":    fallback_price * 1.005,
                 "bottom": fallback_price * 0.995,
                 "mid":    fallback_price
             },
-            "trade_dir": trade_dir
+            "trade_dir":    trade_dir,
+            "limit_entry":  None,
+            "limit_method": "none"
         }
 
     if not zone:
@@ -169,15 +171,17 @@ def detect_retest(
 
     if failed_retest():
         return {
-            "status":    "failed",
-            "label":     "Failed Retest",
-            "desc":      f"{zone_type} broken — setup invalidated",
-            "score":     0,
-            "confirmed": False,
-            "failed":    True,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "trade_dir": trade_dir
+            "status":       "failed",
+            "label":        "Failed Retest",
+            "desc":         f"{zone_type} broken — setup invalidated",
+            "score":        0,
+            "confirmed":    False,
+            "failed":       True,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "trade_dir":    trade_dir,
+            "limit_entry":  None,
+            "limit_method": "none"
         }
 
     def rejection_candle():
@@ -212,82 +216,107 @@ def detect_retest(
     absorption = avg_vol < vol_ma * 0.8
     vol_ok     = float(recent["volume"].iloc[-1]) > vol_ma * 0.8
 
+    def _get_limit_entry(trade_dir, zone, atr):
+        if trade_dir == "bull":
+            limit_price  = round(zone["bottom"] + atr * 0.1, 6)
+            limit_method = f"Limit at zone bottom {zone['bottom']:.4f} + 0.1 ATR"
+        else:
+            limit_price  = round(zone["top"] - atr * 0.1, 6)
+            limit_method = f"Limit at zone top {zone['top']:.4f} - 0.1 ATR"
+        return limit_price, limit_method
+
     if in_zone and rejection["detected"] and (absorption or vol_ok):
+        limit_price, limit_method = _get_limit_entry(trade_dir, zone, atr)
         return {
-            "status":    "confirmed",
-            "label":     "Retest Confirmed",
-            "desc":      f"{zone_type} held · {rejection['desc']}",
-            "score":     12,
-            "confirmed": True,
-            "failed":    False,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "rejection": rejection,
-            "absorption": absorption,
-            "trade_dir": trade_dir
+            "status":       "confirmed",
+            "label":        "Retest Confirmed",
+            "desc":         f"{zone_type} held · {rejection['desc']}",
+            "score":        12,
+            "confirmed":    True,
+            "failed":       False,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "rejection":    rejection,
+            "absorption":   absorption,
+            "trade_dir":    trade_dir,
+            "limit_entry":  limit_price,
+            "limit_method": limit_method
         }
 
     if in_zone and rejection["detected"]:
+        limit_price, limit_method = _get_limit_entry(trade_dir, zone, atr)
         return {
-            "status":    "partial",
-            "label":     "Partial Retest",
-            "desc":      f"{zone_type} — rejection present, awaiting volume",
-            "score":     9,
-            "confirmed": False,
-            "failed":    False,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "rejection": rejection,
-            "trade_dir": trade_dir
+            "status":       "partial",
+            "label":        "Partial Retest",
+            "desc":         f"{zone_type} — rejection present, awaiting volume",
+            "score":        9,
+            "confirmed":    False,
+            "failed":       False,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "rejection":    rejection,
+            "trade_dir":    trade_dir,
+            "limit_entry":  limit_price,
+            "limit_method": limit_method
         }
 
     if in_zone:
+        limit_price, limit_method = _get_limit_entry(trade_dir, zone, atr)
         return {
-            "status":    "pending",
-            "label":     "In Retest Zone",
-            "desc":      f"Inside {zone_type} — waiting for rejection",
-            "score":     5,
-            "confirmed": False,
-            "failed":    False,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "trade_dir": trade_dir
+            "status":       "pending",
+            "label":        "In Retest Zone",
+            "desc":         f"Inside {zone_type} — waiting for rejection",
+            "score":        5,
+            "confirmed":    False,
+            "failed":       False,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "trade_dir":    trade_dir,
+            "limit_entry":  limit_price,
+            "limit_method": limit_method
         }
 
     if trade_dir == "bull" and above_zone:
         return {
-            "status":    "missed",
-            "label":     "Above Zone — Entry Missed",
-            "desc":      f"Price above {zone_type}",
-            "score":     0,
-            "confirmed": False,
-            "failed":    False,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "trade_dir": trade_dir
+            "status":       "missed",
+            "label":        "Above Zone — Entry Missed",
+            "desc":         f"Price above {zone_type}",
+            "score":        0,
+            "confirmed":    False,
+            "failed":       False,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "trade_dir":    trade_dir,
+            "limit_entry":  None,
+            "limit_method": "none"
         }
 
     if trade_dir == "bear" and below_zone:
         return {
-            "status":    "missed",
-            "label":     "Below Zone — Entry Missed",
-            "desc":      f"Price below {zone_type}",
-            "score":     0,
-            "confirmed": False,
-            "failed":    False,
-            "zone_type": zone_type,
-            "zone":      zone,
-            "trade_dir": trade_dir
+            "status":       "missed",
+            "label":        "Below Zone — Entry Missed",
+            "desc":         f"Price below {zone_type}",
+            "score":        0,
+            "confirmed":    False,
+            "failed":       False,
+            "zone_type":    zone_type,
+            "zone":         zone,
+            "trade_dir":    trade_dir,
+            "limit_entry":  None,
+            "limit_method": "none"
         }
 
+    limit_price, limit_method = _get_limit_entry(trade_dir, zone, atr)
     return {
-        "status":    "approaching",
-        "label":     "Approaching Zone",
-        "desc":      f"Price approaching {zone_type} at {zone['mid']:.4f}",
-        "score":     3,
-        "confirmed": False,
-        "failed":    False,
-        "zone_type": zone_type,
-        "zone":      zone,
-        "trade_dir": trade_dir
+        "status":       "approaching",
+        "label":        "Approaching Zone",
+        "desc":         f"Price approaching {zone_type} at {zone['mid']:.4f}",
+        "score":        3,
+        "confirmed":    False,
+        "failed":       False,
+        "zone_type":    zone_type,
+        "zone":         zone,
+        "trade_dir":    trade_dir,
+        "limit_entry":  limit_price,
+        "limit_method": limit_method
     }

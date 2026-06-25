@@ -44,12 +44,6 @@ TIERS = {
     }
 }
 
-GRADE_TP_MULTIPLIER = {
-    "A+": 2.5,
-    "A":  2.0,
-    "B":  1.5,
-}
-
 GRADE_RISK_PCT = {
     "A+": 0.02,
     "A":  0.015,
@@ -62,7 +56,11 @@ GRADE_MIN_RR = {
     "B":  1.5,
 }
 
-SL_COMPRESSION_LIMIT = 2.0
+GRADE_ATR_MULT = {
+    "A+": 3.0,
+    "A":  2.5,
+    "B":  2.0,
+}
 
 
 def _safe_float(val, fallback: float = 0.0) -> float:
@@ -229,16 +227,26 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
     return True, "B grade quality filter passed"
 
 
-def dynamic_risk_pct(grade: str) -> float:
-    return GRADE_RISK_PCT.get(grade, 0.01)
-
-
-def get_tp_multiplier(grade: str) -> float:
-    return GRADE_TP_MULTIPLIER.get(grade, 1.5)
+def dynamic_risk_pct(grade: str, quality_score: float = 100) -> float:
+    base = GRADE_RISK_PCT.get(grade, 0.01)
+    if quality_score >= 80:
+        return base
+    if quality_score >= 60:
+        return round(base * 0.75, 4)
+    return round(base * 0.5, 4)
 
 
 def get_min_rr(grade: str) -> float:
     return GRADE_MIN_RR.get(grade, 1.5)
+
+
+def get_atr_mult(grade: str, adx: float) -> float:
+    base = GRADE_ATR_MULT.get(grade, 2.0)
+    if adx >= 40:
+        return base * 1.2
+    if adx >= 25:
+        return base
+    return base * 0.8
 
 
 def check_15m_entry(
@@ -253,7 +261,7 @@ def check_15m_entry(
             "score":       5,
             "pattern":     "No 15m data",
             "entry_price": None,
-            "desc":        "15m data unavailable — using 4H entry"
+            "desc":        "15m data unavailable — using zone entry"
         }
 
     recent = df_15m.tail(10)
@@ -406,7 +414,7 @@ def check_15m_entry(
             p2_body = abs(_safe_float(p2["close"]) - _safe_float(p2["open"]))
             p2_rng  = _safe_float(p2["high"]) - _safe_float(p2["low"])
             if p2_rng > 0:
-                if direction == "LONG"  and _safe_float(p2["close"]) > _safe_float(p2["open"]):
+                if direction == "LONG" and _safe_float(p2["close"]) > _safe_float(p2["open"]):
                     if p2_body / p2_rng > 0.6: micro_disp = True
                 elif direction == "SHORT" and _safe_float(p2["close"]) < _safe_float(p2["open"]):
                     if p2_body / p2_rng > 0.6: micro_disp = True
@@ -467,33 +475,79 @@ def _determine_direction(d1d: dict, d4h: dict) -> str:
     return "WATCH"
 
 
+def _coin_volatility_profile(
+    d4h:   dict,
+    d1d:   dict,
+    price: float
+) -> dict:
+    atr_4h  = _safe_float(d4h.get("atr") or d1d.get("atr") or price * 0.015)
+    atr_pct = _safe_div(atr_4h, price) * 100
+    adx     = _safe_float(d4h.get("adx") or d1d.get("adx") or 20)
+    bb      = d4h.get("bb") or d1d.get("bb") or {}
+    bb_w    = _safe_float(bb.get("width", 5))
+
+    swings     = d1d.get("swings", {})
+    highs      = swings.get("highs", [])
+    lows       = swings.get("lows",  [])
+    swing_ranges = []
+
+    for i in range(min(len(highs), len(lows), 5)):
+        h = _safe_float(highs[i]["price"]) if i < len(highs) else 0
+        l = _safe_float(lows[i]["price"])  if i < len(lows)  else 0
+        if h > 0 and l > 0 and h > l:
+            swing_ranges.append(h - l)
+
+    avg_swing     = sum(swing_ranges) / len(swing_ranges) if swing_ranges else atr_4h * 4
+    avg_swing_pct = _safe_div(avg_swing, price) * 100
+
+    if atr_pct > 4.0 or bb_w > 10:
+        volatility_class = "high"
+    elif atr_pct < 1.0 or bb_w < 4:
+        volatility_class = "low"
+    else:
+        volatility_class = "normal"
+
+    return {
+        "atr_4h":          atr_4h,
+        "atr_pct":         atr_pct,
+        "adx":             adx,
+        "bb_width":        bb_w,
+        "avg_swing":       avg_swing,
+        "avg_swing_pct":   avg_swing_pct,
+        "volatility_class": volatility_class
+    }
+
+
 def _calculate_sl(
-    is_long:    bool,
-    entry:      float,
-    sweep:      dict,
-    retest:     dict,
-    d4h:        dict,
-    d1d:        dict,
-    swings:     dict,
+    is_long:   bool,
+    entry:     float,
+    sweep:     dict,
+    retest:    dict,
+    d4h:       dict,
+    d1d:       dict,
+    swings:    dict,
     key_levels: dict,
-    grade:      str
+    grade:     str,
+    vol_profile: dict
 ) -> tuple[float, str, bool]:
 
-    atr_4h = d4h.get("atr") or d1d.get("atr") or entry * 0.015
-    atr_4h = _safe_float(atr_4h, entry * 0.015)
+    atr_4h = vol_profile["atr_4h"]
+    adx    = vol_profile["adx"]
     if atr_4h <= 0:
         atr_4h = entry * 0.015
 
-    buffer    = atr_4h * 0.3
-    sl        = None
-    sl_method = ""
+    atr_mult   = get_atr_mult(grade, adx)
+    max_sl_dist = atr_4h * atr_mult
+    buffer      = atr_4h * 0.2
+    sl          = None
+    sl_method   = ""
 
     if is_long:
-        sweep_low = sweep.get("sweep_low")
-        if sweep_low:
-            sweep_low = _safe_float(sweep_low)
-            if sweep_low > 0 and sweep_low < entry:
-                sl        = sweep_low - buffer
+        sweep_low = _safe_float(sweep.get("sweep_low") or 0)
+        if sweep_low > 0 and sweep_low < entry:
+            candidate = sweep_low - buffer
+            if abs(entry - candidate) <= max_sl_dist:
+                sl        = candidate
                 sl_method = "Below sweep low"
 
         if sl is None:
@@ -502,44 +556,44 @@ def _calculate_sl(
             if nearest_ob and not nearest_ob.get("mitigated"):
                 ob_bottom = _safe_float(nearest_ob.get("bottom", 0))
                 if ob_bottom > 0 and ob_bottom < entry:
-                    sl        = ob_bottom - buffer
-                    sl_method = "Below OB bottom"
+                    candidate = ob_bottom - buffer
+                    if abs(entry - candidate) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Below OB bottom"
 
         if sl is None:
             retest_zone = retest.get("zone")
             if retest_zone:
                 rb = _safe_float(retest_zone.get("bottom", 0))
                 if rb > 0 and rb < entry:
-                    sl        = rb - buffer
-                    sl_method = "Below retest zone"
+                    candidate = rb - buffer
+                    if abs(entry - candidate) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Below retest zone"
 
         if sl is None:
             if swings.get("last_low"):
                 swing_low = _safe_float(swings["last_low"]["price"])
                 if swing_low > 0 and swing_low < entry:
-                    sl        = swing_low - buffer
-                    sl_method = "Below swing low"
+                    candidate = swing_low - buffer
+                    if abs(entry - candidate) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Below swing low"
 
         if sl is None:
             pdl = _safe_float(key_levels.get("pdl", 0))
             if pdl > 0 and pdl < entry:
-                sl        = pdl - buffer
-                sl_method = "Below PDL"
-
-        if sl is None:
-            sl        = entry - (atr_4h * 2.0)
-            sl_method = "4H ATR fallback"
-
-        if sl >= entry:
-            sl        = entry - (atr_4h * 2.0)
-            sl_method = "4H ATR fallback (corrected)"
+                candidate = pdl - buffer
+                if abs(entry - candidate) <= max_sl_dist:
+                    sl        = candidate
+                    sl_method = "Below PDL"
 
     else:
-        sweep_high = sweep.get("sweep_high")
-        if sweep_high:
-            sweep_high = _safe_float(sweep_high)
-            if sweep_high > 0 and sweep_high > entry:
-                sl        = sweep_high + buffer
+        sweep_high = _safe_float(sweep.get("sweep_high") or 0)
+        if sweep_high > 0 and sweep_high > entry:
+            candidate = sweep_high + buffer
+            if abs(candidate - entry) <= max_sl_dist:
+                sl        = candidate
                 sl_method = "Above sweep high"
 
         if sl is None:
@@ -548,80 +602,87 @@ def _calculate_sl(
             if nearest_ob and not nearest_ob.get("mitigated"):
                 ob_top = _safe_float(nearest_ob.get("top", 0))
                 if ob_top > 0 and ob_top > entry:
-                    sl        = ob_top + buffer
-                    sl_method = "Above OB top"
+                    candidate = ob_top + buffer
+                    if abs(candidate - entry) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Above OB top"
 
         if sl is None:
             retest_zone = retest.get("zone")
             if retest_zone:
                 rt = _safe_float(retest_zone.get("top", 0))
                 if rt > 0 and rt > entry:
-                    sl        = rt + buffer
-                    sl_method = "Above retest zone"
+                    candidate = rt + buffer
+                    if abs(candidate - entry) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Above retest zone"
 
         if sl is None:
             if swings.get("last_high"):
                 swing_high = _safe_float(swings["last_high"]["price"])
                 if swing_high > 0 and swing_high > entry:
-                    sl        = swing_high + buffer
-                    sl_method = "Above swing high"
+                    candidate = swing_high + buffer
+                    if abs(candidate - entry) <= max_sl_dist:
+                        sl        = candidate
+                        sl_method = "Above swing high"
 
         if sl is None:
             pdh = _safe_float(key_levels.get("pdh", 0))
             if pdh > 0 and pdh > entry:
-                sl        = pdh + buffer
-                sl_method = "Above PDH"
+                candidate = pdh + buffer
+                if abs(candidate - entry) <= max_sl_dist:
+                    sl        = candidate
+                    sl_method = "Above PDH"
 
-        if sl is None:
-            sl        = entry + (atr_4h * 2.0)
-            sl_method = "4H ATR fallback"
+    if sl is None:
+        log.warning(
+            f"No structural SL found within ATR limit "
+            f"(max_sl_dist={max_sl_dist:.4f} atr={atr_4h:.4f} mult={atr_mult}) "
+            f"— entry stale or structure too far"
+        )
+        return 0.0, "SL_REJECTED — no structural level within ATR range (entry stale)", True
 
-        if sl <= entry:
-            sl        = entry + (atr_4h * 2.0)
-            sl_method = "4H ATR fallback (corrected)"
+    if is_long and sl >= entry:
+        return 0.0, "SL_REJECTED — SL above entry for LONG", True
+    if not is_long and sl <= entry:
+        return 0.0, "SL_REJECTED — SL below entry for SHORT", True
 
-    sl_dist  = abs(entry - sl)
-    max_sl   = entry * 0.04
-    min_sl   = entry * 0.005
+    min_sl_dist = atr_4h * 0.3
+    sl_dist     = abs(entry - sl)
 
-    if sl_dist > max_sl:
-        compression_ratio = sl_dist / max_sl
-        if compression_ratio > SL_COMPRESSION_LIMIT:
-            log.warning(
-                f"SL compression ratio {compression_ratio:.2f}x exceeds limit "
-                f"— entry too far from structure. natural_sl={sl:.4f} entry={entry:.4f}"
-            )
-            return sl, f"SL_REJECTED — natural SL {compression_ratio:.1f}x beyond cap (setup aged out)", True
-
-        sl        = entry - max_sl if is_long else entry + max_sl
-        sl_dist   = abs(entry - sl)
-        sl_method += " (capped at 4%)"
-
-    if sl_dist < min_sl:
-        sl        = entry - min_sl if is_long else entry + min_sl
-        sl_method += " (floored at 0.5%)"
+    if sl_dist < min_sl_dist:
+        sl        = entry - min_sl_dist if is_long else entry + min_sl_dist
+        sl_method += " (floored — too tight)"
 
     return sl, sl_method, False
 
 
 def _calculate_tp(
-    is_long:    bool,
-    entry:      float,
-    sl:         float,
-    grade:      str,
-    swings:     dict,
-    key_levels: dict,
-    d1d:        dict,
-    d1h:        dict,
-    sweep:      dict
+    is_long:     bool,
+    entry:       float,
+    sl:          float,
+    grade:       str,
+    swings:      dict,
+    key_levels:  dict,
+    d1d:         dict,
+    d1h:         dict,
+    sweep:       dict,
+    vol_profile: dict
 ) -> tuple[float, float, str]:
 
-    sl_dist = abs(entry - sl)
+    sl_dist   = abs(entry - sl)
     if sl_dist <= 0:
         sl_dist = entry * 0.01
 
-    min_rr   = get_min_rr(grade)
-    tp_mult  = get_tp_multiplier(grade)
+    min_rr    = get_min_rr(grade)
+    bb_width  = vol_profile["bb_width"]
+    avg_swing = vol_profile["avg_swing"]
+
+    tp_extension = (
+        1.3 if bb_width > 8 else
+        1.0 if bb_width > 4 else
+        0.8
+    )
 
     if is_long:
         candidates = []
@@ -659,11 +720,18 @@ def _calculate_tp(
         if vah > entry:
             candidates.append((vah, "VAH"))
 
+        poc = _safe_float(d1d.get("poc") or 0)
+        if poc > entry:
+            candidates.append((poc, "POC"))
+
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
             if item.get("type") == "bear" and lvl > entry:
                 candidates.append((lvl, "Sweep level above"))
+
+        swing_target = entry + (avg_swing * 0.618 * tp_extension)
+        candidates.append((swing_target, "Swing range projection"))
 
         valid_candidates = [
             (lvl, lbl) for lvl, lbl in candidates
@@ -673,17 +741,11 @@ def _calculate_tp(
         if valid_candidates:
             valid_candidates.sort(key=lambda x: x[0])
             tp, tp_label = valid_candidates[0]
-            actual_rr    = _safe_div(abs(tp - entry), sl_dist, fallback=0.0)
+            actual_rr    = _safe_div(abs(tp - entry), sl_dist)
         else:
-            math_tp   = entry + sl_dist * tp_mult
-            actual_rr = tp_mult
-            if actual_rr >= min_rr:
-                tp       = math_tp
-                tp_label = f"{tp_mult}x risk fallback — no structural level found"
-            else:
-                tp       = entry + sl_dist * min_rr
-                tp_label = f"{min_rr}x R:R floor — no structural level found"
-                actual_rr = min_rr
+            tp        = entry + sl_dist * min_rr
+            tp_label  = f"{min_rr}x R:R floor — no structural level found"
+            actual_rr = min_rr
 
     else:
         candidates = []
@@ -721,11 +783,19 @@ def _calculate_tp(
         if val > 0 and val < entry:
             candidates.append((val, "VAL"))
 
+        poc = _safe_float(d1d.get("poc") or 0)
+        if poc > 0 and poc < entry:
+            candidates.append((poc, "POC"))
+
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
             if item.get("type") == "bull" and lvl > 0 and lvl < entry:
                 candidates.append((lvl, "Sweep level below"))
+
+        swing_target = entry - (avg_swing * 0.618 * tp_extension)
+        if swing_target > 0:
+            candidates.append((swing_target, "Swing range projection"))
 
         valid_candidates = [
             (lvl, lbl) for lvl, lbl in candidates
@@ -735,17 +805,11 @@ def _calculate_tp(
         if valid_candidates:
             valid_candidates.sort(key=lambda x: x[0], reverse=True)
             tp, tp_label = valid_candidates[0]
-            actual_rr    = _safe_div(abs(entry - tp), sl_dist, fallback=0.0)
+            actual_rr    = _safe_div(abs(entry - tp), sl_dist)
         else:
-            math_tp   = entry - sl_dist * tp_mult
-            actual_rr = tp_mult
-            if actual_rr >= min_rr:
-                tp       = math_tp
-                tp_label = f"{tp_mult}x risk fallback — no structural level found"
-            else:
-                tp       = entry - sl_dist * min_rr
-                tp_label = f"{min_rr}x R:R floor — no structural level found"
-                actual_rr = min_rr
+            tp        = entry - sl_dist * min_rr
+            tp_label  = f"{min_rr}x R:R floor — no structural level found"
+            actual_rr = min_rr
 
     return tp, round(actual_rr, 2), tp_label
 
@@ -758,9 +822,10 @@ def run_no_trade_engine(
     btc_instability,
     oi_matrix, news_filter,
     base_score: float,
-    coin: str = "",
-    d1w: dict = None,
-    wconf: dict = None
+    coin:       str  = "",
+    d1w:        dict = None,
+    wconf:      dict = None,
+    staleness:  dict = None
 ) -> dict:
 
     market_blocks    = []
@@ -810,6 +875,13 @@ def run_no_trade_engine(
             "penalty":  penalty
         })
         score_penalty += penalty
+
+    if staleness and staleness.get("expired"):
+        hard_entry(
+            "🚫", "Setup expired",
+            " · ".join(staleness.get("reasons", ["Setup too old"])),
+            penalty=30
+        )
 
     if regime.get("type") == "chop":
         hard_market("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
@@ -878,6 +950,15 @@ def run_no_trade_engine(
             penalty=20
         )
 
+    if wconf and not wconf.get("non_neg_passed", True):
+        failed = wconf.get("non_neg_failed", [])
+        if failed:
+            hard_entry(
+                "🚫", "Non-negotiable factors failed",
+                f"Failed: {', '.join(failed)}",
+                penalty=25
+            )
+
     if coin:
         corr = check_correlation(coin)
         if corr["blocked"]:
@@ -924,6 +1005,10 @@ def run_no_trade_engine(
         soft("⚠️", "4H structure conflicts daily",
              "Wait for 4H structure to align.", 3)
 
+    if staleness and staleness.get("degraded"):
+        soft("⚠️", "Setup degraded",
+             " · ".join(staleness.get("reasons", ["Setup aging"])), 5)
+
     market_hard_blocked = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks
     )
@@ -935,6 +1020,9 @@ def run_no_trade_engine(
 
     if market_score >= 70 and not market_hard_blocked:
         adj_score = max(adj_score, 38)
+
+    if staleness and staleness.get("score_mult", 1.0) < 1.0:
+        adj_score = round(adj_score * staleness["score_mult"])
 
     final_tier = get_tier(adj_score, market_hard_blocked)
 
@@ -982,7 +1070,8 @@ def generate_signal(
     regime:       dict = None,
     session:      dict = None,
     d1w:          dict = None,
-    d1h:          dict = None
+    d1h:          dict = None,
+    staleness:    dict = None
 ) -> dict:
 
     capital  = _safe_float(capital)
@@ -1138,42 +1227,53 @@ def generate_signal(
     is_long   = direction == "LONG"
     swings    = d1d.get("swings", {})
 
+    vol_profile = _coin_volatility_profile(d4h, d1d, price)
+
+    limit_entry  = retest.get("limit_entry") if retest else None
+    limit_method = retest.get("limit_method", "") if retest else ""
+
     entry_15m = check_15m_entry(
         df_15m    = df_15m,
         direction = direction,
-        atr_4h    = _safe_float(d4h.get("atr") or d1d.get("atr") or price * 0.015)
+        atr_4h    = vol_profile["atr_4h"]
     )
 
+    if limit_entry and limit_entry > 0:
+        entry        = _safe_float(limit_entry)
+        entry_source = f"Limit order at zone — {limit_method}"
+    elif entry_15m["confirmed"] and entry_15m["entry_price"]:
+        entry        = _safe_float(entry_15m["entry_price"])
+        entry_source = f"15m confirmed — {entry_15m['pattern']}"
+    else:
+        entry        = price
+        entry_source = "Market price — no zone or 15m entry"
+
+    if entry <= 0:
+        entry        = price
+        entry_source = "Market price fallback"
+
     score_15m = score
-    if not entry_15m["confirmed"]:
+    if not entry_15m["confirmed"] and not limit_entry:
         score_15m   = max(0, score - 2)
         tier        = get_tier(score_15m, no_trade.get("market_blocked", False))
         grade_label = tier["label"]
 
-    entry = _safe_float(
-        entry_15m["entry_price"]
-        if entry_15m["confirmed"] and entry_15m["entry_price"]
-        else price
-    )
-
-    if entry <= 0:
-        entry = price
-
     sl, sl_method, sl_rejected = _calculate_sl(
-        is_long    = is_long,
-        entry      = entry,
-        sweep      = sweep or {},
-        retest     = retest or {},
-        d4h        = d4h,
-        d1d        = d1d,
-        swings     = swings,
-        key_levels = key_levels,
-        grade      = grade_label
+        is_long     = is_long,
+        entry       = entry,
+        sweep       = sweep or {},
+        retest      = retest or {},
+        d4h         = d4h,
+        d1d         = d1d,
+        swings      = swings,
+        key_levels  = key_levels,
+        grade       = grade_label,
+        vol_profile = vol_profile
     )
 
     if sl_rejected:
         intended = _determine_direction(d1d, d4h)
-        log.warning(f"Signal rejected — SL compression too severe: {sl_method}")
+        log.warning(f"Signal rejected — SL: {sl_method}")
         result = {
             **base,
             "direction":   intended if intended in ("LONG", "SHORT") else "WATCH",
@@ -1199,29 +1299,28 @@ def generate_signal(
     sl_pct  = _safe_div(sl_dist, entry, fallback=0.5) * 100
 
     if sl_pct <= 0:
-        log.warning("sl_pct is zero — forcing minimum 0.5%")
-        sl_pct = 0.5
+        log.warning("sl_pct is zero — forcing minimum")
+        sl_pct = _safe_div(vol_profile["atr_4h"], entry) * 100 * 0.3
 
     tp1, actual_rr, tp_label = _calculate_tp(
-        is_long    = is_long,
-        entry      = entry,
-        sl         = sl,
-        grade      = grade_label,
-        swings     = swings,
-        key_levels = key_levels,
-        d1d        = d1d,
-        d1h        = d1h,
-        sweep      = sweep or {}
+        is_long     = is_long,
+        entry       = entry,
+        sl          = sl,
+        grade       = grade_label,
+        swings      = swings,
+        key_levels  = key_levels,
+        d1d         = d1d,
+        d1h         = d1h,
+        sweep       = sweep or {},
+        vol_profile = vol_profile
     )
 
-    tp_mult  = get_tp_multiplier(grade_label)
-    risk_pct = dynamic_risk_pct(grade_label)
-    risk_amt = capital * risk_pct
+    quality_score = wconf.get("quality_score", 100) if wconf else 100
+    risk_pct      = dynamic_risk_pct(grade_label, quality_score)
+    risk_amt      = capital * risk_pct
 
     pos_size = _safe_div(risk_amt, sl_pct / 100, fallback=0.0)
     margin   = _safe_div(pos_size, leverage, fallback=0.0)
-
-    atr_used = _safe_float(d4h.get("atr") or d1d.get("atr") or price * 0.015)
 
     result = {
         **base,
@@ -1231,32 +1330,36 @@ def generate_signal(
         "score":          score_15m,
         "signal_type":    tier["signal_type"],
         "entry":          entry,
+        "entry_source":   entry_source,
         "sl":             sl,
         "tp1":            tp1,
         "tp2":            None,
         "sl_pct":         sl_pct,
         "sl_method":      sl_method,
         "tp_label":       tp_label,
-        "tp_structural":  "fallback" not in tp_label,
+        "tp_structural":  "floor" not in tp_label,
         "sl_rejected":    False,
         "risk_pct":       risk_pct * 100,
         "risk_amt":       risk_amt,
         "pos_size":       pos_size,
         "margin":         margin,
         "eff_lev":        leverage,
-        "atr_used":       atr_used,
-        "tp_mult":        tp_mult,
-        "actual_rr":      actual_rr,
+        "atr_used":       vol_profile["atr_4h"],
+        "atr_pct":        vol_profile["atr_pct"],
+        "adx_used":       vol_profile["adx"],
+        "bb_width":       vol_profile["bb_width"],
+        "avg_swing":      vol_profile["avg_swing"],
+        "vol_class":      vol_profile["volatility_class"],
         "min_rr":         get_min_rr(grade_label),
+        "actual_rr":      actual_rr,
         "funding":        market.get("funding", 0),
         "sweep_score":    _safe_float(sweep.get("score", 0) if sweep else 0),
         "disp_score":     _safe_float(displacement.get("score", 0) if displacement else 0),
         "entry_15m":      entry_15m,
-        "reason": (
-            f"15m: {entry_15m['pattern']}"
-            if entry_15m["confirmed"]
-            else "15m not confirmed — score reduced"
-        )
+        "limit_entry":    limit_entry,
+        "limit_method":   limit_method,
+        "staleness":      staleness,
+        "reason":         entry_source
     }
 
     result["explanation"] = _attach_explanation(
@@ -1267,16 +1370,22 @@ def generate_signal(
     )
 
     log.info(
-        "Signal generated | grade=%s dir=%s score=%s entry=%s sl=%s tp1=%s rr=%s sl_method=%s tp_label=%s",
+        "Signal generated | grade=%s dir=%s score=%s entry=%s "
+        "entry_source=%s sl=%s tp1=%s rr=%s sl_method=%s tp_label=%s "
+        "vol_class=%s atr_pct=%.2f adx=%.1f",
         result.get("grade"),
         result.get("direction"),
         result.get("score"),
         result.get("entry"),
+        result.get("entry_source"),
         result.get("sl"),
         result.get("tp1"),
         result.get("actual_rr"),
         result.get("sl_method"),
         result.get("tp_label"),
+        result.get("vol_class"),
+        result.get("atr_pct", 0),
+        result.get("adx_used", 0),
     )
 
     return result
