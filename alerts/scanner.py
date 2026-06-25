@@ -235,12 +235,18 @@ async def _execute_priority_entries():
 
         log.info(f"Signals queued: {[(s['coin'], s['grade'], s['score']) for s in sorted_signals]}")
 
-        entered = 0
+        entered       = 0
+        entered_coins = set()
+
         for item in sorted_signals:
             if entered >= available:
                 break
 
             coin = item["coin"]
+
+            if coin in entered_coins:
+                log.info(f"Skipping — {coin} already entered this cycle")
+                continue
 
             if await ft_has_open_trade(coin):
                 log.info(f"Skipping — {coin} already has open trade")
@@ -254,6 +260,7 @@ async def _execute_priority_entries():
             result = await _do_forceenter(item)
             if result:
                 entered += 1
+                entered_coins.add(coin)
 
         log.info(f"Priority entries complete — {entered} trades opened")
 
@@ -633,6 +640,16 @@ async def scan_all_coins() -> list:
         _write_active_pairs_to_redis()
 
         await _queue_cached_signals_for_entry(results)
+
+        seen_coins = {}
+        for item in _pending_forceenter:
+            coin  = item["coin"]
+            score = item.get("score", 0)
+            if coin not in seen_coins or score > seen_coins[coin]["score"]:
+                seen_coins[coin] = item
+
+        _pending_forceenter = list(seen_coins.values())
+        log.info(f"Deduplicated pending signals: {len(_pending_forceenter)} unique coins")
 
         await _execute_priority_entries()
 

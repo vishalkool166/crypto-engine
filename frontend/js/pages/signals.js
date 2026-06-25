@@ -7,15 +7,15 @@ function signalsPage() {
                 <div class="page-subtitle" x-text="total + ' signals loaded'"></div>
             </div>
             <button class="btn btn-ghost btn-sm" @click="load(true)" :disabled="loading">
-                <span x-show="loading" class="spinner"></span>
-                <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <span x-show="loading" class="spinner" aria-hidden="true"></span>
+                <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Refresh
             </button>
         </div>
 
         <div class="card mb-12">
             <div class="filter-bar">
-                <select class="select" style="width:130px;" x-model="filters.grade" @change="load(true)">
+                <select class="select" style="width:130px;" x-model="filters.grade" @change="load(true)" aria-label="Filter by grade">
                     <option value="">All Grades</option>
                     <option value="A+">A+</option>
                     <option value="A">A</option>
@@ -24,14 +24,14 @@ function signalsPage() {
                     <option value="F">F</option>
                 </select>
 
-                <select class="select" style="width:140px;" x-model="filters.outcome" @change="load(true)">
+                <select class="select" style="width:140px;" x-model="filters.outcome" @change="load(true)" aria-label="Filter by outcome">
                     <option value="">All Outcomes</option>
                     <option value="win">Win</option>
                     <option value="loss">Loss</option>
                     <option value="pending">Pending</option>
                 </select>
 
-                <select class="select" style="width:130px;" x-model="filters.direction" @change="applyFilters()">
+                <select class="select" style="width:130px;" x-model="filters.direction" @change="applyFilters()" aria-label="Filter by direction">
                     <option value="">All Directions</option>
                     <option value="LONG">Long</option>
                     <option value="SHORT">Short</option>
@@ -44,20 +44,21 @@ function signalsPage() {
                     placeholder="Coin (BTC)"
                     x-model="filters.coin"
                     @input.debounce.400ms="load(true)"
+                    aria-label="Filter by coin"
                 >
 
-                <select class="select" style="width:110px;" x-model="filters.limit" @change="load(true)">
+                <select class="select" style="width:110px;" x-model="filters.limit" @change="load(true)" aria-label="Rows per page">
                     <option value="50">50 rows</option>
                     <option value="100">100 rows</option>
                     <option value="200">200 rows</option>
                     <option value="500">500 rows</option>
                 </select>
 
-                <button class="btn btn-ghost btn-sm" @click="clearFilters">Clear</button>
+                <button class="btn btn-ghost btn-sm" @click="clearFilters" aria-label="Clear all filters">Clear</button>
 
                 <div class="flex-1"></div>
 
-                <div style="font-size:11px;color:var(--text-secondary);">
+                <div style="font-size:11px;color:var(--text-secondary);" aria-live="polite">
                     Showing <span class="mono" style="color:var(--text-primary)" x-text="filtered.length"></span> of <span class="mono" x-text="signals.length"></span>
                 </div>
             </div>
@@ -67,24 +68,24 @@ function signalsPage() {
             <div x-show="loading" x-html="Utils.loadingState()"></div>
 
             <div x-show="!loading">
-                <div class="table-wrap">
-                    <table>
+                <div class="table-wrap" role="region" aria-label="Signals table" tabindex="0">
+                    <table aria-label="Trading signals">
                         <thead>
                             <tr>
-                                <th>#</th>
-                                <th>Time</th>
-                                <th>Coin</th>
-                                <th>Dir</th>
-                                <th>Grade</th>
-                                <th>Score</th>
-                                <th>Entry</th>
-                                <th>SL</th>
-                                <th>TP</th>
-                                <th>Exit</th>
-                                <th>PnL</th>
-                                <th>Outcome</th>
-                                <th>Regime</th>
-                                <th>Session</th>
+                                <th scope="col">#</th>
+                                <th scope="col">Time</th>
+                                <th scope="col">Coin</th>
+                                <th scope="col">Dir</th>
+                                <th scope="col">Grade</th>
+                                <th scope="col">Score</th>
+                                <th scope="col">Entry</th>
+                                <th scope="col">SL</th>
+                                <th scope="col">TP</th>
+                                <th scope="col">Exit</th>
+                                <th scope="col">PnL</th>
+                                <th scope="col">Outcome</th>
+                                <th scope="col">Regime</th>
+                                <th scope="col">Session</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -93,11 +94,17 @@ function signalsPage() {
                                     <td colspan="14" x-html="Utils.emptyState('No signals match filters')"></td>
                                 </tr>
                             </template>
+
                             <template x-for="s in paginated" :key="s.id">
                                 <tr
                                     style="cursor:pointer;"
                                     @click="toggleExpand(s.id)"
                                     :style="expanded === s.id ? 'background:var(--bg-tertiary)' : ''"
+                                    :aria-expanded="expanded === s.id ? 'true' : 'false'"
+                                    role="button"
+                                    tabindex="0"
+                                    @keydown.enter="toggleExpand(s.id)"
+                                    :aria-label="'Signal ' + s.id + ' ' + s.coin + ' ' + s.direction"
                                 >
                                     <td><span class="mono" style="color:var(--text-muted);font-size:11px;" x-text="s.id"></span></td>
                                     <td><span style="font-size:11px;color:var(--text-secondary);" x-text="Utils.fmtTimeAgo(s.timestamp)"></span></td>
@@ -121,10 +128,13 @@ function signalsPage() {
                                     <td><span style="font-size:11px;color:var(--text-secondary)" x-text="s.regime || '--'"></span></td>
                                     <td><span style="font-size:11px;color:var(--text-secondary)" x-text="s.session || '--'"></span></td>
                                 </tr>
-                                <template x-if="expanded === s.id">
-                                    <tr>
-                                        <td colspan="14" style="padding:0;">
-                                            <div style="padding:16px;background:var(--bg-tertiary);border-top:1px solid var(--bg-border);">
+                            </template>
+
+                            <template x-if="expanded !== null">
+                                <tr x-show="expanded !== null">
+                                    <td colspan="14" style="padding:0;">
+                                        <template x-for="s in paginated.filter(s => s.id === expanded)" :key="'exp-' + s.id">
+                                            <div style="padding:16px;background:var(--bg-tertiary);border-top:1px solid var(--bg-border);" role="region" :aria-label="'Details for signal ' + s.id">
                                                 <div class="grid-4" style="gap:8px;">
                                                     <div>
                                                         <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Signal ID</div>
@@ -160,26 +170,29 @@ function signalsPage() {
                                                     </div>
                                                 </div>
                                             </div>
-                                        </td>
-                                    </tr>
-                                </template>
+                                        </template>
+                                    </td>
+                                </tr>
                             </template>
+
                         </tbody>
                     </table>
                 </div>
 
                 <div class="flex justify-between items-center mt-12" style="font-size:12px;color:var(--text-secondary);">
-                    <span x-text="'Page ' + currentPage + ' of ' + totalPages"></span>
-                    <div class="flex gap-8">
+                    <span aria-live="polite" x-text="'Page ' + currentPage + ' of ' + totalPages"></span>
+                    <div class="flex gap-8" role="navigation" aria-label="Pagination">
                         <button
                             class="btn btn-ghost btn-sm"
                             @click="currentPage--"
                             :disabled="currentPage <= 1"
+                            aria-label="Previous page"
                         >Prev</button>
                         <button
                             class="btn btn-ghost btn-sm"
                             @click="currentPage++"
                             :disabled="currentPage >= totalPages"
+                            aria-label="Next page"
                         >Next</button>
                     </div>
                 </div>

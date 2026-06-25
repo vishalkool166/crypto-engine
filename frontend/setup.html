@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Signal Engine v5 — Setup</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/app.css">
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <style>
@@ -24,6 +25,12 @@
         .setup-logo {
             text-align: center;
             margin-bottom: 28px;
+        }
+
+        .setup-logo-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
         }
 
         .setup-logo-title {
@@ -134,7 +141,7 @@
         }
 
         .status-dot.ok  { background: var(--green); }
-        .status-dot.bad { background: var(--red); }
+        .status-dot.bad { background: var(--red);   }
 
         .api-key-box {
             background: var(--bg-tertiary);
@@ -186,148 +193,300 @@
             background: var(--bg-secondary);
             color: var(--text-primary);
         }
+
+        .tab-btn:focus-visible {
+            outline: 2px solid var(--blue);
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
     <div class="setup-wrap" x-data="setupApp()">
         <div class="setup-logo">
+            <svg
+                class="setup-logo-icon"
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 32 32"
+                fill="none"
+                aria-hidden="true"
+            >
+                <rect width="32" height="32" rx="8" fill="#111118"/>
+                <polygon
+                    points="18,3 8,18 15,18 14,29 24,14 17,14"
+                    fill="#00d4aa"
+                    stroke="#00d4aa"
+                    stroke-width="0.5"
+                    stroke-linejoin="round"
+                />
+            </svg>
             <div class="setup-logo-title">Signal Engine v5</div>
             <div class="setup-logo-sub">First Run Setup</div>
         </div>
 
         <div class="setup-card">
-            <div class="setup-section-title">
-                <span>Setup Status</span>
-            </div>
+            <div class="setup-section-title">Setup Status</div>
             <div class="setup-section-sub">Complete all steps before logging in</div>
 
-            <div class="status-grid">
-                <div class="status-item">
-                    <div class="status-dot" :class="status.totp_secret_set ? 'ok' : 'bad'"></div>
+            <div class="status-grid" role="list" aria-label="Setup checklist">
+                <div class="status-item" role="listitem">
+                    <div
+                        class="status-dot"
+                        :class="status.totp_secret_set ? 'ok' : 'bad'"
+                        :aria-label="status.totp_secret_set ? 'TOTP Secret configured' : 'TOTP Secret not configured'"
+                    ></div>
                     <span>TOTP Secret</span>
                 </div>
-                <div class="status-item">
-                    <div class="status-dot" :class="status.password_set ? 'ok' : 'bad'"></div>
+                <div class="status-item" role="listitem">
+                    <div
+                        class="status-dot"
+                        :class="status.password_set ? 'ok' : 'bad'"
+                        :aria-label="status.password_set ? 'Password configured' : 'Password not configured'"
+                    ></div>
                     <span>Password</span>
                 </div>
-                <div class="status-item">
-                    <div class="status-dot" :class="status.username_set ? 'ok' : 'bad'"></div>
+                <div class="status-item" role="listitem">
+                    <div
+                        class="status-dot"
+                        :class="status.username_set ? 'ok' : 'bad'"
+                        :aria-label="status.username_set ? 'Username configured' : 'Username not configured'"
+                    ></div>
                     <span>Username</span>
                 </div>
-                <div class="status-item">
-                    <div class="status-dot" :class="status.api_key_set ? 'ok' : 'bad'"></div>
+                <div class="status-item" role="listitem">
+                    <div
+                        class="status-dot"
+                        :class="status.api_key_set ? 'ok' : 'bad'"
+                        :aria-label="status.api_key_set ? 'API Key configured' : 'API Key not configured'"
+                    ></div>
                     <span>API Key</span>
                 </div>
             </div>
 
-            <div x-show="status.setup_complete" x-cloak class="alert alert-success">
+            <div
+                x-show="status.setup_complete"
+                x-cloak
+                class="alert alert-success"
+                role="status"
+                aria-live="polite"
+            >
                 ✅ Setup complete — <a href="/login.html" style="color:var(--green)">go to login</a>
             </div>
         </div>
 
         <div class="setup-card">
-            <div class="tab-row">
-                <button class="tab-btn" :class="tab === 'totp' && 'active'" @click="tab = 'totp'">TOTP / 2FA</button>
-                <button class="tab-btn" :class="tab === 'creds' && 'active'" @click="tab = 'creds'">Credentials</button>
-                <button class="tab-btn" :class="tab === 'reset' && 'active'" @click="tab = 'reset'">Reset Password</button>
-                <button class="tab-btn" :class="tab === 'apikey' && 'active'" @click="tab = 'apikey'">API Key</button>
+            <div class="tab-row" role="tablist" aria-label="Setup sections">
+                <button
+                    class="tab-btn"
+                    :class="tab === 'totp' && 'active'"
+                    @click="tab = 'totp'"
+                    role="tab"
+                    :aria-selected="tab === 'totp'"
+                    aria-controls="panel-totp"
+                    id="tab-totp"
+                >TOTP / 2FA</button>
+                <button
+                    class="tab-btn"
+                    :class="tab === 'creds' && 'active'"
+                    @click="tab = 'creds'"
+                    role="tab"
+                    :aria-selected="tab === 'creds'"
+                    aria-controls="panel-creds"
+                    id="tab-creds"
+                >Credentials</button>
+                <button
+                    class="tab-btn"
+                    :class="tab === 'reset' && 'active'"
+                    @click="tab = 'reset'"
+                    role="tab"
+                    :aria-selected="tab === 'reset'"
+                    aria-controls="panel-reset"
+                    id="tab-reset"
+                >Reset Password</button>
+                <button
+                    class="tab-btn"
+                    :class="tab === 'apikey' && 'active'"
+                    @click="tab = 'apikey'"
+                    role="tab"
+                    :aria-selected="tab === 'apikey'"
+                    aria-controls="panel-apikey"
+                    id="tab-apikey"
+                >API Key</button>
             </div>
 
-            <div x-show="tab === 'totp'" x-cloak>
+            <div
+                id="panel-totp"
+                role="tabpanel"
+                aria-labelledby="tab-totp"
+                x-show="tab === 'totp'"
+                x-cloak
+            >
                 <div class="setup-section-title">Authenticator Setup</div>
                 <div class="setup-section-sub">Scan with Google Authenticator or Authy</div>
 
                 <template x-if="qrSvg">
-                    <div class="qr-wrap" x-html="qrSvg"></div>
+                    <div class="qr-wrap" aria-label="QR Code for authenticator app" role="img">
+                        <div x-html="qrSvg"></div>
+                    </div>
                 </template>
 
                 <template x-if="!qrSvg && qrPngAvailable">
                     <div class="qr-wrap">
-                        <img src="/auth/qr.png" alt="QR Code" style="max-width:180px;">
+                        <img src="/auth/qr.png" alt="QR Code for authenticator app setup" style="max-width:180px;">
                     </div>
                 </template>
 
-                <div class="form-label">TOTP Secret (manual entry)</div>
+                <label class="form-label" for="totp-secret-box">TOTP Secret (manual entry)</label>
                 <div
+                    id="totp-secret-box"
                     class="secret-box"
                     @click="copySecret"
+                    role="button"
+                    tabindex="0"
+                    @keydown.enter="copySecret"
+                    aria-label="TOTP secret — click to copy"
                     title="Click to copy"
                     x-text="totpSecret || 'Not generated yet'"
                 ></div>
-                <div x-show="copied" x-cloak style="font-size:11px;color:var(--green);margin-bottom:10px;">
+
+                <div
+                    x-show="copied"
+                    x-cloak
+                    role="status"
+                    aria-live="polite"
+                    style="font-size:11px;color:var(--green);margin-bottom:10px;"
+                >
                     Copied to clipboard
                 </div>
 
-                <button class="btn btn-warning btn-sm" @click="regenerateTotp" :disabled="regenLoading">
-                    <span x-show="regenLoading" class="spinner"></span>
+                <button
+                    class="btn btn-warning btn-sm"
+                    @click="regenerateTotp"
+                    :disabled="regenLoading"
+                    :aria-busy="regenLoading"
+                    aria-label="Regenerate TOTP secret"
+                >
+                    <span x-show="regenLoading" class="spinner" aria-hidden="true"></span>
                     Regenerate TOTP Secret
                 </button>
 
-                <div x-show="regenMsg" x-cloak class="alert alert-warning" style="margin-top:10px;" x-text="regenMsg"></div>
+                <div
+                    x-show="regenMsg"
+                    x-cloak
+                    class="alert alert-warning"
+                    role="alert"
+                    style="margin-top:10px;"
+                    x-text="regenMsg"
+                ></div>
             </div>
 
-            <div x-show="tab === 'creds'" x-cloak>
+            <div
+                id="panel-creds"
+                role="tabpanel"
+                aria-labelledby="tab-creds"
+                x-show="tab === 'creds'"
+                x-cloak
+            >
                 <div class="setup-section-title">Set Credentials</div>
                 <div class="setup-section-sub">Set your username and password</div>
 
-                <div x-show="credsMsg" x-cloak class="alert" :class="credsOk ? 'alert-success' : 'alert-error'" x-text="credsMsg"></div>
+                <div
+                    x-show="credsMsg"
+                    x-cloak
+                    class="alert"
+                    :class="credsOk ? 'alert-success' : 'alert-error'"
+                    role="alert"
+                    x-text="credsMsg"
+                ></div>
 
                 <div class="form-group">
-                    <label class="form-label">Username</label>
+                    <label class="form-label" for="creds-username">Username</label>
                     <input
+                        id="creds-username"
                         class="input"
                         type="text"
                         x-model="creds.username"
                         :placeholder="status.username || 'admin'"
+                        aria-label="Username"
+                        autocomplete="username"
                     >
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">New Password</label>
+                    <label class="form-label" for="creds-password">New Password</label>
                     <input
+                        id="creds-password"
                         class="input"
                         type="password"
                         x-model="creds.password"
                         placeholder="Min 8 characters"
+                        aria-label="New password"
+                        aria-describedby="password-hint"
+                        autocomplete="new-password"
                     >
+                    <div id="password-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                        Minimum 8 characters
+                    </div>
                 </div>
 
                 <button
                     class="btn btn-primary"
                     @click="saveCredentials"
                     :disabled="credsLoading || (!creds.username && !creds.password)"
+                    :aria-busy="credsLoading"
+                    aria-label="Save credentials"
                 >
-                    <span x-show="credsLoading" class="spinner"></span>
+                    <span x-show="credsLoading" class="spinner" aria-hidden="true"></span>
                     Save Credentials
                 </button>
             </div>
 
-            <div x-show="tab === 'reset'" x-cloak>
+            <div
+                id="panel-reset"
+                role="tabpanel"
+                aria-labelledby="tab-reset"
+                x-show="tab === 'reset'"
+                x-cloak
+            >
                 <div class="setup-section-title">Reset Password via TOTP</div>
                 <div class="setup-section-sub">Use your authenticator app to reset password</div>
 
-                <div x-show="resetMsg" x-cloak class="alert" :class="resetOk ? 'alert-success' : 'alert-error'" x-text="resetMsg"></div>
+                <div
+                    x-show="resetMsg"
+                    x-cloak
+                    class="alert"
+                    :class="resetOk ? 'alert-success' : 'alert-error'"
+                    role="alert"
+                    x-text="resetMsg"
+                ></div>
 
                 <div class="form-group">
-                    <label class="form-label">TOTP Code</label>
+                    <label class="form-label" for="reset-totp">TOTP Code</label>
                     <input
+                        id="reset-totp"
                         class="input totp-input"
                         type="text"
                         inputmode="numeric"
                         maxlength="6"
                         x-model="reset.totp_code"
                         placeholder="000000"
+                        aria-label="TOTP code for password reset"
+                        aria-required="true"
+                        autocomplete="one-time-code"
                         @input="reset.totp_code = reset.totp_code.replace(/\D/g,'')"
                     >
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">New Password</label>
+                    <label class="form-label" for="reset-password">New Password</label>
                     <input
+                        id="reset-password"
                         class="input"
                         type="password"
                         x-model="reset.new_password"
                         placeholder="Min 8 characters"
+                        aria-label="New password"
+                        aria-required="true"
+                        autocomplete="new-password"
                     >
                 </div>
 
@@ -335,30 +494,54 @@
                     class="btn btn-primary"
                     @click="resetPassword"
                     :disabled="resetLoading || reset.totp_code.length < 6 || reset.new_password.length < 8"
+                    :aria-busy="resetLoading"
+                    aria-label="Reset password"
                 >
-                    <span x-show="resetLoading" class="spinner"></span>
+                    <span x-show="resetLoading" class="spinner" aria-hidden="true"></span>
                     Reset Password
                 </button>
             </div>
 
-            <div x-show="tab === 'apikey'" x-cloak>
+            <div
+                id="panel-apikey"
+                role="tabpanel"
+                aria-labelledby="tab-apikey"
+                x-show="tab === 'apikey'"
+                x-cloak
+            >
                 <div class="setup-section-title">API Key</div>
                 <div class="setup-section-sub">Use this key for programmatic access via X-API-Key header</div>
 
-                <div class="form-label">Your API Key</div>
+                <label class="form-label" for="api-key-box">Your API Key</label>
                 <div
+                    id="api-key-box"
                     class="api-key-box"
                     @click="copyApiKey"
+                    role="button"
+                    tabindex="0"
+                    @keydown.enter="copyApiKey"
+                    aria-label="API key — click to copy"
                     title="Click to copy"
                     x-text="apiKey || 'Not generated yet'"
                 ></div>
 
-                <div x-show="apiKeyCopied" x-cloak style="font-size:11px;color:var(--green);margin-bottom:10px;">
+                <div
+                    x-show="apiKeyCopied"
+                    x-cloak
+                    role="status"
+                    aria-live="polite"
+                    style="font-size:11px;color:var(--green);margin-bottom:10px;"
+                >
                     Copied to clipboard
                 </div>
 
-                <div class="form-label" style="margin-top:8px;">TOTP URI (for manual setup)</div>
-                <div class="api-key-box" x-text="totpUri || '--'"></div>
+                <label class="form-label" style="margin-top:8px;" for="totp-uri-box">TOTP URI (for manual setup)</label>
+                <div
+                    id="totp-uri-box"
+                    class="api-key-box"
+                    x-text="totpUri || '--'"
+                    aria-label="TOTP URI for manual authenticator setup"
+                ></div>
             </div>
         </div>
 
@@ -370,54 +553,33 @@
     <script>
         function setupApp() {
             return {
-                tab:           'totp',
-                status:        {},
-                qrSvg:         '',
+                tab:            'totp',
+                status:         {},
+                qrSvg:          '',
                 qrPngAvailable: false,
-                totpSecret:    '',
-                totpUri:       '',
-                apiKey:        '',
-                copied:        false,
-                apiKeyCopied:  false,
-                regenLoading:  false,
-                regenMsg:      '',
-                credsLoading:  false,
-                credsMsg:      '',
-                credsOk:       false,
-                resetLoading:  false,
-                resetMsg:      '',
-                resetOk:       false,
+                totpSecret:     '',
+                totpUri:        '',
+                apiKey:         '',
+                copied:         false,
+                apiKeyCopied:   false,
+                regenLoading:   false,
+                regenMsg:       '',
+                credsLoading:   false,
+                credsMsg:       '',
+                credsOk:        false,
+                resetLoading:   false,
+                resetMsg:       '',
+                resetOk:        false,
                 creds:  { username: '', password: '' },
                 reset:  { totp_code: '', new_password: '' },
 
                 async init() {
-                    await this.loadStatus()
-                },
-
-                async loadStatus() {
-                    try {
-                        const res  = await fetch('/auth/setup')
-                        const html = await res.text()
-                        const parser = new DOMParser()
-                        const doc    = parser.parseFromString(html, 'text/html')
-                        const data   = JSON.parse(doc.getElementById('setup-data')?.textContent || '{}')
-                        this.status         = data.status        || {}
-                        this.qrSvg          = data.qr_svg        || ''
-                        this.qrPngAvailable = data.qr_png_available || false
-                        this.totpSecret     = data.totp_secret   || ''
-                        this.totpUri        = data.totp_uri      || ''
-                        this.apiKey         = data.api_key       || ''
-                    } catch (e) {
-                        this.status = {
-                            totp_secret_set: !!document.querySelector('[data-totp]'),
-                        }
-                        this.qrSvg      = document.getElementById('qr-svg-data')?.innerHTML || ''
-                        this.totpSecret = document.getElementById('totp-secret')?.textContent || ''
-                        this.totpUri    = document.getElementById('totp-uri')?.textContent    || ''
-                        this.apiKey     = document.getElementById('api-key')?.textContent     || ''
-                        this.status     = JSON.parse(document.getElementById('status-json')?.textContent || '{}')
-                        this.qrPngAvailable = document.getElementById('qr-png-available')?.textContent === 'true'
-                    }
+                    this.status         = JSON.parse(document.getElementById('status-json')?.textContent     || '{}')
+                    this.qrSvg          = document.getElementById('qr-svg-data')?.innerHTML                  || ''
+                    this.totpSecret     = document.getElementById('totp-secret')?.textContent?.trim()        || ''
+                    this.totpUri        = document.getElementById('totp-uri')?.textContent?.trim()           || ''
+                    this.apiKey         = document.getElementById('api-key')?.textContent?.trim()            || ''
+                    this.qrPngAvailable = document.getElementById('qr-png-available')?.textContent?.trim() === 'true'
                 },
 
                 async copySecret() {
@@ -470,7 +632,6 @@
                             this.credsOk  = true
                             this.credsMsg = data.message || 'Saved successfully'
                             this.creds    = { username: '', password: '' }
-                            await this.loadStatus()
                         } else {
                             this.credsOk  = false
                             this.credsMsg = data.reason || 'Failed to save'
@@ -512,11 +673,7 @@
         }
     </script>
 
-    <script id="setup-data" type="application/json">
-        {{ setup_data_json | safe }}
-    </script>
-
-    <div style="display:none">
+    <div style="display:none;" aria-hidden="true">
         <span id="status-json">{{ status | tojson }}</span>
         <span id="totp-secret">{{ totp_secret }}</span>
         <span id="totp-uri">{{ totp_uri }}</span>

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Signal Engine v5 — Login</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/app.css">
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <style>
@@ -24,6 +25,12 @@
         .login-logo {
             text-align: center;
             margin-bottom: 32px;
+        }
+
+        .login-logo-icon {
+            width: 48px;
+            height: 48px;
+            margin: 0 auto 12px;
         }
 
         .login-logo-title {
@@ -105,29 +112,15 @@
             color: var(--blue);
             text-decoration: none;
         }
-
-        .mode-pill {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            font-family: var(--font-mono);
-            margin-bottom: 20px;
-        }
-
-        .mode-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-        }
     </style>
 </head>
 <body>
     <div class="login-wrap" x-data="loginApp()">
         <div class="login-logo">
+            <svg class="login-logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+                <rect width="32" height="32" rx="8" fill="#111118"/>
+                <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
+            </svg>
             <div class="login-logo-title">Signal Engine</div>
             <div class="login-logo-sub">v5.0.0 — Automated Crypto Futures</div>
         </div>
@@ -140,33 +133,40 @@
 
             <form @submit.prevent="login">
                 <div class="form-group">
-                    <label class="form-label">Username</label>
+                    <label class="form-label" for="username">Username</label>
                     <input
+                        id="username"
                         class="input"
                         type="text"
                         x-model="form.username"
                         placeholder="admin"
                         autocomplete="username"
                         :disabled="loading"
+                        aria-label="Username"
+                        aria-required="true"
                     >
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">Password</label>
+                    <label class="form-label" for="password">Password</label>
                     <input
+                        id="password"
                         class="input"
                         type="password"
                         x-model="form.password"
                         placeholder="••••••••"
                         autocomplete="current-password"
                         :disabled="loading"
+                        aria-label="Password"
+                        aria-required="true"
                     >
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">TOTP Code</label>
+                    <label class="form-label" for="totp">TOTP Code</label>
                     <div class="totp-row">
                         <input
+                            id="totp"
                             class="input"
                             type="text"
                             inputmode="numeric"
@@ -175,6 +175,8 @@
                             placeholder="000000"
                             autocomplete="one-time-code"
                             :disabled="loading"
+                            aria-label="TOTP Code"
+                            aria-required="true"
                             @input="form.totp_code = form.totp_code.replace(/\D/g,'')"
                         >
                         <button
@@ -182,12 +184,19 @@
                             class="btn btn-ghost"
                             @click="requestTotp"
                             :disabled="loading || totpSent"
+                            aria-label="Send TOTP code via Telegram"
                             title="Send TOTP via Telegram"
                         >
                             <span x-text="totpSent ? 'Sent' : 'Telegram'"></span>
                         </button>
                     </div>
-                    <div x-show="totpSent" x-cloak style="font-size:11px;color:var(--green);margin-top:4px;">
+                    <div
+                        x-show="totpSent"
+                        x-cloak
+                        role="status"
+                        aria-live="polite"
+                        style="font-size:11px;color:var(--green);margin-top:4px;"
+                    >
                         Code sent to Telegram — valid 30 seconds
                     </div>
                 </div>
@@ -196,8 +205,10 @@
                     type="submit"
                     class="btn btn-primary login-btn"
                     :disabled="loading || !form.username || !form.password || form.totp_code.length < 6"
+                    aria-label="Sign in"
+                    :aria-busy="loading"
                 >
-                    <span x-show="loading" class="spinner"></span>
+                    <span x-show="loading" class="spinner" aria-hidden="true"></span>
                     <span x-text="loading ? 'Signing in...' : 'Sign In'"></span>
                 </button>
             </form>
@@ -216,15 +227,15 @@
                     password:  '',
                     totp_code: ''
                 },
-                loading:   false,
-                error:     '',
-                totpSent:  false,
+                loading:  false,
+                error:    '',
+                totpSent: false,
 
                 async login() {
                     this.error   = ''
                     this.loading = true
                     try {
-                        const res = await fetch('/auth/login', {
+                        const res  = await fetch('/auth/login', {
                             method:  'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body:    JSON.stringify(this.form)
@@ -244,7 +255,7 @@
 
                 async requestTotp() {
                     try {
-                        const res = await fetch('/auth/request-totp', { method: 'POST' })
+                        const res  = await fetch('/auth/request-totp', { method: 'POST' })
                         const data = await res.json()
                         if (data.success) {
                             this.totpSent = true

@@ -117,32 +117,53 @@ def _get_signal_from_db(signal_id: int) -> dict | None:
 def _get_signal_levels(trade: Trade) -> dict | None:
     try:
         enter_tag = getattr(trade, "enter_tag", "") or ""
+
         if enter_tag.startswith("SE_"):
             parts = enter_tag.split("_")
             if len(parts) >= 3:
                 signal_id = int(parts[-1])
                 sig = _get_signal_from_db(signal_id)
                 if sig:
-                    return {
-                        "sl":    sig.get("sl"),
-                        "tp1":   sig.get("tp1"),
-                        "entry": sig.get("entry"),
-                    }
+                    sl    = sig.get("sl")
+                    tp1   = sig.get("tp1")
+                    entry = sig.get("entry")
+                    if sl and float(sl) > 0 and tp1 and float(tp1) > 0:
+                        return {
+                            "sl":    sl,
+                            "tp1":   tp1,
+                            "entry": entry
+                        }
+                    logger.warning(
+                        f"Signal {signal_id} has zero/null sl/tp1 "
+                        f"— falling back to Redis"
+                    )
 
         coin = trade.pair.replace("/USDT:USDT", "").replace("/USDT", "")
-        r = _get_redis()
+        r    = _get_redis()
         if r:
+            import time
             data = r.get(f"signal:{coin}USDT")
             if data:
-                import time
                 sig = json.loads(data)
                 if time.time() <= sig.get("valid_until", 0):
-                    return {
-                        "sl":    sig.get("sl"),
-                        "tp1":   sig.get("tp1"),
-                        "entry": sig.get("entry"),
-                    }
+                    sl    = sig.get("sl")
+                    tp1   = sig.get("tp1")
+                    entry = sig.get("entry")
+                    if sl and float(sl) > 0 and tp1 and float(tp1) > 0:
+                        logger.info(
+                            f"Redis fallback successful for {coin} "
+                            f"sl={sl} tp1={tp1}"
+                        )
+                        return {
+                            "sl":    sl,
+                            "tp1":   tp1,
+                            "entry": entry
+                        }
 
+        logger.warning(
+            f"No valid signal levels found for {trade.pair} "
+            f"enter_tag={enter_tag}"
+        )
         return None
 
     except Exception as e:

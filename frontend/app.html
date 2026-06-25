@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Signal Engine v5</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/app.css">
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
@@ -12,56 +13,136 @@
 
 <div class="app-layout">
 
-    <aside class="sidebar">
+    <aside class="sidebar" role="navigation" aria-label="Main navigation">
         <div class="sidebar-logo">
-            <div class="sidebar-logo-title">Signal Engine</div>
-            <div class="sidebar-logo-sub">v5.0.0</div>
+            <div class="flex items-center gap-8">
+                <svg width="28" height="28" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                    <rect width="32" height="32" rx="8" fill="#1a1a24"/>
+                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
+                </svg>
+                <div>
+                    <div class="sidebar-logo-title">Signal Engine</div>
+                    <div class="sidebar-logo-sub">v5.0.0</div>
+                </div>
+            </div>
         </div>
 
         <nav class="sidebar-nav">
             <div class="nav-section-label">Main</div>
 
-            <div class="nav-item" :class="page === 'overview' && 'active'" @click="navigate('overview')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'overview' && 'active'"
+                @click="navigate('overview')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'overview' ? 'page' : false"
+                @keydown.enter="navigate('overview')"
+                aria-label="Overview"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                 <span>Overview</span>
             </div>
 
-            <div class="nav-item" :class="page === 'signals' && 'active'" @click="navigate('signals')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'signals' && 'active'"
+                @click="navigate('signals')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'signals' ? 'page' : false"
+                @keydown.enter="navigate('signals')"
+                aria-label="Signals"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 <span>Signals</span>
             </div>
 
-            <div class="nav-item" :class="page === 'freqtrade' && 'active'" @click="navigate('freqtrade')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'freqtrade' && 'active'"
+                @click="navigate('freqtrade')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'freqtrade' ? 'page' : false"
+                @keydown.enter="navigate('freqtrade')"
+                aria-label="Freqtrade"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
                 <span>Freqtrade</span>
             </div>
 
             <div class="nav-section-label">Tools</div>
 
-            <div class="nav-item" :class="page === 'coins' && 'active'" @click="navigate('coins')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'coins' && 'active'"
+                @click="navigate('coins')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'coins' ? 'page' : false"
+                @keydown.enter="navigate('coins')"
+                aria-label="Coin Universe"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 <span>Coins</span>
             </div>
 
-            <div class="nav-item" :class="page === 'backtest' && 'active'" @click="navigate('backtest')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'backtest' && 'active'"
+                @click="navigate('backtest')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'backtest' ? 'page' : false"
+                @keydown.enter="navigate('backtest')"
+                aria-label="Backtest"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
                 <span>Backtest</span>
             </div>
 
-            <div class="nav-item" :class="page === 'analysis' && 'active'" @click="navigate('analysis')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'analysis' && 'active'"
+                @click="navigate('analysis')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'analysis' ? 'page' : false"
+                @keydown.enter="navigate('analysis')"
+                aria-label="Analysis"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 <span>Analysis</span>
             </div>
 
             <div class="nav-section-label">System</div>
 
-            <div class="nav-item" :class="page === 'audit' && 'active'" @click="navigate('audit')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'audit' && 'active'"
+                @click="navigate('audit')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'audit' ? 'page' : false"
+                @keydown.enter="navigate('audit')"
+                aria-label="Audit Log"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 <span>Audit Log</span>
             </div>
 
-            <div class="nav-item" :class="page === 'settings' && 'active'" @click="navigate('settings')">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <div
+                class="nav-item"
+                :class="page === 'settings' && 'active'"
+                @click="navigate('settings')"
+                role="button"
+                tabindex="0"
+                :aria-current="page === 'settings' ? 'page' : false"
+                @keydown.enter="navigate('settings')"
+                aria-label="Settings"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 <span>Settings</span>
             </div>
         </nav>
@@ -74,7 +155,12 @@
             <div class="stat-row" style="margin-top:6px;">
                 <span class="stat-label" style="font-size:11px;">WebSocket</span>
                 <div class="flex items-center gap-4">
-                    <div class="ws-dot" :class="wsState"></div>
+                    <div
+                        class="ws-dot"
+                        :class="wsState"
+                        role="status"
+                        :aria-label="wsState === 'connected' ? 'WebSocket connected' : 'WebSocket disconnected'"
+                    ></div>
                     <span style="font-size:11px;color:var(--text-muted)" x-text="wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'"></span>
                 </div>
             </div>
@@ -83,7 +169,7 @@
 
     <div class="main-area">
 
-        <header class="topbar">
+        <header class="topbar" role="banner">
             <div class="topbar-left">
                 <span style="font-size:13px;font-weight:600;color:var(--text-secondary)" x-text="pageTitle()"></span>
 
@@ -100,24 +186,33 @@
 
             <div class="topbar-right">
                 <div class="flex items-center gap-6" style="font-size:11px;color:var(--text-secondary);">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     <span>Next scan:</span>
                     <span class="mono" style="color:var(--text-primary)" x-text="nextScan"></span>
                 </div>
 
                 <div class="flex items-center gap-6">
-                    <div class="ws-dot" :class="wsState"></div>
+                    <div
+                        class="ws-dot"
+                        :class="wsState"
+                        role="status"
+                        :aria-label="'WebSocket ' + wsState"
+                    ></div>
                     <span style="font-size:11px;color:var(--text-muted)" x-text="lastUpdate"></span>
                 </div>
 
-                <button class="btn btn-ghost btn-sm" @click="logout">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                <button
+                    class="btn btn-ghost btn-sm"
+                    @click="logout"
+                    aria-label="Logout"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     <span>Logout</span>
                 </button>
             </div>
         </header>
 
-        <main class="page-content">
+        <main class="page-content" role="main" aria-live="polite">
             <div x-show="page === 'overview'"  x-html="pageHtml.overview"></div>
             <div x-show="page === 'signals'"   x-html="pageHtml.signals"></div>
             <div x-show="page === 'freqtrade'" x-html="pageHtml.freqtrade"></div>
@@ -131,40 +226,65 @@
     </div>
 </div>
 
-<div x-show="totp.show" x-cloak class="modal-overlay" @click.self="totp.show = false">
+<div
+    x-show="totp.show"
+    x-cloak
+    class="modal-overlay"
+    @click.self="totp.show = false"
+    role="dialog"
+    aria-modal="true"
+    :aria-label="totp.title"
+>
     <div class="modal">
         <div class="modal-title" x-text="totp.title || 'Confirm Action'"></div>
         <div class="modal-sub" x-text="totp.subtitle || 'Enter your TOTP code to continue'"></div>
 
-        <div x-show="totp.error" x-cloak class="alert alert-error" x-text="totp.error"></div>
+        <div x-show="totp.error" x-cloak class="alert alert-error" role="alert" x-text="totp.error"></div>
 
+        <label for="totp-modal-input" class="form-label" style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">
+            TOTP Code
+        </label>
         <input
+            id="totp-modal-input"
             class="totp-input"
             type="text"
             inputmode="numeric"
             maxlength="6"
             x-model="totp.code"
             placeholder="000000"
+            aria-label="TOTP verification code"
+            aria-required="true"
             @input="totp.code = totp.code.replace(/\D/g,'')"
             @keydown.enter="totp.code.length === 6 && confirmTotp()"
             x-ref="totpInput"
         >
 
         <div class="modal-actions">
-            <button class="btn btn-ghost" @click="totp.show = false; totp.code = ''; totp.error = ''">Cancel</button>
+            <button
+                class="btn btn-ghost"
+                @click="totp.show = false; totp.code = ''; totp.error = ''"
+                aria-label="Cancel"
+            >Cancel</button>
             <button
                 class="btn btn-primary"
                 @click="confirmTotp"
                 :disabled="totp.code.length < 6 || totp.loading"
+                :aria-busy="totp.loading"
+                aria-label="Confirm TOTP"
             >
-                <span x-show="totp.loading" class="spinner"></span>
+                <span x-show="totp.loading" class="spinner" aria-hidden="true"></span>
                 Confirm
             </button>
         </div>
     </div>
 </div>
 
-<div x-show="toast.show" x-cloak
+<div
+    x-show="toast.show"
+    x-cloak
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
     style="position:fixed;bottom:20px;right:20px;z-index:2000;min-width:260px;max-width:360px;"
     x-transition:enter="transition ease-out duration-200"
     x-transition:enter-start="opacity-0 transform translate-y-2"
