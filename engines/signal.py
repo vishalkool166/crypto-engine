@@ -877,10 +877,10 @@ def run_no_trade_engine(
         score_penalty += penalty
 
     if staleness and staleness.get("expired"):
-        hard_entry(
-            "🚫", "Setup expired",
-            " · ".join(staleness.get("reasons", ["Setup too old"])),
-            penalty=30
+        soft(
+            "⚠️", "Setup aging — both sweep and displacement old",
+            " · ".join(staleness.get("reasons", ["Setup aging"])),
+            penalty=12
         )
 
     if regime.get("type") == "chop":
@@ -953,10 +953,10 @@ def run_no_trade_engine(
     if wconf and not wconf.get("non_neg_passed", True):
         failed = wconf.get("non_neg_failed", [])
         if failed:
-            hard_entry(
-                "🚫", "Non-negotiable factors failed",
-                f"Failed: {', '.join(failed)}",
-                penalty=25
+            soft(
+                "⚠️", f"Key factors weak: {', '.join(failed)}",
+                "Non-negotiable factors below threshold — score reduced",
+                penalty=10
             )
 
     if coin:
@@ -1007,7 +1007,7 @@ def run_no_trade_engine(
 
     if staleness and staleness.get("degraded"):
         soft("⚠️", "Setup degraded",
-             " · ".join(staleness.get("reasons", ["Setup aging"])), 5)
+             " · ".join(staleness.get("reasons", ["Setup aging"])), 3)
 
     market_hard_blocked = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks

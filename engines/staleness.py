@@ -2,13 +2,13 @@ from config import cfg
 
 
 REGIME_CANDLE_LIMITS = {
-    "trending-bull": 5,
-    "trending-bear": 5,
-    "expansion":     3,
-    "weak-trend":    10,
-    "ranging":       12,
+    "trending-bull": 10,
+    "trending-bear": 10,
+    "expansion":     6,
+    "weak-trend":    15,
+    "ranging":       20,
     "chop":          0,
-    "unknown":       6,
+    "unknown":       10,
 }
 
 COMPONENT_WEIGHTS = {
@@ -23,9 +23,9 @@ def _atr_candle_limit(atr: float, price: float, base_limit: int) -> int:
         return base_limit
     atr_pct = atr / price * 100
     if atr_pct > 4.0:
-        return max(2, round(base_limit * 0.5))
+        return max(4, round(base_limit * 0.6))
     if atr_pct > 2.0:
-        return max(3, round(base_limit * 0.75))
+        return max(5, round(base_limit * 0.8))
     if atr_pct < 0.5:
         return round(base_limit * 1.5)
     return base_limit
@@ -48,7 +48,7 @@ def check_sweep_staleness(
 
     candles_ago  = sweep.get("candles_ago", 0)
     regime_type  = regime.get("type", "unknown")
-    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 6)
+    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 10)
     weight       = COMPONENT_WEIGHTS["sweep"]
     adj_limit    = _atr_candle_limit(atr, price, base_limit)
     final_limit  = round(adj_limit * weight)
@@ -80,11 +80,10 @@ def check_displacement_staleness(
         }
 
     items        = displacement.get("items", [])
-    best         = displacement.get("best", {})
     candles_ago  = len(items)
 
     regime_type  = regime.get("type", "unknown")
-    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 6)
+    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 10)
     weight       = COMPONENT_WEIGHTS["displacement"]
     adj_limit    = _atr_candle_limit(atr, price, base_limit)
     final_limit  = round(adj_limit * weight)
@@ -118,7 +117,7 @@ def check_retest_staleness(
         }
 
     regime_type  = regime.get("type", "unknown")
-    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 6)
+    base_limit   = REGIME_CANDLE_LIMITS.get(regime_type, 10)
     weight       = COMPONENT_WEIGHTS["retest"]
     adj_limit    = _atr_candle_limit(atr, price, base_limit)
     final_limit  = round(adj_limit * weight)
@@ -147,15 +146,17 @@ def assess_setup_staleness(
 
     checks = [sweep_check, disp_check, retest_check]
 
-    critical_stale = retest_check["stale"]
-    any_stale      = any(c["stale"] for c in checks)
-    stale_reasons  = [c["reason"] for c in checks if c["stale"] and c["reason"]]
+    sweep_stale = sweep_check["stale"]
+    disp_stale  = disp_check["stale"]
+    retest_stale = retest_check["stale"]
 
-    if critical_stale:
+    stale_reasons = [c["reason"] for c in checks if c["stale"] and c["reason"]]
+
+    if sweep_stale and disp_stale:
         overall = "EXPIRED"
-    elif sweep_check["stale"] and disp_check["stale"]:
-        overall = "EXPIRED"
-    elif any_stale:
+    elif sweep_stale or disp_stale:
+        overall = "DEGRADED"
+    elif retest_stale:
         overall = "DEGRADED"
     else:
         overall = "FRESH"
@@ -170,5 +171,5 @@ def assess_setup_staleness(
         "displacement": disp_check,
         "retest":       retest_check,
         "tradeable":    overall in ("FRESH", "DEGRADED"),
-        "score_mult":   1.0 if overall == "FRESH" else 0.7 if overall == "DEGRADED" else 0.0
+        "score_mult":   1.0 if overall == "FRESH" else 0.85 if overall == "DEGRADED" else 0.6
     }
