@@ -1,35 +1,16 @@
 const Charts = {
     _instances: {},
 
-    _baseOptions() {
+    _defaultFont() {
         return {
-            chart: {
-                background:  'transparent',
-                foreColor:   '#8888aa',
-                fontFamily:  '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-                toolbar:     { show: false },
-                animations:  { enabled: false },
-                sparkline:   { enabled: false },
-            },
-            grid: {
-                borderColor: '#2a2a3a',
-                strokeDashArray: 3,
-                xaxis: { lines: { show: false } },
-                yaxis: { lines: { show: true  } },
-                padding: { left: 8, right: 8 },
-            },
-            tooltip: {
-                theme:  'dark',
-                style:  { fontSize: '12px' },
-                x:      { show: true },
-            },
-            legend: {
-                labels: { colors: '#8888aa' },
-                fontSize: '12px',
-            },
-            dataLabels: { enabled: false },
+            family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+            size:   11,
         }
     },
+
+    _gridColor()   { return '#2a2a3a' },
+    _textColor()   { return '#7777aa' },
+    _mutedColor()  { return '#55556a' },
 
     destroy(id) {
         if (this._instances[id]) {
@@ -48,67 +29,87 @@ const Charts = {
         if (!el || !trades.length) return
 
         let equity = 0
-        const series = trades.map(t => {
+        const labels = []
+        const values = []
+
+        trades.forEach(t => {
             equity += parseFloat(t.pnl || 0)
-            return { x: new Date(t.date).getTime(), y: parseFloat(equity.toFixed(4)) }
+            labels.push(t.date || '')
+            values.push(parseFloat(equity.toFixed(4)))
         })
 
         const isPositive = equity >= 0
         const lineColor  = isPositive ? '#00d4aa' : '#ff4466'
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'area',
-                height: 220,
-            },
-            series: [{ name: 'Equity', data: series }],
-            stroke: { curve: 'smooth', width: 2, colors: [lineColor] },
-            fill: {
-                type:     'gradient',
-                gradient: {
-                    shadeIntensity: 1,
-                    opacityFrom:    0.3,
-                    opacityTo:      0.0,
-                    stops:          [0, 100],
-                    colorStops: [{
-                        offset:  0,
-                        color:   lineColor,
-                        opacity: 0.3,
-                    }, {
-                        offset:  100,
-                        color:   lineColor,
-                        opacity: 0,
-                    }],
-                },
-            },
-            xaxis: {
-                type: 'datetime',
-                labels: {
-                    style:      { colors: '#55556a', fontSize: '11px' },
-                    datetimeUTC: false,
-                },
-                axisBorder: { show: false },
-                axisTicks:  { show: false },
-            },
-            yaxis: {
-                labels: {
-                    style:     { colors: '#55556a', fontSize: '11px' },
-                    formatter: v => '$' + v.toFixed(2),
-                },
-            },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                x: { format: 'dd MMM yyyy' },
-                y: { formatter: v => '$' + v.toFixed(4) },
-            },
-            colors: [lineColor],
-        }
+        const ctx = el.getContext('2d')
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        const gradient = ctx.createLinearGradient(0, 0, 0, 220)
+        gradient.addColorStop(0,   lineColor + '40')
+        gradient.addColorStop(1,   lineColor + '00')
+
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    label:           'Equity',
+                    data:            values,
+                    borderColor:     lineColor,
+                    backgroundColor: gradient,
+                    borderWidth:     2,
+                    pointRadius:     0,
+                    pointHoverRadius: 4,
+                    pointHoverBackgroundColor: lineColor,
+                    fill:            true,
+                    tension:         0.4,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 0 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => '$' + ctx.parsed.y.toFixed(4)
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            maxTicksLimit: 8,
+                        },
+                        grid: {
+                            color:   this._gridColor(),
+                            display: false,
+                        },
+                        border: { display: false }
+                    },
+                    y: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            callback: v => '$' + v.toFixed(2)
+                        },
+                        grid: {
+                            color: this._gridColor(),
+                        },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
+
+        el.style.height = '220px'
         this._instances[elId] = chart
         return chart
     },
@@ -120,52 +121,56 @@ const Charts = {
 
         const grades  = ['A+', 'A', 'B']
         const colors  = ['#aa66ff', '#4488ff', '#ff9500']
-        const series  = grades.map(g => data[g]?.total || 0)
-        const hasData = series.some(v => v > 0)
+        const values  = grades.map(g => data[g]?.total || 0)
+        const hasData = values.some(v => v > 0)
 
         if (!hasData) return
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'donut',
-                height: 200,
-            },
-            series,
-            labels:  grades,
-            colors,
-            plotOptions: {
-                pie: {
-                    donut: {
-                        size: '65%',
-                        labels: {
-                            show: true,
-                            total: {
-                                show:      true,
-                                label:     'Trades',
-                                color:     '#8888aa',
-                                fontSize:  '12px',
-                                formatter: w => w.globals.seriesTotals.reduce((a, b) => a + b, 0),
-                            },
-                        },
-                    },
-                },
-            },
-            legend: {
-                position: 'bottom',
-                labels:   { colors: '#8888aa' },
-                fontSize: '12px',
-            },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                y: { formatter: v => v + ' trades' },
-            },
-        }
+        const ctx = el.getContext('2d')
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        const chart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels:   grades,
+                datasets: [{
+                    data:             values,
+                    backgroundColor:  colors,
+                    borderColor:      '#111118',
+                    borderWidth:      3,
+                    hoverBorderWidth: 3,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 300 },
+                cutout:              '65%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color:     '#9999bb',
+                            font:      this._defaultFont(),
+                            padding:   12,
+                            usePointStyle: true,
+                            pointStyleWidth: 8,
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => ctx.label + ': ' + ctx.parsed + ' trades'
+                        }
+                    }
+                }
+            }
+        })
+
+        el.style.height = '200px'
         this._instances[elId] = chart
         return chart
     },
@@ -175,60 +180,75 @@ const Charts = {
         const el = document.getElementById(elId)
         if (!el || !coins.length) return
 
-        const top     = coins.slice(0, 8)
-        const labels  = top.map(c => c.coin)
-        const scores  = top.map(c => parseFloat(c.score) || 0)
-        const colors  = top.map(c => Utils.scoreBarColor(c.score))
+        const top    = coins.slice(0, 8)
+        const labels = top.map(c => c.coin)
+        const scores = top.map(c => parseFloat(c.score) || 0)
+        const colors = top.map(c => {
+            const s = parseFloat(c.score) || 0
+            if (s >= 85) return '#aa66ff'
+            if (s >= 68) return '#4488ff'
+            if (s >= 52) return '#ff9500'
+            if (s >= 38) return '#ffcc00'
+            return '#7777aa'
+        })
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'bar',
-                height: 240,
-            },
-            series: [{ name: 'Score', data: scores }],
-            xaxis: {
-                categories: labels,
-                labels: {
-                    style: { colors: '#8888aa', fontSize: '11px' },
-                },
-                axisBorder: { show: false },
-                axisTicks:  { show: false },
-            },
-            yaxis: {
-                min: 0,
-                max: 100,
-                labels: {
-                    style:     { colors: '#55556a', fontSize: '11px' },
-                    formatter: v => v,
-                },
-            },
-            plotOptions: {
-                bar: {
-                    borderRadius:      4,
-                    distributed:       true,
-                    columnWidth:       '60%',
-                    dataLabels:        { position: 'top' },
-                },
-            },
-            dataLabels: {
-                enabled:   true,
-                formatter: v => v,
-                style:     { fontSize: '11px', colors: ['#e8e8f0'] },
-                offsetY:   -18,
-            },
-            colors,
-            legend: { show: false },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                y: { formatter: v => v + '/100' },
-            },
-        }
+        const ctx = el.getContext('2d')
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label:           'Score',
+                    data:            scores,
+                    backgroundColor: colors,
+                    borderRadius:    4,
+                    borderWidth:     0,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 0 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => ctx.parsed.y + '/100'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color: this._textColor(),
+                            font:  this._defaultFont(),
+                        },
+                        grid:   { display: false },
+                        border: { display: false }
+                    },
+                    y: {
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            color: this._textColor(),
+                            font:  this._defaultFont(),
+                        },
+                        grid: {
+                            color: this._gridColor(),
+                        },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
+
+        el.style.height = '240px'
         this._instances[elId] = chart
         return chart
     },
@@ -238,52 +258,68 @@ const Charts = {
         const el = document.getElementById(elId)
         if (!el || !history.length) return
 
-        const recent  = history.slice(-20)
-        const labels  = recent.map(t => t.coin || '--')
-        const values  = recent.map(t => parseFloat(t.pnl_raw || 0))
-        const colors  = values.map(v => v >= 0 ? '#00d4aa' : '#ff4466')
+        const recent = history.slice(-20)
+        const labels = recent.map(t => t.coin || '--')
+        const values = recent.map(t => parseFloat(t.pnl_raw || 0))
+        const colors = values.map(v => v >= 0 ? '#00d4aa' : '#ff4466')
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'bar',
-                height: 180,
-            },
-            series: [{ name: 'PnL', data: values }],
-            xaxis: {
-                categories: labels,
-                labels: {
-                    style:  { colors: '#55556a', fontSize: '10px' },
-                    rotate: -45,
-                },
-                axisBorder: { show: false },
-                axisTicks:  { show: false },
-            },
-            yaxis: {
-                labels: {
-                    style:     { colors: '#55556a', fontSize: '11px' },
-                    formatter: v => '$' + v.toFixed(2),
-                },
-            },
-            plotOptions: {
-                bar: {
-                    borderRadius: 3,
-                    distributed:  true,
-                    columnWidth:  '70%',
-                },
-            },
-            colors,
-            legend: { show: false },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                y: { formatter: v => (v >= 0 ? '+' : '') + '$' + v.toFixed(4) },
-            },
-        }
+        const ctx = el.getContext('2d')
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label:           'PnL',
+                    data:            values,
+                    backgroundColor: colors,
+                    borderRadius:    3,
+                    borderWidth:     0,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 0 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => (ctx.parsed.y >= 0 ? '+' : '') + '$' + ctx.parsed.y.toFixed(4)
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            maxRotation: 45,
+                        },
+                        grid:   { display: false },
+                        border: { display: false }
+                    },
+                    y: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            callback: v => '$' + v.toFixed(2)
+                        },
+                        grid: {
+                            color: this._gridColor(),
+                        },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
+
+        el.style.height = '180px'
         this._instances[elId] = chart
         return chart
     },
@@ -306,106 +342,63 @@ const Charts = {
             v > -10 ? '#ff9500' : '#ff4466'
         )
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'bar',
-                height: 320,
+        const ctx = el.getContext('2d')
+
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label:           'Edge %',
+                    data:            values,
+                    backgroundColor: colors,
+                    borderRadius:    4,
+                    borderWidth:     0,
+                }]
             },
-            series: [{ name: 'Edge %', data: values }],
-            xaxis: {
-                categories: labels,
-                labels: {
-                    style: { colors: '#8888aa', fontSize: '11px' },
+            options: {
+                indexAxis:           'y',
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 0 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => (ctx.parsed.x >= 0 ? '+' : '') + ctx.parsed.x.toFixed(1) + '% edge'
+                        }
+                    }
                 },
-                axisBorder: { show: false },
-                axisTicks:  { show: false },
-            },
-            yaxis: {
-                labels: {
-                    style:     { colors: '#55556a', fontSize: '11px' },
-                    formatter: v => v.toFixed(1) + '%',
-                },
-            },
-            plotOptions: {
-                bar: {
-                    borderRadius: 4,
-                    distributed:  true,
-                    horizontal:   true,
-                    barHeight:    '60%',
-                },
-            },
-            colors,
-            legend: { show: false },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                y: { formatter: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '% edge' },
-            },
-        }
-
-        const chart = new ApexCharts(el, opts)
-        chart.render()
-        this._instances[elId] = chart
-        return chart
-    },
-
-    winRateGauge(elId, winRate = 0) {
-        this.destroy(elId)
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const color =
-            winRate >= 55 ? '#00d4aa' :
-            winRate >= 45 ? '#ff9500' : '#ff4466'
-
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'radialBar',
-                height: 200,
-            },
-            series: [parseFloat(winRate) || 0],
-            plotOptions: {
-                radialBar: {
-                    startAngle: -135,
-                    endAngle:    135,
-                    hollow: {
-                        size:   '60%',
-                        margin: 0,
-                    },
-                    track: {
-                        background: '#1a1a24',
-                        strokeWidth: '100%',
-                    },
-                    dataLabels: {
-                        name: {
-                            show:     true,
-                            label:    'Win Rate',
-                            color:    '#8888aa',
-                            fontSize: '12px',
-                            offsetY:  20,
+                scales: {
+                    x: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            callback: v => v.toFixed(1) + '%'
                         },
-                        value: {
-                            show:      true,
-                            color,
-                            fontSize:  '24px',
-                            fontWeight: 700,
-                            offsetY:   -10,
-                            formatter: v => v + '%',
+                        grid: {
+                            color: this._gridColor(),
                         },
+                        border: { display: false }
                     },
-                },
-            },
-            colors: [color],
-            labels: ['Win Rate'],
-        }
+                    y: {
+                        ticks: {
+                            color: this._textColor(),
+                            font:  this._defaultFont(),
+                        },
+                        grid:   { display: false },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        el.style.height = '320px'
         this._instances[elId] = chart
         return chart
     },
@@ -416,92 +409,139 @@ const Charts = {
         if (!el || !dailyData.length) return
 
         const labels = dailyData.map(d => d.date)
-        const values = dailyData.map(d => parseFloat(d.profit_abs || d.pnl || 0))
+        const values = dailyData.map(d => parseFloat(d.profit_abs || 0))
         const colors = values.map(v => v >= 0 ? '#00d4aa' : '#ff4466')
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'bar',
-                height: 180,
-            },
-            series: [{ name: 'Daily PnL', data: values }],
-            xaxis: {
-                categories: labels,
-                labels: {
-                    style:  { colors: '#55556a', fontSize: '10px' },
-                    rotate: -30,
-                },
-                axisBorder: { show: false },
-                axisTicks:  { show: false },
-            },
-            yaxis: {
-                labels: {
-                    style:     { colors: '#55556a', fontSize: '11px' },
-                    formatter: v => '$' + v.toFixed(2),
-                },
-            },
-            plotOptions: {
-                bar: {
-                    borderRadius: 3,
-                    distributed:  true,
-                    columnWidth:  '70%',
-                },
-            },
-            colors,
-            legend: { show: false },
-            tooltip: {
-                ...this._baseOptions().tooltip,
-                y: { formatter: v => (v >= 0 ? '+' : '') + '$' + v.toFixed(4) },
-            },
-        }
+        const ctx = el.getContext('2d')
 
-        const chart = new ApexCharts(el, opts)
-        chart.render()
+        const chart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    label:           'Daily PnL',
+                    data:            values,
+                    backgroundColor: colors,
+                    borderRadius:    3,
+                    borderWidth:     0,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 0 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: '#1a1a24',
+                        titleColor:      '#9999bb',
+                        bodyColor:       '#e8e8f0',
+                        borderColor:     '#2a2a3a',
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => (ctx.parsed.y >= 0 ? '+' : '') + '$' + ctx.parsed.y.toFixed(4)
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color:       this._textColor(),
+                            font:        this._defaultFont(),
+                            maxRotation: 30,
+                            maxTicksLimit: 10,
+                        },
+                        grid:   { display: false },
+                        border: { display: false }
+                    },
+                    y: {
+                        ticks: {
+                            color:    this._textColor(),
+                            font:     this._defaultFont(),
+                            callback: v => '$' + v.toFixed(2)
+                        },
+                        grid: {
+                            color: this._gridColor(),
+                        },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
+
+        el.style.height = '180px'
+        this._instances[elId] = chart
+        return chart
+    },
+
+    winRateGauge(elId, winRate = 0) {
+        this.destroy(elId)
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const wr    = parseFloat(winRate) || 0
+        const color = wr >= 55 ? '#00d4aa' : wr >= 40 ? '#ff9500' : '#ff4466'
+        const ctx   = el.getContext('2d')
+
+        const chart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                datasets: [{
+                    data:            [wr, 100 - wr],
+                    backgroundColor: [color, '#1a1a24'],
+                    borderWidth:     0,
+                    circumference:   270,
+                    rotation:        225,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 300 },
+                cutout:              '75%',
+                plugins: {
+                    legend:  { display: false },
+                    tooltip: { enabled: false },
+                }
+            },
+            plugins: [{
+                id: 'centerText',
+                afterDraw(chart) {
+                    const { ctx, chartArea: { width, height, left, top } } = chart
+                    ctx.save()
+                    ctx.font         = `700 24px var(--font-mono, monospace)`
+                    ctx.fillStyle    = color
+                    ctx.textAlign    = 'center'
+                    ctx.textBaseline = 'middle'
+                    ctx.fillText(wr.toFixed(1) + '%', left + width / 2, top + height / 2)
+                    ctx.restore()
+                }
+            }]
+        })
+
+        el.style.height = '200px'
         this._instances[elId] = chart
         return chart
     },
 
     mlProgress(elId, pct = 0) {
-        this.destroy(elId)
         const el = document.getElementById(elId)
         if (!el) return
 
-        const color = pct >= 100 ? '#00d4aa' : '#4488ff'
+        const p     = Math.min(100, parseFloat(pct) || 0)
+        const color = p >= 100 ? '#00d4aa' : '#4488ff'
 
-        const opts = {
-            ...this._baseOptions(),
-            chart: {
-                ...this._baseOptions().chart,
-                id:     elId,
-                type:   'radialBar',
-                height: 180,
-            },
-            series: [Math.min(100, parseFloat(pct) || 0)],
-            plotOptions: {
-                radialBar: {
-                    hollow: { size: '55%' },
-                    track:  { background: '#1a1a24' },
-                    dataLabels: {
-                        name:  { show: false },
-                        value: {
-                            color,
-                            fontSize:   '20px',
-                            fontWeight: 700,
-                            formatter:  v => v + '%',
-                        },
-                    },
-                },
-            },
-            colors: [color],
-        }
-
-        const chart = new ApexCharts(el, opts)
-        chart.render()
-        this._instances[elId] = chart
-        return chart
+        el.innerHTML = `
+            <div style="padding:8px 0;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+                    <span style="font-size:12px;color:var(--text-secondary);">Progress</span>
+                    <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:${color};">${p.toFixed(0)}%</span>
+                </div>
+                <div style="height:8px;background:var(--bg-tertiary);border-radius:4px;overflow:hidden;">
+                    <div style="height:100%;width:${p}%;background:${color};border-radius:4px;transition:width 0.3s ease;"></div>
+                </div>
+            </div>
+        `
     },
 }
 

@@ -6,3 +6,4 @@ __pycache__/
 *.db
 frontend/js/alpine.min.js
 frontend/js/apexcharts.min.js
+frontend/js/chartjs.min.js
