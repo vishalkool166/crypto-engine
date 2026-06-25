@@ -1,5 +1,5 @@
 function freqtradePage() {
-    return `<div x-data="freqtradeData()" x-init="init()" @ft-update.window="onFtUpdate($event.detail)">
+    return `<div x-data="freqtradeData()" x-init="init()">
 
         <div class="page-header flex justify-between items-center">
             <div>
@@ -75,8 +75,11 @@ function freqtradePage() {
         <div class="mt-12">
             <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">
                 Open Trades
-                <span x-show="loading" class="spinner" style="display:inline-block;margin-left:8px;width:12px;height:12px;" aria-hidden="true"></span>
             </div>
+
+            <template x-if="loading && !openTrades.length">
+                <div class="card" x-html="Utils.loadingState()"></div>
+            </template>
 
             <template x-if="!loading && !openTrades.length">
                 <div class="card" x-html="Utils.emptyState('No open trades')"></div>
@@ -275,24 +278,19 @@ function freqtradeData() {
         loading:       false,
         actionLoading: null,
         forceSelling:  null,
-        _pageListener: null,
 
         async init() {
-            this._pageListener = (e) => {
-                if (e.detail.page === 'freqtrade') {
+            await this.load()
+
+            window.addEventListener('page-change', (e) => {
+                if (e.detail.page === 'freqtrade' && !this.loading) {
                     this.load()
                 }
-            }
-            window.addEventListener('page-change', this._pageListener)
+            })
 
-            await this.load()
-        },
-
-        destroy() {
-            if (this._pageListener) {
-                window.removeEventListener('page-change', this._pageListener)
-                this._pageListener = null
-            }
+            window.addEventListener('ft-update', (e) => {
+                this._applyFtUpdate(e.detail)
+            })
         },
 
         async load() {
@@ -305,19 +303,16 @@ function freqtradeData() {
                     fetch('/api/ft/trades?limit=50', { credentials: 'include' })
                 ])
 
-                if (summaryRes.status === 401 || tradesRes.status === 401) {
+                if (summaryRes.status === 401) {
                     window.location.href = '/login.html'
                     return
                 }
 
-                const summary   = await summaryRes.json().catch(() => ({}))
-                const tradesData = await tradesRes.json().catch(() => ({ trades: [] }))
+                const summary    = await summaryRes.json().catch(() => ({}))
+                const tradesData = await tradesRes.json().catch(() => ({}))
 
-                this.botState     = summary.bot_state || '--'
-                this.openTrades   = Array.isArray(summary.status) ? summary.status : []
-                this.profit       = summary.profit   || {}
-                this.balance      = this._parseBalance(summary.balance || {})
-                this.daily        = this._parseDaily(summary.daily)
+                this._applyFtUpdate(summary)
+
                 this.tradeHistory = Array.isArray(tradesData.trades)
                     ? tradesData.trades.filter(t => !t.is_open)
                     : []
@@ -331,47 +326,45 @@ function freqtradeData() {
             }
         },
 
-        async manualRefresh() {
-            Charts.destroy('ft-daily-chart')
-            await this.load()
-        },
-
-        _parseBalance(raw) {
-            if (!raw) return {}
-            const currencies = raw.currencies || []
-            const usdt       = currencies.find(c => c.currency === 'USDT') || {}
-            return {
-                total: raw.total  != null ? parseFloat(raw.total)  : null,
-                free:  usdt.free  != null ? parseFloat(usdt.free)  : null,
-                used:  usdt.used  != null ? parseFloat(usdt.used)  : null,
-            }
-        },
-
-        _parseDaily(raw) {
-            if (!raw) return []
-            const arr = Array.isArray(raw) ? raw : (raw.data || [])
-            return arr
-                .map(d => ({
-                    date:       d.date || d.day || '',
-                    profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
-                }))
-                .filter(d => d.date)
-        },
-
-        onFtUpdate(data) {
+        _applyFtUpdate(data) {
             if (!data) return
+
             if (Array.isArray(data.status)) {
                 this.openTrades = data.status
             }
-            if (data.profit && typeof data.profit === 'object' && Object.keys(data.profit).length) {
+
+            if (data.profit && typeof data.profit === 'object') {
                 this.profit = data.profit
             }
+
             if (data.balance && typeof data.balance === 'object') {
-                this.balance = this._parseBalance(data.balance)
+                const currencies = data.balance.currencies || []
+                const usdt       = currencies.find(c => c.currency === 'USDT') || {}
+                this.balance = {
+                    total: data.balance.total != null ? parseFloat(data.balance.total) : null,
+                    free:  usdt.free          != null ? parseFloat(usdt.free)          : null,
+                    used:  usdt.used          != null ? parseFloat(usdt.used)          : null,
+                }
             }
-            if (data.bot_state && data.bot_state !== 'unknown') {
+
+            if (data.bot_state) {
                 this.botState = data.bot_state
             }
+
+            if (data.daily) {
+                const arr = Array.isArray(data.daily) ? data.daily : (data.daily.data || [])
+                this.daily = arr
+                    .map(d => ({
+                        date:       d.date || d.day || '',
+                        profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
+                    }))
+                    .filter(d => d.date)
+            }
+        },
+
+        async manualRefresh() {
+            Charts.destroy('ft-daily-chart')
+            await this.load()
         },
 
         renderCharts() {
@@ -385,21 +378,15 @@ function freqtradeData() {
         async startBot() {
             this.actionLoading = 'start'
             try {
-                const res  = await fetch('/api/ft/start', {
+                const res = await fetch('/api/ft/start', {
                     method:      'POST',
                     credentials: 'include',
                     headers:     { 'Content-Type': 'application/json' },
                 })
-
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.detail || 'Start failed — status ' + res.status)
-                }
-
-                const data = await res.json()
-                window._app?.showToast('Bot started: ' + (data.status || 'ok'), 'success')
-                setTimeout(() => this.load(), 1000)
-
+                const data = await res.json().catch(() => ({}))
+                const msg  = data.status || data.detail || 'Started'
+                window._app?.showToast('Bot: ' + msg, 'success')
+                setTimeout(() => this.load(), 1500)
             } catch (e) {
                 window._app?.showToast('Start failed: ' + e.message, 'error')
             } finally {
@@ -410,21 +397,15 @@ function freqtradeData() {
         async stopBot() {
             this.actionLoading = 'stop'
             try {
-                const res  = await fetch('/api/ft/stop', {
+                const res = await fetch('/api/ft/stop', {
                     method:      'POST',
                     credentials: 'include',
                     headers:     { 'Content-Type': 'application/json' },
                 })
-
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({}))
-                    throw new Error(err.detail || 'Stop failed — status ' + res.status)
-                }
-
-                const data = await res.json()
-                window._app?.showToast('Bot stopped: ' + (data.status || 'ok'), 'success')
-                setTimeout(() => this.load(), 1000)
-
+                const data = await res.json().catch(() => ({}))
+                const msg  = data.status || data.detail || 'Stopped'
+                window._app?.showToast('Bot: ' + msg, 'success')
+                setTimeout(() => this.load(), 1500)
             } catch (e) {
                 window._app?.showToast('Stop failed: ' + e.message, 'error')
             } finally {
@@ -451,7 +432,7 @@ function freqtradeData() {
 
             if (result.success) {
                 window._app?.showToast('Force sell submitted for ' + coin, 'success')
-                setTimeout(() => this.load(), 1000)
+                setTimeout(() => this.load(), 1500)
             } else if (result.reason !== 'Cancelled') {
                 window._app?.showToast('Force sell failed: ' + result.reason, 'error')
             }
