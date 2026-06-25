@@ -927,7 +927,7 @@ def run_no_trade_engine(
     market_hard_blocked = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks
     )
-        entry_hard_blocked  = len(entry_blocks) > 0
+    entry_hard_blocked  = len(entry_blocks) > 0
     portfolio_blocked   = len(portfolio_blocks) > 0
 
     adj_score    = max(0, base_score - score_penalty)
