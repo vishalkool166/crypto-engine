@@ -1,5 +1,9 @@
 function freqtradePage() {
-    return `<div x-data="freqtradeData()" x-init="init()">
+    return `<div
+        x-data="freqtradeData()"
+        x-init="init()"
+        @ft-update.window="if($event.detail) _applyUpdate($event.detail)"
+        @page-change.window="if($event.detail.page==='freqtrade' && !loading){ loadSummary(); loadTrades(); }">
 
         <div class="page-header flex justify-between items-center">
             <div>
@@ -169,29 +173,27 @@ function freqtradePage() {
         <div class="card mt-12">
             <div class="flex justify-between items-center mb-12">
                 <div class="card-title" style="margin-bottom:0;">Daily PnL</div>
-                <div class="flex gap-8 items-center">
-                    <select
-                        class="select"
-                        style="width:110px;"
-                        x-model="dailyDays"
-                        @change="loadDaily"
-                        aria-label="Daily PnL period"
-                    >
-                        <option value="7">7 days</option>
-                        <option value="14">14 days</option>
-                        <option value="30">30 days</option>
-                        <option value="60">60 days</option>
-                        <option value="90">90 days</option>
-                    </select>
-                </div>
+                <select
+                    class="select"
+                    style="width:110px;"
+                    x-model="dailyDays"
+                    @change="loadDaily"
+                    aria-label="Daily PnL period"
+                >
+                    <option value="7">7 days</option>
+                    <option value="14">14 days</option>
+                    <option value="30">30 days</option>
+                    <option value="60">60 days</option>
+                    <option value="90">90 days</option>
+                </select>
             </div>
-
-            <template x-if="!daily.length && !dailyLoading">
-                <div x-html="Utils.emptyState('No daily PnL data for this period')"></div>
-            </template>
 
             <template x-if="dailyLoading">
                 <div x-html="Utils.loadingState()"></div>
+            </template>
+
+            <template x-if="!dailyLoading && !daily.length">
+                <div x-html="Utils.emptyState('No daily PnL data for this period')"></div>
             </template>
 
             <div id="ft-daily-chart" x-show="daily.length > 0 && !dailyLoading"></div>
@@ -319,57 +321,42 @@ function freqtradePage() {
 
 function freqtradeData() {
     return {
-        openTrades:    [],
-        tradeHistory:  [],
-        profit:        {},
-        balance:       { total: null, free: null, used: null },
-        daily:         [],
-        dailyDays:     '7',
-        dailyLoading:  false,
-        botState:      'unknown',
-        maxTrades:     3,
-        loading:       false,
+        openTrades:   [],
+        tradeHistory: [],
+        profit:       {},
+        balance:      { total: null, free: null, used: null },
+        daily:        [],
+        dailyDays:    '7',
+        dailyLoading: false,
+        botState:     'unknown',
+        maxTrades:    3,
+        loading:      false,
         actionLoading: null,
-        forceSelling:  null,
+        forceSelling: null,
 
         init() {
             this.loadSummary()
             this.loadTrades()
-
-            window.addEventListener('page-change', (e) => {
-                if (e.detail.page === 'freqtrade') {
-                    this.loadSummary()
-                    this.loadTrades()
-                }
-            })
-
-            window.addEventListener('ft-update', (e) => {
-                if (e.detail) this._applyUpdate(e.detail)
-            })
         },
 
         async loadSummary() {
+            if (this.loading) return
             this.loading = true
             try {
                 const controller = new AbortController()
                 const timeout    = setTimeout(() => controller.abort(), 10000)
-
                 const res = await fetch('/api/ft/summary', {
                     credentials: 'include',
                     signal:      controller.signal,
                 })
                 clearTimeout(timeout)
-
                 if (res.status === 401) {
                     window.location.href = '/login.html'
                     return
                 }
-
                 const data = await res.json().catch(() => ({}))
                 this._applyUpdate(data)
-
-                window.dispatchEvent(new CustomEvent('ft-update', { detail: data }))
-
+                this.$nextTick(() => this._renderChart())
             } catch (e) {
                 if (e.name !== 'AbortError') {
                     window._app?.showToast('Freqtrade unavailable: ' + e.message, 'error')
@@ -383,20 +370,16 @@ function freqtradeData() {
             try {
                 const controller = new AbortController()
                 const timeout    = setTimeout(() => controller.abort(), 10000)
-
                 const res = await fetch('/api/ft/trades?limit=50', {
                     credentials: 'include',
                     signal:      controller.signal,
                 })
                 clearTimeout(timeout)
-
                 if (!res.ok) return
-
                 const data = await res.json().catch(() => ({}))
                 this.tradeHistory = Array.isArray(data.trades)
                     ? data.trades.filter(t => !t.is_open)
                     : []
-
             } catch (e) {}
         },
 
@@ -406,20 +389,15 @@ function freqtradeData() {
             try {
                 const controller = new AbortController()
                 const timeout    = setTimeout(() => controller.abort(), 10000)
-
                 const res = await fetch(`/api/ft/daily?days=${this.dailyDays}`, {
                     credentials: 'include',
                     signal:      controller.signal,
                 })
                 clearTimeout(timeout)
-
                 if (!res.ok) return
-
-                const raw  = await res.json().catch(() => ({}))
-                const arr  = Array.isArray(raw) ? raw
-                           : Array.isArray(raw.data) ? raw.data
-                           : []
-
+                const raw = await res.json().catch(() => ({}))
+                const arr = Array.isArray(raw) ? raw
+                          : Array.isArray(raw.data) ? raw.data : []
                 this.daily = arr
                     .map(x => ({
                         date:        x.date || x.day || '',
@@ -427,9 +405,7 @@ function freqtradeData() {
                         trade_count: x.trade_count || x.trades || 0,
                     }))
                     .filter(x => x.date)
-
                 this.$nextTick(() => this._renderChart())
-
             } catch (e) {
             } finally {
                 this.dailyLoading = false
@@ -438,34 +414,20 @@ function freqtradeData() {
 
         _applyUpdate(d) {
             if (!d) return
-
-            if (d.bot_state) {
-                this.botState = d.bot_state
-            }
-
-            if (Array.isArray(d.status)) {
-                this.openTrades = d.status
-            }
-
-            if (d.profit && typeof d.profit === 'object' && d.profit.profit_all_coin !== undefined) {
-                this.profit = d.profit
-            }
-
+            if (d.bot_state)                                              this.botState   = d.bot_state
+            if (Array.isArray(d.status))                                  this.openTrades = d.status
+            if (d.profit?.profit_all_coin !== undefined)                  this.profit     = d.profit
             if (d.balance && typeof d.balance === 'object') {
-                const currencies = d.balance.currencies || []
-                const usdt       = currencies.find(c => c.currency === 'USDT') || {}
+                const usdt = (d.balance.currencies || []).find(c => c.currency === 'USDT') || {}
                 this.balance = {
                     total: d.balance.total != null ? parseFloat(d.balance.total) : null,
                     free:  usdt.free       != null ? parseFloat(usdt.free)       : null,
                     used:  usdt.used       != null ? parseFloat(usdt.used)       : null,
                 }
             }
-
             if (d.daily) {
                 const arr = Array.isArray(d.daily) ? d.daily
-                          : Array.isArray(d.daily.data) ? d.daily.data
-                          : []
-
+                          : Array.isArray(d.daily.data) ? d.daily.data : []
                 if (arr.length) {
                     this.daily = arr
                         .map(x => ({
@@ -474,7 +436,6 @@ function freqtradeData() {
                             trade_count: x.trade_count || x.trades || 0,
                         }))
                         .filter(x => x.date)
-
                     this.$nextTick(() => this._renderChart())
                 }
             }
@@ -483,7 +444,7 @@ function freqtradeData() {
         async manualRefresh() {
             Charts.destroy('ft-daily-chart')
             this.daily = []
-            this.loadSummary()
+            await this.loadSummary()
             this.loadTrades()
         },
 
@@ -499,9 +460,8 @@ function freqtradeData() {
             this.actionLoading = 'start'
             try {
                 const res  = await fetch('/api/ft/start', {
-                    method:      'POST',
-                    credentials: 'include',
-                    headers:     { 'Content-Type': 'application/json' },
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
                 })
                 const data = await res.json().catch(() => ({}))
                 window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
@@ -517,9 +477,8 @@ function freqtradeData() {
             this.actionLoading = 'stop'
             try {
                 const res  = await fetch('/api/ft/stop', {
-                    method:      'POST',
-                    credentials: 'include',
-                    headers:     { 'Content-Type': 'application/json' },
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
                 })
                 const data = await res.json().catch(() => ({}))
                 window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
@@ -538,10 +497,9 @@ function freqtradeData() {
                 'Enter TOTP to confirm force sell of ' + coin,
                 async (code) => {
                     const res = await fetch('/api/ft/forcesell', {
-                        method:      'POST',
-                        credentials: 'include',
-                        headers:     { 'Content-Type': 'application/json' },
-                        body:        JSON.stringify({ tradeid: tradeId, totp_code: code })
+                        method: 'POST', credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tradeid: tradeId, totp_code: code })
                     })
                     return await res.json()
                 }

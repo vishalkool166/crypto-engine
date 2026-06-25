@@ -346,7 +346,7 @@ function overviewData() {
                 this.onUpdate(data)
             }
 
-            this._loadActiveTrades()
+            this.tradesLoading = false
 
             window.addEventListener('dashboard-update', e => this.onUpdate(e.detail))
             window.addEventListener('ft-update',        e => this.onFtUpdate(e.detail))
@@ -358,27 +358,6 @@ function overviewData() {
             })
 
             this.$nextTick(() => this.renderCharts())
-        },
-
-        async _loadActiveTrades() {
-            this.tradesLoading = true
-            try {
-                const controller = new AbortController()
-                const timeout    = setTimeout(() => controller.abort(), 10000)
-                const res = await fetch('/api/ft/summary', {
-                    credentials: 'include',
-                    signal:      controller.signal,
-                })
-                clearTimeout(timeout)
-                if (!res.ok) return
-                const data = await res.json().catch(() => ({}))
-                if (Array.isArray(data.status)) {
-                    this.activeTrades = data.status
-                }
-            } catch (e) {
-            } finally {
-                this.tradesLoading = false
-            }
         },
 
         onUpdate(data) {
