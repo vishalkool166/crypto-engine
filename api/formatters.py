@@ -1,6 +1,6 @@
 import math
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
 from config import cfg
 from data.cache import cache
 
@@ -9,22 +9,22 @@ log = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 C = {
-    "green":       "#34c759",
-    "green_dark":  "#248a3d",
-    "green_bg":    "rgba(52,199,89,0.10)",
-    "red":         "#ff3b30",
-    "red_dark":    "#c0392b",
-    "red_bg":      "rgba(255,59,48,0.10)",
-    "blue":        "#0071e3",
-    "blue_dark":   "#0051a8",
-    "blue_bg":     "rgba(0,113,227,0.10)",
-    "orange":      "#e8820c",
-    "orange_bg":   "rgba(255,149,0,0.10)",
-    "yellow_dark": "#7d5a00",
-    "purple":      "#7d3dbd",
-    "muted":       "#6e6e73",
-    "text":        "#1d1d1f",
-    "text2":       "#3a3a3c",
+    "green":       "#00d4aa",
+    "green_dark":  "#00d4aa",
+    "green_bg":    "rgba(0,212,170,0.12)",
+    "red":         "#ff4466",
+    "red_dark":    "#ff4466",
+    "red_bg":      "rgba(255,68,102,0.12)",
+    "blue":        "#4488ff",
+    "blue_dark":   "#4488ff",
+    "blue_bg":     "rgba(68,136,255,0.12)",
+    "orange":      "#ff9500",
+    "orange_bg":   "rgba(255,149,0,0.12)",
+    "yellow_dark": "#ffcc00",
+    "purple":      "#aa66ff",
+    "muted":       "#7777aa",
+    "text":        "#e8e8f0",
+    "text2":       "#9999bb",
 }
 
 
@@ -112,7 +112,7 @@ def fmt_duration(opened_at) -> str:
 def get_color(type: str, value) -> str:
     if type == "grade":
         return {
-            "A+": C["green"],
+            "A+": C["purple"],
             "A":  C["blue"],
             "B":  C["orange"],
             "C":  C["yellow_dark"],
@@ -121,7 +121,7 @@ def get_color(type: str, value) -> str:
 
     if type == "pnl":
         try:
-            return C["green_dark"] if float(value) >= 0 else C["red_dark"]
+            return C["green"] if float(value) >= 0 else C["red"]
         except Exception:
             return C["muted"]
 
@@ -137,17 +137,17 @@ def get_color(type: str, value) -> str:
 
     if type == "health":
         return {
-            "HEALTHY":     C["green_dark"],
+            "HEALTHY":     C["green"],
             "WARNING":     C["orange"],
-            "INVALIDATED": C["red_dark"]
+            "INVALIDATED": C["red"]
         }.get(str(value), C["muted"])
 
     if type == "winrate":
         try:
             wr = float(value)
-            if wr >= 55: return C["green_dark"]
+            if wr >= 55: return C["green"]
             if wr >= 45: return C["orange"]
-            return C["red_dark"]
+            return C["red"]
         except Exception:
             return C["muted"]
 
@@ -181,9 +181,11 @@ def health_emoji(state: str) -> str:
 def build_performance_data(stats: dict) -> dict:
     empty = {
         "win_rate":       "--%",
+        "win_rate_raw":   0,
         "win_rate_color": C["muted"],
         "win_rate_sub":   "0 trades",
         "total_pnl":      "$--",
+        "total_pnl_raw":  0,
         "pnl_color":      C["muted"],
         "pnl_sub":        "0W · 0L",
         "profit_factor":  "--",
@@ -253,9 +255,11 @@ def build_performance_data(stats: dict) -> dict:
 
     return {
         "win_rate":       f"{wr}%",
+        "win_rate_raw":   wr,
         "win_rate_color": get_color("winrate", wr),
         "win_rate_sub":   f"{stats.get('closed', 0)} closed",
         "total_pnl":      fmt_pnl(tp),
+        "total_pnl_raw":  tp,
         "pnl_color":      pnl_color(tp),
         "pnl_sub":        f"{stats.get('wins',0)}W · {stats.get('losses',0)}L",
         "profit_factor":  str(pf) if pf > 0 else "∞",
@@ -263,7 +267,7 @@ def build_performance_data(stats: dict) -> dict:
         "best_trade":     fmt_pnl(best),
         "best_sub":       best_s.coin if best_s else "--",
         "max_drawdown":   f"{max_dd:.1f}%",
-        "dd_color":       (
+        "dd_color": (
             get_color("health", "HEALTHY")     if max_dd < 10 else
             get_color("health", "WARNING")     if max_dd < 20 else
             get_color("health", "INVALIDATED")
@@ -293,12 +297,6 @@ def build_history_data(signals: list) -> list:
         except Exception:
             pnl_float = 0.0
 
-        border_color = (
-            C["green"] if outcome == "win" else
-            C["red"]   if outcome == "loss" else
-            "rgba(0,0,0,0.1)"
-        )
-
         ts_ist = "--"
         try:
             if s.get("timestamp"):
@@ -313,22 +311,18 @@ def build_history_data(signals: list) -> list:
             "coin":             s.get("coin", "--"),
             "direction":        s.get("direction", "--"),
             "dir_emoji":        "📈" if is_long else "📉",
-            "dir_color":        C["green_dark"] if is_long else C["red_dark"],
+            "dir_color":        C["green"] if is_long else C["red"],
             "grade":            s.get("grade", "--"),
             "outcome":          outcome,
             "outcome_emoji":    "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏹",
-            "border_color":     border_color,
             "pnl":              fmt_pnl(pnl_float),
             "pnl_raw":          round(pnl_float, 4),
             "pnl_color":        pnl_color(pnl_float),
-            "close_reason":     "--",
-            "closed_at":        "--",
             "opened_at":        s.get("timestamp"),
             "entry_price":      s.get("entry"),
             "exit_price":       s.get("exit_price"),
             "sl_price":         s.get("sl"),
             "tp1_price":        s.get("tp1"),
-            "tp2_price":        None,
             "risk_amt":         s.get("risk_amt"),
             "position_size":    s.get("position"),
             "leverage":         s.get("leverage"),
@@ -358,13 +352,11 @@ def build_radar_data(results: list) -> list:
             "grade":          grade,
             "grade_color":    grade_color(grade),
             "direction":      dir_,
-            "dir_emoji":      "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁" if dir_ == "WATCH" else "—",
-            "dir_color":      C["green_dark"] if dir_ == "LONG" else C["red_dark"] if dir_ == "SHORT" else C["orange"] if dir_ == "WATCH" else C["muted"],
             "score":          score,
             "score_pct":      min(100, score),
             "price":          fmt_price(price),
             "change":         fmt_pct(change),
-            "change_color":   pnl_color(change),
+            "change_raw":     change,
             "tradeable":      grade in ["A+", "A"] and dir_ in ["LONG", "SHORT"],
             "confidence":     expl.get("confidence_label", ""),
             "ml_probability": ml_prob,
@@ -380,7 +372,7 @@ def build_signal_queue(results: list) -> list:
         r for r in results
         if r.get("grade") in cfg.MIN_GRADE_TO_TRADE and
         r.get("direction") in ["LONG", "SHORT"]
-    ][:3]
+    ][:5]
 
     queue = []
     for r in tradeable:
@@ -395,21 +387,16 @@ def build_signal_queue(results: list) -> list:
             "grade":            grade,
             "grade_color":      grade_color(grade),
             "direction":        dir_,
-            "dir_emoji":        "📈" if is_long else "📉",
-            "dir_color":        C["green_dark"] if is_long else C["red_dark"],
             "score":            r.get("score", 0),
             "entry":            fmt_price(sig.get("entry")),
             "sl":               fmt_price(sig.get("sl")),
             "tp1":              fmt_price(sig.get("tp1")),
-            "tp2":              None,
             "risk_amt":         f"${sig.get('risk_amt', 0):.2f}",
             "sl_pct":           f"{sig.get('sl_pct', 0):.2f}%",
             "regime":           r.get("regime", "--"),
             "session":          r.get("session", "--"),
             "thesis":           expl.get("thesis", ""),
-            "risk_thesis":      expl.get("risk_thesis", ""),
             "confidence_label": expl.get("confidence_label", ""),
-            "no_trade_reason":  expl.get("no_trade_reason", ""),
             "ml_probability":   r.get("ml_probability"),
             "actual_rr":        r.get("actual_rr", 0),
             "tp_mult":          r.get("tp_mult", 1.5),
@@ -419,18 +406,19 @@ def build_signal_queue(results: list) -> list:
 
 
 def build_header_data(stats: dict) -> dict:
-    today_pnl = 0.0
+    today_pnl    = 0.0
+    today_trades = 0
     try:
         from database import SessionLocal, Signal as SignalModel
-        from datetime import date
+        today_str  = date.today().isoformat()
         with SessionLocal() as db:
-            today_str  = date.today().isoformat()
             today_sigs = db.query(SignalModel).filter(
                 SignalModel.timestamp >= today_str,
                 SignalModel.outcome.notin_(["pending"]),
                 SignalModel.outcome.isnot(None)
             ).all()
-            today_pnl = sum(float(s.pnl or 0) for s in today_sigs)
+            today_pnl    = sum(float(s.pnl or 0) for s in today_sigs)
+            today_trades = len(today_sigs)
     except Exception as e:
         log.error(f"build_header_data today pnl failed: {e}")
 
@@ -445,15 +433,21 @@ def build_header_data(stats: dict) -> dict:
     except Exception:
         pass
 
-    mode = "live" if not cfg.PAPER_TRADING else "paper"
+    mode   = "live" if not cfg.PAPER_TRADING else "paper"
+    grades = cfg.MIN_GRADE_TO_TRADE
 
     return {
         "today_pnl":       fmt_pnl(today_pnl),
+        "today_pnl_raw":   today_pnl,
         "today_pnl_color": pnl_color(today_pnl),
+        "today_trades":    today_trades,
         "win_rate":        f"{wr}%",
+        "win_rate_raw":    wr,
         "win_rate_color":  get_color("winrate", wr),
         "coins_count":     len(cfg.COINS),
         "last_scan_time":  last_scan_time,
         "mode":            mode,
-        "mode_color":      C["red_dark"] if mode == "live" else C["blue"],
+        "mode_color":      C["red"] if mode == "live" else C["blue"],
+        "grades":          grades,
+        "grades_str":      ", ".join(grades) if grades else "--",
     }

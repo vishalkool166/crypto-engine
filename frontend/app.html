@@ -30,118 +30,46 @@
         <nav class="sidebar-nav">
             <div class="nav-section-label">Main</div>
 
-            <div
-                class="nav-item"
-                :class="page === 'overview' && 'active'"
-                @click="navigate('overview')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'overview' ? 'page' : false"
-                @keydown.enter="navigate('overview')"
-                aria-label="Overview"
-            >
+            <div class="nav-item" :class="page==='overview'&&'active'" @click="navigate('overview')" role="button" tabindex="0" :aria-current="page==='overview'?'page':false" @keydown.enter="navigate('overview')" aria-label="Overview">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                 <span>Overview</span>
             </div>
 
-            <div
-                class="nav-item"
-                :class="page === 'signals' && 'active'"
-                @click="navigate('signals')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'signals' ? 'page' : false"
-                @keydown.enter="navigate('signals')"
-                aria-label="Signals"
-            >
+            <div class="nav-item" :class="page==='signals'&&'active'" @click="navigate('signals')" role="button" tabindex="0" :aria-current="page==='signals'?'page':false" @keydown.enter="navigate('signals')" aria-label="Signals">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 <span>Signals</span>
             </div>
 
-            <div
-                class="nav-item"
-                :class="page === 'freqtrade' && 'active'"
-                @click="navigate('freqtrade')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'freqtrade' ? 'page' : false"
-                @keydown.enter="navigate('freqtrade')"
-                aria-label="Freqtrade"
-            >
+            <div class="nav-item" :class="page==='freqtrade'&&'active'" @click="navigate('freqtrade')" role="button" tabindex="0" :aria-current="page==='freqtrade'?'page':false" @keydown.enter="navigate('freqtrade')" aria-label="Freqtrade">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
                 <span>Freqtrade</span>
             </div>
 
             <div class="nav-section-label">Tools</div>
 
-            <div
-                class="nav-item"
-                :class="page === 'coins' && 'active'"
-                @click="navigate('coins')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'coins' ? 'page' : false"
-                @keydown.enter="navigate('coins')"
-                aria-label="Coin Universe"
-            >
+            <div class="nav-item" :class="page==='coins'&&'active'" @click="navigate('coins')" role="button" tabindex="0" :aria-current="page==='coins'?'page':false" @keydown.enter="navigate('coins')" aria-label="Coin Universe">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 <span>Coins</span>
             </div>
 
-            <div
-                class="nav-item"
-                :class="page === 'backtest' && 'active'"
-                @click="navigate('backtest')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'backtest' ? 'page' : false"
-                @keydown.enter="navigate('backtest')"
-                aria-label="Backtest"
-            >
+            <div class="nav-item" :class="page==='backtest'&&'active'" @click="navigate('backtest')" role="button" tabindex="0" :aria-current="page==='backtest'?'page':false" @keydown.enter="navigate('backtest')" aria-label="Backtest">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
                 <span>Backtest</span>
             </div>
 
-            <div
-                class="nav-item"
-                :class="page === 'analysis' && 'active'"
-                @click="navigate('analysis')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'analysis' ? 'page' : false"
-                @keydown.enter="navigate('analysis')"
-                aria-label="Analysis"
-            >
+            <div class="nav-item" :class="page==='analysis'&&'active'" @click="navigate('analysis')" role="button" tabindex="0" :aria-current="page==='analysis'?'page':false" @keydown.enter="navigate('analysis')" aria-label="Analysis">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                 <span>Analysis</span>
             </div>
 
             <div class="nav-section-label">System</div>
 
-            <div
-                class="nav-item"
-                :class="page === 'audit' && 'active'"
-                @click="navigate('audit')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'audit' ? 'page' : false"
-                @keydown.enter="navigate('audit')"
-                aria-label="Audit Log"
-            >
+            <div class="nav-item" :class="page==='audit'&&'active'" @click="navigate('audit')" role="button" tabindex="0" :aria-current="page==='audit'?'page':false" @keydown.enter="navigate('audit')" aria-label="Audit Log">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 <span>Audit Log</span>
             </div>
 
-            <div
-                class="nav-item"
-                :class="page === 'settings' && 'active'"
-                @click="navigate('settings')"
-                role="button"
-                tabindex="0"
-                :aria-current="page === 'settings' ? 'page' : false"
-                @keydown.enter="navigate('settings')"
-                aria-label="Settings"
-            >
+            <div class="nav-item" :class="page==='settings'&&'active'" @click="navigate('settings')" role="button" tabindex="0" :aria-current="page==='settings'?'page':false" @keydown.enter="navigate('settings')" aria-label="Settings">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 <span>Settings</span>
             </div>
@@ -150,18 +78,13 @@
         <div class="sidebar-footer">
             <div class="stat-row">
                 <span class="stat-label" style="font-size:11px;">Mode</span>
-                <span class="badge" :class="mode === 'live' ? 'badge-live' : 'badge-paper'" x-text="mode.toUpperCase()"></span>
+                <span class="badge" :class="mode==='live'?'badge-live':'badge-paper'" x-text="mode.toUpperCase()"></span>
             </div>
             <div class="stat-row" style="margin-top:6px;">
                 <span class="stat-label" style="font-size:11px;">WebSocket</span>
                 <div class="flex items-center gap-4">
-                    <div
-                        class="ws-dot"
-                        :class="wsState"
-                        role="status"
-                        :aria-label="wsState === 'connected' ? 'WebSocket connected' : 'WebSocket disconnected'"
-                    ></div>
-                    <span style="font-size:11px;color:var(--text-muted)" x-text="wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'"></span>
+                    <div class="ws-dot" :class="wsState" role="status" :aria-label="'WebSocket '+wsState"></div>
+                    <span style="font-size:11px;color:var(--text-muted)" x-text="wsState==='connected'?'Live':wsState==='connecting'?'Connecting':'Offline'"></span>
                 </div>
             </div>
         </div>
@@ -172,13 +95,12 @@
         <header class="topbar" role="banner">
             <div class="topbar-left">
                 <span style="font-size:13px;font-weight:600;color:var(--text-secondary)" x-text="pageTitle()"></span>
-
                 <div class="flex items-center gap-8" style="margin-left:8px;">
                     <template x-for="coin in btcEthPrices" :key="coin.symbol">
                         <div class="flex items-center gap-4">
                             <span style="font-size:11px;color:var(--text-muted)" x-text="coin.symbol"></span>
-                            <span class="mono" style="font-size:12px;font-weight:600;" x-text="coin.price"></span>
-                            <span class="mono" style="font-size:11px;" :style="{color: coin.changeColor}" x-text="coin.change"></span>
+                            <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;" x-text="coin.price"></span>
+                            <span style="font-family:var(--font-mono);font-size:11px;" :style="{color:coin.changeColor}" x-text="coin.change"></span>
                         </div>
                     </template>
                 </div>
@@ -188,39 +110,28 @@
                 <div class="flex items-center gap-6" style="font-size:11px;color:var(--text-secondary);">
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     <span>Next scan:</span>
-                    <span class="mono" style="color:var(--text-primary)" x-text="nextScan"></span>
+                    <span style="font-family:var(--font-mono);color:var(--text-primary)" x-text="nextScan"></span>
                 </div>
-
                 <div class="flex items-center gap-6">
-                    <div
-                        class="ws-dot"
-                        :class="wsState"
-                        role="status"
-                        :aria-label="'WebSocket ' + wsState"
-                    ></div>
+                    <div class="ws-dot" :class="wsState" role="status" :aria-label="'WebSocket '+wsState"></div>
                     <span style="font-size:11px;color:var(--text-muted)" x-text="lastUpdate"></span>
                 </div>
-
-                <button
-                    class="btn btn-ghost btn-sm"
-                    @click="logout"
-                    aria-label="Logout"
-                >
+                <button class="btn btn-ghost btn-sm" @click="logout" aria-label="Logout">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     <span>Logout</span>
                 </button>
             </div>
         </header>
 
-        <main class="page-content" role="main" aria-live="polite">
-            <div x-show="page === 'overview'"  x-html="pageHtml.overview"></div>
-            <div x-show="page === 'signals'"   x-html="pageHtml.signals"></div>
-            <div x-show="page === 'freqtrade'" x-html="pageHtml.freqtrade"></div>
-            <div x-show="page === 'coins'"     x-html="pageHtml.coins"></div>
-            <div x-show="page === 'backtest'"  x-html="pageHtml.backtest"></div>
-            <div x-show="page === 'analysis'"  x-html="pageHtml.analysis"></div>
-            <div x-show="page === 'audit'"     x-html="pageHtml.audit"></div>
-            <div x-show="page === 'settings'"  x-html="pageHtml.settings"></div>
+        <main class="page-content" role="main">
+            <div x-show="page==='overview'"  x-html="pageHtml.overview"></div>
+            <div x-show="page==='signals'"   x-html="pageHtml.signals"></div>
+            <div x-show="page==='freqtrade'" x-html="pageHtml.freqtrade"></div>
+            <div x-show="page==='coins'"     x-html="pageHtml.coins"></div>
+            <div x-show="page==='backtest'"  x-html="pageHtml.backtest"></div>
+            <div x-show="page==='analysis'"  x-html="pageHtml.analysis"></div>
+            <div x-show="page==='audit'"     x-html="pageHtml.audit"></div>
+            <div x-show="page==='settings'"  x-html="pageHtml.settings"></div>
         </main>
 
     </div>
@@ -230,20 +141,16 @@
     x-show="totp.show"
     x-cloak
     class="modal-overlay"
-    @click.self="totp.show = false"
+    @click.self="totp.show=false"
     role="dialog"
     aria-modal="true"
     :aria-label="totp.title"
 >
     <div class="modal">
-        <div class="modal-title" x-text="totp.title || 'Confirm Action'"></div>
-        <div class="modal-sub" x-text="totp.subtitle || 'Enter your TOTP code to continue'"></div>
-
+        <div class="modal-title" x-text="totp.title||'Confirm Action'"></div>
+        <div class="modal-sub" x-text="totp.subtitle||'Enter your TOTP code to continue'"></div>
         <div x-show="totp.error" x-cloak class="alert alert-error" role="alert" x-text="totp.error"></div>
-
-        <label for="totp-modal-input" class="form-label" style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">
-            TOTP Code
-        </label>
+        <label for="totp-modal-input" style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">TOTP Code</label>
         <input
             id="totp-modal-input"
             class="totp-input"
@@ -254,24 +161,13 @@
             placeholder="000000"
             aria-label="TOTP verification code"
             aria-required="true"
-            @input="totp.code = totp.code.replace(/\D/g,'')"
-            @keydown.enter="totp.code.length === 6 && confirmTotp()"
+            @input="totp.code=totp.code.replace(/\D/g,'')"
+            @keydown.enter="totp.code.length===6&&confirmTotp()"
             x-ref="totpInput"
         >
-
         <div class="modal-actions">
-            <button
-                class="btn btn-ghost"
-                @click="totp.show = false; totp.code = ''; totp.error = ''"
-                aria-label="Cancel"
-            >Cancel</button>
-            <button
-                class="btn btn-primary"
-                @click="confirmTotp"
-                :disabled="totp.code.length < 6 || totp.loading"
-                :aria-busy="totp.loading"
-                aria-label="Confirm TOTP"
-            >
+            <button class="btn btn-ghost" @click="totp.show=false;totp.code='';totp.error=''" aria-label="Cancel">Cancel</button>
+            <button class="btn btn-primary" @click="confirmTotp" :disabled="totp.code.length<6||totp.loading" :aria-busy="totp.loading" aria-label="Confirm TOTP">
                 <span x-show="totp.loading" class="spinner" aria-hidden="true"></span>
                 Confirm
             </button>
@@ -293,7 +189,7 @@
     x-transition:leave-start="opacity-100"
     x-transition:leave-end="opacity-0"
 >
-    <div class="alert" :class="'alert-' + toast.type" x-text="toast.message"></div>
+    <div class="alert" :class="'alert-'+toast.type" x-text="toast.message"></div>
 </div>
 
 <script src="/js/utils.js"></script>
@@ -313,12 +209,15 @@
 <script>
 function app() {
     return {
-        page:     'overview',
-        mode:     'paper',
-        wsState:  'connecting',
-        nextScan: '--',
-        lastUpdate: '--',
+        page:         'overview',
+        mode:         'paper',
+        wsState:      'connecting',
+        nextScan:     '--',
+        lastUpdate:   '--',
         btcEthPrices: [],
+        dashboardData: {},
+        _wsInstance:  null,
+        _countdownTimer: null,
 
         pageHtml: {
             overview:  overviewPage(),
@@ -331,16 +230,14 @@ function app() {
             settings:  settingsPage(),
         },
 
-        dashboardData: {},
-
         totp: {
-            show:     false,
-            title:    '',
-            subtitle: '',
-            code:     '',
-            error:    '',
-            loading:  false,
-            resolve:  null,
+            show:    false,
+            title:   '',
+            subtitle:'',
+            code:    '',
+            error:   '',
+            loading: false,
+            resolve: null,
         },
 
         toast: {
@@ -351,22 +248,83 @@ function app() {
         },
 
         async init() {
-            await this.checkAuth()
-            this.initWS()
-            this.startCountdown()
             window._app = this
+
+            const [authOk] = await Promise.all([
+                this._checkAuth(),
+                this._loadDashboardNow(),
+            ])
+
+            if (!authOk) return
+
+            this._initWS()
+            this._startCountdown()
+            this._loadFtNow()
         },
 
-        async checkAuth() {
+        async _checkAuth() {
             try {
-                const res = await fetch('/api/health')
+                const res = await fetch('/api/health', { credentials: 'include' })
                 if (res.status === 401) {
                     window.location.href = '/login.html'
+                    return false
+                }
+                return true
+            } catch (e) {
+                return true
+            }
+        },
+
+        async _loadDashboardNow() {
+            try {
+                const data = await API.dashboard()
+                if (data) this._applyDashboard(data)
+            } catch (e) {}
+        },
+
+        async _loadFtNow() {
+            try {
+                const data = await API.ftSummary()
+                if (data) {
+                    window.dispatchEvent(new CustomEvent('ft-update', {
+                        detail: {
+                            type:      'ft_update',
+                            status:    data.status    || [],
+                            profit:    data.profit    || {},
+                            balance:   data.balance   || {},
+                            bot_state: data.bot_state || '--',
+                        }
+                    }))
                 }
             } catch (e) {}
         },
 
-        initWS() {
+        _applyDashboard(data) {
+            this.dashboardData = data
+            this.mode          = data.header?.mode || 'paper'
+            this.lastUpdate    = 'Just now'
+
+            this.btcEthPrices = (data.radar || [])
+                .filter(r => ['BTC', 'ETH'].includes(r.coin))
+                .map(r => ({
+                    symbol:      r.coin,
+                    price:       r.price,
+                    change:      r.change,
+                    changeColor: Utils.changeColor(r.change_raw ?? r.change)
+                }))
+
+            if (data.next_scan_epoch) {
+                this._updateNextScan(data.next_scan_epoch)
+            }
+
+            window.dispatchEvent(new CustomEvent('dashboard-update', { detail: data }))
+        },
+
+        _initWS() {
+            if (this._wsInstance) {
+                try { this._wsInstance.close() } catch (e) {}
+            }
+
             const proto = location.protocol === 'https:' ? 'wss' : 'ws'
             const ws    = new WebSocket(`${proto}://${location.host}/ws/dashboard`)
 
@@ -377,61 +335,43 @@ function app() {
             ws.onmessage = (e) => {
                 try {
                     const data = JSON.parse(e.data)
-                    this.handleWsMessage(data)
+                    if (data.type === 'dashboard') {
+                        this._applyDashboard(data)
+                    }
+                    if (data.type === 'ft_update') {
+                        window.dispatchEvent(new CustomEvent('ft-update', { detail: data }))
+                    }
                 } catch (err) {}
             }
 
             ws.onclose = () => {
-                this.wsState = 'disconnected'
+                this.wsState     = 'disconnected'
+                this._wsInstance = null
                 setTimeout(() => {
                     this.wsState = 'connecting'
-                    this.initWS()
+                    this._initWS()
                 }, 3000)
             }
 
             ws.onerror = () => {
                 this.wsState = 'disconnected'
             }
+
+            this._wsInstance = ws
         },
 
-        handleWsMessage(data) {
-            if (data.type === 'dashboard') {
-                this.dashboardData = data
-                this.mode          = data.header?.mode || 'paper'
-                this.lastUpdate    = 'Just now'
-
-                this.btcEthPrices = (data.radar || [])
-                    .filter(r => ['BTC','ETH'].includes(r.coin))
-                    .map(r => ({
-                        symbol:      r.coin,
-                        price:       r.price,
-                        change:      r.change,
-                        changeColor: r.change && r.change.startsWith('+') ? 'var(--green)' : 'var(--red)'
-                    }))
-
-                if (data.next_scan_epoch) {
-                    this.updateNextScan(data.next_scan_epoch)
-                }
-
-                window.dispatchEvent(new CustomEvent('dashboard-update', { detail: data }))
-            }
-
-            if (data.type === 'ft_update') {
-                window.dispatchEvent(new CustomEvent('ft-update', { detail: data }))
-            }
-        },
-
-        updateNextScan(epoch) {
+        _updateNextScan(epoch) {
             const diff = Math.max(0, epoch - Date.now())
             const mins = Math.floor(diff / 60000)
             const secs = Math.floor((diff % 60000) / 1000)
             this.nextScan = `${mins}m ${secs}s`
         },
 
-        startCountdown() {
-            setInterval(() => {
+        _startCountdown() {
+            if (this._countdownTimer) clearInterval(this._countdownTimer)
+            this._countdownTimer = setInterval(() => {
                 if (this.dashboardData.next_scan_epoch) {
-                    this.updateNextScan(this.dashboardData.next_scan_epoch)
+                    this._updateNextScan(this.dashboardData.next_scan_epoch)
                 }
             }, 1000)
         },
@@ -494,7 +434,7 @@ function app() {
         async logout() {
             await fetch('/auth/logout')
             window.location.href = '/login.html'
-        }
+        },
     }
 }
 </script>

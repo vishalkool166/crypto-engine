@@ -56,12 +56,12 @@ const Utils = {
         try {
             const d = new Date(ts)
             return d.toLocaleString('en-IN', {
-                timeZone:    'Asia/Kolkata',
-                day:         '2-digit',
-                month:       'short',
-                hour:        '2-digit',
-                minute:      '2-digit',
-                hour12:      true
+                timeZone:  'Asia/Kolkata',
+                day:       '2-digit',
+                month:     'short',
+                hour:      '2-digit',
+                minute:    '2-digit',
+                hour12:    true
             }) + ' IST'
         } catch (e) {
             return '--'
@@ -96,13 +96,24 @@ const Utils = {
 
     pnlColor(n) {
         if (n == null) return 'var(--text-muted)'
-        return parseFloat(n) >= 0 ? 'var(--green)' : 'var(--red)'
+        try {
+            return parseFloat(n) >= 0 ? 'var(--green)' : 'var(--red)'
+        } catch (e) {
+            return 'var(--text-muted)'
+        }
     },
 
     changeColor(n) {
         if (n == null) return 'var(--text-muted)'
-        const v = typeof n === 'string' ? parseFloat(n) : n
-        return v >= 0 ? 'var(--green)' : 'var(--red)'
+        try {
+            const v = typeof n === 'string'
+                ? parseFloat(n.replace('%','').replace('+',''))
+                : parseFloat(n)
+            if (isNaN(v)) return 'var(--text-muted)'
+            return v >= 0 ? 'var(--green)' : 'var(--red)'
+        } catch (e) {
+            return 'var(--text-muted)'
+        }
     },
 
     gradeColor(grade) {
@@ -183,6 +194,13 @@ const Utils = {
         return 'var(--text-muted)'
     },
 
+    winRateColor(wr) {
+        wr = parseFloat(wr) || 0
+        if (wr >= 55) return 'var(--green)'
+        if (wr >= 40) return 'var(--orange)'
+        return 'var(--red)'
+    },
+
     ramColor(pct) {
         pct = parseFloat(pct) || 0
         if (pct >= 85) return 'var(--red)'
@@ -202,13 +220,6 @@ const Utils = {
         if (pct >= 90) return 'var(--red)'
         if (pct >= 75) return 'var(--orange)'
         return 'var(--blue)'
-    },
-
-    winRateColor(wr) {
-        wr = parseFloat(wr) || 0
-        if (wr >= 55) return 'var(--green)'
-        if (wr >= 45) return 'var(--orange)'
-        return 'var(--red)'
     },
 
     edgeColor(edge) {
@@ -267,7 +278,7 @@ const Utils = {
         const color = Utils.scoreBarColor(score)
         return `
             <div class="score-bar">
-                <span class="mono" style="font-size:12px;font-weight:600;color:${color};min-width:32px;">${Math.round(score)}</span>
+                <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:${color};min-width:32px;">${Math.round(score)}</span>
                 <div class="score-bar-track">
                     <div class="score-bar-fill" style="width:${score}%;background:${color};"></div>
                 </div>
@@ -292,9 +303,17 @@ const Utils = {
         return `
             <div class="empty-state">
                 <div class="spinner"></div>
-                <span class="empty-state-text">Loading...</span>
+                <span class="empty-state-text" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Loading...</span>
             </div>
         `
+    },
+
+    safeGet(obj, path, fallback = '--') {
+        try {
+            return path.split('.').reduce((o, k) => o?.[k], obj) ?? fallback
+        } catch (e) {
+            return fallback
+        }
     },
 }
 
