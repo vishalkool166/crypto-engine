@@ -1,313 +1,528 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Signal Engine v5 — Setup</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif;
-  background: #f5f5f7;
-  min-height: 100vh;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 40px 20px;
-}
-.card {
-  background: white;
-  border-radius: 20px;
-  padding: 40px;
-  max-width: 540px;
-  width: 100%;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-}
-.logo {
-  width: 48px; height: 48px;
-  background: linear-gradient(135deg, #0071e3, #0051a8);
-  border-radius: 14px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 24px; margin-bottom: 16px;
-}
-h1 { font-size: 22px; font-weight: 700; color: #1d1d1f; margin-bottom: 6px; }
-.subtitle { font-size: 14px; color: #6e6e73; margin-bottom: 28px; line-height: 1.5; }
-.section {
-  border-top: 1px solid rgba(0,0,0,0.08);
-  padding-top: 24px;
-  margin-top: 24px;
-}
-.section-title { font-size: 15px; font-weight: 700; color: #1d1d1f; margin-bottom: 12px; }
-.status-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: 8px;
-  font-size: 13px; margin-bottom: 6px;
-}
-.ok   { background: rgba(52,199,89,0.08);  color: #248a3d; }
-.warn { background: rgba(255,149,0,0.08);  color: #e8820c; }
-.qr-wrap {
-  text-align: center; padding: 24px;
-  background: #f5f5f7; border-radius: 14px;
-  margin: 16px 0;
-}
-.qr-wrap svg, .qr-wrap img { max-width: 180px; border-radius: 8px; }
-.info-box {
-  background: #f5f5f7; border-radius: 12px;
-  padding: 14px 16px; font-size: 12px;
-  line-height: 2; margin-bottom: 16px;
-}
-.info-box code {
-  background: #e8e8ed; padding: 2px 6px;
-  border-radius: 4px; font-size: 11px;
-  word-break: break-all;
-}
-.reveal-btn {
-  background: none; border: 1px solid rgba(0,0,0,0.1);
-  border-radius: 8px; padding: 6px 12px;
-  font-size: 12px; color: #6e6e73;
-  cursor: pointer; margin-bottom: 12px;
-  font-family: inherit;
-}
-.reveal-btn:hover { background: rgba(0,0,0,0.04); }
-label {
-  display: block; font-size: 11px; font-weight: 700;
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: #6e6e73; margin-bottom: 6px; margin-top: 14px;
-}
-input {
-  width: 100%; padding: 12px 14px;
-  border: 1.5px solid rgba(0,0,0,0.1);
-  border-radius: 10px; font-size: 14px;
-  font-family: inherit; outline: none;
-  background: white; color: #1d1d1f;
-  transition: border-color 0.2s;
-}
-input:focus { border-color: #0071e3; }
-.btn {
-  width: 100%; padding: 13px;
-  border: none; border-radius: 10px;
-  font-size: 14px; font-weight: 600;
-  font-family: inherit; cursor: pointer;
-  margin-top: 12px; transition: background 0.2s;
-}
-.btn-primary { background: #0071e3; color: white; }
-.btn-primary:hover { background: #0077ed; }
-.btn-danger {
-  background: rgba(255,59,48,0.08);
-  color: #ff3b30;
-  border: 1px solid rgba(255,59,48,0.2);
-}
-.btn-danger:hover { background: rgba(255,59,48,0.14); }
-.msg {
-  margin-top: 10px; padding: 10px 14px;
-  border-radius: 8px; font-size: 13px;
-  text-align: center; display: none;
-}
-.msg-ok  { background: rgba(52,199,89,0.1);  color: #248a3d; }
-.msg-err { background: rgba(255,59,48,0.1);  color: #c0392b; }
-.back-link {
-  display: block; text-align: center;
-  margin-top: 28px; color: #0071e3;
-  font-size: 13px; font-weight: 600;
-  text-decoration: none;
-}
-.back-link:hover { text-decoration: underline; }
-.complete-banner {
-  background: rgba(52,199,89,0.08);
-  border: 1px solid rgba(52,199,89,0.2);
-  border-radius: 12px; padding: 16px;
-  text-align: center; margin-bottom: 24px;
-}
-.complete-banner .icon { font-size: 32px; margin-bottom: 8px; }
-.complete-banner h2 { font-size: 16px; font-weight: 700; color: #248a3d; margin-bottom: 4px; }
-.complete-banner p { font-size: 13px; color: #6e6e73; }
-.emergency {
-  background: rgba(255,59,48,0.04);
-  border: 1px solid rgba(255,59,48,0.15);
-  border-radius: 10px; padding: 14px;
-  font-size: 12px; color: #6e6e73;
-  line-height: 1.8;
-}
-.emergency code {
-  background: rgba(0,0,0,0.06);
-  padding: 2px 6px; border-radius: 4px;
-  font-size: 11px; word-break: break-all;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Engine v5 — Setup</title>
+    <link rel="stylesheet" href="/css/app.css">
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+            padding: 20px;
+        }
+
+        .setup-wrap {
+            width: 100%;
+            max-width: 480px;
+        }
+
+        .setup-logo {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .setup-logo-title {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-primary);
+        }
+
+        .setup-logo-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            margin-top: 4px;
+        }
+
+        .setup-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--bg-border);
+            border-radius: var(--radius-lg);
+            padding: 28px;
+            margin-bottom: 12px;
+        }
+
+        .setup-section-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .setup-section-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 18px;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 6px;
+        }
+
+        .qr-wrap {
+            display: flex;
+            justify-content: center;
+            padding: 16px;
+            background: #fff;
+            border-radius: var(--radius);
+            margin-bottom: 14px;
+        }
+
+        .qr-wrap svg {
+            max-width: 180px;
+            height: auto;
+        }
+
+        .secret-box {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--bg-border);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            color: var(--text-primary);
+            word-break: break-all;
+            margin-bottom: 14px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .secret-box:hover {
+            border-color: var(--blue);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 18px;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 10px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+        }
+
+        .status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-dot.ok  { background: var(--green); }
+        .status-dot.bad { background: var(--red); }
+
+        .api-key-box {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--bg-border);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            color: var(--text-secondary);
+            word-break: break-all;
+            margin-bottom: 14px;
+        }
+
+        .setup-footer {
+            text-align: center;
+            margin-top: 16px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .setup-footer a {
+            color: var(--blue);
+            text-decoration: none;
+        }
+
+        .tab-row {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: var(--bg-tertiary);
+            padding: 4px;
+            border-radius: var(--radius-sm);
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 7px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 4px;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            transition: all 0.15s;
+        }
+
+        .tab-btn.active {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+    </style>
 </head>
 <body>
-<div class="card">
+    <div class="setup-wrap" x-data="setupApp()">
+        <div class="setup-logo">
+            <div class="setup-logo-title">Signal Engine v5</div>
+            <div class="setup-logo-sub">First Run Setup</div>
+        </div>
 
-  <div class="logo">⚡</div>
-  <h1>Signal Engine v5 — Setup</h1>
-  <p class="subtitle">Configure your dashboard credentials and TOTP authenticator.</p>
+        <div class="setup-card">
+            <div class="setup-section-title">
+                <span>Setup Status</span>
+            </div>
+            <div class="setup-section-sub">Complete all steps before logging in</div>
 
-  {% if status.setup_complete %}
-  <div class="complete-banner">
-    <div class="icon">✅</div>
-    <h2>Setup Complete</h2>
-    <p>Your bot is fully configured and ready to trade.</p>
-  </div>
-  {% endif %}
+            <div class="status-grid">
+                <div class="status-item">
+                    <div class="status-dot" :class="status.totp_secret_set ? 'ok' : 'bad'"></div>
+                    <span>TOTP Secret</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" :class="status.password_set ? 'ok' : 'bad'"></div>
+                    <span>Password</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" :class="status.username_set ? 'ok' : 'bad'"></div>
+                    <span>Username</span>
+                </div>
+                <div class="status-item">
+                    <div class="status-dot" :class="status.api_key_set ? 'ok' : 'bad'"></div>
+                    <span>API Key</span>
+                </div>
+            </div>
 
-  <div class="status-row {{ 'ok' if status.totp_secret_set else 'warn' }}">
-    {{ '✅' if status.totp_secret_set else '⚠️' }} TOTP: {{ 'Configured' if status.totp_secret_set else 'Not set' }}
-  </div>
-  <div class="status-row {{ 'ok' if status.password_set else 'warn' }}">
-    {{ '✅' if status.password_set else '⚠️' }} Password: {{ 'Set' if status.password_set else 'Not set — fill form below' }}
-  </div>
-  <div class="status-row ok">
-    ✅ Username: <strong>{{ status.username }}</strong>
-  </div>
+            <div x-show="status.setup_complete" x-cloak class="alert alert-success">
+                ✅ Setup complete — <a href="/login.html" style="color:var(--green)">go to login</a>
+            </div>
+        </div>
 
-  {% if not status.setup_complete %}
-  <div class="section">
-    <div class="section-title">📱 Authenticator Setup</div>
-    <p style="font-size:13px;color:#6e6e73;margin-bottom:12px;line-height:1.6">
-      Scan this QR code with Google Authenticator or Authy. Only needs to be done once.
-    </p>
+        <div class="setup-card">
+            <div class="tab-row">
+                <button class="tab-btn" :class="tab === 'totp' && 'active'" @click="tab = 'totp'">TOTP / 2FA</button>
+                <button class="tab-btn" :class="tab === 'creds' && 'active'" @click="tab = 'creds'">Credentials</button>
+                <button class="tab-btn" :class="tab === 'reset' && 'active'" @click="tab = 'reset'">Reset Password</button>
+                <button class="tab-btn" :class="tab === 'apikey' && 'active'" @click="tab = 'apikey'">API Key</button>
+            </div>
 
-    {% if qr_svg %}
-      <div class="qr-wrap">{{ qr_svg | safe }}</div>
-    {% elif qr_png_available %}
-      <div class="qr-wrap"><img src="/auth/qr.png" alt="QR Code"></div>
-    {% else %}
-      <div class="qr-wrap" style="color:#ff3b30;font-size:13px">
-        ⚠️ QR generation failed — use the secret below to add manually
-      </div>
-    {% endif %}
+            <div x-show="tab === 'totp'" x-cloak>
+                <div class="setup-section-title">Authenticator Setup</div>
+                <div class="setup-section-sub">Scan with Google Authenticator or Authy</div>
 
-    <div class="info-box">
-      <div>TOTP Secret: <code>{{ totp_secret }}</code></div>
-      <div>TOTP URI: <code>{{ totp_uri }}</code></div>
+                <template x-if="qrSvg">
+                    <div class="qr-wrap" x-html="qrSvg"></div>
+                </template>
+
+                <template x-if="!qrSvg && qrPngAvailable">
+                    <div class="qr-wrap">
+                        <img src="/auth/qr.png" alt="QR Code" style="max-width:180px;">
+                    </div>
+                </template>
+
+                <div class="form-label">TOTP Secret (manual entry)</div>
+                <div
+                    class="secret-box"
+                    @click="copySecret"
+                    title="Click to copy"
+                    x-text="totpSecret || 'Not generated yet'"
+                ></div>
+                <div x-show="copied" x-cloak style="font-size:11px;color:var(--green);margin-bottom:10px;">
+                    Copied to clipboard
+                </div>
+
+                <button class="btn btn-warning btn-sm" @click="regenerateTotp" :disabled="regenLoading">
+                    <span x-show="regenLoading" class="spinner"></span>
+                    Regenerate TOTP Secret
+                </button>
+
+                <div x-show="regenMsg" x-cloak class="alert alert-warning" style="margin-top:10px;" x-text="regenMsg"></div>
+            </div>
+
+            <div x-show="tab === 'creds'" x-cloak>
+                <div class="setup-section-title">Set Credentials</div>
+                <div class="setup-section-sub">Set your username and password</div>
+
+                <div x-show="credsMsg" x-cloak class="alert" :class="credsOk ? 'alert-success' : 'alert-error'" x-text="credsMsg"></div>
+
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input
+                        class="input"
+                        type="text"
+                        x-model="creds.username"
+                        :placeholder="status.username || 'admin'"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">New Password</label>
+                    <input
+                        class="input"
+                        type="password"
+                        x-model="creds.password"
+                        placeholder="Min 8 characters"
+                    >
+                </div>
+
+                <button
+                    class="btn btn-primary"
+                    @click="saveCredentials"
+                    :disabled="credsLoading || (!creds.username && !creds.password)"
+                >
+                    <span x-show="credsLoading" class="spinner"></span>
+                    Save Credentials
+                </button>
+            </div>
+
+            <div x-show="tab === 'reset'" x-cloak>
+                <div class="setup-section-title">Reset Password via TOTP</div>
+                <div class="setup-section-sub">Use your authenticator app to reset password</div>
+
+                <div x-show="resetMsg" x-cloak class="alert" :class="resetOk ? 'alert-success' : 'alert-error'" x-text="resetMsg"></div>
+
+                <div class="form-group">
+                    <label class="form-label">TOTP Code</label>
+                    <input
+                        class="input totp-input"
+                        type="text"
+                        inputmode="numeric"
+                        maxlength="6"
+                        x-model="reset.totp_code"
+                        placeholder="000000"
+                        @input="reset.totp_code = reset.totp_code.replace(/\D/g,'')"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">New Password</label>
+                    <input
+                        class="input"
+                        type="password"
+                        x-model="reset.new_password"
+                        placeholder="Min 8 characters"
+                    >
+                </div>
+
+                <button
+                    class="btn btn-primary"
+                    @click="resetPassword"
+                    :disabled="resetLoading || reset.totp_code.length < 6 || reset.new_password.length < 8"
+                >
+                    <span x-show="resetLoading" class="spinner"></span>
+                    Reset Password
+                </button>
+            </div>
+
+            <div x-show="tab === 'apikey'" x-cloak>
+                <div class="setup-section-title">API Key</div>
+                <div class="setup-section-sub">Use this key for programmatic access via X-API-Key header</div>
+
+                <div class="form-label">Your API Key</div>
+                <div
+                    class="api-key-box"
+                    @click="copyApiKey"
+                    title="Click to copy"
+                    x-text="apiKey || 'Not generated yet'"
+                ></div>
+
+                <div x-show="apiKeyCopied" x-cloak style="font-size:11px;color:var(--green);margin-bottom:10px;">
+                    Copied to clipboard
+                </div>
+
+                <div class="form-label" style="margin-top:8px;">TOTP URI (for manual setup)</div>
+                <div class="api-key-box" x-text="totpUri || '--'"></div>
+            </div>
+        </div>
+
+        <div class="setup-footer">
+            Already set up? <a href="/login.html">Go to login</a>
+        </div>
     </div>
-  </div>
 
-  <div class="section">
-    <div class="section-title">🔑 Set Credentials</div>
+    <script>
+        function setupApp() {
+            return {
+                tab:           'totp',
+                status:        {},
+                qrSvg:         '',
+                qrPngAvailable: false,
+                totpSecret:    '',
+                totpUri:       '',
+                apiKey:        '',
+                copied:        false,
+                apiKeyCopied:  false,
+                regenLoading:  false,
+                regenMsg:      '',
+                credsLoading:  false,
+                credsMsg:      '',
+                credsOk:       false,
+                resetLoading:  false,
+                resetMsg:      '',
+                resetOk:       false,
+                creds:  { username: '', password: '' },
+                reset:  { totp_code: '', new_password: '' },
 
-    <label>Username <span style="font-weight:400;text-transform:none">(current: {{ username }})</span></label>
-    <input type="text" id="new-username" placeholder="Change username (optional)">
+                async init() {
+                    await this.loadStatus()
+                },
 
-    <label>New Password</label>
-    <input type="password" id="pw" placeholder="Min 8 characters">
+                async loadStatus() {
+                    try {
+                        const res  = await fetch('/auth/setup')
+                        const html = await res.text()
+                        const parser = new DOMParser()
+                        const doc    = parser.parseFromString(html, 'text/html')
+                        const data   = JSON.parse(doc.getElementById('setup-data')?.textContent || '{}')
+                        this.status         = data.status        || {}
+                        this.qrSvg          = data.qr_svg        || ''
+                        this.qrPngAvailable = data.qr_png_available || false
+                        this.totpSecret     = data.totp_secret   || ''
+                        this.totpUri        = data.totp_uri      || ''
+                        this.apiKey         = data.api_key       || ''
+                    } catch (e) {
+                        this.status = {
+                            totp_secret_set: !!document.querySelector('[data-totp]'),
+                        }
+                        this.qrSvg      = document.getElementById('qr-svg-data')?.innerHTML || ''
+                        this.totpSecret = document.getElementById('totp-secret')?.textContent || ''
+                        this.totpUri    = document.getElementById('totp-uri')?.textContent    || ''
+                        this.apiKey     = document.getElementById('api-key')?.textContent     || ''
+                        this.status     = JSON.parse(document.getElementById('status-json')?.textContent || '{}')
+                        this.qrPngAvailable = document.getElementById('qr-png-available')?.textContent === 'true'
+                    }
+                },
 
-    <label>Confirm Password</label>
-    <input type="password" id="pw2" placeholder="Confirm password">
+                async copySecret() {
+                    if (!this.totpSecret) return
+                    await navigator.clipboard.writeText(this.totpSecret)
+                    this.copied = true
+                    setTimeout(() => { this.copied = false }, 2000)
+                },
 
-    <button class="btn btn-primary" onclick="saveCredentials()">Save Credentials</button>
-    <div class="msg" id="cred-msg"></div>
-  </div>
+                async copyApiKey() {
+                    if (!this.apiKey) return
+                    await navigator.clipboard.writeText(this.apiKey)
+                    this.apiKeyCopied = true
+                    setTimeout(() => { this.apiKeyCopied = false }, 2000)
+                },
 
-  {% else %}
+                async regenerateTotp() {
+                    this.regenLoading = true
+                    this.regenMsg     = ''
+                    try {
+                        const res  = await fetch('/auth/regenerate-totp', { method: 'POST' })
+                        const data = await res.json()
+                        if (data.success) {
+                            this.totpSecret = data.secret
+                            this.regenMsg   = '⚠️ New secret generated — re-scan QR in your authenticator app'
+                            window.location.reload()
+                        }
+                    } catch (e) {
+                        this.regenMsg = 'Failed to regenerate'
+                    } finally {
+                        this.regenLoading = false
+                    }
+                },
 
-  <div class="section">
-    <div class="section-title">🔑 Update Credentials</div>
+                async saveCredentials() {
+                    this.credsLoading = true
+                    this.credsMsg     = ''
+                    try {
+                        const body = {}
+                        if (this.creds.username) body.username = this.creds.username
+                        if (this.creds.password) body.password = this.creds.password
 
-    <label>New Username <span style="font-weight:400;text-transform:none">(optional)</span></label>
-    <input type="text" id="new-username" placeholder="Leave blank to keep current">
+                        const res  = await fetch('/auth/set-credentials', {
+                            method:  'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body:    JSON.stringify(body)
+                        })
+                        const data = await res.json()
+                        if (data.success) {
+                            this.credsOk  = true
+                            this.credsMsg = data.message || 'Saved successfully'
+                            this.creds    = { username: '', password: '' }
+                            await this.loadStatus()
+                        } else {
+                            this.credsOk  = false
+                            this.credsMsg = data.reason || 'Failed to save'
+                        }
+                    } catch (e) {
+                        this.credsOk  = false
+                        this.credsMsg = 'Network error'
+                    } finally {
+                        this.credsLoading = false
+                    }
+                },
 
-    <label>New Password <span style="font-weight:400;text-transform:none">(optional)</span></label>
-    <input type="password" id="pw" placeholder="Leave blank to keep current">
+                async resetPassword() {
+                    this.resetLoading = true
+                    this.resetMsg     = ''
+                    try {
+                        const res  = await fetch('/auth/reset-password', {
+                            method:  'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body:    JSON.stringify(this.reset)
+                        })
+                        const data = await res.json()
+                        if (data.success) {
+                            this.resetOk  = true
+                            this.resetMsg = 'Password reset successfully — go to login'
+                            this.reset    = { totp_code: '', new_password: '' }
+                        } else {
+                            this.resetOk  = false
+                            this.resetMsg = data.reason || 'Reset failed'
+                        }
+                    } catch (e) {
+                        this.resetOk  = false
+                        this.resetMsg = 'Network error'
+                    } finally {
+                        this.resetLoading = false
+                    }
+                }
+            }
+        }
+    </script>
 
-    <label>Confirm Password</label>
-    <input type="password" id="pw2" placeholder="Confirm new password">
+    <script id="setup-data" type="application/json">
+        {{ setup_data_json | safe }}
+    </script>
 
-    <button class="btn btn-primary" onclick="saveCredentials()">Update Credentials</button>
-    <div class="msg" id="cred-msg"></div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">📱 TOTP / API Key</div>
-    <button class="reveal-btn" onclick="toggleSecrets()">👁 Show Secrets</button>
-    <div id="secrets-box" style="display:none">
-      <div class="info-box">
-        <div>API Key: <code>{{ api_key }}</code></div>
-        <div>TOTP Secret: <code>{{ totp_secret }}</code></div>
-        <div>TOTP URI: <code>{{ totp_uri }}</code></div>
-      </div>
-      {% if qr_svg %}
-        <div class="qr-wrap">{{ qr_svg | safe }}</div>
-      {% elif qr_png_available %}
-        <div class="qr-wrap"><img src="/auth/qr.png" alt="QR Code"></div>
-      {% endif %}
+    <div style="display:none">
+        <span id="status-json">{{ status | tojson }}</span>
+        <span id="totp-secret">{{ totp_secret }}</span>
+        <span id="totp-uri">{{ totp_uri }}</span>
+        <span id="api-key">{{ api_key }}</span>
+        <span id="qr-png-available">{{ qr_png_available | lower }}</span>
+        <div id="qr-svg-data">{{ qr_svg | safe }}</div>
     </div>
-  </div>
-
-  {% endif %}
-
-  <div class="section">
-    <div class="section-title">🔄 Regenerate TOTP</div>
-    <p style="font-size:12px;color:#6e6e73;margin-bottom:12px;line-height:1.6">
-      Only do this if you lost access to your authenticator app. You must re-scan after regenerating.
-    </p>
-    <button class="btn btn-danger" onclick="regenTotp()">⚠️ Regenerate TOTP Secret</button>
-    <div class="msg" id="regen-msg"></div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">🆘 Emergency Recovery</div>
-    <div class="emergency">
-      Lost access completely? Run on your server:<br>
-      <code>python -c "from auth import set_password; set_password('newpass')"</code>
-    </div>
-  </div>
-
-  <a href="/login.html" class="back-link">← Back to Login</a>
-
-</div>
-
-<script>
-function toggleSecrets() {
-  const box = document.getElementById('secrets-box')
-  const btn = document.querySelector('.reveal-btn')
-  if (box.style.display === 'none') {
-    box.style.display = 'block'
-    btn.textContent   = '🙈 Hide Secrets'
-  } else {
-    box.style.display = 'none'
-    btn.textContent   = '👁 Show Secrets'
-  }
-}
-
-async function saveCredentials() {
-  const username = document.getElementById('new-username').value.trim()
-  const pw       = document.getElementById('pw').value
-  const pw2      = document.getElementById('pw2').value
-
-  if (!pw && !username) { showMsg('cred-msg', 'Enter a password or new username', false); return }
-  if (pw && pw.length < 8) { showMsg('cred-msg', 'Password must be at least 8 characters', false); return }
-  if (pw && pw !== pw2)    { showMsg('cred-msg', 'Passwords do not match', false); return }
-
-  const res  = await fetch('/auth/set-credentials', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ password: pw || null, username: username || null })
-  })
-  const data = await res.json()
-  showMsg('cred-msg', data.success ? '✅ ' + data.message : '❌ ' + (data.reason || 'Failed'), data.success)
-  if (data.success) setTimeout(() => location.reload(), 1500)
-}
-
-async function regenTotp() {
-  if (!confirm('Are you sure? You must re-scan the new QR code in your authenticator app.')) return
-  const res  = await fetch('/auth/regenerate-totp', { method: 'POST' })
-  const data = await res.json()
-  if (data.success) {
-    showMsg('regen-msg', '✅ New TOTP generated — reloading...', true)
-    setTimeout(() => location.reload(), 1500)
-  } else {
-    showMsg('regen-msg', '❌ ' + (data.reason || 'Failed'), false)
-  }
-}
-
-function showMsg(id, text, ok) {
-  const el = document.getElementById(id)
-  el.textContent   = text
-  el.className     = 'msg ' + (ok ? 'msg-ok' : 'msg-err')
-  el.style.display = 'block'
-}
-</script>
 </body>
 </html>

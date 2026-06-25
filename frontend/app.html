@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Engine v5</title>
+    <link rel="stylesheet" href="/css/app.css">
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+</head>
+<body x-data="app()" x-init="init()" x-cloak>
+
+<div class="app-layout">
+
+    <aside class="sidebar">
+        <div class="sidebar-logo">
+            <div class="sidebar-logo-title">Signal Engine</div>
+            <div class="sidebar-logo-sub">v5.0.0</div>
+        </div>
+
+        <nav class="sidebar-nav">
+            <div class="nav-section-label">Main</div>
+
+            <div class="nav-item" :class="page === 'overview' && 'active'" @click="navigate('overview')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                <span>Overview</span>
+            </div>
+
+            <div class="nav-item" :class="page === 'signals' && 'active'" @click="navigate('signals')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>Signals</span>
+            </div>
+
+            <div class="nav-item" :class="page === 'freqtrade' && 'active'" @click="navigate('freqtrade')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+                <span>Freqtrade</span>
+            </div>
+
+            <div class="nav-section-label">Tools</div>
+
+            <div class="nav-item" :class="page === 'coins' && 'active'" @click="navigate('coins')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                <span>Coins</span>
+            </div>
+
+            <div class="nav-item" :class="page === 'backtest' && 'active'" @click="navigate('backtest')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                <span>Backtest</span>
+            </div>
+
+            <div class="nav-item" :class="page === 'analysis' && 'active'" @click="navigate('analysis')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                <span>Analysis</span>
+            </div>
+
+            <div class="nav-section-label">System</div>
+
+            <div class="nav-item" :class="page === 'audit' && 'active'" @click="navigate('audit')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                <span>Audit Log</span>
+            </div>
+
+            <div class="nav-item" :class="page === 'settings' && 'active'" @click="navigate('settings')">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                <span>Settings</span>
+            </div>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="stat-row">
+                <span class="stat-label" style="font-size:11px;">Mode</span>
+                <span class="badge" :class="mode === 'live' ? 'badge-live' : 'badge-paper'" x-text="mode.toUpperCase()"></span>
+            </div>
+            <div class="stat-row" style="margin-top:6px;">
+                <span class="stat-label" style="font-size:11px;">WebSocket</span>
+                <div class="flex items-center gap-4">
+                    <div class="ws-dot" :class="wsState"></div>
+                    <span style="font-size:11px;color:var(--text-muted)" x-text="wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'"></span>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <div class="main-area">
+
+        <header class="topbar">
+            <div class="topbar-left">
+                <span style="font-size:13px;font-weight:600;color:var(--text-secondary)" x-text="pageTitle()"></span>
+
+                <div class="flex items-center gap-8" style="margin-left:8px;">
+                    <template x-for="coin in btcEthPrices" :key="coin.symbol">
+                        <div class="flex items-center gap-4">
+                            <span style="font-size:11px;color:var(--text-muted)" x-text="coin.symbol"></span>
+                            <span class="mono" style="font-size:12px;font-weight:600;" x-text="coin.price"></span>
+                            <span class="mono" style="font-size:11px;" :style="{color: coin.changeColor}" x-text="coin.change"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="topbar-right">
+                <div class="flex items-center gap-6" style="font-size:11px;color:var(--text-secondary);">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Next scan:</span>
+                    <span class="mono" style="color:var(--text-primary)" x-text="nextScan"></span>
+                </div>
+
+                <div class="flex items-center gap-6">
+                    <div class="ws-dot" :class="wsState"></div>
+                    <span style="font-size:11px;color:var(--text-muted)" x-text="lastUpdate"></span>
+                </div>
+
+                <button class="btn btn-ghost btn-sm" @click="logout">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="page-content">
+            <div x-show="page === 'overview'"  x-html="pageHtml.overview"></div>
+            <div x-show="page === 'signals'"   x-html="pageHtml.signals"></div>
+            <div x-show="page === 'freqtrade'" x-html="pageHtml.freqtrade"></div>
+            <div x-show="page === 'coins'"     x-html="pageHtml.coins"></div>
+            <div x-show="page === 'backtest'"  x-html="pageHtml.backtest"></div>
+            <div x-show="page === 'analysis'"  x-html="pageHtml.analysis"></div>
+            <div x-show="page === 'audit'"     x-html="pageHtml.audit"></div>
+            <div x-show="page === 'settings'"  x-html="pageHtml.settings"></div>
+        </main>
+
+    </div>
+</div>
+
+<div x-show="totp.show" x-cloak class="modal-overlay" @click.self="totp.show = false">
+    <div class="modal">
+        <div class="modal-title" x-text="totp.title || 'Confirm Action'"></div>
+        <div class="modal-sub" x-text="totp.subtitle || 'Enter your TOTP code to continue'"></div>
+
+        <div x-show="totp.error" x-cloak class="alert alert-error" x-text="totp.error"></div>
+
+        <input
+            class="totp-input"
+            type="text"
+            inputmode="numeric"
+            maxlength="6"
+            x-model="totp.code"
+            placeholder="000000"
+            @input="totp.code = totp.code.replace(/\D/g,'')"
+            @keydown.enter="totp.code.length === 6 && confirmTotp()"
+            x-ref="totpInput"
+        >
+
+        <div class="modal-actions">
+            <button class="btn btn-ghost" @click="totp.show = false; totp.code = ''; totp.error = ''">Cancel</button>
+            <button
+                class="btn btn-primary"
+                @click="confirmTotp"
+                :disabled="totp.code.length < 6 || totp.loading"
+            >
+                <span x-show="totp.loading" class="spinner"></span>
+                Confirm
+            </button>
+        </div>
+    </div>
+</div>
+
+<div x-show="toast.show" x-cloak
+    style="position:fixed;bottom:20px;right:20px;z-index:2000;min-width:260px;max-width:360px;"
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="opacity-0 transform translate-y-2"
+    x-transition:enter-end="opacity-100 transform translate-y-0"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="opacity-100"
+    x-transition:leave-end="opacity-0"
+>
+    <div class="alert" :class="'alert-' + toast.type" x-text="toast.message"></div>
+</div>
+
+<script src="/js/utils.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/ws.js"></script>
+<script src="/js/charts.js"></script>
+<script src="/js/components/totp.js"></script>
+<script src="/js/pages/overview.js"></script>
+<script src="/js/pages/signals.js"></script>
+<script src="/js/pages/freqtrade.js"></script>
+<script src="/js/pages/coins.js"></script>
+<script src="/js/pages/backtest.js"></script>
+<script src="/js/pages/analysis.js"></script>
+<script src="/js/pages/audit.js"></script>
+<script src="/js/pages/settings.js"></script>
+
+<script>
+function app() {
+    return {
+        page:     'overview',
+        mode:     'paper',
+        wsState:  'connecting',
+        nextScan: '--',
+        lastUpdate: '--',
+        btcEthPrices: [],
+
+        pageHtml: {
+            overview:  overviewPage(),
+            signals:   signalsPage(),
+            freqtrade: freqtradePage(),
+            coins:     coinsPage(),
+            backtest:  backtestPage(),
+            analysis:  analysisPage(),
+            audit:     auditPage(),
+            settings:  settingsPage(),
+        },
+
+        dashboardData: {},
+
+        totp: {
+            show:     false,
+            title:    '',
+            subtitle: '',
+            code:     '',
+            error:    '',
+            loading:  false,
+            resolve:  null,
+        },
+
+        toast: {
+            show:    false,
+            message: '',
+            type:    'success',
+            timer:   null,
+        },
+
+        async init() {
+            await this.checkAuth()
+            this.initWS()
+            this.startCountdown()
+            window._app = this
+        },
+
+        async checkAuth() {
+            try {
+                const res = await fetch('/api/health')
+                if (res.status === 401) {
+                    window.location.href = '/login.html'
+                }
+            } catch (e) {}
+        },
+
+        initWS() {
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+            const ws    = new WebSocket(`${proto}://${location.host}/ws/dashboard`)
+
+            ws.onopen = () => {
+                this.wsState = 'connected'
+            }
+
+            ws.onmessage = (e) => {
+                try {
+                    const data = JSON.parse(e.data)
+                    this.handleWsMessage(data)
+                } catch (err) {}
+            }
+
+            ws.onclose = () => {
+                this.wsState = 'disconnected'
+                setTimeout(() => {
+                    this.wsState = 'connecting'
+                    this.initWS()
+                }, 3000)
+            }
+
+            ws.onerror = () => {
+                this.wsState = 'disconnected'
+            }
+        },
+
+        handleWsMessage(data) {
+            if (data.type === 'dashboard') {
+                this.dashboardData = data
+                this.mode          = data.header?.mode || 'paper'
+                this.lastUpdate    = 'Just now'
+
+                this.btcEthPrices = (data.radar || [])
+                    .filter(r => ['BTC','ETH'].includes(r.coin))
+                    .map(r => ({
+                        symbol:      r.coin,
+                        price:       r.price,
+                        change:      r.change,
+                        changeColor: r.change && r.change.startsWith('+') ? 'var(--green)' : 'var(--red)'
+                    }))
+
+                if (data.next_scan_epoch) {
+                    this.updateNextScan(data.next_scan_epoch)
+                }
+
+                window.dispatchEvent(new CustomEvent('dashboard-update', { detail: data }))
+            }
+
+            if (data.type === 'ft_update') {
+                window.dispatchEvent(new CustomEvent('ft-update', { detail: data }))
+            }
+        },
+
+        updateNextScan(epoch) {
+            const diff = Math.max(0, epoch - Date.now())
+            const mins = Math.floor(diff / 60000)
+            const secs = Math.floor((diff % 60000) / 1000)
+            this.nextScan = `${mins}m ${secs}s`
+        },
+
+        startCountdown() {
+            setInterval(() => {
+                if (this.dashboardData.next_scan_epoch) {
+                    this.updateNextScan(this.dashboardData.next_scan_epoch)
+                }
+            }, 1000)
+        },
+
+        navigate(p) {
+            this.page = p
+            window.dispatchEvent(new CustomEvent('page-change', { detail: { page: p } }))
+        },
+
+        pageTitle() {
+            const titles = {
+                overview:  'Overview',
+                signals:   'Signals',
+                freqtrade: 'Freqtrade',
+                coins:     'Coin Universe',
+                backtest:  'Backtest',
+                analysis:  'Analysis',
+                audit:     'Audit Log',
+                settings:  'Settings',
+            }
+            return titles[this.page] || ''
+        },
+
+        async requireTotp(title, subtitle) {
+            return new Promise((resolve) => {
+                this.totp.title    = title    || 'Confirm Action'
+                this.totp.subtitle = subtitle || 'Enter your TOTP code to continue'
+                this.totp.code     = ''
+                this.totp.error    = ''
+                this.totp.loading  = false
+                this.totp.show     = true
+                this.totp.resolve  = resolve
+                this.$nextTick(() => {
+                    this.$refs.totpInput?.focus()
+                })
+            })
+        },
+
+        confirmTotp() {
+            if (this.totp.code.length < 6) return
+            if (this.totp.resolve) {
+                this.totp.resolve(this.totp.code)
+                this.totp.show    = false
+                this.totp.resolve = null
+                this.totp.code    = ''
+                this.totp.error   = ''
+            }
+        },
+
+        showToast(message, type = 'success', duration = 3500) {
+            if (this.toast.timer) clearTimeout(this.toast.timer)
+            this.toast.message = message
+            this.toast.type    = type
+            this.toast.show    = true
+            this.toast.timer   = setTimeout(() => {
+                this.toast.show = false
+            }, duration)
+        },
+
+        async logout() {
+            await fetch('/auth/logout')
+            window.location.href = '/login.html'
+        }
+    }
+}
+</script>
+</body>
+</html>

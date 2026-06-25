@@ -25,3 +25,4 @@ mplfinance
 tweepy
 Pillow
 docker
+psutil

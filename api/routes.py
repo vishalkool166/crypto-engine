@@ -27,15 +27,72 @@ from api.formatters import (
 )
 import runtime_state as rs
 import httpx
+import psutil
+import time
 
 log     = logging.getLogger(__name__)
 router  = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
+_boot_time = time.time()
+
 
 def _auth(request: Request):
     if not is_authenticated(request):
         raise HTTPException(401, "Unauthorized")
+
+
+def _get_system_stats() -> dict:
+    try:
+        mem  = psutil.virtual_memory()
+        cpu  = psutil.cpu_percent(interval=0.1)
+        disk = psutil.disk_usage('/')
+
+        uptime_secs = int(time.time() - psutil.boot_time())
+        days        = uptime_secs // 86400
+        hours       = (uptime_secs % 86400) // 3600
+        mins        = (uptime_secs % 3600) // 60
+
+        containers = []
+        try:
+            import docker
+            client = docker.from_env()
+            for c in client.containers.list():
+                stats     = c.stats(stream=False)
+                mem_usage = stats["memory_stats"].get("usage", 0)
+                mem_limit = stats["memory_stats"].get("limit", 1)
+                cpu_delta  = stats["cpu_stats"]["cpu_usage"]["total_usage"] - \
+                             stats["precpu_stats"]["cpu_usage"]["total_usage"]
+                sys_delta  = stats["cpu_stats"].get("system_cpu_usage", 0) - \
+                             stats["precpu_stats"].get("system_cpu_usage", 0)
+                cpu_pct    = (cpu_delta / sys_delta * 100) if sys_delta > 0 else 0
+
+                containers.append({
+                    "name":       c.name,
+                    "status":     c.status,
+                    "mem_mb":     round(mem_usage / 1024 / 1024),
+                    "mem_pct":    round(mem_usage / mem_limit * 100, 1),
+                    "cpu_pct":    round(cpu_pct, 1),
+                })
+        except Exception:
+            pass
+
+        return {
+            "ram_used_mb":   round(mem.used / 1024 / 1024),
+            "ram_total_mb":  round(mem.total / 1024 / 1024),
+            "ram_pct":       round(mem.percent, 1),
+            "ram_available": round(mem.available / 1024 / 1024),
+            "cpu_pct":       round(cpu, 1),
+            "disk_used_gb":  round(disk.used / 1024 ** 3, 1),
+            "disk_total_gb": round(disk.total / 1024 ** 3, 1),
+            "disk_pct":      round(disk.percent, 1),
+            "uptime_secs":   uptime_secs,
+            "uptime_str":    f"{days}d {hours}h {mins}m",
+            "containers":    containers,
+        }
+    except Exception as e:
+        log.error(f"System stats error: {e}")
+        return {}
 
 
 async def build_dashboard_payload() -> dict:
@@ -49,24 +106,24 @@ async def build_dashboard_payload() -> dict:
         ).order_by(SignalModel.timestamp.desc()).limit(10).all()
 
         signals_list = [{
-            "id":        s.id,
-            "coin":      s.coin,
-            "direction": s.direction,
-            "grade":     s.grade,
-            "outcome":   s.outcome,
-            "pnl":       s.pnl,
-            "entry":     s.entry,
-            "exit_price":s.exit_price,
-            "sl":        s.sl,
-            "tp1":       s.tp1,
-            "tp2":       None,
-            "risk_amt":  s.risk_amt,
-            "position":  s.position,
-            "leverage":  s.leverage,
-            "regime":    s.regime,
-            "session":   s.session,
-            "score":     s.score,
-            "timestamp": s.timestamp.isoformat() if s.timestamp else None,
+            "id":         s.id,
+            "coin":       s.coin,
+            "direction":  s.direction,
+            "grade":      s.grade,
+            "outcome":    s.outcome,
+            "pnl":        s.pnl,
+            "entry":      s.entry,
+            "exit_price": s.exit_price,
+            "sl":         s.sl,
+            "tp1":        s.tp1,
+            "tp2":        None,
+            "risk_amt":   s.risk_amt,
+            "position":   s.position,
+            "leverage":   s.leverage,
+            "regime":     s.regime,
+            "session":    s.session,
+            "score":      s.score,
+            "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
         } for s in signals_raw]
     finally:
         db.close()
@@ -127,22 +184,22 @@ def build_coin_universe() -> list:
             change = market.get("change24", 0)
 
             result.append({
-                "coin":        r.coin,
-                "enabled":     r.enabled,
-                "tier":        r.tier,
-                "source":      r.source,
-                "volume_24h":  r.volume_24h,
-                "added_at":    r.added_at.isoformat() if r.added_at else None,
-                "last_seen":   r.last_seen.isoformat() if r.last_seen else None,
-                "grade":       grade,
-                "grade_color": grade_color(grade),
-                "score":       score,
-                "direction":   dir_,
-                "has_signal":  cached is not None,
-                "price":       fmt_price(market.get("price", 0)),
-                "change":      fmt_pct(change),
-                "change_color":pnl_color(change),
-                "funding":     round(market.get("funding", 0) * 100, 4) if market else 0,
+                "coin":         r.coin,
+                "enabled":      r.enabled,
+                "tier":         r.tier,
+                "source":       r.source,
+                "volume_24h":   r.volume_24h,
+                "added_at":     r.added_at.isoformat() if r.added_at else None,
+                "last_seen":    r.last_seen.isoformat() if r.last_seen else None,
+                "grade":        grade,
+                "grade_color":  grade_color(grade),
+                "score":        score,
+                "direction":    dir_,
+                "has_signal":   cached is not None,
+                "price":        fmt_price(market.get("price", 0)),
+                "change":       fmt_pct(change),
+                "change_color": pnl_color(change),
+                "funding":      round(market.get("funding", 0) * 100, 4) if market else 0,
             })
         return result
     except Exception as e:
@@ -202,6 +259,7 @@ async def get_signals(
     limit:   int = 50,
     grade:   str = None,
     coin:    str = None,
+    outcome: str = None,
     db: Session = Depends(get_db)
 ):
     _auth(request)
@@ -211,6 +269,8 @@ async def get_signals(
             q = q.filter(SignalModel.grade == grade.upper())
         if coin:
             q = q.filter(SignalModel.coin == coin.upper())
+        if outcome:
+            q = q.filter(SignalModel.outcome == outcome.lower())
 
         signals = q.limit(limit).all()
         result  = [{
@@ -323,7 +383,8 @@ async def signals_active(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-    
+
+
 @router.get("/signal/{signal_id}")
 async def get_signal_by_id(request: Request, signal_id: int, db: Session = Depends(get_db)):
     row = db.query(SignalModel).filter(SignalModel.id == signal_id).first()
@@ -354,15 +415,10 @@ async def coins_active():
                 return JSONResponse(content=json.loads(data))
 
         with SessionLocal() as db:
-            rows = db.query(CoinConfig).filter(
-                CoinConfig.enabled == True
-            ).all()
+            rows  = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
             pairs = [f"{row.coin}/USDT:USDT" for row in rows]
 
-        return JSONResponse(content={
-            "pairs":          pairs,
-            "refresh_period": 1800
-        })
+        return JSONResponse(content={"pairs": pairs, "refresh_period": 1800})
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -512,6 +568,8 @@ async def health(request: Request):
     except Exception:
         pass
 
+    system = _get_system_stats()
+
     return JSONResponse(content={
         "status":          "ok",
         "timestamp":       datetime.now(timezone.utc).isoformat(),
@@ -520,7 +578,8 @@ async def health(request: Request):
         "grades":          cfg.MIN_GRADE_TO_TRADE,
         "redis_connected": redis_connected,
         "ml_status":       get_ml_status(),
-        "sync_status":     await get_sync_status()
+        "sync_status":     await get_sync_status(),
+        "system":          system,
     })
 
 
@@ -573,7 +632,7 @@ async def mode_toggle(request: Request):
                     status_code = 400,
                     content     = {
                         "success": False,
-                        "reason":  f"Cannot switch mode — {len(status)} open trade(s). Close all trades first."
+                        "reason":  f"Cannot switch — {len(status)} open trade(s). Close all first."
                     }
                 )
         except Exception as e:
@@ -632,8 +691,6 @@ def _update_freqtrade_config(mode: str):
         with open(config_path, "w") as f:
             json.dump(ft_config, f, indent=2)
 
-        log.info(f"Freqtrade config updated: dry_run={mode != 'live'}")
-
     except Exception as e:
         log.error(f"Failed to update Freqtrade config: {e}")
         raise
@@ -645,7 +702,6 @@ async def _restart_freqtrade():
         client    = docker.from_env()
         container = client.containers.get("freqtrade")
         container.restart()
-        log.info("Freqtrade container restarted")
     except Exception as e:
         log.error(f"Freqtrade restart error: {e}")
         raise
@@ -724,12 +780,12 @@ async def toggle_coin(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-    
+
+
 async def _backfill_new_coin(coin: str):
     try:
         from backfill import run_backfill
         await run_backfill(coins=[coin])
-        log.info(f"Backfill complete for new coin: {coin}")
     except Exception as e:
         log.error(f"Auto backfill failed for {coin}: {e}")
 
@@ -777,12 +833,7 @@ async def add_coin(request: Request):
                 db.commit()
                 msg = f"{coin} re-enabled"
             else:
-                db.add(CoinConfig(
-                    coin    = coin,
-                    enabled = True,
-                    tier    = 1,
-                    source  = "manual"
-                ))
+                db.add(CoinConfig(coin=coin, enabled=True, tier=1, source="manual"))
                 db.commit()
                 msg = f"{coin} added"
 
@@ -866,7 +917,6 @@ async def ft_summary(request: Request):
 
         trades_with_health = []
         if not isinstance(status, Exception) and status and isinstance(status, list):
-
             tp1_map = {}
             sl_map  = {}
 
@@ -1018,13 +1068,8 @@ async def get_candles(request: Request, coin: str, tf: str):
     if tf not in valid_tfs:
         raise HTTPException(400, f"Invalid timeframe. Use: {valid_tfs}")
 
-    limits = {
-        "15m": 200,
-        "1h":  300,
-        "4h":  500,
-        "1d":  365
-    }
-    limit = limits.get(tf, 300)
+    limits = {"15m": 200, "1h": 300, "4h": 500, "1d": 365}
+    limit  = limits.get(tf, 300)
 
     try:
         from database import SessionLocal, Candle
@@ -1053,7 +1098,8 @@ async def get_candles(request: Request, coin: str, tf: str):
     except Exception as e:
         log.error(f"Candles endpoint error {coin} {tf}: {e}")
         raise HTTPException(500, str(e))
-    
+
+
 @router.get("/backtest-signal/{coin}")
 async def backtest_signal(request: Request, coin: str, date: str = None):
     _auth(request)
@@ -1068,7 +1114,6 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         from engines.retest import detect_retest
         from engines.confluence import score_confluence
         from engines.signal import run_no_trade_engine, generate_signal
-        from datetime import timezone
         import pandas as pd
 
         if not date:
@@ -1109,10 +1154,10 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             btc_data    = calculate_all(d1d_w)
             btc_4h_data = calculate_all(d4h_w)
         else:
-            df_btc_1d = load_candles("BTC", "1d", limit=1000)
-            df_btc_4h = load_candles("BTC", "4h", limit=2000)
-            btc_1d_w  = df_btc_1d[df_btc_1d.index < target_ts].iloc[-window:] if df_btc_1d is not None else None
-            btc_4h_w  = df_btc_4h[df_btc_4h.index < target_ts].iloc[-window:] if df_btc_4h is not None else None
+            df_btc_1d   = load_candles("BTC", "1d", limit=1000)
+            df_btc_4h   = load_candles("BTC", "4h", limit=2000)
+            btc_1d_w    = df_btc_1d[df_btc_1d.index < target_ts].iloc[-window:] if df_btc_1d is not None else None
+            btc_4h_w    = df_btc_4h[df_btc_4h.index < target_ts].iloc[-window:] if df_btc_4h is not None else None
             btc_data    = calculate_all(btc_1d_w) if btc_1d_w is not None and len(btc_1d_w) >= 50 else None
             btc_4h_data = calculate_all(btc_4h_w) if btc_4h_w is not None and len(btc_4h_w) >= 50 else None
 
@@ -1224,6 +1269,7 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
+
 @router.get("/proxy/binance/aggTrades")
 async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 100):
     _auth(request)
@@ -1266,4 +1312,3 @@ async def proxy_binance_price(request: Request, symbol: str):
     except Exception as e:
         log.error(f"Binance price proxy error: {e}")
         raise HTTPException(500, str(e))
-    

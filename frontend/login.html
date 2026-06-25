@@ -1,343 +1,259 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<title>Signal Engine v5 — Login</title>
-<style>
-* { -webkit-font-smoothing: antialiased; box-sizing: border-box; margin: 0; padding: 0; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', Inter, sans-serif;
-  background: #f5f5f7;
-  min-height: 100vh;
-  display: flex; align-items: center; justify-content: center;
-  padding: 20px;
-}
-.card {
-  background: rgba(255,255,255,0.88);
-  backdrop-filter: blur(40px);
-  -webkit-backdrop-filter: blur(40px);
-  border: 1px solid rgba(255,255,255,0.6);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-  border-radius: 24px;
-  padding: 48px 40px;
-  width: 100%; max-width: 400px;
-}
-.logo {
-  width: 56px; height: 56px;
-  background: linear-gradient(135deg, #0071e3, #0051a8);
-  border-radius: 16px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 28px; margin: 0 auto 24px;
-  box-shadow: 0 4px 16px rgba(0,113,227,0.3);
-}
-h1 { font-size: 24px; font-weight: 700; color: #1d1d1f; text-align: center; margin-bottom: 6px; }
-.subtitle { font-size: 14px; color: #6e6e73; text-align: center; margin-bottom: 36px; }
-.mode-badge {
-  display: inline-block; padding: 3px 10px;
-  border-radius: 100px; font-size: 11px; font-weight: 600;
-  margin-top: 4px;
-}
-.mode-badge.live {
-  background: rgba(255,59,48,0.1);
-  color: #ff3b30;
-  border: 1px solid rgba(255,59,48,0.2);
-}
-.mode-badge.paper {
-  background: rgba(0,113,227,0.1);
-  color: #0071e3;
-  border: 1px solid rgba(0,113,227,0.2);
-}
-.tab-bar {
-  display: flex; gap: 4px;
-  background: rgba(0,0,0,0.05);
-  border-radius: 12px; padding: 4px;
-  margin-bottom: 28px;
-}
-.tab {
-  flex: 1; padding: 8px; border-radius: 9px;
-  border: none; background: transparent;
-  font-size: 13px; font-weight: 600; color: #6e6e73;
-  cursor: pointer; transition: all 0.2s; font-family: inherit;
-}
-.tab.active { background: white; color: #1d1d1f; box-shadow: 0 1px 4px rgba(0,0,0,0.1); }
-.tab:hover:not(.active) { color: #1d1d1f; }
-.panel { display: none; }
-.panel.active { display: block; }
-.field { margin-bottom: 16px; }
-label {
-  display: block; font-size: 12px; font-weight: 700;
-  letter-spacing: 0.04em; text-transform: uppercase;
-  color: #6e6e73; margin-bottom: 8px;
-}
-input {
-  width: 100%; padding: 14px 16px;
-  border: 1.5px solid rgba(0,0,0,0.1);
-  border-radius: 12px; font-size: 15px;
-  font-family: inherit; background: rgba(255,255,255,0.8);
-  color: #1d1d1f; transition: border-color 0.2s; outline: none;
-}
-input:focus { border-color: #0071e3; background: white; }
-input[type="number"] {
-  font-family: 'SF Mono', 'JetBrains Mono', monospace;
-  letter-spacing: 0.15em; font-size: 20px; text-align: center;
-}
-.totp-hint { font-size: 11px; color: #6e6e73; text-align: center; margin-top: 6px; }
-.tg-btn {
-  width: 100%; margin-top: 8px; padding: 10px;
-  border-radius: 10px; border: 1px solid rgba(0,113,227,0.2);
-  background: rgba(0,113,227,0.06); color: #0071e3;
-  font-size: 13px; font-weight: 600; cursor: pointer;
-  font-family: inherit; transition: background 0.2s;
-}
-.tg-btn:hover    { background: rgba(0,113,227,0.12); }
-.tg-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-button.primary {
-  width: 100%; padding: 15px;
-  background: #0071e3; color: white;
-  border: none; border-radius: 12px;
-  font-size: 15px; font-weight: 600;
-  font-family: inherit; cursor: pointer;
-  margin-top: 8px; transition: background 0.2s, transform 0.1s;
-}
-button.primary:hover   { background: #0077ed; }
-button.primary:active  { transform: scale(0.99); }
-button.primary:disabled { background: rgba(0,0,0,0.12); color: rgba(0,0,0,0.3); cursor: not-allowed; transform: none; }
-.error {
-  background: rgba(255,59,48,0.08);
-  border: 1px solid rgba(255,59,48,0.2);
-  border-radius: 10px; padding: 12px 14px;
-  font-size: 13px; color: #c0392b;
-  margin-top: 16px; text-align: center; display: none;
-}
-.success-msg {
-  background: rgba(52,199,89,0.08);
-  border: 1px solid rgba(52,199,89,0.2);
-  border-radius: 10px; padding: 12px 14px;
-  font-size: 13px; color: #248a3d;
-  margin-top: 16px; text-align: center; display: none;
-}
-.spinner {
-  width: 18px; height: 18px;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: white; border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  display: inline-block; vertical-align: middle; margin-right: 8px;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.footer { text-align: center; margin-top: 20px; font-size: 11px; color: #6e6e73; line-height: 1.8; }
-.setup-link { color: #0071e3; text-decoration: none; font-weight: 600; }
-.setup-link:hover { text-decoration: underline; }
-hr { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 20px 0; }
-.emergency { font-size: 11px; color: #6e6e73; line-height: 1.8; text-align: center; }
-.emergency code {
-  background: rgba(0,0,0,0.06); padding: 2px 6px;
-  border-radius: 4px; font-size: 10px; word-break: break-all;
-}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Engine v5 — Login</title>
+    <link rel="stylesheet" href="/css/app.css">
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+        }
+
+        .login-wrap {
+            width: 100%;
+            max-width: 380px;
+            padding: 16px;
+        }
+
+        .login-logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .login-logo-title {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-primary);
+            letter-spacing: -0.5px;
+        }
+
+        .login-logo-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: var(--font-mono);
+            margin-top: 4px;
+        }
+
+        .login-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--bg-border);
+            border-radius: var(--radius-lg);
+            padding: 28px;
+        }
+
+        .login-title {
+            font-size: 16px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .login-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            margin-bottom: 6px;
+        }
+
+        .totp-row {
+            display: flex;
+            gap: 8px;
+        }
+
+        .totp-row .input {
+            flex: 1;
+            font-family: var(--font-mono);
+            font-size: 16px;
+            letter-spacing: 4px;
+            text-align: center;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 11px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        .login-footer {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .login-footer a {
+            color: var(--blue);
+            text-decoration: none;
+        }
+
+        .mode-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            font-family: var(--font-mono);
+            margin-bottom: 20px;
+        }
+
+        .mode-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+    </style>
 </head>
 <body>
+    <div class="login-wrap" x-data="loginApp()">
+        <div class="login-logo">
+            <div class="login-logo-title">Signal Engine</div>
+            <div class="login-logo-sub">v5.0.0 — Automated Crypto Futures</div>
+        </div>
 
-<div class="card">
-  <div class="logo">⚡</div>
-  <h1>Signal Engine</h1>
-  <p class="subtitle">
-    v5 · Binance Futures<br>
-    <span class="mode-badge {{ mode }}">{{ mode | upper }}</span>
-  </p>
+        <div class="login-card">
+            <div class="login-title">Welcome back</div>
+            <div class="login-sub">Sign in to your dashboard</div>
 
-  <div class="tab-bar">
-    <button class="tab active" onclick="switchTab('login')">Sign In</button>
-    <button class="tab" onclick="switchTab('forgot')">Reset Password</button>
-  </div>
+            <div x-show="error" x-cloak class="alert alert-error" x-text="error"></div>
 
-  <!-- LOGIN -->
-  <div id="panel-login" class="panel active">
-    <form onsubmit="handleLogin(event)">
-      <div class="field">
-        <label>Username</label>
-        <input type="text" id="username" placeholder="Your username" autocomplete="username" required>
-      </div>
-      <div class="field">
-        <label>Password</label>
-        <input type="password" id="password" placeholder="Dashboard password" autocomplete="current-password" required>
-      </div>
-      <div class="field">
-        <label>Authenticator Code</label>
-        <input type="number" id="totp" placeholder="000000" autocomplete="one-time-code" maxlength="6" required>
-        <div class="totp-hint">6-digit code from your authenticator app</div>
-        <button type="button" class="tg-btn" id="tg-totp-btn" onclick="requestTotpViaTelegram()">
-          📱 Send code to Telegram
-        </button>
-      </div>
-      <button type="submit" class="primary" id="login-btn">Sign In</button>
-      <div class="error" id="login-error"></div>
-    </form>
-    <div class="footer">
-      First time? <a href="/auth/setup" class="setup-link">Setup TOTP &amp; password</a>
+            <form @submit.prevent="login">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input
+                        class="input"
+                        type="text"
+                        x-model="form.username"
+                        placeholder="admin"
+                        autocomplete="username"
+                        :disabled="loading"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input
+                        class="input"
+                        type="password"
+                        x-model="form.password"
+                        placeholder="••••••••"
+                        autocomplete="current-password"
+                        :disabled="loading"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">TOTP Code</label>
+                    <div class="totp-row">
+                        <input
+                            class="input"
+                            type="text"
+                            inputmode="numeric"
+                            maxlength="6"
+                            x-model="form.totp_code"
+                            placeholder="000000"
+                            autocomplete="one-time-code"
+                            :disabled="loading"
+                            @input="form.totp_code = form.totp_code.replace(/\D/g,'')"
+                        >
+                        <button
+                            type="button"
+                            class="btn btn-ghost"
+                            @click="requestTotp"
+                            :disabled="loading || totpSent"
+                            title="Send TOTP via Telegram"
+                        >
+                            <span x-text="totpSent ? 'Sent' : 'Telegram'"></span>
+                        </button>
+                    </div>
+                    <div x-show="totpSent" x-cloak style="font-size:11px;color:var(--green);margin-top:4px;">
+                        Code sent to Telegram — valid 30 seconds
+                    </div>
+                </div>
+
+                <button
+                    type="submit"
+                    class="btn btn-primary login-btn"
+                    :disabled="loading || !form.username || !form.password || form.totp_code.length < 6"
+                >
+                    <span x-show="loading" class="spinner"></span>
+                    <span x-text="loading ? 'Signing in...' : 'Sign In'"></span>
+                </button>
+            </form>
+        </div>
+
+        <div class="login-footer">
+            First time? <a href="/auth/setup">Setup your account</a>
+        </div>
     </div>
-  </div>
 
-  <!-- RESET PASSWORD -->
-  <div id="panel-forgot" class="panel">
-    <p style="font-size:13px;color:#6e6e73;margin-bottom:20px;text-align:center;line-height:1.6">
-      Verify with TOTP to reset your password.<br>
-      <span style="font-size:11px">Your authenticator app must still be working.</span>
-    </p>
-    <form onsubmit="handleReset(event)">
-      <div class="field">
-        <label>Authenticator Code</label>
-        <input type="number" id="reset-totp" placeholder="000000" autocomplete="one-time-code" maxlength="6" required>
-      </div>
-      <div class="field">
-        <label>New Password</label>
-        <input type="password" id="reset-pw" placeholder="Min 8 characters" autocomplete="new-password" required>
-      </div>
-      <div class="field">
-        <label>Confirm Password</label>
-        <input type="password" id="reset-pw2" placeholder="Confirm new password" autocomplete="new-password" required>
-      </div>
-      <button type="submit" class="primary" id="reset-btn">Reset Password</button>
-      <div class="error"       id="reset-error"></div>
-      <div class="success-msg" id="reset-success"></div>
-    </form>
-    <hr>
-    <div class="emergency">
-      Lost authenticator too? Run on server:<br>
-      <code>python -c "from auth import set_password; set_password('newpass')"</code>
-    </div>
-  </div>
-</div>
+    <script>
+        function loginApp() {
+            return {
+                form: {
+                    username:  '',
+                    password:  '',
+                    totp_code: ''
+                },
+                loading:   false,
+                error:     '',
+                totpSent:  false,
 
-<script>
-'use strict'
+                async login() {
+                    this.error   = ''
+                    this.loading = true
+                    try {
+                        const res = await fetch('/auth/login', {
+                            method:  'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body:    JSON.stringify(this.form)
+                        })
+                        const data = await res.json()
+                        if (data.success) {
+                            window.location.href = '/app.html'
+                        } else {
+                            this.error = data.reason || 'Login failed'
+                        }
+                    } catch (e) {
+                        this.error = 'Network error — try again'
+                    } finally {
+                        this.loading = false
+                    }
+                },
 
-function switchTab(tab) {
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', (i === 0 && tab === 'login') || (i === 1 && tab === 'forgot'))
-  })
-  document.getElementById('panel-login').classList.toggle('active',  tab === 'login')
-  document.getElementById('panel-forgot').classList.toggle('active', tab === 'forgot')
-}
-
-async function handleLogin(e) {
-  e.preventDefault()
-  const username = document.getElementById('username').value.trim()
-  const password = document.getElementById('password').value
-  const totp     = document.getElementById('totp').value.trim()
-  const btn      = document.getElementById('login-btn')
-
-  if (totp.length !== 6) { showErr('login-error', 'Enter your 6-digit code'); return }
-
-  btn.disabled  = true
-  btn.innerHTML = '<span class="spinner"></span>Signing in...'
-  document.getElementById('login-error').style.display = 'none'
-
-  try {
-    const res  = await fetch('/auth/login', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ username, password, totp_code: totp })
-    })
-    const data = await res.json()
-    if (data.success) {
-      window.location.href = '/'
-    } else {
-      showErr('login-error', data.reason || 'Invalid credentials')
-      btn.disabled  = false
-      btn.innerHTML = 'Sign In'
-    }
-  } catch(err) {
-    showErr('login-error', 'Connection error — try again')
-    btn.disabled  = false
-    btn.innerHTML = 'Sign In'
-  }
-}
-
-async function requestTotpViaTelegram() {
-  const btn = document.getElementById('tg-totp-btn')
-  btn.disabled    = true
-  btn.textContent = '⏳ Sending...'
-  try {
-    const res  = await fetch('/auth/request-totp', { method: 'POST' })
-    const data = await res.json()
-    if (data.success) {
-      btn.textContent = '✅ Code sent to Telegram!'
-      setTimeout(() => {
-        btn.disabled    = false
-        btn.textContent = '📱 Send code to Telegram'
-      }, 30000)
-    } else {
-      btn.textContent = '❌ ' + (data.reason || 'Failed')
-      setTimeout(() => {
-        btn.disabled    = false
-        btn.textContent = '📱 Send code to Telegram'
-      }, 3000)
-    }
-  } catch(err) {
-    btn.textContent = '❌ Connection error'
-    setTimeout(() => {
-      btn.disabled    = false
-      btn.textContent = '📱 Send code to Telegram'
-    }, 3000)
-  }
-}
-
-async function handleReset(e) {
-  e.preventDefault()
-  const totp = document.getElementById('reset-totp').value.trim()
-  const pw   = document.getElementById('reset-pw').value
-  const pw2  = document.getElementById('reset-pw2').value
-  const btn  = document.getElementById('reset-btn')
-
-  document.getElementById('reset-error').style.display   = 'none'
-  document.getElementById('reset-success').style.display = 'none'
-
-  if (totp.length !== 6) { showErr('reset-error', 'Enter your 6-digit code'); return }
-  if (pw.length < 8)     { showErr('reset-error', 'Password must be at least 8 characters'); return }
-  if (pw !== pw2)        { showErr('reset-error', 'Passwords do not match'); return }
-
-  btn.disabled  = true
-  btn.innerHTML = '<span class="spinner"></span>Resetting...'
-
-  try {
-    const res  = await fetch('/auth/reset-password', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ totp_code: totp, new_password: pw })
-    })
-    const data = await res.json()
-    if (data.success) {
-      const el = document.getElementById('reset-success')
-      el.textContent   = '✅ Password reset! Redirecting to login...'
-      el.style.display = 'block'
-      document.getElementById('reset-totp').value = ''
-      document.getElementById('reset-pw').value   = ''
-      document.getElementById('reset-pw2').value  = ''
-      setTimeout(() => switchTab('login'), 2000)
-    } else {
-      showErr('reset-error', data.reason || 'Reset failed')
-    }
-  } catch(err) {
-    showErr('reset-error', 'Connection error — try again')
-  } finally {
-    btn.disabled  = false
-    btn.innerHTML = 'Reset Password'
-  }
-}
-
-function showErr(id, msg) {
-  const el = document.getElementById(id)
-  if (el) { el.textContent = '❌ ' + msg; el.style.display = 'block' }
-}
-
-document.querySelectorAll('input[type="number"]').forEach(inp => {
-  inp.addEventListener('input', () => {
-    if (inp.value.length > 6) inp.value = inp.value.slice(0, 6)
-  })
-})
-</script>
-
+                async requestTotp() {
+                    try {
+                        const res = await fetch('/auth/request-totp', { method: 'POST' })
+                        const data = await res.json()
+                        if (data.success) {
+                            this.totpSent = true
+                            setTimeout(() => { this.totpSent = false }, 35000)
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+    </script>
 </body>
 </html>
