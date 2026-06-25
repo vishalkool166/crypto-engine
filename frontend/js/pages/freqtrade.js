@@ -6,7 +6,7 @@ function freqtradePage() {
                 <div class="page-title">Freqtrade</div>
                 <div class="page-subtitle flex items-center gap-8">
                     <div class="ws-dot" :class="botState === 'running' ? '' : 'disconnected'"></div>
-                    <span x-text="'Bot ' + (botState || 'unknown')"></span>
+                    <span x-text="'Bot ' + botState"></span>
                 </div>
             </div>
             <div class="flex gap-8">
@@ -50,15 +50,15 @@ function freqtradePage() {
                     <span
                         class="badge"
                         :class="botState === 'running' ? 'badge-online' : 'badge-offline'"
-                        x-text="(botState || 'unknown').toUpperCase()"
+                        x-text="botState.toUpperCase()"
                     ></span>
                 </div>
                 <div class="card-sub" style="font-family:var(--font-mono);" x-text="openTrades.length + ' / ' + maxTrades + ' trades open'"></div>
             </div>
             <div class="card">
                 <div class="card-title">Balance</div>
-                <div class="card-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></div>
-                <div class="card-sub" style="font-family:var(--font-mono);" x-text="balance.free != null ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'"></div>
+                <div class="card-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + balance.total.toFixed(2) : '--'"></div>
+                <div class="card-sub" style="font-family:var(--font-mono);" x-text="balance.free != null ? 'Free: $' + balance.free.toFixed(2) : '--'"></div>
             </div>
             <div class="card">
                 <div class="card-title">Total PnL</div>
@@ -75,13 +75,12 @@ function freqtradePage() {
         <div class="mt-12">
             <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">
                 Open Trades
+                <template x-if="loading">
+                    <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:8px;">loading...</span>
+                </template>
             </div>
 
-            <template x-if="loading && !openTrades.length">
-                <div class="card" x-html="Utils.loadingState()"></div>
-            </template>
-
-            <template x-if="!loading && !openTrades.length">
+            <template x-if="!openTrades.length && !loading">
                 <div class="card" x-html="Utils.emptyState('No open trades')"></div>
             </template>
 
@@ -207,11 +206,11 @@ function freqtradePage() {
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Balance</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + balance.total.toFixed(2) : '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Free</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free != null ? '$' + parseFloat(balance.free).toFixed(2) : '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free != null ? '$' + balance.free.toFixed(2) : '--'"></span>
                 </div>
             </div>
         </div>
@@ -221,7 +220,6 @@ function freqtradePage() {
                 <span>Trade History</span>
                 <span class="tag" style="font-family:var(--font-mono);" x-text="tradeHistory.length + ' trades'"></span>
             </div>
-
             <div class="table-wrap" role="region" aria-label="Trade history" tabindex="0">
                 <table aria-label="Freqtrade closed trades">
                     <thead>
@@ -271,25 +269,25 @@ function freqtradeData() {
         openTrades:    [],
         tradeHistory:  [],
         profit:        {},
-        balance:       {},
+        balance:       { total: null, free: null, used: null },
         daily:         [],
-        botState:      '--',
+        botState:      'unknown',
         maxTrades:     3,
         loading:       false,
         actionLoading: null,
         forceSelling:  null,
 
-        async init() {
-            await this.load()
+        init() {
+            this.load()
 
             window.addEventListener('page-change', (e) => {
-                if (e.detail.page === 'freqtrade' && !this.loading) {
-                    this.load()
+                if (e.detail.page === 'freqtrade') {
+                    if (!this.loading) this.load()
                 }
             })
 
             window.addEventListener('ft-update', (e) => {
-                this._applyFtUpdate(e.detail)
+                if (e.detail) this._applyUpdate(e.detail)
             })
         },
 
@@ -298,67 +296,69 @@ function freqtradeData() {
             this.loading = true
 
             try {
-                const [summaryRes, tradesRes] = await Promise.all([
+                const [sRes, tRes] = await Promise.all([
                     fetch('/api/ft/summary', { credentials: 'include' }),
                     fetch('/api/ft/trades?limit=50', { credentials: 'include' })
                 ])
 
-                if (summaryRes.status === 401) {
+                if (sRes.status === 401) {
                     window.location.href = '/login.html'
                     return
                 }
 
-                const summary    = await summaryRes.json().catch(() => ({}))
-                const tradesData = await tradesRes.json().catch(() => ({}))
+                const s = await sRes.json().catch(() => ({}))
+                const t = await tRes.json().catch(() => ({}))
 
-                this._applyFtUpdate(summary)
+                this._applyUpdate(s)
 
-                this.tradeHistory = Array.isArray(tradesData.trades)
-                    ? tradesData.trades.filter(t => !t.is_open)
+                this.tradeHistory = Array.isArray(t.trades)
+                    ? t.trades.filter(x => !x.is_open)
                     : []
 
-                this.$nextTick(() => this.renderCharts())
+                this.$nextTick(() => this._renderChart())
 
             } catch (e) {
-                window._app?.showToast('Freqtrade load failed: ' + e.message, 'error')
+                window._app?.showToast('Load failed: ' + e.message, 'error')
             } finally {
                 this.loading = false
             }
         },
 
-        _applyFtUpdate(data) {
-            if (!data) return
+        _applyUpdate(d) {
+            if (!d) return
 
-            if (Array.isArray(data.status)) {
-                this.openTrades = data.status
+            if (d.bot_state) {
+                this.botState = d.bot_state
             }
 
-            if (data.profit && typeof data.profit === 'object') {
-                this.profit = data.profit
+            if (Array.isArray(d.status)) {
+                this.openTrades = d.status
             }
 
-            if (data.balance && typeof data.balance === 'object') {
-                const currencies = data.balance.currencies || []
+            if (d.profit && typeof d.profit === 'object' && d.profit.profit_all_coin !== undefined) {
+                this.profit = d.profit
+            }
+
+            if (d.balance && typeof d.balance === 'object') {
+                const currencies = d.balance.currencies || []
                 const usdt       = currencies.find(c => c.currency === 'USDT') || {}
                 this.balance = {
-                    total: data.balance.total != null ? parseFloat(data.balance.total) : null,
-                    free:  usdt.free          != null ? parseFloat(usdt.free)          : null,
-                    used:  usdt.used          != null ? parseFloat(usdt.used)          : null,
+                    total: d.balance.total != null ? parseFloat(d.balance.total) : null,
+                    free:  usdt.free       != null ? parseFloat(usdt.free)       : null,
+                    used:  usdt.used       != null ? parseFloat(usdt.used)       : null,
                 }
             }
 
-            if (data.bot_state) {
-                this.botState = data.bot_state
-            }
-
-            if (data.daily) {
-                const arr = Array.isArray(data.daily) ? data.daily : (data.daily.data || [])
+            if (d.daily) {
+                const arr = Array.isArray(d.daily)
+                    ? d.daily
+                    : Array.isArray(d.daily.data) ? d.daily.data : []
                 this.daily = arr
-                    .map(d => ({
-                        date:       d.date || d.day || '',
-                        profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
+                    .map(x => ({
+                        date:       x.date || x.day || '',
+                        profit_abs: parseFloat(x.profit_abs || x.profit || 0),
                     }))
-                    .filter(d => d.date)
+                    .filter(x => x.date)
             }
         },
 
@@ -367,7 +367,7 @@ function freqtradeData() {
             await this.load()
         },
 
-        renderCharts() {
+        _renderChart() {
             if (window._app?.page !== 'freqtrade') return
             if (!this.daily.length) return
             const el = document.getElementById('ft-daily-chart')
@@ -378,14 +378,13 @@ function freqtradeData() {
         async startBot() {
             this.actionLoading = 'start'
             try {
-                const res = await fetch('/api/ft/start', {
+                const res  = await fetch('/api/ft/start', {
                     method:      'POST',
                     credentials: 'include',
                     headers:     { 'Content-Type': 'application/json' },
                 })
                 const data = await res.json().catch(() => ({}))
-                const msg  = data.status || data.detail || 'Started'
-                window._app?.showToast('Bot: ' + msg, 'success')
+                window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
                 setTimeout(() => this.load(), 1500)
             } catch (e) {
                 window._app?.showToast('Start failed: ' + e.message, 'error')
@@ -397,14 +396,13 @@ function freqtradeData() {
         async stopBot() {
             this.actionLoading = 'stop'
             try {
-                const res = await fetch('/api/ft/stop', {
+                const res  = await fetch('/api/ft/stop', {
                     method:      'POST',
                     credentials: 'include',
                     headers:     { 'Content-Type': 'application/json' },
                 })
                 const data = await res.json().catch(() => ({}))
-                const msg  = data.status || data.detail || 'Stopped'
-                window._app?.showToast('Bot: ' + msg, 'success')
+                window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
                 setTimeout(() => this.load(), 1500)
             } catch (e) {
                 window._app?.showToast('Stop failed: ' + e.message, 'error')
@@ -415,7 +413,6 @@ function freqtradeData() {
 
         async forceSell(tradeId, pair) {
             const coin = (pair || '').replace('/USDT:USDT', '').replace('/USDT', '')
-
             const result = await TOTP.confirm(
                 'Force Sell — ' + coin,
                 'Enter TOTP to confirm force sell of ' + coin,
@@ -429,7 +426,6 @@ function freqtradeData() {
                     return await res.json()
                 }
             )
-
             if (result.success) {
                 window._app?.showToast('Force sell submitted for ' + coin, 'success')
                 setTimeout(() => this.load(), 1500)
