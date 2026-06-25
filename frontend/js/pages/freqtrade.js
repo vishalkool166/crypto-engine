@@ -166,52 +166,104 @@ function freqtradePage() {
             </template>
         </div>
 
-        <div class="grid-2 mt-12">
-            <div class="card">
-                <div class="card-title">Daily PnL — 7 days</div>
-                <template x-if="!daily.length">
-                    <div x-html="Utils.emptyState('No daily data yet')"></div>
-                </template>
-                <div id="ft-daily-chart" x-show="daily.length > 0"></div>
+        <div class="card mt-12">
+            <div class="flex justify-between items-center mb-12">
+                <div class="card-title" style="margin-bottom:0;">Daily PnL</div>
+                <div class="flex gap-8 items-center">
+                    <select
+                        class="select"
+                        style="width:110px;"
+                        x-model="dailyDays"
+                        @change="loadDaily"
+                        aria-label="Daily PnL period"
+                    >
+                        <option value="7">7 days</option>
+                        <option value="14">14 days</option>
+                        <option value="30">30 days</option>
+                        <option value="60">60 days</option>
+                        <option value="90">90 days</option>
+                    </select>
+                </div>
             </div>
 
-            <div class="card">
-                <div class="card-title">Profit Summary</div>
-                <div class="stat-row">
-                    <span class="stat-label">Total PnL</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.pnlColor(profit.profit_all_coin)}" x-text="profit.profit_all_coin != null ? Utils.fmtPnl(profit.profit_all_coin) : '--'"></span>
+            <template x-if="!daily.length && !dailyLoading">
+                <div x-html="Utils.emptyState('No daily PnL data for this period')"></div>
+            </template>
+
+            <template x-if="dailyLoading">
+                <div x-html="Utils.loadingState()"></div>
+            </template>
+
+            <div id="ft-daily-chart" x-show="daily.length > 0 && !dailyLoading"></div>
+
+            <template x-if="daily.length > 0 && !dailyLoading">
+                <div class="table-wrap mt-12" style="max-height:200px;overflow-y:auto;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Date</th>
+                                <th scope="col">PnL</th>
+                                <th scope="col">Trades</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="d in [...daily].reverse()" :key="d.date">
+                                <tr>
+                                    <td><span style="font-family:var(--font-mono);font-size:12px;" x-text="d.date"></span></td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);font-weight:600;"
+                                            :style="{color: Utils.pnlColor(d.profit_abs)}"
+                                            x-text="Utils.fmtPnl(d.profit_abs)"
+                                        ></span>
+                                    </td>
+                                    <td><span style="font-family:var(--font-mono);color:var(--text-secondary);" x-text="d.trade_count || '--'"></span></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
                 </div>
-                <div class="stat-row">
-                    <span class="stat-label">Win Rate</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.winRateColor((profit.winrate||0)*100)}" x-text="profit.winrate != null ? ((profit.winrate||0)*100).toFixed(1) + '%' : '--'"></span>
+            </template>
+        </div>
+
+        <div class="card mt-12">
+            <div class="card-title">Profit Summary</div>
+            <div class="grid-2" style="gap:0;">
+                <div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total PnL</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.pnlColor(profit.profit_all_coin)}" x-text="profit.profit_all_coin != null ? Utils.fmtPnl(profit.profit_all_coin) : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Win Rate</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.winRateColor((profit.winrate||0)*100)}" x-text="profit.winrate != null ? ((profit.winrate||0)*100).toFixed(1) + '%' : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Total Trades</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.trade_count != null ? profit.trade_count : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Profit Factor</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.profit_factor != null ? parseFloat(profit.profit_factor).toFixed(2) : '--'"></span>
+                    </div>
                 </div>
-                <div class="stat-row">
-                    <span class="stat-label">Total Trades</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.trade_count != null ? profit.trade_count : '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Profit Factor</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.profit_factor != null ? parseFloat(profit.profit_factor).toFixed(2) : '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Best Pair</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);font-size:11px;" x-text="profit.best_pair || '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Best Profit</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--green);" x-text="profit.best_pair_profit_ratio != null ? Utils.fmtPct((profit.best_pair_profit_ratio||0)*100) : '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Worst Profit</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--red);" x-text="profit.worst_pair_profit_ratio != null ? Utils.fmtPct((profit.worst_pair_profit_ratio||0)*100) : '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Balance</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + balance.total.toFixed(2) : '--'"></span>
-                </div>
-                <div class="stat-row">
-                    <span class="stat-label">Free</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free != null ? '$' + balance.free.toFixed(2) : '--'"></span>
+                <div>
+                    <div class="stat-row">
+                        <span class="stat-label">Best Pair</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);font-size:11px;" x-text="profit.best_pair || '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Best Profit</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);color:var(--green);" x-text="profit.best_pair_profit_ratio != null ? Utils.fmtPct((profit.best_pair_profit_ratio||0)*100) : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Balance</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + balance.total.toFixed(2) : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Free</span>
+                        <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free != null ? '$' + balance.free.toFixed(2) : '--'"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -272,6 +324,8 @@ function freqtradeData() {
         profit:        {},
         balance:       { total: null, free: null, used: null },
         daily:         [],
+        dailyDays:     '7',
+        dailyLoading:  false,
         botState:      'unknown',
         maxTrades:     3,
         loading:       false,
@@ -280,7 +334,6 @@ function freqtradeData() {
 
         init() {
             this.loadSummary()
-
             this.loadTrades()
 
             window.addEventListener('page-change', (e) => {
@@ -314,7 +367,8 @@ function freqtradeData() {
 
                 const data = await res.json().catch(() => ({}))
                 this._applyUpdate(data)
-                this.$nextTick(() => this._renderChart())
+
+                window.dispatchEvent(new CustomEvent('ft-update', { detail: data }))
 
             } catch (e) {
                 if (e.name !== 'AbortError') {
@@ -346,6 +400,42 @@ function freqtradeData() {
             } catch (e) {}
         },
 
+        async loadDaily() {
+            this.dailyLoading = true
+            Charts.destroy('ft-daily-chart')
+            try {
+                const controller = new AbortController()
+                const timeout    = setTimeout(() => controller.abort(), 10000)
+
+                const res = await fetch(`/api/ft/daily?days=${this.dailyDays}`, {
+                    credentials: 'include',
+                    signal:      controller.signal,
+                })
+                clearTimeout(timeout)
+
+                if (!res.ok) return
+
+                const raw  = await res.json().catch(() => ({}))
+                const arr  = Array.isArray(raw) ? raw
+                           : Array.isArray(raw.data) ? raw.data
+                           : []
+
+                this.daily = arr
+                    .map(x => ({
+                        date:        x.date || x.day || '',
+                        profit_abs:  parseFloat(x.profit_abs || x.profit || 0),
+                        trade_count: x.trade_count || x.trades || 0,
+                    }))
+                    .filter(x => x.date)
+
+                this.$nextTick(() => this._renderChart())
+
+            } catch (e) {
+            } finally {
+                this.dailyLoading = false
+            }
+        },
+
         _applyUpdate(d) {
             if (!d) return
 
@@ -372,20 +462,27 @@ function freqtradeData() {
             }
 
             if (d.daily) {
-                const arr = Array.isArray(d.daily)
-                    ? d.daily
-                    : Array.isArray(d.daily.data) ? d.daily.data : []
-                this.daily = arr
-                    .map(x => ({
-                        date:       x.date || x.day || '',
-                        profit_abs: parseFloat(x.profit_abs || x.profit || 0),
-                    }))
-                    .filter(x => x.date)
+                const arr = Array.isArray(d.daily) ? d.daily
+                          : Array.isArray(d.daily.data) ? d.daily.data
+                          : []
+
+                if (arr.length) {
+                    this.daily = arr
+                        .map(x => ({
+                            date:        x.date || x.day || '',
+                            profit_abs:  parseFloat(x.profit_abs || x.profit || 0),
+                            trade_count: x.trade_count || x.trades || 0,
+                        }))
+                        .filter(x => x.date)
+
+                    this.$nextTick(() => this._renderChart())
+                }
             }
         },
 
         async manualRefresh() {
             Charts.destroy('ft-daily-chart')
+            this.daily = []
             this.loadSummary()
             this.loadTrades()
         },

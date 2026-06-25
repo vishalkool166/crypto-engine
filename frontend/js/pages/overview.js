@@ -123,7 +123,11 @@ function overviewPage() {
                     </div>
                 </div>
 
-                <template x-if="!activeTrades.length">
+                <template x-if="tradesLoading && !activeTrades.length">
+                    <div x-html="Utils.loadingState()"></div>
+                </template>
+
+                <template x-if="!tradesLoading && !activeTrades.length">
                     <div x-html="Utils.emptyState('No open trades')"></div>
                 </template>
 
@@ -162,9 +166,9 @@ function overviewPage() {
                             <template x-if="trade.health">
                                 <div :class="Utils.healthBarClass(trade.health.state)" style="margin-top:8px;">
                                     <span x-text="Utils.healthEmoji(trade.health.state)"></span>
-                                    <span style="font-size:12px;font-weight:600;" x-text="trade.health.state||'Checking...'"></span>
+                                    <span style="font-size:12px;font-weight:600;" x-text="trade.health.state || 'Checking...'"></span>
                                     <template x-if="trade.health.failures && trade.health.failures.length">
-                                        <span style="font-size:11px;opacity:0.8;" x-text="'— '+trade.health.failures[0]"></span>
+                                        <span style="font-size:11px;opacity:0.8;" x-text="'— ' + trade.health.failures[0]"></span>
                                     </template>
                                 </div>
                             </template>
@@ -209,7 +213,7 @@ function overviewPage() {
                                     <td><span :class="Utils.dirBadgeClass(r.direction)" x-text="r.direction"></span></td>
                                     <td><span style="font-family:var(--font-mono);" x-text="r.price"></span></td>
                                     <td><span style="font-family:var(--font-mono);" :style="{color: Utils.changeColor(r.change_raw ?? r.change)}" x-text="r.change"></span></td>
-                                    <td><span style="font-size:11px;color:var(--text-secondary)" x-text="r.confidence||'--'"></span></td>
+                                    <td><span style="font-size:11px;color:var(--text-secondary)" x-text="r.confidence || '--'"></span></td>
                                 </tr>
                             </template>
                         </tbody>
@@ -221,23 +225,23 @@ function overviewPage() {
                 <div class="card-title">Performance</div>
                 <div class="stat-row">
                     <span class="stat-label">Total PnL</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.pnlColor(perf.total_pnl_raw)}" x-text="perf.total_pnl||'--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.pnlColor(perf.total_pnl_raw)}" x-text="perf.total_pnl || '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Win Rate</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.winRateColor(perf.win_rate_raw)}" x-text="perf.win_rate||'--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: Utils.winRateColor(perf.win_rate_raw)}" x-text="perf.win_rate || '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Profit Factor</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="perf.profit_factor||'--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="perf.profit_factor || '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Best Trade</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--green)" x-text="perf.best_trade||'--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--green)" x-text="perf.best_trade || '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Max Drawdown</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: perf.dd_color||'var(--text-muted)'}" x-text="perf.max_drawdown||'--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" :style="{color: perf.dd_color || 'var(--text-muted)'}" x-text="perf.max_drawdown || '--'"></span>
                 </div>
 
                 <div class="divider"></div>
@@ -333,6 +337,8 @@ function overviewData() {
         scanning:      false,
         showAllQueue:  false,
         showAllTrades: false,
+        tradesLoading: true,
+        _chartRendered: false,
 
         init() {
             const data = window._app?.dashboardData
@@ -340,15 +346,39 @@ function overviewData() {
                 this.onUpdate(data)
             }
 
+            this._loadActiveTrades()
+
             window.addEventListener('dashboard-update', e => this.onUpdate(e.detail))
             window.addEventListener('ft-update',        e => this.onFtUpdate(e.detail))
             window.addEventListener('page-change',      e => {
                 if (e.detail.page === 'overview') {
+                    this._chartRendered = false
                     this.$nextTick(() => this.renderCharts())
                 }
             })
 
             this.$nextTick(() => this.renderCharts())
+        },
+
+        async _loadActiveTrades() {
+            this.tradesLoading = true
+            try {
+                const controller = new AbortController()
+                const timeout    = setTimeout(() => controller.abort(), 10000)
+                const res = await fetch('/api/ft/summary', {
+                    credentials: 'include',
+                    signal:      controller.signal,
+                })
+                clearTimeout(timeout)
+                if (!res.ok) return
+                const data = await res.json().catch(() => ({}))
+                if (Array.isArray(data.status)) {
+                    this.activeTrades = data.status
+                }
+            } catch (e) {
+            } finally {
+                this.tradesLoading = false
+            }
         },
 
         onUpdate(data) {
@@ -366,27 +396,39 @@ function overviewData() {
                 this.nextScan = `${mins}m ${secs}s`
             }
 
-            this.$nextTick(() => this.renderCharts())
+            if (!this._chartRendered) {
+                this.$nextTick(() => this.renderCharts())
+            }
         },
 
         onFtUpdate(data) {
-            if (data.status && Array.isArray(data.status)) {
-                this.activeTrades = data.status
+            if (data && Array.isArray(data.status)) {
+                this.activeTrades  = data.status
+                this.tradesLoading = false
             }
         },
 
         renderCharts() {
             if (window._app?.page !== 'overview') return
+            if (this._chartRendered) return
             const el = document.getElementById('overview-donut')
             if (!el) return
 
-            if (this.perf && (this.perf.aplus_bar != null || this.perf.a_bar != null)) {
-                Charts.gradeDonut('overview-donut', {
-                    'A+': { total: parseFloat(this.perf.aplus_bar) || 0 },
-                    'A':  { total: parseFloat(this.perf.a_bar)     || 0 },
-                    'B':  { total: parseFloat(this.perf.b_bar)     || 0 },
-                })
-            }
+            const hasData = (
+                (parseFloat(this.perf.aplus_bar) || 0) > 0 ||
+                (parseFloat(this.perf.a_bar)     || 0) > 0 ||
+                (parseFloat(this.perf.b_bar)     || 0) > 0
+            )
+
+            if (!hasData) return
+
+            Charts.gradeDonut('overview-donut', {
+                'A+': { total: parseFloat(this.perf.aplus_bar) || 0 },
+                'A':  { total: parseFloat(this.perf.a_bar)     || 0 },
+                'B':  { total: parseFloat(this.perf.b_bar)     || 0 },
+            })
+
+            this._chartRendered = true
         },
 
         async triggerScan() {
