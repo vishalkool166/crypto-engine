@@ -1,6 +1,10 @@
+import logging
+import math
 import pandas as pd
 from config import cfg
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 
 TIERS = {
     "A+": {
@@ -41,9 +45,9 @@ TIERS = {
 }
 
 GRADE_TP_MULTIPLIER = {
-    "A+": 1.8,
-    "A":  1.5,
-    "B":  1.2,
+    "A+": 2.5,
+    "A":  2.0,
+    "B":  1.5,
 }
 
 GRADE_RISK_PCT = {
@@ -52,8 +56,33 @@ GRADE_RISK_PCT = {
     "B":  0.01,
 }
 
+MIN_RR = 2.0
 
-def get_tier(score: float, hard_blocked: bool) -> dict:
+
+def _safe_float(val, fallback: float = 0.0) -> float:
+    try:
+        result = float(val)
+        return result if math.isfinite(result) else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _safe_div(a, b, fallback: float = 0.0) -> float:
+    try:
+        if b is None or b == 0 or math.isnan(float(b)):
+            return fallback
+        result = float(a) / float(b)
+        return result if math.isfinite(result) else fallback
+    except (TypeError, ValueError):
+        return fallback
+
+
+def get_tier(score, hard_blocked: bool) -> dict:
+    try:
+        score = float(score) if score is not None else 0.0
+    except (TypeError, ValueError):
+        score = 0.0
+
     if hard_blocked:
         return {**TIERS["F"], "label": "F"}
     for label, t in TIERS.items():
@@ -63,7 +92,6 @@ def get_tier(score: float, hard_blocked: bool) -> dict:
 
 
 def get_session(vol_ratio: float = 1.0, current_time=None) -> dict:
-    from datetime import datetime, timezone
     now        = current_time if current_time else datetime.now(timezone.utc)
     hour       = now.hour + now.minute / 60
     weekday    = now.weekday()
@@ -170,7 +198,7 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
     if market_score < cfg.B_GRADE_MARKET_SCORE_MIN:
         return False, f"Market score {market_score} below minimum {cfg.B_GRADE_MARKET_SCORE_MIN}"
 
-    session_name = session.get("name", "")
+    session_name     = session.get("name", "")
     allowed_sessions = ["London/NY Overlap", "New York Session", "London Session"]
     if session_name not in allowed_sessions:
         return False, f"Session {session_name} not suitable for B grade"
@@ -200,7 +228,7 @@ def dynamic_risk_pct(grade: str) -> float:
 
 
 def get_tp_multiplier(grade: str) -> float:
-    return GRADE_TP_MULTIPLIER.get(grade, 1.2)
+    return GRADE_TP_MULTIPLIER.get(grade, 1.5)
 
 
 def check_15m_entry(
@@ -222,70 +250,98 @@ def check_15m_entry(
     last   = recent.iloc[-1]
     prev   = recent.iloc[-2]
     prev2  = recent.iloc[-3] if len(recent) >= 3 else None
-    price  = float(last["close"])
+    price  = _safe_float(last["close"])
+
+    if price <= 0:
+        return {
+            "confirmed":   False,
+            "score":       5,
+            "pattern":     "Invalid price",
+            "entry_price": None,
+            "desc":        "Invalid 15m price data"
+        }
 
     try:
         import ta
         ema20_series = ta.trend.ema_indicator(df_15m["close"], window=20)
-        ema20        = float(ema20_series.iloc[-1])
-    except Exception:
+        ema20_val    = _safe_float(ema20_series.iloc[-1])
+        ema20        = ema20_val if ema20_val > 0 else None
+    except Exception as e:
+        log.warning(f"15m EMA calculation failed: {e}")
         ema20 = None
 
-    vol_ma  = float(df_15m["volume"].rolling(10).mean().iloc[-1]) or 1
-    cur_vol = float(last["volume"])
+    try:
+        vol_series = df_15m["volume"].rolling(10).mean()
+        vol_ma_raw = _safe_float(vol_series.iloc[-1])
+        vol_ma     = vol_ma_raw if vol_ma_raw > 0 else 1.0
+    except Exception:
+        vol_ma = 1.0
+
+    cur_vol = _safe_float(last["volume"])
     vol_ok  = cur_vol > vol_ma * 1.1
 
-    last_open  = float(last["open"])
-    last_close = float(last["close"])
-    last_high  = float(last["high"])
-    last_low   = float(last["low"])
+    last_open  = _safe_float(last["open"])
+    last_close = _safe_float(last["close"])
+    last_high  = _safe_float(last["high"])
+    last_low   = _safe_float(last["low"])
     last_body  = abs(last_close - last_open)
     last_range = last_high - last_low
 
-    prev_open  = float(prev["open"])
-    prev_close = float(prev["close"])
-    prev_high  = float(prev["high"])
-    prev_low   = float(prev["low"])
+    prev_open  = _safe_float(prev["open"])
+    prev_close = _safe_float(prev["close"])
+    prev_high  = _safe_float(prev["high"])
+    prev_low   = _safe_float(prev["low"])
 
     pattern        = "None"
     pattern_score  = 0
     follow_through = True
 
     if direction == "LONG":
-        if (prev_close < prev_open and last_close > last_open and
+        if (last_range > 0 and
+                prev_close < prev_open and last_close > last_open and
                 last_close > prev_open and last_open < prev_close and
                 last_body > last_range * 0.6):
             pattern, pattern_score = "Bullish Engulfing", 9
             if prev2 is not None:
-                follow_through = float(prev2["close"]) >= last_open
+                follow_through = _safe_float(prev2["close"]) >= last_open
+
         elif (last_range > 0 and
                 (min(last_open, last_close) - last_low) / last_range > 0.45 and
                 last_close > (last_high + last_low) / 2):
             pattern, pattern_score = "Hammer / Pin Bar", 7
             if prev2 is not None:
-                follow_through = float(prev2["close"]) >= last_low
-        elif (last_close > last_open and last_close > prev_high and
+                follow_through = _safe_float(prev2["close"]) >= last_low
+
+        elif (last_range > 0 and
+                last_close > last_open and last_close > prev_high and
                 last_body > last_range * 0.5):
             pattern, pattern_score = "Bullish Break", 6
+
         elif (last_high > prev_high and last_low > prev_low and
                 last_close > last_open):
             pattern, pattern_score = "Higher High/Low", 5
+
     else:
-        if (prev_close > prev_open and last_close < last_open and
+        if (last_range > 0 and
+                prev_close > prev_open and last_close < last_open and
                 last_close < prev_open and last_open > prev_close and
                 last_body > last_range * 0.6):
             pattern, pattern_score = "Bearish Engulfing", 9
             if prev2 is not None:
-                follow_through = float(prev2["close"]) <= last_open
+                follow_through = _safe_float(prev2["close"]) <= last_open
+
         elif (last_range > 0 and
                 (last_high - max(last_open, last_close)) / last_range > 0.45 and
                 last_close < (last_high + last_low) / 2):
             pattern, pattern_score = "Shooting Star", 7
             if prev2 is not None:
-                follow_through = float(prev2["close"]) <= last_high
-        elif (last_close < last_open and last_close < prev_low and
+                follow_through = _safe_float(prev2["close"]) <= last_high
+
+        elif (last_range > 0 and
+                last_close < last_open and last_close < prev_low and
                 last_body > last_range * 0.5):
             pattern, pattern_score = "Bearish Break", 6
+
         elif (last_high < prev_high and last_low < prev_low and
                 last_close < last_open):
             pattern, pattern_score = "Lower High/Low", 5
@@ -294,14 +350,14 @@ def check_15m_entry(
         pattern_score = max(0, pattern_score - 3)
 
     ema_ok = False
-    if ema20:
-        if direction == "LONG"    and price > ema20: ema_ok = True
-        elif direction == "SHORT" and price < ema20: ema_ok = True
+    if ema20 and ema20 > 0:
+        if direction == "LONG"  and price > ema20: ema_ok = True
+        if direction == "SHORT" and price < ema20: ema_ok = True
 
     last5       = recent.tail(5)
-    closes      = [float(c["close"]) for _, c in last5.iterrows()]
-    struct_bull = closes[-1] > closes[0]
-    struct_bear = closes[-1] < closes[0]
+    closes      = [_safe_float(c["close"]) for _, c in last5.iterrows()]
+    struct_bull = closes[-1] > closes[0] if closes else False
+    struct_bear = closes[-1] < closes[0] if closes else False
     struct_ok   = (
         (direction == "LONG"  and struct_bull) or
         (direction == "SHORT" and struct_bear)
@@ -312,36 +368,40 @@ def check_15m_entry(
 
     try:
         swing_window = df_15m.tail(20)
-        atr_15m      = float(
-            swing_window["high"].values[-5:].max() -
-            swing_window["low"].values[-5:].min()
-        ) / 5
+        highs        = swing_window["high"].values[-5:]
+        lows         = swing_window["low"].values[-5:]
+        atr_15m      = _safe_float(highs.max() - lows.min()) / 5
+        if atr_15m <= 0:
+            atr_15m = price * 0.001
 
         if direction == "LONG":
-            recent_low = float(swing_window["low"].iloc[:-1].min())
+            recent_low = _safe_float(swing_window["low"].iloc[:-1].min())
             if (last_low < recent_low and last_close > recent_low and
                     (recent_low - last_low) < atr_15m * 0.5):
                 micro_sweep      = True
                 micro_sweep_desc = f"Micro sweep below {recent_low:.4f}"
         else:
-            recent_high = float(swing_window["high"].iloc[:-1].max())
+            recent_high = _safe_float(swing_window["high"].iloc[:-1].max())
             if (last_high > recent_high and last_close < recent_high and
                     (last_high - recent_high) < atr_15m * 0.5):
                 micro_sweep      = True
                 micro_sweep_desc = f"Micro sweep above {recent_high:.4f}"
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug(f"Micro sweep detection failed: {e}")
 
     micro_disp = False
     if len(recent) >= 3:
-        p2      = recent.iloc[-3]
-        p2_body = abs(float(p2["close"]) - float(p2["open"]))
-        p2_rng  = float(p2["high"]) - float(p2["low"])
-        if p2_rng > 0:
-            if direction == "LONG" and float(p2["close"]) > float(p2["open"]):
-                if p2_body / p2_rng > 0.6: micro_disp = True
-            elif direction == "SHORT" and float(p2["close"]) < float(p2["open"]):
-                if p2_body / p2_rng > 0.6: micro_disp = True
+        try:
+            p2      = recent.iloc[-3]
+            p2_body = abs(_safe_float(p2["close"]) - _safe_float(p2["open"]))
+            p2_rng  = _safe_float(p2["high"]) - _safe_float(p2["low"])
+            if p2_rng > 0:
+                if direction == "LONG"  and _safe_float(p2["close"]) > _safe_float(p2["open"]):
+                    if p2_body / p2_rng > 0.6: micro_disp = True
+                elif direction == "SHORT" and _safe_float(p2["close"]) < _safe_float(p2["open"]):
+                    if p2_body / p2_rng > 0.6: micro_disp = True
+        except Exception as e:
+            log.debug(f"Micro displacement detection failed: {e}")
 
     score = pattern_score
     if vol_ok:      score += 1
@@ -364,9 +424,9 @@ def check_15m_entry(
             pattern_score = max(pattern_score, 7)
 
     desc_parts = [f"15m: {pattern}"]
-    if not follow_through:    desc_parts.append("no follow-through")
-    if micro_sweep:           desc_parts.append(micro_sweep_desc)
-    if micro_disp:            desc_parts.append("micro displacement")
+    if not follow_through: desc_parts.append("no follow-through")
+    if micro_sweep:        desc_parts.append(micro_sweep_desc)
+    if micro_disp:         desc_parts.append("micro displacement")
     desc_parts.append(f"EMA:{'✅' if ema_ok else '❌'}")
     desc_parts.append(f"Vol:{'✅' if vol_ok else '❌'}")
 
@@ -387,18 +447,255 @@ def check_15m_entry(
 
 
 def _determine_direction(d1d: dict, d4h: dict) -> str:
-    d1_cls = d1d["trend"]["cls"]
-    d4_cls = d4h["trend"]["cls"]
+    d1_cls = d1d.get("trend", {}).get("cls", "neutral")
+    d4_cls = d4h.get("trend", {}).get("cls", "neutral")
 
-    if d1_cls == "bull" and d4_cls == "bull":
-        return "LONG"
-    if d1_cls == "bear" and d4_cls == "bear":
-        return "SHORT"
-    if d1_cls == "bull":
-        return "LONG"
-    if d1_cls == "bear":
-        return "SHORT"
+    if d1_cls == "bull" and d4_cls == "bull": return "LONG"
+    if d1_cls == "bear" and d4_cls == "bear": return "SHORT"
+    if d1_cls == "bull": return "LONG"
+    if d1_cls == "bear": return "SHORT"
     return "WATCH"
+
+
+def _calculate_sl(
+    is_long:    bool,
+    entry:      float,
+    sweep:      dict,
+    retest:     dict,
+    d4h:        dict,
+    d1d:        dict,
+    swings:     dict,
+    key_levels: dict,
+    grade:      str
+) -> tuple[float, str]:
+
+    atr_4h = d4h.get("atr") or d1d.get("atr") or entry * 0.015
+    atr_4h = _safe_float(atr_4h, entry * 0.015)
+    if atr_4h <= 0:
+        atr_4h = entry * 0.015
+
+    buffer    = atr_4h * 0.3
+    sl        = None
+    sl_method = ""
+
+    if is_long:
+        sweep_low = sweep.get("sweep_low")
+        if sweep_low:
+            sweep_low = _safe_float(sweep_low)
+            if sweep_low > 0 and sweep_low < entry:
+                sl        = sweep_low - buffer
+                sl_method = "Below sweep low"
+
+        if sl is None:
+            ob_data    = d4h.get("order_blocks", {})
+            nearest_ob = ob_data.get("nearest_bull")
+            if nearest_ob and not nearest_ob.get("mitigated"):
+                ob_bottom = _safe_float(nearest_ob.get("bottom", 0))
+                if ob_bottom > 0 and ob_bottom < entry:
+                    sl        = ob_bottom - buffer
+                    sl_method = "Below OB bottom"
+
+        if sl is None:
+            retest_zone = retest.get("zone")
+            if retest_zone:
+                rb = _safe_float(retest_zone.get("bottom", 0))
+                if rb > 0 and rb < entry:
+                    sl        = rb - buffer
+                    sl_method = "Below retest zone"
+
+        if sl is None:
+            if swings.get("last_low"):
+                swing_low = _safe_float(swings["last_low"]["price"])
+                if swing_low > 0 and swing_low < entry:
+                    sl        = swing_low - buffer
+                    sl_method = "Below swing low"
+
+        if sl is None:
+            pdl = _safe_float(key_levels.get("pdl", 0))
+            if pdl > 0 and pdl < entry:
+                sl        = pdl - buffer
+                sl_method = "Below PDL"
+
+        if sl is None:
+            sl        = entry - (atr_4h * 2.0)
+            sl_method = "4H ATR fallback"
+
+        if sl >= entry:
+            sl        = entry - (atr_4h * 2.0)
+            sl_method = "4H ATR fallback (corrected)"
+
+    else:
+        sweep_high = sweep.get("sweep_high")
+        if sweep_high:
+            sweep_high = _safe_float(sweep_high)
+            if sweep_high > 0 and sweep_high > entry:
+                sl        = sweep_high + buffer
+                sl_method = "Above sweep high"
+
+        if sl is None:
+            ob_data    = d4h.get("order_blocks", {})
+            nearest_ob = ob_data.get("nearest_bear")
+            if nearest_ob and not nearest_ob.get("mitigated"):
+                ob_top = _safe_float(nearest_ob.get("top", 0))
+                if ob_top > 0 and ob_top > entry:
+                    sl        = ob_top + buffer
+                    sl_method = "Above OB top"
+
+        if sl is None:
+            retest_zone = retest.get("zone")
+            if retest_zone:
+                rt = _safe_float(retest_zone.get("top", 0))
+                if rt > 0 and rt > entry:
+                    sl        = rt + buffer
+                    sl_method = "Above retest zone"
+
+        if sl is None:
+            if swings.get("last_high"):
+                swing_high = _safe_float(swings["last_high"]["price"])
+                if swing_high > 0 and swing_high > entry:
+                    sl        = swing_high + buffer
+                    sl_method = "Above swing high"
+
+        if sl is None:
+            pdh = _safe_float(key_levels.get("pdh", 0))
+            if pdh > 0 and pdh > entry:
+                sl        = pdh + buffer
+                sl_method = "Above PDH"
+
+        if sl is None:
+            sl        = entry + (atr_4h * 2.0)
+            sl_method = "4H ATR fallback"
+
+        if sl <= entry:
+            sl        = entry + (atr_4h * 2.0)
+            sl_method = "4H ATR fallback (corrected)"
+
+    sl_dist = abs(entry - sl)
+    max_sl  = entry * 0.04
+    min_sl  = entry * 0.005
+
+    if sl_dist > max_sl:
+        sl      = entry - max_sl if is_long else entry + max_sl
+        sl_dist = abs(entry - sl)
+        sl_method += " (capped at 4%)"
+
+    if sl_dist < min_sl:
+        sl      = entry - min_sl if is_long else entry + min_sl
+        sl_method += " (floored at 0.5%)"
+
+    return sl, sl_method
+
+
+def _calculate_tp(
+    is_long:    bool,
+    entry:      float,
+    sl:         float,
+    grade:      str,
+    swings:     dict,
+    key_levels: dict,
+    d1d:        dict,
+    sweep:      dict
+) -> tuple[float, float]:
+
+    sl_dist = abs(entry - sl)
+    if sl_dist <= 0:
+        sl_dist = entry * 0.01
+
+    tp_mult = get_tp_multiplier(grade)
+    min_tp  = entry + sl_dist * tp_mult if is_long else entry - sl_dist * tp_mult
+
+    if is_long:
+        candidates = []
+
+        highs = swings.get("highs", [])
+        if len(highs) >= 2:
+            last_high = _safe_float(highs[-1]["price"])
+            prev_high = _safe_float(highs[-2]["price"])
+            if prev_high > 0 and abs(last_high - prev_high) / prev_high < 0.003:
+                equal_high = max(last_high, prev_high)
+                if equal_high > min_tp:
+                    candidates.append((equal_high, "Equal highs liquidity"))
+
+        if swings.get("last_high"):
+            sh = _safe_float(swings["last_high"]["price"])
+            if sh > min_tp:
+                candidates.append((sh, "Swing high"))
+
+        pdh = _safe_float(key_levels.get("pdh", 0))
+        if pdh > min_tp:
+            candidates.append((pdh, "PDH"))
+
+        pwh = _safe_float(key_levels.get("pwh", 0))
+        if pwh > min_tp:
+            candidates.append((pwh, "PWH"))
+
+        vah = _safe_float(d1d.get("vah") or 0)
+        if vah > min_tp:
+            candidates.append((vah, "VAH"))
+
+        sweep_items = sweep.get("items", [])
+        for item in sweep_items:
+            lvl = _safe_float(item.get("level", 0))
+            if item.get("type") == "bear" and lvl > min_tp:
+                candidates.append((lvl, "Sweep level above"))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            tp, tp_label = candidates[0]
+        else:
+            tp       = min_tp
+            tp_label = f"{tp_mult}x risk fallback"
+
+    else:
+        candidates = []
+
+        lows = swings.get("lows", [])
+        if len(lows) >= 2:
+            last_low = _safe_float(lows[-1]["price"])
+            prev_low = _safe_float(lows[-2]["price"])
+            if prev_low > 0 and abs(last_low - prev_low) / prev_low < 0.003:
+                equal_low = min(last_low, prev_low)
+                if equal_low < min_tp:
+                    candidates.append((equal_low, "Equal lows liquidity"))
+
+        if swings.get("last_low"):
+            sl_swing = _safe_float(swings["last_low"]["price"])
+            if sl_swing < min_tp:
+                candidates.append((sl_swing, "Swing low"))
+
+        pdl = _safe_float(key_levels.get("pdl", 0))
+        if pdl > 0 and pdl < min_tp:
+            candidates.append((pdl, "PDL"))
+
+        pwl = _safe_float(key_levels.get("pwl", 0))
+        if pwl > 0 and pwl < min_tp:
+            candidates.append((pwl, "PWL"))
+
+        val = _safe_float(d1d.get("val") or 0)
+        if val > 0 and val < min_tp:
+            candidates.append((val, "VAL"))
+
+        sweep_items = sweep.get("items", [])
+        for item in sweep_items:
+            lvl = _safe_float(item.get("level", 0))
+            if item.get("type") == "bull" and lvl > 0 and lvl < min_tp:
+                candidates.append((lvl, "Sweep level below"))
+
+        if candidates:
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            tp, tp_label = candidates[0]
+        else:
+            tp       = min_tp
+            tp_label = f"{tp_mult}x risk fallback"
+
+    actual_rr = _safe_div(abs(tp - entry), sl_dist, fallback=0.0)
+
+    if actual_rr < MIN_RR:
+        tp        = entry + sl_dist * MIN_RR if is_long else entry - sl_dist * MIN_RR
+        tp_label  = f"R:R floor {MIN_RR}x"
+        actual_rr = MIN_RR
+
+    return tp, round(actual_rr, 2)
 
 
 def run_no_trade_engine(
@@ -419,7 +716,7 @@ def run_no_trade_engine(
     portfolio_blocks = []
     score_penalty    = 0
 
-    d1_cls = d1d["trend"]["cls"]
+    d1_cls = d1d.get("trend", {}).get("cls", "neutral")
 
     def hard_market(icon, reason, detail):
         market_blocks.append({
@@ -462,11 +759,11 @@ def run_no_trade_engine(
         })
         score_penalty += penalty
 
-    if regime["type"] == "chop":
+    if regime.get("type") == "chop":
         hard_market("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
 
     if d1w:
-        wk_cls = d1w["trend"]["cls"]
+        wk_cls = d1w.get("trend", {}).get("cls", "neutral")
         if (wk_cls == "bear" and d1_cls == "bull") or \
            (wk_cls == "bull" and d1_cls == "bear"):
             hard_market(
@@ -481,7 +778,7 @@ def run_no_trade_engine(
             "ADX below 18. Ranging market."
         )
 
-    fund = market["funding"] * 100
+    fund = _safe_float(market.get("funding", 0)) * 100
     if abs(fund) > 0.08:
         hard_market(
             "🚫", f"Extreme funding {fund:.4f}%",
@@ -505,8 +802,7 @@ def run_no_trade_engine(
             penalty=20
         )
 
-    if (len(btc_instability.get("warnings", [])) >= 2 and
-            coin != "BTC"):
+    if (len(btc_instability.get("warnings", [])) >= 2 and coin != "BTC"):
         hard_entry(
             "🚫", "BTC unstable",
             " · ".join(btc_instability["warnings"][:2]),
@@ -539,16 +835,16 @@ def run_no_trade_engine(
     if rsi is not None:
         if rsi < 25 and d1_cls == "bear":
             soft("⚠️", f"RSI {rsi:.1f} — deeply oversold",
-                 "Bounce risk elevated. Confidence reduced.", penalty=6)
+                 "Bounce risk elevated.", penalty=6)
         elif rsi < 30 and d1_cls == "bear":
             soft("⚠️", f"RSI {rsi:.1f} — approaching oversold",
-                 "Bounce risk present. Reduce confidence.", penalty=3)
+                 "Bounce risk present.", penalty=3)
         if rsi > 75 and d1_cls == "bull":
             soft("⚠️", f"RSI {rsi:.1f} — deeply overbought",
-                 "Exhaustion risk elevated. Confidence reduced.", penalty=6)
+                 "Exhaustion risk elevated.", penalty=6)
         elif rsi > 70 and d1_cls == "bull":
             soft("⚠️", f"RSI {rsi:.1f} — approaching overbought",
-                 "Exhaustion risk present. Reduce confidence.", penalty=3)
+                 "Exhaustion risk present.", penalty=3)
 
     if news_filter and news_filter.get("warning"):
         upcoming = ", ".join(
@@ -582,9 +878,9 @@ def run_no_trade_engine(
     entry_hard_blocked  = len(entry_blocks) > 0
     portfolio_blocked   = len(portfolio_blocks) > 0
 
-    adj_score = max(0, base_score - score_penalty)
-
+    adj_score    = max(0, base_score - score_penalty)
     market_score = wconf.get("market_score", 0) if wconf else 0
+
     if market_score >= 70 and not market_hard_blocked:
         adj_score = max(adj_score, 38)
 
@@ -618,92 +914,6 @@ def run_no_trade_engine(
     }
 
 
-def _cap_sl_distance(
-    entry:   float,
-    sl:      float,
-    is_long: bool,
-    atr:     float,
-    adx:     float,
-    grade:   str
-) -> float:
-    if not entry or not sl or not atr:
-        return sl
-
-    sl_dist = abs(entry - sl)
-    sl_pct  = sl_dist / entry
-
-    atr_pct = atr / entry if entry > 0 else 0.02
-
-    if adx and adx > 40:
-        adx_mult = 1.5
-    elif adx and adx > 25:
-        adx_mult = 1.2
-    else:
-        adx_mult = 0.8
-
-    grade_mult = {"A+": 1.2, "A": 1.0, "B": 0.8}.get(grade, 1.0)
-
-    dynamic_cap = atr_pct * adx_mult * grade_mult
-    dynamic_cap = max(0.015, min(0.06, dynamic_cap))
-
-    if sl_pct > dynamic_cap:
-        sl_dist = entry * dynamic_cap
-        sl      = entry - sl_dist if is_long else entry + sl_dist
-
-    return sl
-
-
-def _calculate_tp(
-    is_long:    bool,
-    entry:      float,
-    sl:         float,
-    grade:      str,
-    swings:     dict,
-    key_levels: dict,
-    d1d:        dict
-) -> float:
-    sl_dist = abs(entry - sl)
-    tp_mult = get_tp_multiplier(grade)
-
-    if is_long:
-        min_tp = entry + sl_dist * tp_mult
-
-        structure_candidates = []
-        if swings.get("last_high"):
-            structure_candidates.append(swings["last_high"]["price"])
-        if key_levels.get("pdh"):
-            structure_candidates.append(key_levels["pdh"])
-        if key_levels.get("pwh"):
-            structure_candidates.append(key_levels["pwh"])
-        vah = d1d.get("vah")
-        if vah and vah > entry:
-            structure_candidates.append(vah)
-
-        valid = [c for c in structure_candidates if c > min_tp]
-        if valid:
-            return min(valid)
-        return min_tp
-
-    else:
-        min_tp = entry - sl_dist * tp_mult
-
-        structure_candidates = []
-        if swings.get("last_low"):
-            structure_candidates.append(swings["last_low"]["price"])
-        if key_levels.get("pdl"):
-            structure_candidates.append(key_levels["pdl"])
-        if key_levels.get("pwl"):
-            structure_candidates.append(key_levels["pwl"])
-        val = d1d.get("val")
-        if val and val < entry:
-            structure_candidates.append(val)
-
-        valid = [c for c in structure_candidates if c < min_tp]
-        if valid:
-            return max(valid)
-        return min_tp
-
-
 def generate_signal(
     d1d, d4h,
     wconf, no_trade,
@@ -722,9 +932,31 @@ def generate_signal(
     d1w:          dict = None
 ) -> dict:
 
+    capital  = _safe_float(capital)
+    leverage = max(1, min(int(leverage or 1), 125))
+
+    if capital <= 0:
+        log.error(f"Invalid capital: {capital} — using 0")
+        capital = 0.0
+
     tier  = no_trade["final_tier"]
     score = no_trade["adj_score"]
-    price = market["price"]
+    price = _safe_float(market.get("price", 0))
+
+    if price <= 0:
+        log.error("Invalid price in generate_signal")
+        return {
+            "grade":       "F",
+            "score":       0,
+            "direction":   "NO TRADE",
+            "dir_class":   "notrade",
+            "signal_type": "HARD_BLOCK",
+            "reason":      "Invalid price",
+            "entry":       None,
+            "sl":          None,
+            "tp1":         None,
+            "tp2":         None,
+        }
 
     base = {
         "grade": tier["label"],
@@ -744,10 +976,10 @@ def generate_signal(
             "signal_type":      "PORTFOLIO_BLOCK",
             "portfolio_reason": tier.get("portfolio_reason", "Portfolio blocked"),
             "reason":           tier.get("portfolio_reason", "Portfolio blocked"),
-            "entry": price,
-            "sl":    None,
-            "tp1":   None,
-            "tp2":   None,
+            "entry":            price,
+            "sl":               None,
+            "tp1":              None,
+            "tp2":              None,
         }
         result["explanation"] = _attach_explanation(
             result, sweep, displacement, retest,
@@ -823,8 +1055,8 @@ def generate_signal(
             )
             return result
 
-    d1_cls = d1d["trend"]["cls"]
-    d4_cls = d4h["trend"]["cls"]
+    d1_cls = d1d.get("trend", {}).get("cls", "neutral")
+    d4_cls = d4h.get("trend", {}).get("cls", "neutral")
 
     if not (d1_cls == "bull" and d4_cls == "bull") and \
        not (d1_cls == "bear" and d4_cls == "bear"):
@@ -851,105 +1083,67 @@ def generate_signal(
 
     direction = "LONG" if d1_cls == "bull" else "SHORT"
     is_long   = direction == "LONG"
-    atr       = d1d.get("atr") or price * 0.015
     swings    = d1d.get("swings", {})
-    atr_mult  = (regime or {}).get("atr_multiplier", 2.0)
-    adx_1d    = d1d.get("adx")
 
     entry_15m = check_15m_entry(
         df_15m    = df_15m,
         direction = direction,
-        atr_4h    = d4h.get("atr", atr)
+        atr_4h    = _safe_float(d4h.get("atr") or d1d.get("atr") or price * 0.015)
     )
 
     score_15m = score
     if not entry_15m["confirmed"]:
-        score_15m = max(0, score - 2)
-        tier = get_tier(score_15m, no_trade.get("market_blocked", False))
+        score_15m   = max(0, score - 2)
+        tier        = get_tier(score_15m, no_trade.get("market_blocked", False))
+        grade_label = tier["label"]
 
-    entry = (
+    entry = _safe_float(
         entry_15m["entry_price"]
         if entry_15m["confirmed"] and entry_15m["entry_price"]
         else price
     )
 
-    retest_zone = retest.get("zone") if retest else None
+    if entry <= 0:
+        entry = price
 
-    if is_long:
-        sl_candidates = []
-
-        if retest_zone:
-            sl_candidates.append(retest_zone["bottom"] - atr * 0.15)
-
-        sweep_low = (sweep or {}).get("sweep_low")
-        if sweep_low:
-            sl_candidates.append(sweep_low - atr * 0.1)
-
-        if swings.get("last_low"):
-            sl_candidates.append(swings["last_low"]["price"] - atr * 0.1)
-
-        if key_levels.get("pdl"):
-            sl_candidates.append(key_levels["pdl"] - atr * 0.1)
-
-        sl_candidates = [c for c in sl_candidates if 0 < c < entry]
-        sl = max(sl_candidates) if sl_candidates else entry - atr * atr_mult
-
-        min_sl_dist = atr * atr_mult
-        if (entry - sl) < min_sl_dist:
-            sl = entry - min_sl_dist
-
-    else:
-        sl_candidates = []
-
-        if retest_zone:
-            sl_candidates.append(retest_zone["top"] + atr * 0.15)
-
-        sweep_high = (sweep or {}).get("sweep_high")
-        if sweep_high:
-            sl_candidates.append(sweep_high + atr * 0.1)
-
-        if swings.get("last_high"):
-            sl_candidates.append(swings["last_high"]["price"] + atr * 0.1)
-
-        if key_levels.get("pdh"):
-            sl_candidates.append(key_levels["pdh"] + atr * 0.1)
-
-        sl_candidates = [c for c in sl_candidates if c > entry]
-        sl = min(sl_candidates) if sl_candidates else entry + atr * atr_mult
-
-        min_sl_dist = atr * atr_mult
-        if (sl - entry) < min_sl_dist:
-            sl = entry + min_sl_dist
-
-    sl = _cap_sl_distance(
-        entry   = entry,
-        sl      = sl,
-        is_long = is_long,
-        atr     = atr,
-        adx     = adx_1d,
-        grade   = grade_label
+    sl, sl_method = _calculate_sl(
+        is_long    = is_long,
+        entry      = entry,
+        sweep      = sweep or {},
+        retest     = retest or {},
+        d4h        = d4h,
+        d1d        = d1d,
+        swings     = swings,
+        key_levels = key_levels,
+        grade      = grade_label
     )
 
     sl_dist = abs(entry - sl)
-    sl_pct  = sl_dist / entry * 100
-    tp_mult = get_tp_multiplier(grade_label)
+    sl_pct  = _safe_div(sl_dist, entry, fallback=0.5) * 100
 
-    tp1 = _calculate_tp(
+    if sl_pct <= 0:
+        log.warning("sl_pct is zero — forcing minimum 0.5%")
+        sl_pct = 0.5
+
+    tp1, actual_rr = _calculate_tp(
         is_long    = is_long,
         entry      = entry,
         sl         = sl,
         grade      = grade_label,
         swings     = swings,
         key_levels = key_levels,
-        d1d        = d1d
+        d1d        = d1d,
+        sweep      = sweep or {}
     )
 
-    actual_rr = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0
-
+    tp_mult  = get_tp_multiplier(grade_label)
     risk_pct = dynamic_risk_pct(grade_label)
     risk_amt = capital * risk_pct
-    pos_size = risk_amt / (sl_pct / 100)
-    margin   = pos_size / leverage
+
+    pos_size = _safe_div(risk_amt, sl_pct / 100, fallback=0.0)
+    margin   = _safe_div(pos_size, leverage, fallback=0.0)
+
+    atr_used = _safe_float(d4h.get("atr") or d1d.get("atr") or price * 0.015)
 
     result = {
         **base,
@@ -963,19 +1157,18 @@ def generate_signal(
         "tp1":         tp1,
         "tp2":         None,
         "sl_pct":      sl_pct,
-        "sl_method":   "Structure-aware with dynamic cap",
+        "sl_method":   sl_method,
         "risk_pct":    risk_pct * 100,
         "risk_amt":    risk_amt,
         "pos_size":    pos_size,
         "margin":      margin,
         "eff_lev":     leverage,
-        "atr_used":    atr,
-        "atr_mult":    atr_mult,
+        "atr_used":    atr_used,
         "tp_mult":     tp_mult,
-        "actual_rr":   round(actual_rr, 2),
+        "actual_rr":   actual_rr,
         "funding":     market.get("funding", 0),
-        "sweep_score": 0,
-        "disp_score":  0,
+        "sweep_score": _safe_float(sweep.get("score", 0) if sweep else 0),
+        "disp_score":  _safe_float(displacement.get("score", 0) if displacement else 0),
         "entry_15m":   entry_15m,
         "reason": (
             f"15m: {entry_15m['pattern']}"
@@ -989,6 +1182,18 @@ def generate_signal(
         d1d, d4h, btc_data, btc_inst,
         oi_matrix, market, regime, session,
         no_trade, wconf
+    )
+
+    log.info(
+        "Signal generated | grade=%s dir=%s score=%s entry=%s sl=%s tp1=%s rr=%s sl_method=%s",
+        result.get("grade"),
+        result.get("direction"),
+        result.get("score"),
+        result.get("entry"),
+        result.get("sl"),
+        result.get("tp1"),
+        result.get("actual_rr"),
+        result.get("sl_method"),
     )
 
     return result
@@ -1021,4 +1226,5 @@ def _attach_explanation(
             wconf        = wconf
         )
     except Exception:
+        log.exception("Explanation build error")
         return {}
