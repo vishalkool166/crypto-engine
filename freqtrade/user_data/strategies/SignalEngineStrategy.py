@@ -117,6 +117,7 @@ def _get_signal_from_db(signal_id: int) -> dict | None:
 def _get_signal_levels(trade: Trade) -> dict | None:
     try:
         enter_tag = getattr(trade, "enter_tag", "") or ""
+        logger.info(f"_get_signal_levels: pair={trade.pair} enter_tag={enter_tag}")
 
         if enter_tag.startswith("SE_"):
             parts = enter_tag.split("_")
@@ -128,11 +129,11 @@ def _get_signal_levels(trade: Trade) -> dict | None:
                     tp1   = sig.get("tp1")
                     entry = sig.get("entry")
                     if sl and float(sl) > 0 and tp1 and float(tp1) > 0:
-                        return {
-                            "sl":    sl,
-                            "tp1":   tp1,
-                            "entry": entry
-                        }
+                        logger.info(
+                            f"Signal {signal_id} loaded: "
+                            f"sl={sl} tp1={tp1} entry={entry}"
+                        )
+                        return {"sl": sl, "tp1": tp1, "entry": entry}
                     logger.warning(
                         f"Signal {signal_id} has zero/null sl/tp1 "
                         f"— falling back to Redis"
@@ -154,11 +155,7 @@ def _get_signal_levels(trade: Trade) -> dict | None:
                             f"Redis fallback successful for {coin} "
                             f"sl={sl} tp1={tp1}"
                         )
-                        return {
-                            "sl":    sl,
-                            "tp1":   tp1,
-                            "entry": entry
-                        }
+                        return {"sl": sl, "tp1": tp1, "entry": entry}
 
         logger.warning(
             f"No valid signal levels found for {trade.pair} "
@@ -175,9 +172,11 @@ class SignalEngineStrategy(IStrategy):
 
     INTERFACE_VERSION = 3
 
-    stoploss   = -0.99
-    timeframe  = "1d"
-    can_short  = True
+    stoploss                      = -0.99
+    timeframe                     = "5m"
+    can_short                     = True
+    stoploss_on_exchange          = True
+    stoploss_on_exchange_interval = 60
 
     minimal_roi = {"0": 100}
 
@@ -291,14 +290,17 @@ class SignalEngineStrategy(IStrategy):
             if not levels:
                 return self.stoploss
 
-            sl_price = float(levels.get("sl") or 0)
-            if not sl_price or not trade.open_rate:
+            sl_price     = float(levels.get("sl") or 0)
+            signal_entry = float(levels.get("entry") or 0)
+            base_price   = signal_entry if signal_entry > 0 else trade.open_rate
+
+            if not sl_price or not base_price:
                 return self.stoploss
 
             if trade.is_short:
-                sl_pct = -abs((sl_price - trade.open_rate) / trade.open_rate)
+                sl_pct = -abs((sl_price - base_price) / base_price)
             else:
-                sl_pct = (sl_price - trade.open_rate) / trade.open_rate
+                sl_pct = (sl_price - base_price) / base_price
 
             sl_pct = max(-0.99, min(-0.001, sl_pct))
             return sl_pct
