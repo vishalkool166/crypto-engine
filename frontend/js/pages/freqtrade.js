@@ -75,13 +75,14 @@ function freqtradePage() {
         <div class="mt-12">
             <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">
                 Open Trades
-                <template x-if="loading">
-                    <span style="font-size:10px;color:var(--text-muted);font-weight:400;margin-left:8px;">loading...</span>
-                </template>
             </div>
 
             <template x-if="!openTrades.length && !loading">
                 <div class="card" x-html="Utils.emptyState('No open trades')"></div>
+            </template>
+
+            <template x-if="!openTrades.length && loading">
+                <div class="card" x-html="Utils.loadingState()"></div>
             </template>
 
             <template x-for="trade in openTrades" :key="trade.trade_id">
@@ -278,11 +279,14 @@ function freqtradeData() {
         forceSelling:  null,
 
         init() {
-            this.load()
+            this.loadSummary()
+
+            this.loadTrades()
 
             window.addEventListener('page-change', (e) => {
                 if (e.detail.page === 'freqtrade') {
-                    if (!this.loading) this.load()
+                    this.loadSummary()
+                    this.loadTrades()
                 }
             })
 
@@ -291,37 +295,55 @@ function freqtradeData() {
             })
         },
 
-        async load() {
-            if (this.loading) return
+        async loadSummary() {
             this.loading = true
-
             try {
-                const [sRes, tRes] = await Promise.all([
-                    fetch('/api/ft/summary', { credentials: 'include' }),
-                    fetch('/api/ft/trades?limit=50', { credentials: 'include' })
-                ])
+                const controller = new AbortController()
+                const timeout    = setTimeout(() => controller.abort(), 10000)
 
-                if (sRes.status === 401) {
+                const res = await fetch('/api/ft/summary', {
+                    credentials: 'include',
+                    signal:      controller.signal,
+                })
+                clearTimeout(timeout)
+
+                if (res.status === 401) {
                     window.location.href = '/login.html'
                     return
                 }
 
-                const s = await sRes.json().catch(() => ({}))
-                const t = await tRes.json().catch(() => ({}))
-
-                this._applyUpdate(s)
-
-                this.tradeHistory = Array.isArray(t.trades)
-                    ? t.trades.filter(x => !x.is_open)
-                    : []
-
+                const data = await res.json().catch(() => ({}))
+                this._applyUpdate(data)
                 this.$nextTick(() => this._renderChart())
 
             } catch (e) {
-                window._app?.showToast('Load failed: ' + e.message, 'error')
+                if (e.name !== 'AbortError') {
+                    window._app?.showToast('Freqtrade unavailable: ' + e.message, 'error')
+                }
             } finally {
                 this.loading = false
             }
+        },
+
+        async loadTrades() {
+            try {
+                const controller = new AbortController()
+                const timeout    = setTimeout(() => controller.abort(), 10000)
+
+                const res = await fetch('/api/ft/trades?limit=50', {
+                    credentials: 'include',
+                    signal:      controller.signal,
+                })
+                clearTimeout(timeout)
+
+                if (!res.ok) return
+
+                const data = await res.json().catch(() => ({}))
+                this.tradeHistory = Array.isArray(data.trades)
+                    ? data.trades.filter(t => !t.is_open)
+                    : []
+
+            } catch (e) {}
         },
 
         _applyUpdate(d) {
@@ -364,7 +386,8 @@ function freqtradeData() {
 
         async manualRefresh() {
             Charts.destroy('ft-daily-chart')
-            await this.load()
+            this.loadSummary()
+            this.loadTrades()
         },
 
         _renderChart() {
@@ -385,7 +408,7 @@ function freqtradeData() {
                 })
                 const data = await res.json().catch(() => ({}))
                 window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
-                setTimeout(() => this.load(), 1500)
+                setTimeout(() => this.loadSummary(), 1500)
             } catch (e) {
                 window._app?.showToast('Start failed: ' + e.message, 'error')
             } finally {
@@ -403,7 +426,7 @@ function freqtradeData() {
                 })
                 const data = await res.json().catch(() => ({}))
                 window._app?.showToast('Bot: ' + (data.status || 'command sent'), 'success')
-                setTimeout(() => this.load(), 1500)
+                setTimeout(() => this.loadSummary(), 1500)
             } catch (e) {
                 window._app?.showToast('Stop failed: ' + e.message, 'error')
             } finally {
@@ -428,7 +451,7 @@ function freqtradeData() {
             )
             if (result.success) {
                 window._app?.showToast('Force sell submitted for ' + coin, 'success')
-                setTimeout(() => this.load(), 1500)
+                setTimeout(() => this.loadSummary(), 1500)
             } else if (result.reason !== 'Cancelled') {
                 window._app?.showToast('Force sell failed: ' + result.reason, 'error')
             }
