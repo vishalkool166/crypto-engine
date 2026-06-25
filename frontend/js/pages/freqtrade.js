@@ -10,17 +10,32 @@ function freqtradePage() {
                 </div>
             </div>
             <div class="flex gap-8">
-                <button class="btn btn-success btn-sm" @click="startBot" :disabled="actionLoading === 'start' || botState === 'running'" aria-label="Start bot">
+                <button
+                    class="btn btn-success btn-sm"
+                    @click="startBot"
+                    :disabled="actionLoading === 'start' || botState === 'running'"
+                    aria-label="Start bot"
+                >
                     <span x-show="actionLoading === 'start'" class="spinner" aria-hidden="true"></span>
                     <svg x-show="actionLoading !== 'start'" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     Start
                 </button>
-                <button class="btn btn-danger btn-sm" @click="stopBot" :disabled="actionLoading === 'stop' || botState === 'stopped'" aria-label="Stop bot">
+                <button
+                    class="btn btn-danger btn-sm"
+                    @click="stopBot"
+                    :disabled="actionLoading === 'stop' || botState === 'stopped'"
+                    aria-label="Stop bot"
+                >
                     <span x-show="actionLoading === 'stop'" class="spinner" aria-hidden="true"></span>
                     <svg x-show="actionLoading !== 'stop'" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18"/></svg>
                     Stop
                 </button>
-                <button class="btn btn-ghost btn-sm" @click="manualRefresh" :disabled="loading" aria-label="Refresh">
+                <button
+                    class="btn btn-ghost btn-sm"
+                    @click="manualRefresh"
+                    :disabled="loading"
+                    aria-label="Refresh"
+                >
                     <span x-show="loading" class="spinner" aria-hidden="true"></span>
                     <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                     Refresh
@@ -32,13 +47,17 @@ function freqtradePage() {
             <div class="card">
                 <div class="card-title">Bot State</div>
                 <div class="card-value" style="margin-top:4px;">
-                    <span class="badge" :class="botState === 'running' ? 'badge-online' : 'badge-offline'" x-text="(botState || 'unknown').toUpperCase()"></span>
+                    <span
+                        class="badge"
+                        :class="botState === 'running' ? 'badge-online' : 'badge-offline'"
+                        x-text="(botState || 'unknown').toUpperCase()"
+                    ></span>
                 </div>
                 <div class="card-sub" style="font-family:var(--font-mono);" x-text="openTrades.length + ' / ' + maxTrades + ' trades open'"></div>
             </div>
             <div class="card">
                 <div class="card-title">Balance</div>
-                <div class="card-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></div>
+                <div class="card-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></div>
                 <div class="card-sub" style="font-family:var(--font-mono);" x-text="balance.free != null ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'"></div>
             </div>
             <div class="card">
@@ -54,9 +73,10 @@ function freqtradePage() {
         </div>
 
         <div class="mt-12">
-            <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">Open Trades</div>
-
-            <div x-show="loading && !openTrades.length" x-html="Utils.loadingState()"></div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">
+                Open Trades
+                <span x-show="loading" class="spinner" style="display:inline-block;margin-left:8px;width:12px;height:12px;" aria-hidden="true"></span>
+            </div>
 
             <template x-if="!loading && !openTrades.length">
                 <div class="card" x-html="Utils.emptyState('No open trades')"></div>
@@ -184,7 +204,7 @@ function freqtradePage() {
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Balance</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Free</span>
@@ -199,9 +219,7 @@ function freqtradePage() {
                 <span class="tag" style="font-family:var(--font-mono);" x-text="tradeHistory.length + ' trades'"></span>
             </div>
 
-            <div x-show="loading && !tradeHistory.length" x-html="Utils.loadingState()"></div>
-
-            <div x-show="!loading || tradeHistory.length" class="table-wrap" role="region" aria-label="Trade history" tabindex="0">
+            <div class="table-wrap" role="region" aria-label="Trade history" tabindex="0">
                 <table aria-label="Freqtrade closed trades">
                     <thead>
                         <tr>
@@ -257,17 +275,23 @@ function freqtradeData() {
         loading:       false,
         actionLoading: null,
         forceSelling:  null,
-        _loaded:       false,
+        _pageListener: null,
 
         async init() {
-            window.addEventListener('page-change', e => {
+            this._pageListener = (e) => {
                 if (e.detail.page === 'freqtrade') {
                     this.load()
                 }
-            })
+            }
+            window.addEventListener('page-change', this._pageListener)
 
-            if (window._app?.page === 'freqtrade') {
-                await this.load()
+            await this.load()
+        },
+
+        destroy() {
+            if (this._pageListener) {
+                window.removeEventListener('page-change', this._pageListener)
+                this._pageListener = null
             }
         },
 
@@ -276,23 +300,32 @@ function freqtradeData() {
             this.loading = true
 
             try {
-                const [summary, tradesRes] = await Promise.all([
-                    fetch('/api/ft/summary', { credentials: 'include' }).then(r => r.json()).catch(() => ({})),
-                    fetch('/api/ft/trades?limit=50', { credentials: 'include' }).then(r => r.json()).catch(() => ({ trades: [] }))
+                const [summaryRes, tradesRes] = await Promise.all([
+                    fetch('/api/ft/summary', { credentials: 'include' }),
+                    fetch('/api/ft/trades?limit=50', { credentials: 'include' })
                 ])
 
-                this.botState    = summary.bot_state || '--'
-                this.openTrades  = summary.status    || []
-                this.profit      = summary.profit    || {}
-                this.balance     = this._parseBalance(summary.balance || {})
-                this.daily       = this._parseDaily(summary.daily)
-                this.tradeHistory = (tradesRes.trades || []).filter(t => !t.is_open)
-                this._loaded     = true
+                if (summaryRes.status === 401 || tradesRes.status === 401) {
+                    window.location.href = '/login.html'
+                    return
+                }
+
+                const summary   = await summaryRes.json().catch(() => ({}))
+                const tradesData = await tradesRes.json().catch(() => ({ trades: [] }))
+
+                this.botState     = summary.bot_state || '--'
+                this.openTrades   = Array.isArray(summary.status) ? summary.status : []
+                this.profit       = summary.profit   || {}
+                this.balance      = this._parseBalance(summary.balance || {})
+                this.daily        = this._parseDaily(summary.daily)
+                this.tradeHistory = Array.isArray(tradesData.trades)
+                    ? tradesData.trades.filter(t => !t.is_open)
+                    : []
 
                 this.$nextTick(() => this.renderCharts())
 
             } catch (e) {
-                window._app?.showToast('Failed to load Freqtrade: ' + e.message, 'error')
+                window._app?.showToast('Freqtrade load failed: ' + e.message, 'error')
             } finally {
                 this.loading = false
             }
@@ -308,30 +341,32 @@ function freqtradeData() {
             const currencies = raw.currencies || []
             const usdt       = currencies.find(c => c.currency === 'USDT') || {}
             return {
-                total: raw.total  != null ? raw.total  : null,
-                free:  usdt.free  != null ? usdt.free  : null,
-                used:  usdt.used  != null ? usdt.used  : null,
+                total: raw.total  != null ? parseFloat(raw.total)  : null,
+                free:  usdt.free  != null ? parseFloat(usdt.free)  : null,
+                used:  usdt.used  != null ? parseFloat(usdt.used)  : null,
             }
         },
 
         _parseDaily(raw) {
             if (!raw) return []
             const arr = Array.isArray(raw) ? raw : (raw.data || [])
-            return arr.map(d => ({
-                date:       d.date        || d.day || '',
-                profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
-            })).filter(d => d.date)
+            return arr
+                .map(d => ({
+                    date:       d.date || d.day || '',
+                    profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
+                }))
+                .filter(d => d.date)
         },
 
         onFtUpdate(data) {
             if (!data) return
-            if (data.status && Array.isArray(data.status)) {
+            if (Array.isArray(data.status)) {
                 this.openTrades = data.status
             }
-            if (data.profit && Object.keys(data.profit).length) {
+            if (data.profit && typeof data.profit === 'object' && Object.keys(data.profit).length) {
                 this.profit = data.profit
             }
-            if (data.balance) {
+            if (data.balance && typeof data.balance === 'object') {
                 this.balance = this._parseBalance(data.balance)
             }
             if (data.bot_state && data.bot_state !== 'unknown') {
@@ -350,15 +385,23 @@ function freqtradeData() {
         async startBot() {
             this.actionLoading = 'start'
             try {
-                const res = await fetch('/api/ft/start', {
+                const res  = await fetch('/api/ft/start', {
                     method:      'POST',
                     credentials: 'include',
+                    headers:     { 'Content-Type': 'application/json' },
                 })
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}))
+                    throw new Error(err.detail || 'Start failed — status ' + res.status)
+                }
+
                 const data = await res.json()
-                window._app?.showToast('Freqtrade started', 'success')
-                await this.load()
+                window._app?.showToast('Bot started: ' + (data.status || 'ok'), 'success')
+                setTimeout(() => this.load(), 1000)
+
             } catch (e) {
-                window._app?.showToast('Failed to start: ' + e.message, 'error')
+                window._app?.showToast('Start failed: ' + e.message, 'error')
             } finally {
                 this.actionLoading = null
             }
@@ -367,15 +410,23 @@ function freqtradeData() {
         async stopBot() {
             this.actionLoading = 'stop'
             try {
-                const res = await fetch('/api/ft/stop', {
+                const res  = await fetch('/api/ft/stop', {
                     method:      'POST',
                     credentials: 'include',
+                    headers:     { 'Content-Type': 'application/json' },
                 })
+
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}))
+                    throw new Error(err.detail || 'Stop failed — status ' + res.status)
+                }
+
                 const data = await res.json()
-                window._app?.showToast('Freqtrade stopped', 'success')
-                await this.load()
+                window._app?.showToast('Bot stopped: ' + (data.status || 'ok'), 'success')
+                setTimeout(() => this.load(), 1000)
+
             } catch (e) {
-                window._app?.showToast('Failed to stop: ' + e.message, 'error')
+                window._app?.showToast('Stop failed: ' + e.message, 'error')
             } finally {
                 this.actionLoading = null
             }
@@ -400,7 +451,7 @@ function freqtradeData() {
 
             if (result.success) {
                 window._app?.showToast('Force sell submitted for ' + coin, 'success')
-                await this.load()
+                setTimeout(() => this.load(), 1000)
             } else if (result.reason !== 'Cancelled') {
                 window._app?.showToast('Force sell failed: ' + result.reason, 'error')
             }
