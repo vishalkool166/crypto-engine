@@ -20,7 +20,7 @@ function freqtradePage() {
                     <svg x-show="actionLoading !== 'stop'" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18"/></svg>
                     Stop
                 </button>
-                <button class="btn btn-ghost btn-sm" @click="load" :disabled="loading" aria-label="Refresh">
+                <button class="btn btn-ghost btn-sm" @click="manualRefresh" :disabled="loading" aria-label="Refresh">
                     <span x-show="loading" class="spinner" aria-hidden="true"></span>
                     <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                     Refresh
@@ -39,114 +39,117 @@ function freqtradePage() {
             <div class="card">
                 <div class="card-title">Balance</div>
                 <div class="card-value" style="font-family:var(--font-mono);color:var(--blue);" x-text="balance.total ? '$' + parseFloat(balance.total).toFixed(2) : '--'"></div>
-                <div class="card-sub" style="font-family:var(--font-mono);" x-text="balance.free ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'"></div>
+                <div class="card-sub" style="font-family:var(--font-mono);" x-text="balance.free != null ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'"></div>
             </div>
             <div class="card">
                 <div class="card-title">Total PnL</div>
                 <div class="card-value" style="font-family:var(--font-mono);" :style="{color: Utils.pnlColor(profit.profit_all_coin)}" x-text="profit.profit_all_coin != null ? Utils.fmtPnl(profit.profit_all_coin) : '--'"></div>
-                <div class="card-sub" x-text="profit.trade_count ? profit.trade_count + ' total trades' : '--'"></div>
+                <div class="card-sub" x-text="profit.trade_count != null ? profit.trade_count + ' total trades' : '--'"></div>
             </div>
             <div class="card">
                 <div class="card-title">Win Rate</div>
                 <div class="card-value" style="font-family:var(--font-mono);" :style="{color: Utils.winRateColor((profit.winrate||0)*100)}" x-text="profit.winrate != null ? ((profit.winrate||0)*100).toFixed(1) + '%' : '--'"></div>
-                <div class="card-sub" x-text="profit.profit_factor ? 'PF: ' + parseFloat(profit.profit_factor||0).toFixed(2) : '--'"></div>
+                <div class="card-sub" x-text="profit.profit_factor != null ? 'PF: ' + parseFloat(profit.profit_factor||0).toFixed(2) : '--'"></div>
             </div>
         </div>
 
         <div class="mt-12">
-            <div class="card-title" style="margin-bottom:12px;">Open Trades</div>
+            <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:12px;">Open Trades</div>
 
-            <template x-if="!openTrades.length">
+            <div x-show="loading && !openTrades.length" x-html="Utils.loadingState()"></div>
+
+            <template x-if="!loading && !openTrades.length">
                 <div class="card" x-html="Utils.emptyState('No open trades')"></div>
             </template>
 
-            <div x-show="openTrades.length > 0">
-                <template x-for="trade in openTrades" :key="trade.trade_id">
-                    <div class="trade-card" style="margin-bottom:10px;">
-                        <div class="trade-card-header">
-                            <div class="flex items-center gap-8">
-                                <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;" x-text="(trade.pair||'').replace('/USDT:USDT','USDT').replace('/USDT','USDT')"></span>
-                                <span :class="Utils.dirBadgeClass(trade.is_short ? 'SHORT' : 'LONG')" x-text="trade.is_short ? 'SHORT' : 'LONG'"></span>
-                                <span class="tag" style="font-family:var(--font-mono);" x-text="'#' + trade.trade_id"></span>
-                            </div>
-                            <div class="flex items-center gap-12">
-                                <div style="text-align:right;">
-                                    <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;" :style="{color: Utils.pnlColor(trade.profit_abs)}" x-text="Utils.fmtPnl(trade.profit_abs)"></div>
-                                    <div style="font-family:var(--font-mono);font-size:11px;" :style="{color: Utils.pnlColor(trade.profit_ratio)}" x-text="Utils.fmtPct((trade.profit_ratio||0)*100)"></div>
-                                </div>
-                                <button
-                                    class="btn btn-danger btn-sm"
-                                    @click="forceSell(trade.trade_id, trade.pair)"
-                                    :disabled="forceSelling === trade.trade_id"
-                                    aria-label="Force sell trade"
-                                >
-                                    <span x-show="forceSelling === trade.trade_id" class="spinner" aria-hidden="true"></span>
-                                    <span x-show="forceSelling !== trade.trade_id">Force Sell</span>
-                                </button>
-                            </div>
+            <template x-for="trade in openTrades" :key="trade.trade_id">
+                <div class="trade-card" style="margin-bottom:10px;">
+                    <div class="trade-card-header">
+                        <div class="flex items-center gap-8">
+                            <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;" x-text="(trade.pair||'').replace('/USDT:USDT','USDT').replace('/USDT','USDT')"></span>
+                            <span :class="Utils.dirBadgeClass(trade.is_short ? 'SHORT' : 'LONG')" x-text="trade.is_short ? 'SHORT' : 'LONG'"></span>
+                            <span class="tag" style="font-family:var(--font-mono);" x-text="'#' + trade.trade_id"></span>
                         </div>
-
-                        <div class="trade-card-levels">
-                            <div class="level-item">
-                                <div class="level-label">Entry</div>
-                                <div class="level-value" x-text="Utils.fmtPrice(trade.open_rate)"></div>
+                        <div class="flex items-center gap-12">
+                            <div style="text-align:right;">
+                                <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;" :style="{color: Utils.pnlColor(trade.profit_abs)}" x-text="Utils.fmtPnl(trade.profit_abs)"></div>
+                                <div style="font-family:var(--font-mono);font-size:11px;" :style="{color: Utils.pnlColor(trade.profit_ratio)}" x-text="Utils.fmtPct((trade.profit_ratio||0)*100)"></div>
                             </div>
-                            <div class="level-item">
-                                <div class="level-label">Current</div>
-                                <div class="level-value" x-text="Utils.fmtPrice(trade.current_rate)"></div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">SL Signal</div>
-                                <div class="level-value" style="color:var(--red);" x-text="trade.sl_signal ? Utils.fmtPrice(trade.sl_signal) : '--'"></div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">TP1 Signal</div>
-                                <div class="level-value" style="color:var(--green);" x-text="trade.tp1 ? Utils.fmtPrice(trade.tp1) : '--'"></div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Open</div>
-                                <div class="level-value" x-text="Utils.fmtDuration(trade.open_date)"></div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Stake</div>
-                                <div class="level-value" x-text="trade.stake_amount ? '$' + parseFloat(trade.stake_amount).toFixed(2) : '--'"></div>
-                            </div>
+                            <button
+                                class="btn btn-danger btn-sm"
+                                @click.stop="forceSell(trade.trade_id, trade.pair)"
+                                :disabled="forceSelling === trade.trade_id"
+                                aria-label="Force sell trade"
+                            >
+                                <span x-show="forceSelling === trade.trade_id" class="spinner" aria-hidden="true"></span>
+                                <span x-show="forceSelling !== trade.trade_id">Force Sell</span>
+                            </button>
                         </div>
-
-                        <template x-if="trade.health">
-                            <div :class="Utils.healthBarClass(trade.health.state)" style="margin-bottom:8px;">
-                                <span x-text="Utils.healthEmoji(trade.health.state)"></span>
-                                <span style="font-weight:600;" x-text="trade.health.state"></span>
-                                <template x-if="trade.health.failures?.length">
-                                    <span style="font-size:11px;opacity:0.8;" x-text="'— ' + trade.health.failures[0]"></span>
-                                </template>
-                                <template x-if="!trade.health.failures?.length && trade.health.warnings?.length">
-                                    <span style="font-size:11px;opacity:0.8;" x-text="'— ' + trade.health.warnings[0]"></span>
-                                </template>
-                            </div>
-                        </template>
-
-                        <template x-if="!trade.health">
-                            <div class="health-bar" style="margin-bottom:8px;background:var(--bg-tertiary);color:var(--text-muted);">
-                                <span>⏳</span>
-                                <span style="font-size:12px;">Checking health...</span>
-                            </div>
-                        </template>
-
-                        <template x-if="trade.enter_tag">
-                            <div style="font-size:11px;color:var(--text-muted);">
-                                Tag: <span style="font-family:var(--font-mono);" x-text="trade.enter_tag"></span>
-                            </div>
-                        </template>
                     </div>
-                </template>
-            </div>
+
+                    <div class="trade-card-levels">
+                        <div class="level-item">
+                            <div class="level-label">Entry</div>
+                            <div class="level-value" x-text="Utils.fmtPrice(trade.open_rate)"></div>
+                        </div>
+                        <div class="level-item">
+                            <div class="level-label">Current</div>
+                            <div class="level-value" x-text="Utils.fmtPrice(trade.current_rate)"></div>
+                        </div>
+                        <div class="level-item">
+                            <div class="level-label">SL Signal</div>
+                            <div class="level-value" style="color:var(--red);" x-text="trade.sl_signal ? Utils.fmtPrice(trade.sl_signal) : '--'"></div>
+                        </div>
+                        <div class="level-item">
+                            <div class="level-label">TP1 Signal</div>
+                            <div class="level-value" style="color:var(--green);" x-text="trade.tp1 ? Utils.fmtPrice(trade.tp1) : '--'"></div>
+                        </div>
+                        <div class="level-item">
+                            <div class="level-label">Open</div>
+                            <div class="level-value" x-text="Utils.fmtDuration(trade.open_date)"></div>
+                        </div>
+                        <div class="level-item">
+                            <div class="level-label">Stake</div>
+                            <div class="level-value" x-text="trade.stake_amount ? '$' + parseFloat(trade.stake_amount).toFixed(2) : '--'"></div>
+                        </div>
+                    </div>
+
+                    <template x-if="trade.health">
+                        <div :class="Utils.healthBarClass(trade.health.state)" style="margin-bottom:8px;">
+                            <span x-text="Utils.healthEmoji(trade.health.state)"></span>
+                            <span style="font-weight:600;" x-text="trade.health.state"></span>
+                            <template x-if="trade.health.failures && trade.health.failures.length">
+                                <span style="font-size:11px;opacity:0.8;" x-text="'— ' + trade.health.failures[0]"></span>
+                            </template>
+                            <template x-if="!trade.health.failures?.length && trade.health.warnings?.length">
+                                <span style="font-size:11px;opacity:0.8;" x-text="'— ' + trade.health.warnings[0]"></span>
+                            </template>
+                        </div>
+                    </template>
+
+                    <template x-if="!trade.health">
+                        <div class="health-bar" style="margin-bottom:8px;background:var(--bg-tertiary);color:var(--text-muted);">
+                            <span>⏳</span>
+                            <span style="font-size:12px;">Checking health...</span>
+                        </div>
+                    </template>
+
+                    <template x-if="trade.enter_tag">
+                        <div style="font-size:11px;color:var(--text-muted);">
+                            Tag: <span style="font-family:var(--font-mono);" x-text="trade.enter_tag"></span>
+                        </div>
+                    </template>
+                </div>
+            </template>
         </div>
 
         <div class="grid-2 mt-12">
             <div class="card">
                 <div class="card-title">Daily PnL — 7 days</div>
-                <div id="ft-daily-chart"></div>
+                <template x-if="!daily.length">
+                    <div x-html="Utils.emptyState('No daily data yet')"></div>
+                </template>
+                <div id="ft-daily-chart" x-show="daily.length > 0"></div>
             </div>
 
             <div class="card">
@@ -161,11 +164,11 @@ function freqtradePage() {
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Total Trades</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.trade_count || '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.trade_count != null ? profit.trade_count : '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Profit Factor</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.profit_factor ? parseFloat(profit.profit_factor).toFixed(2) : '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="profit.profit_factor != null ? parseFloat(profit.profit_factor).toFixed(2) : '--'"></span>
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Best Pair</span>
@@ -185,7 +188,7 @@ function freqtradePage() {
                 </div>
                 <div class="stat-row">
                     <span class="stat-label">Free</span>
-                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free ? '$' + parseFloat(balance.free).toFixed(2) : '--'"></span>
+                    <span class="stat-value" style="font-family:var(--font-mono);" x-text="balance.free != null ? '$' + parseFloat(balance.free).toFixed(2) : '--'"></span>
                 </div>
             </div>
         </div>
@@ -196,9 +199,9 @@ function freqtradePage() {
                 <span class="tag" style="font-family:var(--font-mono);" x-text="tradeHistory.length + ' trades'"></span>
             </div>
 
-            <div x-show="loading" x-html="Utils.loadingState()"></div>
+            <div x-show="loading && !tradeHistory.length" x-html="Utils.loadingState()"></div>
 
-            <div x-show="!loading" class="table-wrap" role="region" aria-label="Trade history" tabindex="0">
+            <div x-show="!loading || tradeHistory.length" class="table-wrap" role="region" aria-label="Trade history" tabindex="0">
                 <table aria-label="Freqtrade closed trades">
                     <thead>
                         <tr>
@@ -254,46 +257,50 @@ function freqtradeData() {
         loading:       false,
         actionLoading: null,
         forceSelling:  null,
+        _loaded:       false,
 
         async init() {
-            const existing = window._app?.dashboardData
-            if (existing?.type === 'dashboard') {
-                this.onFtUpdate({
-                    status:    existing.ft_status    || [],
-                    profit:    existing.ft_profit    || {},
-                    balance:   existing.ft_balance   || {},
-                    bot_state: existing.ft_bot_state || '--',
-                })
-            }
-
-            await this.load()
-
             window.addEventListener('page-change', e => {
-                if (e.detail.page === 'freqtrade') this.load()
+                if (e.detail.page === 'freqtrade') {
+                    this.load()
+                }
             })
+
+            if (window._app?.page === 'freqtrade') {
+                await this.load()
+            }
         },
 
         async load() {
+            if (this.loading) return
             this.loading = true
+
             try {
-                const [summary, trades] = await Promise.all([
-                    API.ftSummary(),
-                    API.get('/ft/trades?limit=50').catch(() => ({ trades: [] }))
+                const [summary, tradesRes] = await Promise.all([
+                    fetch('/api/ft/summary', { credentials: 'include' }).then(r => r.json()).catch(() => ({})),
+                    fetch('/api/ft/trades?limit=50', { credentials: 'include' }).then(r => r.json()).catch(() => ({ trades: [] }))
                 ])
 
-                this.openTrades   = summary.status   || []
-                this.profit       = summary.profit   || {}
-                this.balance      = this._parseBalance(summary.balance || {})
-                this.daily        = summary.daily    || []
-                this.botState     = summary.bot_state || '--'
-                this.tradeHistory = (trades.trades   || []).filter(t => !t.is_open)
+                this.botState    = summary.bot_state || '--'
+                this.openTrades  = summary.status    || []
+                this.profit      = summary.profit    || {}
+                this.balance     = this._parseBalance(summary.balance || {})
+                this.daily       = this._parseDaily(summary.daily)
+                this.tradeHistory = (tradesRes.trades || []).filter(t => !t.is_open)
+                this._loaded     = true
 
                 this.$nextTick(() => this.renderCharts())
+
             } catch (e) {
-                window._app?.showToast('Failed to load Freqtrade data: ' + e.message, 'error')
+                window._app?.showToast('Failed to load Freqtrade: ' + e.message, 'error')
             } finally {
                 this.loading = false
             }
+        },
+
+        async manualRefresh() {
+            Charts.destroy('ft-daily-chart')
+            await this.load()
         },
 
         _parseBalance(raw) {
@@ -301,13 +308,23 @@ function freqtradeData() {
             const currencies = raw.currencies || []
             const usdt       = currencies.find(c => c.currency === 'USDT') || {}
             return {
-                total: raw.total || 0,
-                free:  usdt.free  || 0,
-                used:  usdt.used  || 0,
+                total: raw.total  != null ? raw.total  : null,
+                free:  usdt.free  != null ? usdt.free  : null,
+                used:  usdt.used  != null ? usdt.used  : null,
             }
         },
 
+        _parseDaily(raw) {
+            if (!raw) return []
+            const arr = Array.isArray(raw) ? raw : (raw.data || [])
+            return arr.map(d => ({
+                date:       d.date        || d.day || '',
+                profit_abs: parseFloat(d.profit_abs || d.profit || d.pnl || 0),
+            })).filter(d => d.date)
+        },
+
         onFtUpdate(data) {
+            if (!data) return
             if (data.status && Array.isArray(data.status)) {
                 this.openTrades = data.status
             }
@@ -317,26 +334,27 @@ function freqtradeData() {
             if (data.balance) {
                 this.balance = this._parseBalance(data.balance)
             }
-            if (data.bot_state) {
+            if (data.bot_state && data.bot_state !== 'unknown') {
                 this.botState = data.bot_state
             }
         },
 
         renderCharts() {
             if (window._app?.page !== 'freqtrade') return
-            if (this.daily && this.daily.length) {
-                const formatted = this.daily.map(d => ({
-                    date:       d.date,
-                    profit_abs: d.profit_abs || d.pnl || 0,
-                }))
-                Charts.dailyPnl('ft-daily-chart', formatted)
-            }
+            if (!this.daily.length) return
+            const el = document.getElementById('ft-daily-chart')
+            if (!el) return
+            Charts.dailyPnl('ft-daily-chart', this.daily)
         },
 
         async startBot() {
             this.actionLoading = 'start'
             try {
-                await API.ftStart()
+                const res = await fetch('/api/ft/start', {
+                    method:      'POST',
+                    credentials: 'include',
+                })
+                const data = await res.json()
                 window._app?.showToast('Freqtrade started', 'success')
                 await this.load()
             } catch (e) {
@@ -349,7 +367,11 @@ function freqtradeData() {
         async stopBot() {
             this.actionLoading = 'stop'
             try {
-                await API.ftStop()
+                const res = await fetch('/api/ft/stop', {
+                    method:      'POST',
+                    credentials: 'include',
+                })
+                const data = await res.json()
                 window._app?.showToast('Freqtrade stopped', 'success')
                 await this.load()
             } catch (e) {
@@ -366,7 +388,13 @@ function freqtradeData() {
                 'Force Sell — ' + coin,
                 'Enter TOTP to confirm force sell of ' + coin,
                 async (code) => {
-                    return await API.ftForceSell(tradeId, code)
+                    const res = await fetch('/api/ft/forcesell', {
+                        method:      'POST',
+                        credentials: 'include',
+                        headers:     { 'Content-Type': 'application/json' },
+                        body:        JSON.stringify({ tradeid: tradeId, totp_code: code })
+                    })
+                    return await res.json()
                 }
             )
 
