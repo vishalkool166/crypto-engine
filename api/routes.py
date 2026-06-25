@@ -323,6 +323,22 @@ async def signals_active(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
+    
+@router.get("/signal/{signal_id}")
+async def get_signal_by_id(request: Request, signal_id: int, db: Session = Depends(get_db)):
+    row = db.query(SignalModel).filter(SignalModel.id == signal_id).first()
+    if not row:
+        raise HTTPException(404, "Signal not found")
+    return JSONResponse(content={
+        "id":        row.id,
+        "coin":      row.coin,
+        "direction": row.direction,
+        "grade":     row.grade,
+        "entry":     row.entry,
+        "sl":        row.sl,
+        "tp1":       row.tp1,
+        "score":     row.score,
+    })
 
 
 @router.get("/coins/active")
@@ -1250,3 +1266,4 @@ async def proxy_binance_price(request: Request, symbol: str):
     except Exception as e:
         log.error(f"Binance price proxy error: {e}")
         raise HTTPException(500, str(e))
+    

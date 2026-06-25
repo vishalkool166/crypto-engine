@@ -10,7 +10,6 @@ from pandas import DataFrame
 logger = logging.getLogger(__name__)
 
 _redis_client = None
-_signal_cache = {}
 
 
 def _get_redis():
@@ -102,59 +101,52 @@ def _push_ls_ratio_to_redis(coin: str, long_pct: float, short_pct: float):
         logger.error(f"Redis LS ratio push failed {coin}: {e}")
 
 
-def _get_backtest_signal(coin: str, date_str: str) -> dict | None:
-    cache_key = f"{coin}_{date_str}"
-    if cache_key in _signal_cache:
-        return _signal_cache[cache_key]
-
+def _get_signal_from_db(signal_id: int) -> dict | None:
     try:
-        r = _get_redis()
-        if r:
-            redis_key = f"backtest_signal:{coin}:{date_str}"
-            data = r.get(redis_key)
-            if data:
-                result = json.loads(data)
-                _signal_cache[cache_key] = result
-                return result
-
         response = requests.get(
-            f"http://signal-engine:8000/api/backtest-signal/{coin}",
-            params={"date": date_str},
-            timeout=30
+            f"http://signal-engine:8000/api/signal/{signal_id}",
+            timeout=5
         )
-
         if response.status_code == 200:
-            result = response.json()
-            _signal_cache[cache_key] = result
-
-            if r:
-                redis_key = f"backtest_signal:{coin}:{date_str}"
-                r.setex(redis_key, 86400, json.dumps(result))
-
-            return result
-
+            return response.json()
     except Exception as e:
-        logger.error(f"Backtest signal fetch failed {coin} {date_str}: {e}")
-
+        logger.error(f"DB signal fetch failed id:{signal_id}: {e}")
     return None
 
 
-def _get_live_signal(coin: str) -> dict | None:
+def _get_signal_levels(trade: Trade) -> dict | None:
     try:
+        enter_tag = getattr(trade, "enter_tag", "") or ""
+        if enter_tag.startswith("SE_"):
+            parts = enter_tag.split("_")
+            if len(parts) >= 3:
+                signal_id = int(parts[-1])
+                sig = _get_signal_from_db(signal_id)
+                if sig:
+                    return {
+                        "sl":    sig.get("sl"),
+                        "tp1":   sig.get("tp1"),
+                        "entry": sig.get("entry"),
+                    }
+
+        coin = trade.pair.replace("/USDT:USDT", "").replace("/USDT", "")
         r = _get_redis()
-        if not r:
-            return None
-        key  = f"signal:{coin}USDT"
-        data = r.get(key)
-        if not data:
-            return None
-        import time
-        sig = json.loads(data)
-        if time.time() > sig.get("valid_until", 0):
-            return None
-        return sig
+        if r:
+            data = r.get(f"signal:{coin}USDT")
+            if data:
+                import time
+                sig = json.loads(data)
+                if time.time() <= sig.get("valid_until", 0):
+                    return {
+                        "sl":    sig.get("sl"),
+                        "tp1":   sig.get("tp1"),
+                        "entry": sig.get("entry"),
+                    }
+
+        return None
+
     except Exception as e:
-        logger.error(f"Live signal read failed {coin}: {e}")
+        logger.error(f"_get_signal_levels error: {e}")
         return None
 
 
@@ -261,43 +253,9 @@ class SignalEngineStrategy(IStrategy):
         return dataframe
 
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        pair = metadata.get("pair", "")
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-
         dataframe["enter_long"]  = 0
         dataframe["enter_short"] = 0
         dataframe["enter_tag"]   = ""
-
-        is_backtest = self.dp.runmode.value in ("backtest", "hyperopt", "plot")
-
-        for idx in range(len(dataframe)):
-            candle = dataframe.iloc[idx]
-            ts     = candle.name
-
-            if is_backtest:
-                date_str = ts.strftime("%Y-%m-%d") if hasattr(ts, 'strftime') else str(ts)[:10]
-                signal   = _get_backtest_signal(coin, date_str)
-            else:
-                signal = _get_live_signal(coin)
-
-            if not signal:
-                continue
-
-            grade     = signal.get("grade", "F")
-            direction = signal.get("direction", "")
-            entry     = float(signal.get("entry", 0))
-            signal_id = signal.get("signal_id", "")
-
-            if grade not in ["A+", "A", "B"]:
-                continue
-
-            if direction == "LONG":
-                dataframe.loc[dataframe.index[idx], "enter_long"] = 1
-                dataframe.loc[dataframe.index[idx], "enter_tag"]  = f"SE_{grade}_{signal_id}"
-            elif direction == "SHORT":
-                dataframe.loc[dataframe.index[idx], "enter_short"] = 1
-                dataframe.loc[dataframe.index[idx], "enter_tag"]   = f"SE_{grade}_{signal_id}"
-
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -307,20 +265,12 @@ class SignalEngineStrategy(IStrategy):
 
     def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime,
                         current_rate: float, current_profit: float, **kwargs) -> float:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
         try:
-            is_backtest = self.dp.runmode.value in ("backtest", "hyperopt", "plot")
-
-            if is_backtest:
-                date_str = trade.open_date_utc.strftime("%Y-%m-%d")
-                signal   = _get_backtest_signal(coin, date_str)
-            else:
-                signal = _get_live_signal(coin)
-
-            if not signal:
+            levels = _get_signal_levels(trade)
+            if not levels:
                 return self.stoploss
 
-            sl_price = float(signal.get("stoploss", 0) or signal.get("sl", 0))
+            sl_price = float(levels.get("sl") or 0)
             if not sl_price or not trade.open_rate:
                 return self.stoploss
 
@@ -333,25 +283,17 @@ class SignalEngineStrategy(IStrategy):
             return sl_pct
 
         except Exception as e:
-            logger.error(f"custom_stoploss error {coin}: {e}")
+            logger.error(f"custom_stoploss error {pair}: {e}")
             return self.stoploss
 
     def custom_exit(self, pair: str, trade: Trade, current_time: datetime,
                     current_rate: float, current_profit: float, **kwargs) -> Optional[str]:
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
         try:
-            is_backtest = self.dp.runmode.value in ("backtest", "hyperopt", "plot")
-
-            if is_backtest:
-                date_str = trade.open_date_utc.strftime("%Y-%m-%d")
-                signal   = _get_backtest_signal(coin, date_str)
-            else:
-                signal = _get_live_signal(coin)
-
-            if not signal:
+            levels = _get_signal_levels(trade)
+            if not levels:
                 return None
 
-            tp = float(signal.get("tp1", 0) or signal.get("tp", 0))
+            tp = float(levels.get("tp1") or 0)
             if not tp:
                 return None
 
@@ -361,41 +303,13 @@ class SignalEngineStrategy(IStrategy):
                 return "tp_hit"
 
         except Exception as e:
-            logger.error(f"custom_exit error {coin}: {e}")
+            logger.error(f"custom_exit error {pair}: {e}")
         return None
 
     def confirm_trade_entry(self, pair: str, order_type: str, amount: float,
                             rate: float, time_in_force: str, current_time: datetime,
                             entry_tag: Optional[str], side: str, **kwargs) -> bool:
-        is_backtest = self.dp.runmode.value in ("backtest", "hyperopt", "plot")
-        if is_backtest:
-            return True
-
-        coin = pair.replace("/USDT", "").replace(":USDT", "")
-        try:
-            signal = _get_live_signal(coin)
-            if not signal:
-                return False
-
-            import time
-            if time.time() > signal.get("valid_until", 0):
-                return False
-
-            grade = signal.get("grade", "F")
-            if grade not in ["A+", "A", "B"]:
-                return False
-
-            entry_price = float(signal.get("entry", 0))
-            if entry_price and rate:
-                deviation = abs(rate - entry_price) / entry_price
-                if deviation > 0.005:
-                    return False
-
-            return True
-
-        except Exception as e:
-            logger.error(f"confirm_trade_entry error {coin}: {e}")
-            return False
+        return True
 
     def confirm_trade_exit(self, pair: str, trade: Trade, order_type: str,
                            amount: float, rate: float, time_in_force: str,

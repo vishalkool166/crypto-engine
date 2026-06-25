@@ -111,6 +111,31 @@ def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
         return True, 1.0
 
 
+def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return
+        payload = {
+            "coin":        coin,
+            "grade":       signal.get("grade"),
+            "direction":   signal.get("direction"),
+            "entry":       signal.get("entry"),
+            "sl":          signal.get("sl"),
+            "stoploss":    signal.get("sl"),
+            "tp1":         signal.get("tp1"),
+            "tp":          signal.get("tp1"),
+            "score":       signal.get("score", 0),
+            "signal_id":   db_id,
+            "valid_until": time.time() + 1800,
+        }
+        r.setex(f"signal:{coin}USDT", 1800, json.dumps(payload))
+        log.info(f"Signal written to Redis: {coin} {payload['grade']} {payload['direction']}")
+    except Exception as e:
+        log.error(f"Redis signal write error {coin}: {e}")
+
+
 def save_signal_to_db(signal, coin, regime, session, sweep,
                       retest, disp, market, wconf=None) -> int:
     if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
@@ -183,6 +208,8 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
 async def _execute_priority_entries():
     global _pending_forceenter
 
+    log.info(f"_execute_priority_entries — pending: {len(_pending_forceenter)}")
+
     if not _pending_forceenter:
         return
 
@@ -192,6 +219,8 @@ async def _execute_priority_entries():
         open_count = await ft_open_trade_count()
         max_trades = cfg.MAX_TRADES_PER_DAY
         available  = max_trades - open_count
+
+        log.info(f"Slots: {open_count} open / {max_trades} max / {available} available")
 
         if available <= 0:
             log.info(f"No slots available — {open_count}/{max_trades} open")
@@ -204,6 +233,8 @@ async def _execute_priority_entries():
             key=lambda x: (grade_order.get(x["grade"], 99), -x["score"])
         )
 
+        log.info(f"Signals queued: {[(s['coin'], s['grade'], s['score']) for s in sorted_signals]}")
+
         entered = 0
         for item in sorted_signals:
             if entered >= available:
@@ -212,12 +243,12 @@ async def _execute_priority_entries():
             coin = item["coin"]
 
             if await ft_has_open_trade(coin):
-                log.info(f"Skipping forceenter — {coin} already has open trade")
+                log.info(f"Skipping — {coin} already has open trade")
                 continue
 
             open_count = await ft_open_trade_count()
             if open_count >= max_trades:
-                log.info(f"Max trades reached — stopping entries")
+                log.info(f"Max trades reached — stopping")
                 break
 
             result = await _do_forceenter(item)
@@ -227,7 +258,7 @@ async def _execute_priority_entries():
         log.info(f"Priority entries complete — {entered} trades opened")
 
     except Exception as e:
-        log.error(f"_execute_priority_entries error: {e}")
+        log.error(f"_execute_priority_entries error: {e}", exc_info=True)
     finally:
         _pending_forceenter = []
 
@@ -276,8 +307,59 @@ async def _do_forceenter(item: dict) -> bool:
             return False
 
     except Exception as e:
-        log.error(f"_do_forceenter error {item.get('coin')}: {e}")
+        log.error(f"_do_forceenter error {item.get('coin')}: {e}", exc_info=True)
         return False
+
+
+async def _queue_cached_signals_for_entry(results: list):
+    try:
+        from api.freqtrade import ft_has_open_trade
+
+        for r in results:
+            coin  = r.get("coin")
+            grade = r.get("grade")
+            dir_  = r.get("direction")
+
+            if grade not in cfg.MIN_GRADE_TO_TRADE:
+                continue
+            if dir_ not in ["LONG", "SHORT"]:
+                continue
+            if any(p["coin"] == coin for p in _pending_forceenter):
+                continue
+            if await ft_has_open_trade(coin):
+                continue
+
+            with get_session() as db:
+                sig = db.query(SignalModel).filter(
+                    SignalModel.coin      == coin,
+                    SignalModel.direction == dir_,
+                    SignalModel.outcome   == "pending"
+                ).order_by(SignalModel.timestamp.desc()).first()
+
+            if not sig or not sig.entry or not sig.sl or not sig.tp1:
+                continue
+
+            _pending_forceenter.append({
+                "coin":   coin,
+                "grade":  sig.grade,
+                "score":  sig.score or 0,
+                "signal": {
+                    "grade":     sig.grade,
+                    "direction": sig.direction,
+                    "score":     sig.score or 0,
+                    "entry":     sig.entry,
+                    "sl":        sig.sl,
+                    "tp1":       sig.tp1,
+                    "sl_pct":    sig.sl_pct or 0,
+                    "risk_amt":  sig.risk_amt or 0,
+                    "pos_size":  sig.position or 0,
+                },
+                "db_id": sig.id,
+            })
+            log.info(f"Queued cached signal: {coin} {dir_} Grade:{grade} entry:{sig.entry}")
+
+    except Exception as e:
+        log.error(f"_queue_cached_signals_for_entry error: {e}", exc_info=True)
 
 
 async def analyze_coin(
@@ -439,6 +521,8 @@ async def _analyze_coin_inner(
     if db_id:
         signal["db_id"] = db_id
 
+        _write_signal_to_redis(coin, signal, db_id)
+
         if cfg.CONTENT_ENABLED and signal.get("grade") in ["A+", "A"]:
             asyncio.create_task(run_content_pipeline(db_id))
 
@@ -546,6 +630,8 @@ async def scan_all_coins() -> list:
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         _write_active_pairs_to_redis()
+
+        await _queue_cached_signals_for_entry(results)
 
         await _execute_priority_entries()
 

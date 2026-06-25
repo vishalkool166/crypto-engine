@@ -152,22 +152,28 @@ async def ft_force_enter(
             "pair":         pair,
             "side":         side,
             "price":        entry,
-            "stake_amount": stake,
+            "stake_amount": round(stake, 2),
             "leverage":     leverage,
-            "stoploss":     sl,
-            "tp":           tp,
         }
 
         if signal_id:
             body["enter_tag"] = f"SE_{grade}_{signal_id}"
 
+        log.info(
+            f"Freqtrade forceenter: {coin} {side} "
+            f"entry:{entry} sl:{sl} tp:{tp} "
+            f"stake:{stake:.2f} leverage:{leverage} "
+            f"tag:{body.get('enter_tag', '--')}"
+        )
+
         result = await _ft_post("/forceenter", body)
+
+        log.info(f"Freqtrade forceenter response: {result}")
 
         if result and result.get("trade_id"):
             log.info(
-                f"Freqtrade forceenter success: {coin} {side} "
-                f"trade_id:{result['trade_id']} "
-                f"entry:{entry} sl:{sl} tp:{tp} leverage:{leverage}"
+                f"Trade opened: {coin} {side} "
+                f"trade_id:{result['trade_id']}"
             )
             return {"success": True, "trade_id": result["trade_id"], "result": result}
         else:
@@ -175,7 +181,7 @@ async def ft_force_enter(
             return {"success": False, "error": str(result)}
 
     except Exception as e:
-        log.error(f"ft_force_enter error {coin}: {e}")
+        log.error(f"ft_force_enter error {coin}: {e}", exc_info=True)
         return {"success": False, "error": str(e)}
 
 
