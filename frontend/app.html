@@ -167,7 +167,13 @@
         >
         <div class="modal-actions">
             <button class="btn btn-ghost" @click="totp.show=false;totp.code='';totp.error=''" aria-label="Cancel">Cancel</button>
-            <button class="btn btn-primary" @click="confirmTotp" :disabled="totp.code.length<6||totp.loading" :aria-busy="totp.loading" aria-label="Confirm TOTP">
+            <button
+                class="btn btn-primary"
+                @click="confirmTotp"
+                :disabled="totp.code.length<6||totp.loading"
+                :aria-busy="totp.loading"
+                aria-label="Confirm TOTP"
+            >
                 <span x-show="totp.loading" class="spinner" aria-hidden="true"></span>
                 Confirm
             </button>
@@ -209,14 +215,14 @@
 <script>
 function app() {
     return {
-        page:         'overview',
-        mode:         'paper',
-        wsState:      'connecting',
-        nextScan:     '--',
-        lastUpdate:   '--',
-        btcEthPrices: [],
-        dashboardData: {},
-        _wsInstance:  null,
+        page:            'overview',
+        mode:            'paper',
+        wsState:         'connecting',
+        nextScan:        '--',
+        lastUpdate:      '--',
+        btcEthPrices:    [],
+        dashboardData:   {},
+        _wsInstance:     null,
         _countdownTimer: null,
 
         pageHtml: {
@@ -231,13 +237,13 @@ function app() {
         },
 
         totp: {
-            show:    false,
-            title:   '',
-            subtitle:'',
-            code:    '',
-            error:   '',
-            loading: false,
-            resolve: null,
+            show:     false,
+            title:    '',
+            subtitle: '',
+            code:     '',
+            error:    '',
+            loading:  false,
+            resolve:  null,
         },
 
         toast: {
@@ -250,16 +256,13 @@ function app() {
         async init() {
             window._app = this
 
-            const [authOk] = await Promise.all([
-                this._checkAuth(),
-                this._loadDashboardNow(),
-            ])
-
+            const authOk = await this._checkAuth()
             if (!authOk) return
+
+            await this._loadDashboardNow()
 
             this._initWS()
             this._startCountdown()
-            this._loadFtNow()
         },
 
         async _checkAuth() {
@@ -277,25 +280,13 @@ function app() {
 
         async _loadDashboardNow() {
             try {
-                const data = await API.dashboard()
-                if (data) this._applyDashboard(data)
-            } catch (e) {}
-        },
-
-        async _loadFtNow() {
-            try {
-                const data = await API.ftSummary()
-                if (data) {
-                    window.dispatchEvent(new CustomEvent('ft-update', {
-                        detail: {
-                            type:      'ft_update',
-                            status:    data.status    || [],
-                            profit:    data.profit    || {},
-                            balance:   data.balance   || {},
-                            bot_state: data.bot_state || '--',
-                        }
-                    }))
+                const res = await fetch('/api/dashboard', { credentials: 'include' })
+                if (res.status === 401) {
+                    window.location.href = '/login.html'
+                    return
                 }
+                const data = await res.json()
+                if (data) this._applyDashboard(data)
             } catch (e) {}
         },
 
