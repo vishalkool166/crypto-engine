@@ -56,7 +56,13 @@ GRADE_RISK_PCT = {
     "B":  0.01,
 }
 
-MIN_RR = 2.0
+GRADE_MIN_RR = {
+    "A+": 2.0,
+    "A":  1.8,
+    "B":  1.5,
+}
+
+SL_COMPRESSION_LIMIT = 2.0
 
 
 def _safe_float(val, fallback: float = 0.0) -> float:
@@ -229,6 +235,10 @@ def dynamic_risk_pct(grade: str) -> float:
 
 def get_tp_multiplier(grade: str) -> float:
     return GRADE_TP_MULTIPLIER.get(grade, 1.5)
+
+
+def get_min_rr(grade: str) -> float:
+    return GRADE_MIN_RR.get(grade, 1.5)
 
 
 def check_15m_entry(
@@ -467,7 +477,7 @@ def _calculate_sl(
     swings:     dict,
     key_levels: dict,
     grade:      str
-) -> tuple[float, str]:
+) -> tuple[float, str, bool]:
 
     atr_4h = d4h.get("atr") or d1d.get("atr") or entry * 0.015
     atr_4h = _safe_float(atr_4h, entry * 0.015)
@@ -570,20 +580,28 @@ def _calculate_sl(
             sl        = entry + (atr_4h * 2.0)
             sl_method = "4H ATR fallback (corrected)"
 
-    sl_dist = abs(entry - sl)
-    max_sl  = entry * 0.04
-    min_sl  = entry * 0.005
+    sl_dist  = abs(entry - sl)
+    max_sl   = entry * 0.04
+    min_sl   = entry * 0.005
 
     if sl_dist > max_sl:
-        sl      = entry - max_sl if is_long else entry + max_sl
-        sl_dist = abs(entry - sl)
+        compression_ratio = sl_dist / max_sl
+        if compression_ratio > SL_COMPRESSION_LIMIT:
+            log.warning(
+                f"SL compression ratio {compression_ratio:.2f}x exceeds limit "
+                f"— entry too far from structure. natural_sl={sl:.4f} entry={entry:.4f}"
+            )
+            return sl, f"SL_REJECTED — natural SL {compression_ratio:.1f}x beyond cap (setup aged out)", True
+
+        sl        = entry - max_sl if is_long else entry + max_sl
+        sl_dist   = abs(entry - sl)
         sl_method += " (capped at 4%)"
 
     if sl_dist < min_sl:
-        sl      = entry - min_sl if is_long else entry + min_sl
+        sl        = entry - min_sl if is_long else entry + min_sl
         sl_method += " (floored at 0.5%)"
 
-    return sl, sl_method
+    return sl, sl_method, False
 
 
 def _calculate_tp(
@@ -594,15 +612,16 @@ def _calculate_tp(
     swings:     dict,
     key_levels: dict,
     d1d:        dict,
+    d1h:        dict,
     sweep:      dict
-) -> tuple[float, float]:
+) -> tuple[float, float, str]:
 
     sl_dist = abs(entry - sl)
     if sl_dist <= 0:
         sl_dist = entry * 0.01
 
-    tp_mult = get_tp_multiplier(grade)
-    min_tp  = entry + sl_dist * tp_mult if is_long else entry - sl_dist * tp_mult
+    min_rr   = get_min_rr(grade)
+    tp_mult  = get_tp_multiplier(grade)
 
     if is_long:
         candidates = []
@@ -613,38 +632,58 @@ def _calculate_tp(
             prev_high = _safe_float(highs[-2]["price"])
             if prev_high > 0 and abs(last_high - prev_high) / prev_high < 0.003:
                 equal_high = max(last_high, prev_high)
-                if equal_high > min_tp:
+                if equal_high > entry:
                     candidates.append((equal_high, "Equal highs liquidity"))
 
         if swings.get("last_high"):
             sh = _safe_float(swings["last_high"]["price"])
-            if sh > min_tp:
+            if sh > entry:
                 candidates.append((sh, "Swing high"))
 
+        if d1h:
+            d1h_swings = d1h.get("swings", {})
+            if d1h_swings.get("last_high"):
+                h1h = _safe_float(d1h_swings["last_high"]["price"])
+                if h1h > entry:
+                    candidates.append((h1h, "1H Swing high"))
+
         pdh = _safe_float(key_levels.get("pdh", 0))
-        if pdh > min_tp:
+        if pdh > entry:
             candidates.append((pdh, "PDH"))
 
         pwh = _safe_float(key_levels.get("pwh", 0))
-        if pwh > min_tp:
+        if pwh > entry:
             candidates.append((pwh, "PWH"))
 
         vah = _safe_float(d1d.get("vah") or 0)
-        if vah > min_tp:
+        if vah > entry:
             candidates.append((vah, "VAH"))
 
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
-            if item.get("type") == "bear" and lvl > min_tp:
+            if item.get("type") == "bear" and lvl > entry:
                 candidates.append((lvl, "Sweep level above"))
 
-        if candidates:
-            candidates.sort(key=lambda x: x[0])
-            tp, tp_label = candidates[0]
+        valid_candidates = [
+            (lvl, lbl) for lvl, lbl in candidates
+            if _safe_div(abs(lvl - entry), sl_dist) >= min_rr
+        ]
+
+        if valid_candidates:
+            valid_candidates.sort(key=lambda x: x[0])
+            tp, tp_label = valid_candidates[0]
+            actual_rr    = _safe_div(abs(tp - entry), sl_dist, fallback=0.0)
         else:
-            tp       = min_tp
-            tp_label = f"{tp_mult}x risk fallback"
+            math_tp   = entry + sl_dist * tp_mult
+            actual_rr = tp_mult
+            if actual_rr >= min_rr:
+                tp       = math_tp
+                tp_label = f"{tp_mult}x risk fallback — no structural level found"
+            else:
+                tp       = entry + sl_dist * min_rr
+                tp_label = f"{min_rr}x R:R floor — no structural level found"
+                actual_rr = min_rr
 
     else:
         candidates = []
@@ -655,47 +694,60 @@ def _calculate_tp(
             prev_low = _safe_float(lows[-2]["price"])
             if prev_low > 0 and abs(last_low - prev_low) / prev_low < 0.003:
                 equal_low = min(last_low, prev_low)
-                if equal_low < min_tp:
+                if equal_low < entry:
                     candidates.append((equal_low, "Equal lows liquidity"))
 
         if swings.get("last_low"):
             sl_swing = _safe_float(swings["last_low"]["price"])
-            if sl_swing < min_tp:
+            if sl_swing < entry:
                 candidates.append((sl_swing, "Swing low"))
 
+        if d1h:
+            d1h_swings = d1h.get("swings", {})
+            if d1h_swings.get("last_low"):
+                l1h = _safe_float(d1h_swings["last_low"]["price"])
+                if l1h < entry:
+                    candidates.append((l1h, "1H Swing low"))
+
         pdl = _safe_float(key_levels.get("pdl", 0))
-        if pdl > 0 and pdl < min_tp:
+        if pdl > 0 and pdl < entry:
             candidates.append((pdl, "PDL"))
 
         pwl = _safe_float(key_levels.get("pwl", 0))
-        if pwl > 0 and pwl < min_tp:
+        if pwl > 0 and pwl < entry:
             candidates.append((pwl, "PWL"))
 
         val = _safe_float(d1d.get("val") or 0)
-        if val > 0 and val < min_tp:
+        if val > 0 and val < entry:
             candidates.append((val, "VAL"))
 
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
-            if item.get("type") == "bull" and lvl > 0 and lvl < min_tp:
+            if item.get("type") == "bull" and lvl > 0 and lvl < entry:
                 candidates.append((lvl, "Sweep level below"))
 
-        if candidates:
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            tp, tp_label = candidates[0]
+        valid_candidates = [
+            (lvl, lbl) for lvl, lbl in candidates
+            if _safe_div(abs(entry - lvl), sl_dist) >= min_rr
+        ]
+
+        if valid_candidates:
+            valid_candidates.sort(key=lambda x: x[0], reverse=True)
+            tp, tp_label = valid_candidates[0]
+            actual_rr    = _safe_div(abs(entry - tp), sl_dist, fallback=0.0)
         else:
-            tp       = min_tp
-            tp_label = f"{tp_mult}x risk fallback"
+            math_tp   = entry - sl_dist * tp_mult
+            actual_rr = tp_mult
+            if actual_rr >= min_rr:
+                tp       = math_tp
+                tp_label = f"{tp_mult}x risk fallback — no structural level found"
+            else:
+                tp       = entry - sl_dist * min_rr
+                tp_label = f"{min_rr}x R:R floor — no structural level found"
+                actual_rr = min_rr
 
-    actual_rr = _safe_div(abs(tp - entry), sl_dist, fallback=0.0)
-
-    if actual_rr < MIN_RR:
-        tp        = entry + sl_dist * MIN_RR if is_long else entry - sl_dist * MIN_RR
-        tp_label  = f"R:R floor {MIN_RR}x"
-        actual_rr = MIN_RR
-
-    return tp, round(actual_rr, 2)
+    return tp, round(actual_rr, 2), tp_label
 
 
 def run_no_trade_engine(
@@ -875,7 +927,7 @@ def run_no_trade_engine(
     market_hard_blocked = len(market_blocks) > 0 and any(
         b.get("severity") == "HARD" for b in market_blocks
     )
-    entry_hard_blocked  = len(entry_blocks) > 0
+        entry_hard_blocked  = len(entry_blocks) > 0
     portfolio_blocked   = len(portfolio_blocks) > 0
 
     adj_score    = max(0, base_score - score_penalty)
@@ -929,7 +981,8 @@ def generate_signal(
     oi_matrix:    dict = None,
     regime:       dict = None,
     session:      dict = None,
-    d1w:          dict = None
+    d1w:          dict = None,
+    d1h:          dict = None
 ) -> dict:
 
     capital  = _safe_float(capital)
@@ -1106,7 +1159,7 @@ def generate_signal(
     if entry <= 0:
         entry = price
 
-    sl, sl_method = _calculate_sl(
+    sl, sl_method, sl_rejected = _calculate_sl(
         is_long    = is_long,
         entry      = entry,
         sweep      = sweep or {},
@@ -1118,6 +1171,30 @@ def generate_signal(
         grade      = grade_label
     )
 
+    if sl_rejected:
+        intended = _determine_direction(d1d, d4h)
+        log.warning(f"Signal rejected — SL compression too severe: {sl_method}")
+        result = {
+            **base,
+            "direction":   intended if intended in ("LONG", "SHORT") else "WATCH",
+            "dir_class":   "long" if intended == "LONG" else "short" if intended == "SHORT" else "watch",
+            "grade":       grade_label,
+            "signal_type": "SKIP",
+            "reason":      sl_method,
+            "sl_rejected": True,
+            "entry":       None,
+            "sl":          None,
+            "tp1":         None,
+            "tp2":         None,
+        }
+        result["explanation"] = _attach_explanation(
+            result, sweep, displacement, retest,
+            d1d, d4h, btc_data, btc_inst,
+            oi_matrix, market, regime, session,
+            no_trade, wconf
+        )
+        return result
+
     sl_dist = abs(entry - sl)
     sl_pct  = _safe_div(sl_dist, entry, fallback=0.5) * 100
 
@@ -1125,7 +1202,7 @@ def generate_signal(
         log.warning("sl_pct is zero — forcing minimum 0.5%")
         sl_pct = 0.5
 
-    tp1, actual_rr = _calculate_tp(
+    tp1, actual_rr, tp_label = _calculate_tp(
         is_long    = is_long,
         entry      = entry,
         sl         = sl,
@@ -1133,6 +1210,7 @@ def generate_signal(
         swings     = swings,
         key_levels = key_levels,
         d1d        = d1d,
+        d1h        = d1h,
         sweep      = sweep or {}
     )
 
@@ -1147,29 +1225,33 @@ def generate_signal(
 
     result = {
         **base,
-        "direction":   direction,
-        "dir_class":   "long" if is_long else "short",
-        "grade":       grade_label,
-        "score":       score_15m,
-        "signal_type": tier["signal_type"],
-        "entry":       entry,
-        "sl":          sl,
-        "tp1":         tp1,
-        "tp2":         None,
-        "sl_pct":      sl_pct,
-        "sl_method":   sl_method,
-        "risk_pct":    risk_pct * 100,
-        "risk_amt":    risk_amt,
-        "pos_size":    pos_size,
-        "margin":      margin,
-        "eff_lev":     leverage,
-        "atr_used":    atr_used,
-        "tp_mult":     tp_mult,
-        "actual_rr":   actual_rr,
-        "funding":     market.get("funding", 0),
-        "sweep_score": _safe_float(sweep.get("score", 0) if sweep else 0),
-        "disp_score":  _safe_float(displacement.get("score", 0) if displacement else 0),
-        "entry_15m":   entry_15m,
+        "direction":      direction,
+        "dir_class":      "long" if is_long else "short",
+        "grade":          grade_label,
+        "score":          score_15m,
+        "signal_type":    tier["signal_type"],
+        "entry":          entry,
+        "sl":             sl,
+        "tp1":            tp1,
+        "tp2":            None,
+        "sl_pct":         sl_pct,
+        "sl_method":      sl_method,
+        "tp_label":       tp_label,
+        "tp_structural":  "fallback" not in tp_label,
+        "sl_rejected":    False,
+        "risk_pct":       risk_pct * 100,
+        "risk_amt":       risk_amt,
+        "pos_size":       pos_size,
+        "margin":         margin,
+        "eff_lev":        leverage,
+        "atr_used":       atr_used,
+        "tp_mult":        tp_mult,
+        "actual_rr":      actual_rr,
+        "min_rr":         get_min_rr(grade_label),
+        "funding":        market.get("funding", 0),
+        "sweep_score":    _safe_float(sweep.get("score", 0) if sweep else 0),
+        "disp_score":     _safe_float(displacement.get("score", 0) if displacement else 0),
+        "entry_15m":      entry_15m,
         "reason": (
             f"15m: {entry_15m['pattern']}"
             if entry_15m["confirmed"]
@@ -1185,7 +1267,7 @@ def generate_signal(
     )
 
     log.info(
-        "Signal generated | grade=%s dir=%s score=%s entry=%s sl=%s tp1=%s rr=%s sl_method=%s",
+        "Signal generated | grade=%s dir=%s score=%s entry=%s sl=%s tp1=%s rr=%s sl_method=%s tp_label=%s",
         result.get("grade"),
         result.get("direction"),
         result.get("score"),
@@ -1194,6 +1276,7 @@ def generate_signal(
         result.get("tp1"),
         result.get("actual_rr"),
         result.get("sl_method"),
+        result.get("tp_label"),
     )
 
     return result
