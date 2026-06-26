@@ -1,6 +1,6 @@
 import { h, Fragment } from '/js/preact.min.js'
 import { useState, useEffect, useRef } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, HealthBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
+import { html, DirBadge, HealthBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
 import { useFtUpdate, showToast, requireTotp } from '/js/store.js'
 
 export function FreqtradePage() {
@@ -28,10 +28,10 @@ export function FreqtradePage() {
     }, [])
 
     useEffect(() => {
-        if (ftData.trades?.length)                    setOpenTrades(ftData.trades)
-        if (ftData.profit?.trade_count != null)       setProfit(ftData.profit)
-        if (ftData.balance?.total      != null)       setBalance(ftData.balance)
-        if (ftData.botState && ftData.botState !== 'unknown') setBotState(ftData.botState)
+        if (ftData.trades?.length)                              setOpenTrades(ftData.trades)
+        if (ftData.profit?.trade_count        != null)         setProfit(ftData.profit)
+        if (ftData.balance?.total             != null)         setBalance(ftData.balance)
+        if (ftData.botState && ftData.botState !== 'unknown')  setBotState(ftData.botState)
     }, [ftData])
 
     useEffect(() => {
@@ -385,7 +385,11 @@ export function FreqtradePage() {
                         ? html`<${LoadingSkeleton} rows=${2}/>`
                         : !daily.length
                         ? html`<${EmptyState} message="No daily data"/>`
-                        : html`<canvas id="ft-daily-chart" style="width:100%;height:160px;"></canvas>`
+                        : html`
+                            <div style="position:relative;height:160px;">
+                                <canvas id="ft-daily-chart"></canvas>
+                            </div>
+                        `
                     }
                 </div>
 

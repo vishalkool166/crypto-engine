@@ -227,7 +227,9 @@ export function AnalysisPage() {
                     : factors?.table?.length
                     ? html`
                         <div>
-                            <canvas id="factor-bar-chart" style="width:100%;height:300px;" class="mb-12"></canvas>
+                            <div style="position:relative;height:300px;" class="mb-12">
+                                <canvas id="factor-bar-chart"></canvas>
+                            </div>
                             <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
                                 <table>
                                     <thead>

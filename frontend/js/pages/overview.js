@@ -258,7 +258,9 @@ export function OverviewPage() {
                         </div>
                     `)}
                     <div class="divider"></div>
-                    <canvas id="overview-donut" style="width:100%;height:180px;"></canvas>
+                    <div style="position:relative;height:180px;">
+                        <canvas id="overview-donut"></canvas>
+                    </div>
                 </div>
 
                 <div class="card">
@@ -266,7 +268,9 @@ export function OverviewPage() {
                         <div class="section-title">Equity Curve</div>
                         <span class="tag">${perf.equity_curve?.length || 0} trades</span>
                     </div>
-                    <canvas id="overview-equity" style="width:100%;height:200px;"></canvas>
+                    <div style="position:relative;height:200px;">
+                        <canvas id="overview-equity"></canvas>
+                    </div>
                 </div>
             </div>
 

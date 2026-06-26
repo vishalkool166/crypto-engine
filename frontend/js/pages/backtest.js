@@ -155,11 +155,15 @@ export function BacktestPage() {
                     <div class="grid-2 mb-12">
                         <div class="card">
                             <div class="section-title mb-12">Equity Curve</div>
-                            <canvas id="bt-equity-chart" style="width:100%;height:220px;"></canvas>
+                            <div style="position:relative;height:220px;">
+                                <canvas id="bt-equity-chart"></canvas>
+                            </div>
                         </div>
                         <div class="card">
                             <div class="section-title mb-12">By Grade</div>
-                            <canvas id="bt-grade-donut" style="width:100%;height:180px;" class="mb-12"></canvas>
+                            <div style="position:relative;height:180px;" class="mb-12">
+                                <canvas id="bt-grade-donut"></canvas>
+                            </div>
                             ${Object.entries(result.by_grade || {}).map(([grade, data]) => html`
                                 <div key=${grade} style="margin-bottom:12px;">
                                     <div class="flex justify-between items-center" style="margin-bottom:5px;">
