@@ -530,7 +530,8 @@ async def health(request: Request):
     except Exception:
         pass
 
-    system = _get_system_stats()
+    loop   = asyncio.get_running_loop()
+    system = await loop.run_in_executor(None, _get_system_stats)
 
     return JSONResponse(content={
         "status":          "ok",
