@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 import traceback
 from datetime import datetime, timezone
@@ -20,15 +19,18 @@ from backtest.factor_analysis import run_factor_analysis
 from scheduler import get_next_scan_epoch
 from config import cfg
 from auth import is_authenticated, audit
-from api.formatters import (
-    make_serializable,
-    build_performance_data, build_radar_data,
-    build_signal_queue, build_history_data, build_header_data
+from api.dashboard import (
+    get_summary, get_performance, get_signals_data,
+    get_history, get_universe, get_ticker_bar,
+    invalidate_all
 )
+from api.formatters import make_serializable
 import runtime_state as rs
 import httpx
 import psutil
 import time
+import subprocess
+import os
 
 log     = logging.getLogger(__name__)
 router  = APIRouter()
@@ -68,11 +70,11 @@ def _get_system_stats() -> dict:
                 cpu_pct    = (cpu_delta / sys_delta * 100) if sys_delta > 0 else 0
 
                 containers.append({
-                    "name":       c.name,
-                    "status":     c.status,
-                    "mem_mb":     round(mem_usage / 1024 / 1024),
-                    "mem_pct":    round(mem_usage / mem_limit * 100, 1),
-                    "cpu_pct":    round(cpu_pct, 1),
+                    "name":    c.name,
+                    "status":  c.status,
+                    "mem_mb":  round(mem_usage / 1024 / 1024),
+                    "mem_pct": round(mem_usage / mem_limit * 100, 1),
+                    "cpu_pct": round(cpu_pct, 1),
                 })
         except Exception:
             pass
@@ -96,115 +98,23 @@ def _get_system_stats() -> dict:
 
 
 async def build_dashboard_payload() -> dict:
-    stats = get_db_stats()
-
-    db = SessionLocal()
-    try:
-        signals_raw = db.query(SignalModel).filter(
-            SignalModel.outcome.notin_(["pending"]),
-            SignalModel.outcome.isnot(None)
-        ).order_by(SignalModel.timestamp.desc()).limit(10).all()
-
-        signals_list = [{
-            "id":         s.id,
-            "coin":       s.coin,
-            "direction":  s.direction,
-            "grade":      s.grade,
-            "outcome":    s.outcome,
-            "pnl":        s.pnl,
-            "entry":      s.entry,
-            "exit_price": s.exit_price,
-            "sl":         s.sl,
-            "tp1":        s.tp1,
-            "tp2":        None,
-            "risk_amt":   s.risk_amt,
-            "position":   s.position,
-            "leverage":   s.leverage,
-            "regime":     s.regime,
-            "session":    s.session,
-            "score":      s.score,
-            "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
-        } for s in signals_raw]
-    finally:
-        db.close()
-
-    perf_data    = build_performance_data(stats)
-    history_data = build_history_data(signals_list)
-
-    radar_data = []
-    queue_data = []
-    last_scan  = "--"
-
-    cached_results = []
-    for coin in cfg.COINS:
-        cached = cache.get_raw(f"signal_{coin}")
-        if cached:
-            cached_results.append(cached)
-
-    if cached_results:
-        cached_results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        radar_data = build_radar_data(cached_results)
-        queue_data = build_signal_queue(cached_results)
-        last_scan  = "From cache"
-
-    header_data   = build_header_data(stats)
-    coin_universe = build_coin_universe()
+    summary    = get_summary()
+    perf       = get_performance()
+    signals    = get_signals_data()
+    history    = get_history(limit=10)
+    universe   = get_universe()
+    ticker     = get_ticker_bar()
 
     return make_serializable({
-        "type":            "dashboard",
-        "performance":     perf_data,
-        "history":         history_data,
-        "radar":           radar_data,
-        "queue":           queue_data,
-        "header":          header_data,
-        "coin_universe":   coin_universe,
-        "last_scan":       last_scan,
-        "next_scan_epoch": get_next_scan_epoch(),
-        "timestamp":       datetime.now(timezone.utc).isoformat()
+        "type":          "dashboard",
+        "summary":       summary,
+        "performance":   perf,
+        "signals":       signals,
+        "history":       history,
+        "universe":      universe,
+        "ticker":        ticker,
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
     })
-
-
-def build_coin_universe() -> list:
-    try:
-        with SessionLocal() as db:
-            rows = db.query(CoinConfig).order_by(
-                CoinConfig.enabled.desc(),
-                CoinConfig.coin.asc()
-            ).all()
-
-        result = []
-        for r in rows:
-            cached = cache.get_raw(f"signal_{r.coin}")
-            grade  = cached.get("grade", "--")     if cached else "--"
-            score  = cached.get("score", 0)        if cached else 0
-            dir_   = cached.get("direction", "--") if cached else "--"
-            market = cached.get("market", {})      if cached else {}
-
-            from api.formatters import grade_color, pnl_color, fmt_price, fmt_pct
-            change = market.get("change24", 0)
-
-            result.append({
-                "coin":         r.coin,
-                "enabled":      r.enabled,
-                "tier":         r.tier,
-                "source":       r.source,
-                "volume_24h":   r.volume_24h,
-                "added_at":     r.added_at.isoformat() if r.added_at else None,
-                "last_seen":    r.last_seen.isoformat() if r.last_seen else None,
-                "grade":        grade,
-                "grade_color":  grade_color(grade),
-                "score":        score,
-                "direction":    dir_,
-                "has_signal":   cached is not None,
-                "price":        fmt_price(market.get("price", 0)),
-                "change":       fmt_pct(change),
-                "change_color": pnl_color(change),
-                "funding":      round(market.get("funding", 0) * 100, 4) if market else 0,
-            })
-        return result
-    except Exception as e:
-        log.error(f"build_coin_universe error: {e}")
-        return []
 
 
 @router.get("/dashboard")
@@ -215,6 +125,60 @@ async def dashboard(request: Request):
         return JSONResponse(content=await build_dashboard_payload())
     except Exception as e:
         log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/summary")
+async def dashboard_summary(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_summary()))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/performance")
+async def dashboard_performance(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_performance()))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/signals")
+async def dashboard_signals(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_signals_data()))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/history")
+async def dashboard_history(request: Request, limit: int = 20):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_history(limit=limit)))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/universe")
+async def dashboard_universe(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_universe()))
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@router.get("/dashboard/ticker")
+async def dashboard_ticker(request: Request):
+    _auth(request)
+    try:
+        return JSONResponse(content=make_serializable(get_ticker_bar()))
+    except Exception as e:
         raise HTTPException(500, str(e))
 
 
@@ -243,10 +207,10 @@ async def scan(request: Request):
     _auth(request)
     try:
         results = await scan_all_coins()
+        invalidate_all()
         return JSONResponse(content={
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "count":     len(results),
-            "results":   make_serializable(results)
         })
     except Exception as e:
         log.error(traceback.format_exc())
@@ -307,7 +271,6 @@ async def signals_latest(request: Request):
     try:
         from redis_client import get_redis
         import json
-        import time
 
         r = get_redis()
         if not r:
@@ -352,7 +315,6 @@ async def signals_active(request: Request):
     try:
         from redis_client import get_redis
         import json
-        import time
 
         r = get_redis()
         if not r:
@@ -474,7 +436,7 @@ async def backtest(request: Request, coin: str):
             loop.run_in_executor(
                 None, lambda: run_backtest(
                     coin     = coin,
-                    capital  = cfg.CAPITAL,
+                    capital  = 1000,
                     leverage = 10
                 )
             ),
@@ -504,7 +466,7 @@ async def backtest_all(request: Request):
                 loop.run_in_executor(
                     None, lambda c=coin: run_backtest(
                         coin     = c,
-                        capital  = cfg.CAPITAL,
+                        capital  = 1000,
                         leverage = 10
                     )
                 ),
@@ -589,6 +551,7 @@ async def sync_outcomes(request: Request):
     try:
         from trade.sync import sync_freqtrade_outcomes
         result = await sync_freqtrade_outcomes()
+        invalidate_all()
         return JSONResponse(content=result)
     except Exception as e:
         log.error(traceback.format_exc())
@@ -659,6 +622,8 @@ async def mode_toggle(request: Request):
 
         ip = request.client.host if request.client else ""
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=ip)
+
+        invalidate_all()
 
         return JSONResponse(content={
             "success": True,
@@ -748,7 +713,7 @@ async def audit_log(request: Request, limit: int = 50, db: Session = Depends(get
 async def get_coins(request: Request):
     _auth(request)
     try:
-        return JSONResponse(content=make_serializable(build_coin_universe()))
+        return JSONResponse(content=make_serializable(get_universe()))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -773,6 +738,8 @@ async def toggle_coin(request: Request):
             db.commit()
 
         cfg.COINS = []
+        from api.dashboard import _invalidate
+        _invalidate("universe")
 
         ip = request.client.host if request.client else ""
         audit("coin_toggle", "api", f"{coin} enabled:{enabled}", ip=ip)
@@ -838,6 +805,9 @@ async def add_coin(request: Request):
                 msg = f"{coin} added"
 
         cfg.COINS = []
+        from api.dashboard import _invalidate
+        _invalidate("universe")
+
         asyncio.create_task(_backfill_new_coin(coin))
 
         if coin not in cfg._FALLBACK_COINS:
@@ -865,6 +835,8 @@ async def remove_coin(request: Request, coin: str):
                 db.commit()
 
         cfg.COINS = []
+        from api.dashboard import _invalidate
+        _invalidate("universe")
 
         if coin in cfg._FALLBACK_COINS:
             cfg._FALLBACK_COINS.remove(coin)
@@ -1079,7 +1051,6 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             d1d, d4h,
             wconf, no_trade,
             market, key_levels,
-            cfg.CAPITAL, cfg.LEVERAGE,
             d1w = d1w,
             d1h = d1h
         )
@@ -1150,4 +1121,74 @@ async def proxy_binance_price(request: Request, symbol: str):
             return JSONResponse(content=res.json())
     except Exception as e:
         log.error(f"Binance price proxy error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/system/docker-purge")
+async def docker_purge(request: Request):
+    _auth(request)
+    try:
+        body      = await request.json()
+        totp_code = body.get("totp_code", "")
+
+        from auth import verify_totp
+        if not verify_totp(totp_code):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid TOTP code"}
+            )
+
+        disk_before = psutil.disk_usage('/').used
+
+        result = subprocess.run(
+            ["docker", "system", "prune", "-f", "--volumes"],
+            capture_output = True,
+            text           = True,
+            timeout        = 120,
+            cwd            = "/home/ubuntu/crypto-engine"
+        )
+
+        disk_after = psutil.disk_usage('/').used
+        freed_gb   = round((disk_before - disk_after) / 1024 ** 3, 2)
+        freed_mb   = round((disk_before - disk_after) / 1024 ** 2, 0)
+
+        ip = request.client.host if request.client else ""
+        audit("docker_purge", "dashboard", f"freed:{freed_mb}MB", ip=ip)
+
+        if result.returncode == 0:
+            return JSONResponse(content={
+                "success":  True,
+                "output":   result.stdout,
+                "freed_gb": freed_gb,
+                "freed_mb": freed_mb,
+                "message":  f"Docker purge complete. Freed {freed_mb}MB of disk space."
+            })
+        else:
+            return JSONResponse(
+                status_code = 500,
+                content     = {
+                    "success": False,
+                    "reason":  result.stderr or "Docker purge failed"
+                }
+            )
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408, "Docker purge timed out")
+    except Exception as e:
+        log.error(f"Docker purge error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/system/disk")
+async def system_disk(request: Request):
+    _auth(request)
+    try:
+        disk = psutil.disk_usage('/')
+        return JSONResponse(content={
+            "used_gb":  round(disk.used  / 1024 ** 3, 1),
+            "total_gb": round(disk.total / 1024 ** 3, 1),
+            "free_gb":  round(disk.free  / 1024 ** 3, 1),
+            "pct":      round(disk.percent, 1),
+        })
+    except Exception as e:
         raise HTTPException(500, str(e))

@@ -19,9 +19,9 @@
     "pair_blacklist": []
   },
   "stake_currency": "USDT",
-  "stake_amount": "unlimited",
+  "stake_amount": 10,
   "tradable_balance_ratio": 0.99,
-  "max_open_trades": 3,
+  "max_open_trades": 10,
   "dry_run": true,
   "dry_run_wallet": 1000,
   "cancel_open_orders_on_exit": true,

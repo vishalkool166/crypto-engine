@@ -13,125 +13,243 @@
 
 <div class="app-layout">
 
-    <aside class="sidebar" role="navigation" aria-label="Main navigation">
+    <aside
+        class="sidebar"
+        :class="sidebarExpanded && 'expanded'"
+        role="navigation"
+        aria-label="Main navigation"
+        :aria-expanded="sidebarExpanded"
+    >
         <div class="sidebar-logo">
-            <div class="flex items-center gap-8">
-                <svg width="28" height="28" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                    <rect width="32" height="32" rx="8" fill="#1a1a24"/>
-                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
-                </svg>
-                <div>
-                    <div class="sidebar-logo-title">Signal Engine</div>
-                    <div class="sidebar-logo-sub">v5.0.0</div>
-                </div>
+            <svg class="sidebar-logo-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                <rect width="32" height="32" rx="8" fill="#0e0e1a"/>
+                <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00e5b8" stroke="#00e5b8" stroke-width="0.5" stroke-linejoin="round"/>
+            </svg>
+            <div class="sidebar-logo-text" aria-hidden="true">
+                <div class="sidebar-logo-title">Signal Engine</div>
+                <div class="sidebar-logo-sub">v5.0.0</div>
             </div>
         </div>
 
-        <nav class="sidebar-nav">
-            <div class="nav-section-label">Main</div>
+        <nav class="sidebar-nav" role="menubar" aria-label="Navigation menu">
 
-            <div class="nav-item" :class="page==='overview'&&'active'" @click="navigate('overview')" role="button" tabindex="0" :aria-current="page==='overview'?'page':false" @keydown.enter="navigate('overview')" aria-label="Overview">
+            <div class="nav-section-label" aria-hidden="true">Main</div>
+
+            <div
+                class="nav-item"
+                :class="page==='overview' && 'active'"
+                @click="navigate('overview')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='overview' ? 'page' : false"
+                @keydown.enter="navigate('overview')"
+                @keydown.space.prevent="navigate('overview')"
+                aria-label="Overview"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-                <span>Overview</span>
+                <span class="nav-item-label">Overview</span>
+                <span class="nav-tooltip" role="tooltip">Overview</span>
             </div>
 
-            <div class="nav-item" :class="page==='signals'&&'active'" @click="navigate('signals')" role="button" tabindex="0" :aria-current="page==='signals'?'page':false" @keydown.enter="navigate('signals')" aria-label="Signals">
+            <div
+                class="nav-item"
+                :class="page==='signals' && 'active'"
+                @click="navigate('signals')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='signals' ? 'page' : false"
+                @keydown.enter="navigate('signals')"
+                @keydown.space.prevent="navigate('signals')"
+                aria-label="Signals"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                <span>Signals</span>
+                <span class="nav-item-label">Signals</span>
+                <span class="nav-tooltip" role="tooltip">Signals</span>
             </div>
 
-            <div class="nav-item" :class="page==='freqtrade'&&'active'" @click="navigate('freqtrade')" role="button" tabindex="0" :aria-current="page==='freqtrade'?'page':false" @keydown.enter="navigate('freqtrade')" aria-label="Freqtrade">
+            <div
+                class="nav-item"
+                :class="page==='freqtrade' && 'active'"
+                @click="navigate('freqtrade')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='freqtrade' ? 'page' : false"
+                @keydown.enter="navigate('freqtrade')"
+                @keydown.space.prevent="navigate('freqtrade')"
+                aria-label="Freqtrade"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-                <span>Freqtrade</span>
+                <span class="nav-item-label">Freqtrade</span>
+                <span class="nav-tooltip" role="tooltip">Freqtrade</span>
             </div>
 
-            <div class="nav-section-label">Tools</div>
+            <div class="nav-section-label" aria-hidden="true">Tools</div>
 
-            <div class="nav-item" :class="page==='coins'&&'active'" @click="navigate('coins')" role="button" tabindex="0" :aria-current="page==='coins'?'page':false" @keydown.enter="navigate('coins')" aria-label="Coin Universe">
+            <div
+                class="nav-item"
+                :class="page==='coins' && 'active'"
+                @click="navigate('coins')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='coins' ? 'page' : false"
+                @keydown.enter="navigate('coins')"
+                @keydown.space.prevent="navigate('coins')"
+                aria-label="Coin Universe"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                <span>Coins</span>
+                <span class="nav-item-label">Coins</span>
+                <span class="nav-tooltip" role="tooltip">Coin Universe</span>
             </div>
 
-            <div class="nav-item" :class="page==='backtest'&&'active'" @click="navigate('backtest')" role="button" tabindex="0" :aria-current="page==='backtest'?'page':false" @keydown.enter="navigate('backtest')" aria-label="Backtest">
+            <div
+                class="nav-item"
+                :class="page==='backtest' && 'active'"
+                @click="navigate('backtest')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='backtest' ? 'page' : false"
+                @keydown.enter="navigate('backtest')"
+                @keydown.space.prevent="navigate('backtest')"
+                aria-label="Backtest"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-                <span>Backtest</span>
+                <span class="nav-item-label">Backtest</span>
+                <span class="nav-tooltip" role="tooltip">Backtest</span>
             </div>
 
-            <div class="nav-item" :class="page==='analysis'&&'active'" @click="navigate('analysis')" role="button" tabindex="0" :aria-current="page==='analysis'?'page':false" @keydown.enter="navigate('analysis')" aria-label="Analysis">
+            <div
+                class="nav-item"
+                :class="page==='analysis' && 'active'"
+                @click="navigate('analysis')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='analysis' ? 'page' : false"
+                @keydown.enter="navigate('analysis')"
+                @keydown.space.prevent="navigate('analysis')"
+                aria-label="Analysis"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                <span>Analysis</span>
+                <span class="nav-item-label">Analysis</span>
+                <span class="nav-tooltip" role="tooltip">Analysis</span>
             </div>
 
-            <div class="nav-section-label">System</div>
+            <div class="nav-section-label" aria-hidden="true">System</div>
 
-            <div class="nav-item" :class="page==='audit'&&'active'" @click="navigate('audit')" role="button" tabindex="0" :aria-current="page==='audit'?'page':false" @keydown.enter="navigate('audit')" aria-label="Audit Log">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                <span>Audit Log</span>
+            <div
+                class="nav-item"
+                :class="page==='audit' && 'active'"
+                @click="navigate('audit')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='audit' ? 'page' : false"
+                @keydown.enter="navigate('audit')"
+                @keydown.space.prevent="navigate('audit')"
+                aria-label="Audit Log"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                <span class="nav-item-label">Audit Log</span>
+                <span class="nav-tooltip" role="tooltip">Audit Log</span>
             </div>
 
-            <div class="nav-item" :class="page==='settings'&&'active'" @click="navigate('settings')" role="button" tabindex="0" :aria-current="page==='settings'?'page':false" @keydown.enter="navigate('settings')" aria-label="Settings">
+            <div
+                class="nav-item"
+                :class="page==='settings' && 'active'"
+                @click="navigate('settings')"
+                role="menuitem"
+                tabindex="0"
+                :aria-current="page==='settings' ? 'page' : false"
+                @keydown.enter="navigate('settings')"
+                @keydown.space.prevent="navigate('settings')"
+                aria-label="Settings"
+            >
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                <span>Settings</span>
+                <span class="nav-item-label">Settings</span>
+                <span class="nav-tooltip" role="tooltip">Settings</span>
             </div>
         </nav>
 
-        <div class="sidebar-footer">
-            <div class="stat-row">
-                <span class="stat-label" style="font-size:11px;">Mode</span>
-                <span class="badge" :class="mode==='live'?'badge-live':'badge-paper'" x-text="mode.toUpperCase()"></span>
-            </div>
-            <div class="stat-row" style="margin-top:6px;">
-                <span class="stat-label" style="font-size:11px;">WebSocket</span>
-                <div class="flex items-center gap-4">
-                    <div class="ws-dot" :class="wsState" role="status" :aria-label="'WebSocket '+wsState"></div>
-                    <span style="font-size:11px;color:var(--text-muted)" x-text="wsState==='connected'?'Live':wsState==='connecting'?'Connecting':'Offline'"></span>
-                </div>
-            </div>
-        </div>
+        <button
+            class="sidebar-toggle"
+            @click="sidebarExpanded = !sidebarExpanded"
+            :aria-label="sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'"
+            :aria-expanded="sidebarExpanded"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <polyline x-show="!sidebarExpanded" points="9 18 15 12 9 6"/>
+                <polyline x-show="sidebarExpanded"  points="15 18 9 12 15 6"/>
+            </svg>
+        </button>
     </aside>
 
     <div class="main-area">
 
         <header class="topbar" role="banner">
             <div class="topbar-left">
-                <span style="font-size:13px;font-weight:600;color:var(--text-secondary)" x-text="pageTitle()"></span>
-                <div class="flex items-center gap-8" style="margin-left:8px;">
-                    <template x-for="coin in btcEthPrices" :key="coin.symbol">
-                        <div class="flex items-center gap-4">
-                            <span style="font-size:11px;color:var(--text-muted)" x-text="coin.symbol"></span>
-                            <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;" x-text="coin.price"></span>
-                            <span style="font-family:var(--font-mono);font-size:11px;" :style="{color:coin.changeColor}" x-text="coin.change"></span>
-                        </div>
-                    </template>
+                <span class="topbar-title" x-text="pageTitle()"></span>
+                <div class="topbar-divider" aria-hidden="true"></div>
+                <div class="mode-indicator" :class="mode" role="status" :aria-label="'Trading mode: ' + mode">
+                    <div class="live-dot" :style="mode === 'live' ? 'background:var(--red)' : ''" aria-hidden="true"></div>
+                    <span x-text="mode.toUpperCase()"></span>
                 </div>
             </div>
 
             <div class="topbar-right">
-                <div class="flex items-center gap-6" style="font-size:11px;color:var(--text-secondary);">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                    <span>Next scan:</span>
-                    <span style="font-family:var(--font-mono);color:var(--text-primary)" x-text="nextScan"></span>
+                <div class="next-scan-badge" aria-live="polite" aria-label="Next scan countdown">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Next scan</span>
+                    <span x-text="nextScan"></span>
                 </div>
-                <div class="flex items-center gap-6">
-                    <div class="ws-dot" :class="wsState" role="status" :aria-label="'WebSocket '+wsState"></div>
-                    <span style="font-size:11px;color:var(--text-muted)" x-text="lastUpdate"></span>
+
+                <div class="topbar-divider" aria-hidden="true"></div>
+
+                <div class="ws-status-bar" role="status" :aria-label="'Connection: ' + wsState">
+                    <div class="ws-dot" :class="wsState" aria-hidden="true"></div>
+                    <span x-text="wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'"></span>
                 </div>
-                <button class="btn btn-ghost btn-sm" @click="logout" aria-label="Logout">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                    <span>Logout</span>
+
+                <div class="topbar-divider" aria-hidden="true"></div>
+
+                <button
+                    class="btn btn-ghost btn-sm"
+                    @click="logout"
+                    aria-label="Log out of Signal Engine"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    Logout
                 </button>
             </div>
         </header>
 
-        <main class="page-content" role="main">
-            <div x-show="page==='overview'"  x-html="pageHtml.overview"></div>
-            <div x-show="page==='signals'"   x-html="pageHtml.signals"></div>
-            <div x-show="page==='freqtrade'" x-html="pageHtml.freqtrade"></div>
-            <div x-show="page==='coins'"     x-html="pageHtml.coins"></div>
-            <div x-show="page==='backtest'"  x-html="pageHtml.backtest"></div>
-            <div x-show="page==='analysis'"  x-html="pageHtml.analysis"></div>
-            <div x-show="page==='audit'"     x-html="pageHtml.audit"></div>
-            <div x-show="page==='settings'"  x-html="pageHtml.settings"></div>
+        <div
+            class="ticker-bar"
+            role="marquee"
+            aria-label="Live price ticker"
+            aria-live="off"
+        >
+            <div class="ticker-track" id="ticker-track">
+                <template x-for="item in [...ticker, ...ticker]" :key="Math.random()">
+                    <div class="ticker-item">
+                        <span class="ticker-coin" x-text="item.coin"></span>
+                        <span class="ticker-price" x-text="item.price"></span>
+                        <span
+                            class="ticker-change"
+                            :style="{color: item.change_color}"
+                            x-text="item.change"
+                        ></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <main class="page-content" role="main" id="main-content">
+            <div x-show="page==='overview'"  x-html="pageHtml.overview"  @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='signals'"   x-html="pageHtml.signals"   @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='freqtrade'" x-html="pageHtml.freqtrade" @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='coins'"     x-html="pageHtml.coins"     @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='backtest'"  x-html="pageHtml.backtest"  @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='analysis'"  x-html="pageHtml.analysis"  @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='audit'"     x-html="pageHtml.audit"     @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='settings'"  x-html="pageHtml.settings"  @click.capture="handlePageClick($event)"></div>
         </main>
 
     </div>
@@ -141,16 +259,32 @@
     x-show="totp.show"
     x-cloak
     class="modal-overlay"
-    @click.self="totp.show=false"
+    @click.self="totp.show=false;totp.code='';totp.error=''"
     role="dialog"
     aria-modal="true"
     :aria-label="totp.title"
+    @keydown.escape="totp.show=false;totp.code='';totp.error=''"
 >
     <div class="modal">
-        <div class="modal-title" x-text="totp.title||'Confirm Action'"></div>
-        <div class="modal-sub" x-text="totp.subtitle||'Enter your TOTP code to continue'"></div>
-        <div x-show="totp.error" x-cloak class="alert alert-error" role="alert" x-text="totp.error"></div>
-        <label for="totp-modal-input" style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">TOTP Code</label>
+        <div class="modal-title" x-text="totp.title || 'Confirm Action'"></div>
+        <div class="modal-sub"   x-text="totp.subtitle || 'Enter your TOTP code to continue'"></div>
+
+        <div
+            x-show="totp.error"
+            x-cloak
+            class="alert alert-error"
+            role="alert"
+            aria-live="assertive"
+            x-text="totp.error"
+        ></div>
+
+        <label
+            for="totp-modal-input"
+            style="display:block;font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;"
+        >
+            TOTP Code
+        </label>
+
         <input
             id="totp-modal-input"
             class="totp-input"
@@ -159,20 +293,26 @@
             maxlength="6"
             x-model="totp.code"
             placeholder="000000"
-            aria-label="TOTP verification code"
+            aria-label="6-digit TOTP verification code"
             aria-required="true"
-            @input="totp.code=totp.code.replace(/\D/g,'')"
-            @keydown.enter="totp.code.length===6&&confirmTotp()"
+            autocomplete="one-time-code"
+            @input="totp.code = totp.code.replace(/\D/g,'')"
+            @keydown.enter="totp.code.length === 6 && confirmTotp()"
             x-ref="totpInput"
         >
+
         <div class="modal-actions">
-            <button class="btn btn-ghost" @click="totp.show=false;totp.code='';totp.error=''" aria-label="Cancel">Cancel</button>
+            <button
+                class="btn btn-ghost"
+                @click="totp.show=false;totp.code='';totp.error=''"
+                aria-label="Cancel action"
+            >Cancel</button>
             <button
                 class="btn btn-primary"
                 @click="confirmTotp"
-                :disabled="totp.code.length<6||totp.loading"
+                :disabled="totp.code.length < 6 || totp.loading"
                 :aria-busy="totp.loading"
-                aria-label="Confirm TOTP"
+                aria-label="Confirm with TOTP code"
             >
                 <span x-show="totp.loading" class="spinner" aria-hidden="true"></span>
                 Confirm
@@ -187,7 +327,7 @@
     role="status"
     aria-live="polite"
     aria-atomic="true"
-    style="position:fixed;bottom:20px;right:20px;z-index:2000;min-width:260px;max-width:360px;"
+    style="position:fixed;bottom:24px;right:24px;z-index:2000;min-width:280px;max-width:380px;"
     x-transition:enter="transition ease-out duration-200"
     x-transition:enter-start="opacity-0 transform translate-y-2"
     x-transition:enter-end="opacity-100 transform translate-y-0"
@@ -195,7 +335,7 @@
     x-transition:leave-start="opacity-100"
     x-transition:leave-end="opacity-0"
 >
-    <div class="alert" :class="'alert-'+toast.type" x-text="toast.message"></div>
+    <div class="alert" :class="'alert-' + toast.type" x-text="toast.message"></div>
 </div>
 
 <script src="/js/utils.js"></script>
@@ -219,11 +359,12 @@ function app() {
         mode:            'paper',
         wsState:         'connecting',
         nextScan:        '--',
-        lastUpdate:      '--',
-        btcEthPrices:    [],
+        ticker:          [],
+        sidebarExpanded: false,
         dashboardData:   {},
         _wsInstance:     null,
         _countdownTimer: null,
+        _nextScanEpoch:  0,
 
         pageHtml: {
             overview:  overviewPage(),
@@ -259,8 +400,7 @@ function app() {
             const authOk = await this._checkAuth()
             if (!authOk) return
 
-            await this._loadDashboardNow()
-
+            await this._loadInitial()
             this._initWS()
             this._startCountdown()
         },
@@ -278,7 +418,7 @@ function app() {
             }
         },
 
-        async _loadDashboardNow() {
+        async _loadInitial() {
             try {
                 const res = await fetch('/api/dashboard', { credentials: 'include' })
                 if (res.status === 401) {
@@ -292,20 +432,16 @@ function app() {
 
         _applyDashboard(data) {
             this.dashboardData = data
-            this.mode          = data.header?.mode || 'paper'
-            this.lastUpdate    = 'Just now'
+            const summary = data.summary || {}
+            this.mode     = summary.mode || 'paper'
 
-            this.btcEthPrices = (data.radar || [])
-                .filter(r => ['BTC', 'ETH'].includes(r.coin))
-                .map(r => ({
-                    symbol:      r.coin,
-                    price:       r.price,
-                    change:      r.change,
-                    changeColor: Utils.changeColor(r.change_raw ?? r.change)
-                }))
+            if (data.ticker && data.ticker.length) {
+                this.ticker = data.ticker
+            }
 
-            if (data.next_scan_epoch) {
-                this._updateNextScan(data.next_scan_epoch)
+            if (summary.next_scan_epoch) {
+                this._nextScanEpoch = summary.next_scan_epoch
+                this._updateNextScan()
             }
 
             window.dispatchEvent(new CustomEvent('dashboard-update', { detail: data }))
@@ -351,8 +487,9 @@ function app() {
             this._wsInstance = ws
         },
 
-        _updateNextScan(epoch) {
-            const diff = Math.max(0, epoch - Date.now())
+        _updateNextScan() {
+            if (!this._nextScanEpoch) return
+            const diff = Math.max(0, this._nextScanEpoch - Date.now())
             const mins = Math.floor(diff / 60000)
             const secs = Math.floor((diff % 60000) / 1000)
             this.nextScan = `${mins}m ${secs}s`
@@ -361,9 +498,7 @@ function app() {
         _startCountdown() {
             if (this._countdownTimer) clearInterval(this._countdownTimer)
             this._countdownTimer = setInterval(() => {
-                if (this.dashboardData.next_scan_epoch) {
-                    this._updateNextScan(this.dashboardData.next_scan_epoch)
-                }
+                this._updateNextScan()
             }, 1000)
         },
 
@@ -371,6 +506,8 @@ function app() {
             this.page = p
             window.dispatchEvent(new CustomEvent('page-change', { detail: { page: p } }))
         },
+
+        handlePageClick(e) {},
 
         pageTitle() {
             const titles = {

@@ -16,6 +16,7 @@ from engines.signal import (
     get_tier, get_session as get_trading_session,
     run_no_trade_engine, generate_signal
 )
+from engines.capital import compute_allocation
 from alerts.telegram import send_signal, send_scan_summary
 from alerts.utils import categorize_results
 from content.pipeline import run_content_pipeline, run_commentary_pipeline
@@ -179,7 +180,7 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
                 risk_amt      = signal.get("risk_amt", 0),
                 risk_pct      = signal.get("risk_pct", 0),
                 position      = signal.get("pos_size", 0),
-                leverage      = str(cfg.LEVERAGE) + "x" if hasattr(cfg, "LEVERAGE") else "10x",
+                leverage      = str(signal.get("leverage", 10)) + "x",
                 regime        = regime,
                 session       = session,
                 sweep_score   = sweep.get("score", 0),
@@ -215,17 +216,10 @@ async def _execute_priority_entries():
 
     try:
         from api.freqtrade import ft_open_trade_count, ft_has_open_trade
+        from engines.capital import get_portfolio_state
 
-        open_count = await ft_open_trade_count()
-        max_trades = cfg.MAX_TRADES_PER_DAY
-        available  = max_trades - open_count
-
-        log.info(f"Slots: {open_count} open / {max_trades} max / {available} available")
-
-        if available <= 0:
-            log.info(f"No slots available — {open_count}/{max_trades} open")
-            _pending_forceenter = []
-            return
+        portfolio  = await get_portfolio_state()
+        open_count = portfolio.get("open_trades", 0)
 
         grade_order = {"A+": 0, "A": 1, "B": 2}
         sorted_signals = sorted(
@@ -239,27 +233,28 @@ async def _execute_priority_entries():
         entered_coins = set()
 
         for item in sorted_signals:
-            if entered >= available:
+            allocation = item.get("allocation", {})
+            if allocation.get("skip"):
+                log.info(f"Skipping {item['coin']} — allocation said skip: {allocation.get('reason')}")
+                continue
+
+            max_trades = allocation.get("max_trades_allowed", 3)
+            if open_count >= max_trades:
+                log.info(f"Max trades {max_trades} reached for current regime — stopping")
                 break
 
             coin = item["coin"]
 
             if coin in entered_coins:
-                log.info(f"Skipping — {coin} already entered this cycle")
                 continue
 
             if await ft_has_open_trade(coin):
-                log.info(f"Skipping — {coin} already has open trade")
                 continue
-
-            open_count = await ft_open_trade_count()
-            if open_count >= max_trades:
-                log.info(f"Max trades reached — stopping")
-                break
 
             result = await _do_forceenter(item)
             if result:
-                entered += 1
+                entered      += 1
+                open_count   += 1
                 entered_coins.add(coin)
 
         log.info(f"Priority entries complete — {entered} trades opened")
@@ -274,21 +269,25 @@ async def _do_forceenter(item: dict) -> bool:
     try:
         from api.freqtrade import ft_force_enter
 
-        coin      = item["coin"]
-        signal    = item["signal"]
-        db_id     = item["db_id"]
-        direction = signal.get("direction", "")
-        side      = "short" if direction == "SHORT" else "long"
-        entry     = float(signal.get("entry", 0))
-        sl        = float(signal.get("sl", 0))
-        tp        = float(signal.get("tp1", 0))
-        grade     = signal.get("grade", "")
-        risk_amt  = float(signal.get("risk_amt", 0))
-        leverage  = cfg.LEVERAGE
-        stake     = risk_amt * leverage
+        coin       = item["coin"]
+        signal     = item["signal"]
+        db_id      = item["db_id"]
+        allocation = item.get("allocation", {})
+        direction  = signal.get("direction", "")
+        side       = "short" if direction == "SHORT" else "long"
+        entry      = float(signal.get("entry", 0))
+        sl         = float(signal.get("sl", 0))
+        tp         = float(signal.get("tp1", 0))
+        grade      = signal.get("grade", "")
+        stake      = float(allocation.get("stake", 0))
+        leverage   = int(allocation.get("leverage", 10))
 
         if not entry or not sl or not tp:
             log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
+            return False
+
+        if stake <= 0:
+            log.error(f"Invalid stake for {coin} — stake:{stake}")
             return False
 
         result = await ft_force_enter(
@@ -306,6 +305,7 @@ async def _do_forceenter(item: dict) -> bool:
         if result.get("success"):
             log.info(
                 f"Trade opened: {coin} {direction} Grade:{grade} "
+                f"stake:{stake:.2f} leverage:{leverage}x "
                 f"trade_id:{result.get('trade_id')}"
             )
             return True
@@ -346,24 +346,47 @@ async def _queue_cached_signals_for_entry(results: list):
             if not sig or not sig.entry or not sig.sl or not sig.tp1:
                 continue
 
+            signal_dict = {
+                "grade":     sig.grade,
+                "direction": sig.direction,
+                "score":     sig.score or 0,
+                "entry":     sig.entry,
+                "sl":        sig.sl,
+                "tp1":       sig.tp1,
+                "sl_pct":    sig.sl_pct or 0,
+                "risk_amt":  sig.risk_amt or 0,
+                "pos_size":  sig.position or 0,
+            }
+
+            wconf_cached = r.get("wconf", {})
+            regime_cached = {"type": r.get("regime", "unknown"), "label": r.get("regime", "unknown")}
+            vol_profile_cached = {
+                "volatility_class": r.get("signal", {}).get("vol_class", "normal"),
+                "atr_pct":          r.get("signal", {}).get("atr_pct", 2.0),
+                "adx":              r.get("signal", {}).get("adx_used", 20),
+            }
+
+            allocation = await compute_allocation(
+                signal      = signal_dict,
+                wconf       = wconf_cached,
+                regime      = regime_cached,
+                vol_profile = vol_profile_cached,
+                direction   = dir_,
+            )
+
+            if allocation.get("skip"):
+                log.info(f"Cached signal {coin} skipped by allocation: {allocation.get('reason')}")
+                continue
+
             _pending_forceenter.append({
-                "coin":   coin,
-                "grade":  sig.grade,
-                "score":  sig.score or 0,
-                "signal": {
-                    "grade":     sig.grade,
-                    "direction": sig.direction,
-                    "score":     sig.score or 0,
-                    "entry":     sig.entry,
-                    "sl":        sig.sl,
-                    "tp1":       sig.tp1,
-                    "sl_pct":    sig.sl_pct or 0,
-                    "risk_amt":  sig.risk_amt or 0,
-                    "pos_size":  sig.position or 0,
-                },
-                "db_id": sig.id,
+                "coin":       coin,
+                "grade":      sig.grade,
+                "score":      sig.score or 0,
+                "signal":     signal_dict,
+                "db_id":      sig.id,
+                "allocation": allocation,
             })
-            log.info(f"Queued cached signal: {coin} {dir_} Grade:{grade} entry:{sig.entry}")
+            log.info(f"Queued cached signal: {coin} {dir_} Grade:{grade} stake:{allocation.get('stake'):.2f} lev:{allocation.get('leverage')}x")
 
     except Exception as e:
         log.error(f"_queue_cached_signals_for_entry error: {e}", exc_info=True)
@@ -383,9 +406,6 @@ async def _analyze_coin_inner(
     capital:  float = None,
     leverage: int   = None
 ) -> dict:
-
-    capital  = capital  or cfg.CAPITAL
-    leverage = leverage or cfg.LEVERAGE
 
     cached = cache.get(f"signal_{coin}")
     if cached:
@@ -499,8 +519,6 @@ async def _analyze_coin_inner(
         no_trade     = no_trade,
         market       = market,
         key_levels   = key_levels,
-        capital      = capital,
-        leverage     = leverage,
         df_15m       = df_15m,
         sweep        = sweep,
         displacement = disp,
@@ -541,13 +559,36 @@ async def _analyze_coin_inner(
             ml_passed, ml_prob = _check_ml_gate(signal, wconf)
 
             if ml_passed:
-                _pending_forceenter.append({
-                    "coin":    coin,
-                    "grade":   signal.get("grade"),
-                    "score":   signal.get("score", 0),
-                    "signal":  signal,
-                    "db_id":   db_id,
-                })
+                vol_profile = {
+                    "volatility_class": signal.get("vol_class", "normal"),
+                    "atr_pct":          signal.get("atr_pct", 2.0),
+                    "adx":              signal.get("adx_used", 20),
+                }
+
+                allocation = await compute_allocation(
+                    signal      = signal,
+                    wconf       = wconf,
+                    regime      = regime,
+                    vol_profile = vol_profile,
+                    direction   = signal.get("direction"),
+                )
+
+                if not allocation.get("skip"):
+                    signal["risk_amt"]  = allocation["risk_amt"]
+                    signal["pos_size"]  = allocation["pos_size"]
+                    signal["leverage"]  = allocation["leverage"]
+                    signal["stake"]     = allocation["stake"]
+
+                    _pending_forceenter.append({
+                        "coin":       coin,
+                        "grade":      signal.get("grade"),
+                        "score":      signal.get("score", 0),
+                        "signal":     signal,
+                        "db_id":      db_id,
+                        "allocation": allocation,
+                    })
+                else:
+                    log.info(f"Signal {coin} skipped by allocation engine: {allocation.get('reason')}")
 
     result = {
         "coin":              coin,

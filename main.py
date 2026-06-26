@@ -33,35 +33,46 @@ log       = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="frontend")
 
 _dashboard_clients:   set          = set()
-_last_dashboard_data: dict         = {}
 _last_payload_hash:   str          = ""
 _dashboard_push_task: asyncio.Task = None
 
 limiter = Limiter(key_func=get_remote_address)
 
 
+async def _build_ws_payload() -> dict:
+    from api.dashboard import get_summary, get_signals_data, get_ticker_bar
+    return {
+        "type":    "dashboard",
+        "summary": get_summary(),
+        "signals": get_signals_data(),
+        "ticker":  get_ticker_bar(),
+    }
+
+
+async def _push_to_clients(payload_str: str):
+    dead = set()
+    for ws in _dashboard_clients:
+        try:
+            await ws.send_text(payload_str)
+        except Exception:
+            dead.add(ws)
+    _dashboard_clients.difference_update(dead)
+
+
 async def push_event(event_type: str, data: dict = None):
-    global _last_dashboard_data, _last_payload_hash
+    global _last_payload_hash
     if not _dashboard_clients:
         return
     try:
-        full_data    = await build_dashboard_payload()
-        payload_str  = json.dumps(full_data)
+        payload      = await _build_ws_payload()
+        payload_str  = json.dumps(payload)
         payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
 
         if payload_hash == _last_payload_hash and event_type == "ping":
             return
 
-        _last_payload_hash   = payload_hash
-        _last_dashboard_data = full_data
-
-        dead = set()
-        for ws in _dashboard_clients:
-            try:
-                await ws.send_text(payload_str)
-            except Exception:
-                dead.add(ws)
-        _dashboard_clients.difference_update(dead)
+        _last_payload_hash = payload_hash
+        await _push_to_clients(payload_str)
 
     except Exception as e:
         log.error(f"push_event error: {e}")
@@ -71,25 +82,23 @@ async def _push_ft_update(event_type: str, data: dict = None):
     if not _dashboard_clients:
         return
     try:
-        from api.freqtrade import _ft_get
+        from api.freqtrade import _ft_get_safe
         from database import SessionLocal
         from database import Signal as SignalModel
 
         status, profit, balance, config = await asyncio.gather(
-            _ft_get("/status"),
-            _ft_get("/profit"),
-            _ft_get("/balance"),
-            _ft_get("/show_config"),
-            return_exceptions=True
+            _ft_get_safe("/status"),
+            _ft_get_safe("/profit"),
+            _ft_get_safe("/balance"),
+            _ft_get_safe("/show_config"),
         )
 
         bot_state = "unknown"
-        if not isinstance(config, Exception) and config:
+        if config:
             bot_state = config.get("state", "unknown")
 
         trades_with_health = []
-        if not isinstance(status, Exception) and status and isinstance(status, list):
-
+        if status and isinstance(status, list):
             tp1_map = {}
             sl_map  = {}
 
@@ -141,18 +150,12 @@ async def _push_ft_update(event_type: str, data: dict = None):
             "type":      "ft_update",
             "event":     event_type,
             "status":    trades_with_health,
-            "profit":    profit    if not isinstance(profit,    Exception) else {},
-            "balance":   balance   if not isinstance(balance,   Exception) else {},
+            "profit":    profit    if profit    else {},
+            "balance":   balance   if balance   else {},
             "bot_state": bot_state
         })
 
-        dead = set()
-        for ws in _dashboard_clients:
-            try:
-                await ws.send_text(payload)
-            except Exception:
-                dead.add(ws)
-        _dashboard_clients.difference_update(dead)
+        await _push_to_clients(payload)
 
     except Exception as e:
         log.error(f"_push_ft_update error: {e}")
@@ -174,7 +177,7 @@ async def _on_ft_event(event_type: str, data: dict):
 
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)
         if _dashboard_clients:
             await push_event("ping")
 
@@ -456,11 +459,8 @@ async def dashboard_websocket(websocket: WebSocket):
     _dashboard_clients.add(websocket)
 
     try:
-        if _last_dashboard_data:
-            await websocket.send_text(json.dumps(_last_dashboard_data))
-        else:
-            data = await build_dashboard_payload()
-            await websocket.send_text(json.dumps(data))
+        initial = await build_dashboard_payload()
+        await websocket.send_text(json.dumps(initial))
     except Exception as e:
         log.error(f"Dashboard WS initial push error: {e}")
 
@@ -468,6 +468,8 @@ async def dashboard_websocket(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        _dashboard_clients.discard(websocket)
+    except Exception:
         _dashboard_clients.discard(websocket)
 
 

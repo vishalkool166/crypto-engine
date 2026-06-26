@@ -44,12 +44,6 @@ TIERS = {
     }
 }
 
-GRADE_RISK_PCT = {
-    "A+": 0.02,
-    "A":  0.015,
-    "B":  0.01,
-}
-
 GRADE_MIN_RR = {
     "A+": 2.0,
     "A":  1.8,
@@ -225,15 +219,6 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
         return False, f"Too many entry blocks: {len(entry_blocks)}"
 
     return True, "B grade quality filter passed"
-
-
-def dynamic_risk_pct(grade: str, quality_score: float = 100) -> float:
-    base = GRADE_RISK_PCT.get(grade, 0.01)
-    if quality_score >= 80:
-        return base
-    if quality_score >= 60:
-        return round(base * 0.75, 4)
-    return round(base * 0.5, 4)
 
 
 def get_min_rr(grade: str) -> float:
@@ -508,26 +493,26 @@ def _coin_volatility_profile(
         volatility_class = "normal"
 
     return {
-        "atr_4h":          atr_4h,
-        "atr_pct":         atr_pct,
-        "adx":             adx,
-        "bb_width":        bb_w,
-        "avg_swing":       avg_swing,
-        "avg_swing_pct":   avg_swing_pct,
+        "atr_4h":           atr_4h,
+        "atr_pct":          atr_pct,
+        "adx":              adx,
+        "bb_width":         bb_w,
+        "avg_swing":        avg_swing,
+        "avg_swing_pct":    avg_swing_pct,
         "volatility_class": volatility_class
     }
 
 
 def _calculate_sl(
-    is_long:   bool,
-    entry:     float,
-    sweep:     dict,
-    retest:    dict,
-    d4h:       dict,
-    d1d:       dict,
-    swings:    dict,
+    is_long:    bool,
+    entry:      float,
+    sweep:      dict,
+    retest:     dict,
+    d4h:        dict,
+    d1d:        dict,
+    swings:     dict,
     key_levels: dict,
-    grade:     str,
+    grade:      str,
     vol_profile: dict
 ) -> tuple[float, str, bool]:
 
@@ -536,7 +521,7 @@ def _calculate_sl(
     if atr_4h <= 0:
         atr_4h = entry * 0.015
 
-    atr_mult   = get_atr_mult(grade, adx)
+    atr_mult    = get_atr_mult(grade, adx)
     max_sl_dist = atr_4h * atr_mult
     buffer      = atr_4h * 0.2
     sl          = None
@@ -1058,8 +1043,8 @@ def generate_signal(
     d1d, d4h,
     wconf, no_trade,
     market, key_levels,
-    capital:      float,
-    leverage:     int,
+    capital:      float = None,
+    leverage:     int   = None,
     df_15m:       pd.DataFrame = None,
     sweep:        dict = None,
     displacement: dict = None,
@@ -1074,15 +1059,6 @@ def generate_signal(
     staleness:    dict = None
 ) -> dict:
 
-    capital  = _safe_float(capital)
-    leverage = max(1, min(int(leverage or 1), 125))
-
-    if capital <= 0:
-        log.error(f"Invalid capital: {capital} — using 0")
-        capital = 0.0
-
-    tier  = no_trade["final_tier"]
-    score = no_trade["adj_score"]
     price = _safe_float(market.get("price", 0))
 
     if price <= 0:
@@ -1099,6 +1075,9 @@ def generate_signal(
             "tp1":         None,
             "tp2":         None,
         }
+
+    tier  = no_trade["final_tier"]
+    score = no_trade["adj_score"]
 
     base = {
         "grade": tier["label"],
@@ -1315,13 +1294,6 @@ def generate_signal(
         vol_profile = vol_profile
     )
 
-    quality_score = wconf.get("quality_score", 100) if wconf else 100
-    risk_pct      = dynamic_risk_pct(grade_label, quality_score)
-    risk_amt      = capital * risk_pct
-
-    pos_size = _safe_div(risk_amt, sl_pct / 100, fallback=0.0)
-    margin   = _safe_div(pos_size, leverage, fallback=0.0)
-
     result = {
         **base,
         "direction":      direction,
@@ -1339,11 +1311,13 @@ def generate_signal(
         "tp_label":       tp_label,
         "tp_structural":  "floor" not in tp_label,
         "sl_rejected":    False,
-        "risk_pct":       risk_pct * 100,
-        "risk_amt":       risk_amt,
-        "pos_size":       pos_size,
-        "margin":         margin,
-        "eff_lev":        leverage,
+        "risk_pct":       0,
+        "risk_amt":       0,
+        "pos_size":       0,
+        "stake":          0,
+        "leverage":       10,
+        "margin":         0,
+        "eff_lev":        10,
         "atr_used":       vol_profile["atr_4h"],
         "atr_pct":        vol_profile["atr_pct"],
         "adx_used":       vol_profile["adx"],

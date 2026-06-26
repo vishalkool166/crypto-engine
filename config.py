@@ -57,20 +57,14 @@ class Config:
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
-    CAPITAL  = float(os.getenv("CAPITAL", 16))
-    LEVERAGE = 10
-
-    RISK_PCT_PER_TRADE = 0.02
-    DAILY_LOSS_CAP_PCT = 0.06
-    MAX_TRADES_PER_DAY = 3
-    TRADING_MODE       = os.getenv("TRADING_MODE", "paper")
-    PAPER_TRADING      = TRADING_MODE != "live"
+    TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
+    PAPER_TRADING = TRADING_MODE != "live"
 
     BALANCE_TIERS = [
-        {"min": 0,    "max": 50,   "risk_pct": 0.02, "max_trades": 2, "leverage": 10},
-        {"min": 50,   "max": 200,  "risk_pct": 0.02, "max_trades": 2, "leverage": 10},
-        {"min": 200,  "max": 1000, "risk_pct": 0.02, "max_trades": 3, "leverage": 15},
-        {"min": 1000, "max": None, "risk_pct": 0.02, "max_trades": 3, "leverage": 20},
+        {"min": 0,    "max": 50,   "leverage": 5},
+        {"min": 50,   "max": 200,  "leverage": 7},
+        {"min": 200,  "max": 1000, "leverage": 10},
+        {"min": 1000, "max": None, "leverage": 15},
     ]
 
     B_GRADE_MARKET_SCORE_MIN = 65

@@ -93,6 +93,29 @@ async def _ft_get(path: str) -> dict:
         raise HTTPException(503, f"Freqtrade unavailable: {e}")
 
 
+async def _ft_get_safe(path: str) -> dict | None:
+    try:
+        token = await _get_ft_token()
+        if not token:
+            return None
+        client = await _get_http_client()
+        r = await client.get(
+            f"{cfg.FREQTRADE_URL}/api/v1{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
+        if r.status_code == 401:
+            global _ft_token
+            _ft_token = None
+            return None
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception as e:
+        log.warning(f"Freqtrade safe GET {path} error: {e}")
+        return None
+
+
 async def _ft_post(path: str, body: dict = None) -> dict:
     global _ft_token
     token = await _get_ft_token()
@@ -187,7 +210,7 @@ async def ft_force_enter(
 
 async def ft_has_open_trade(coin: str) -> bool:
     try:
-        status = await _ft_get("/status")
+        status = await _ft_get_safe("/status")
         if not status or not isinstance(status, list):
             return False
         for t in status:
@@ -202,7 +225,7 @@ async def ft_has_open_trade(coin: str) -> bool:
 
 async def ft_open_trade_count() -> int:
     try:
-        status = await _ft_get("/status")
+        status = await _ft_get_safe("/status")
         if not status or not isinstance(status, list):
             return 0
         return len(status)

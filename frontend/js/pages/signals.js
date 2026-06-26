@@ -1,23 +1,33 @@
 function signalsPage() {
-    return `<div x-data="signalsData()" x-init="init()">
+    return `<div x-data="signalsData()" x-init="init()" @page-change.window="onPageChange($event.detail)">
 
         <div class="page-header flex justify-between items-center">
             <div>
                 <div class="page-title">Signals</div>
-                <div class="page-subtitle" x-text="total + ' signals loaded'"></div>
+                <div
+                    class="page-subtitle"
+                    aria-live="polite"
+                    x-text="filtered.length + ' signals'"
+                ></div>
             </div>
-            <button class="btn btn-ghost btn-sm" @click="load(true)" :disabled="loading" aria-label="Refresh signals">
+            <button
+                class="btn btn-ghost btn-sm"
+                @click="load(true)"
+                :disabled="loading"
+                :aria-busy="loading"
+                aria-label="Refresh signals"
+            >
                 <span x-show="loading" class="spinner" aria-hidden="true"></span>
-                <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                <svg x-show="!loading" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                 Refresh
             </button>
         </div>
 
         <div class="card mb-12">
-            <div class="filter-bar">
+            <div class="filter-bar" role="search" aria-label="Signal filters">
                 <select
                     class="select"
-                    style="width:130px;"
+                    style="width:120px;"
                     x-model="filters.grade"
                     @change="load(true)"
                     aria-label="Filter by grade"
@@ -32,7 +42,7 @@ function signalsPage() {
 
                 <select
                     class="select"
-                    style="width:140px;"
+                    style="width:130px;"
                     x-model="filters.outcome"
                     @change="load(true)"
                     aria-label="Filter by outcome"
@@ -45,7 +55,7 @@ function signalsPage() {
 
                 <select
                     class="select"
-                    style="width:130px;"
+                    style="width:120px;"
                     x-model="filters.direction"
                     @change="applyFilters()"
                     aria-label="Filter by direction"
@@ -57,20 +67,20 @@ function signalsPage() {
 
                 <input
                     class="input"
-                    style="width:120px;"
+                    style="width:110px;"
                     type="text"
-                    placeholder="Coin (BTC)"
+                    placeholder="Coin..."
                     x-model="filters.coin"
                     @input.debounce.400ms="load(true)"
-                    aria-label="Filter by coin"
+                    aria-label="Filter by coin symbol"
                 >
 
                 <select
                     class="select"
-                    style="width:110px;"
+                    style="width:100px;"
                     x-model="filters.limit"
                     @change="load(true)"
-                    aria-label="Rows per page"
+                    aria-label="Number of rows to show"
                 >
                     <option value="50">50 rows</option>
                     <option value="100">100 rows</option>
@@ -86,8 +96,11 @@ function signalsPage() {
 
                 <div class="flex-1"></div>
 
-                <div style="font-size:11px;color:var(--text-secondary);" aria-live="polite">
-                    Showing
+                <div
+                    style="font-size:11px;color:var(--text-secondary);"
+                    aria-live="polite"
+                    aria-atomic="true"
+                >
                     <span style="font-family:var(--font-mono);color:var(--text-primary);" x-text="filtered.length"></span>
                     of
                     <span style="font-family:var(--font-mono);" x-text="signals.length"></span>
@@ -96,10 +109,26 @@ function signalsPage() {
         </div>
 
         <div class="card">
-            <div x-show="loading" x-html="Utils.loadingState()"></div>
+            <template x-if="loading">
+                <div>
+                    <div class="loading-skeleton">
+                        <div class="skeleton skeleton-row"></div>
+                        <div class="skeleton skeleton-row"></div>
+                        <div class="skeleton skeleton-row"></div>
+                        <div class="skeleton skeleton-row"></div>
+                        <div class="skeleton skeleton-row"></div>
+                    </div>
+                </div>
+            </template>
 
             <div x-show="!loading">
-                <div class="table-wrap" role="region" aria-label="Signals table" tabindex="0">
+                <div
+                    class="table-wrap"
+                    role="region"
+                    aria-label="Signals table"
+                    tabindex="0"
+                    style="max-height:600px;overflow-y:auto;"
+                >
                     <table aria-label="Trading signals">
                         <thead>
                             <tr>
@@ -114,15 +143,14 @@ function signalsPage() {
                                 <th scope="col">TP</th>
                                 <th scope="col">Exit</th>
                                 <th scope="col">PnL</th>
-                                <th scope="col">Outcome</th>
+                                <th scope="col">Result</th>
                                 <th scope="col">Regime</th>
-                                <th scope="col">Session</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <template x-if="!filtered.length">
+                            <template x-if="!paginated.length">
                                 <tr>
-                                    <td colspan="14" x-html="Utils.emptyState('No signals match filters')"></td>
+                                    <td colspan="13" x-html="Utils.emptyState('No signals match filters')"></td>
                                 </tr>
                             </template>
 
@@ -135,87 +163,161 @@ function signalsPage() {
                                     role="button"
                                     tabindex="0"
                                     @keydown.enter="toggleExpand(s.id)"
-                                    :aria-label="'Signal ' + s.id + ' ' + s.coin + ' ' + s.direction"
+                                    @keydown.space.prevent="toggleExpand(s.id)"
+                                    :aria-label="'Signal ' + s.id + ' ' + s.coin + ' ' + s.direction + ' — click to expand'"
                                 >
-                                    <td><span style="font-family:var(--font-mono);color:var(--text-muted);font-size:11px;" x-text="s.id"></span></td>
-                                    <td><span style="font-size:11px;color:var(--text-secondary);" x-text="Utils.fmtTimeAgo(s.timestamp)"></span></td>
-                                    <td><span style="font-family:var(--font-mono);font-weight:700;" x-text="s.coin"></span></td>
-                                    <td><span :class="Utils.dirBadgeClass(s.direction)" x-text="s.direction"></span></td>
-                                    <td><span :class="Utils.gradeBadgeClass(s.grade)" x-text="s.grade"></span></td>
-                                    <td x-html="Utils.scoreBar(s.score)"></td>
-                                    <td><span style="font-family:var(--font-mono);" x-text="Utils.fmtPrice(s.entry)"></span></td>
-                                    <td><span style="font-family:var(--font-mono);color:var(--red);" x-text="Utils.fmtPrice(s.sl)"></span></td>
-                                    <td><span style="font-family:var(--font-mono);color:var(--green);" x-text="Utils.fmtPrice(s.tp1)"></span></td>
-                                    <td><span style="font-family:var(--font-mono);" x-text="Utils.fmtPrice(s.exit_price)"></span></td>
                                     <td>
                                         <span
-                                            style="font-family:var(--font-mono);font-weight:600;"
+                                            style="font-family:var(--font-mono);color:var(--text-muted);font-size:11px;"
+                                            x-text="s.id"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-size:11px;color:var(--text-secondary);"
+                                            x-text="Utils.fmtTimeAgo(s.timestamp)"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);font-weight:700;"
+                                            x-text="s.coin"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span :class="Utils.dirBadgeClass(s.direction)" x-text="s.direction"></span>
+                                    </td>
+                                    <td>
+                                        <span :class="Utils.gradeBadgeClass(s.grade)" x-text="s.grade"></span>
+                                    </td>
+                                    <td x-html="Utils.scoreBar(s.score)"></td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);"
+                                            x-text="Utils.fmtPrice(s.entry)"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);color:var(--red);"
+                                            x-text="Utils.fmtPrice(s.sl)"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);color:var(--green);"
+                                            x-text="Utils.fmtPrice(s.tp1)"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);"
+                                            x-text="Utils.fmtPrice(s.exit_price)"
+                                        ></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-family:var(--font-mono);font-weight:700;"
                                             :style="{color: Utils.pnlColor(s.pnl)}"
                                             x-text="s.pnl != null ? Utils.fmtPnl(s.pnl) : '--'"
                                         ></span>
                                     </td>
-                                    <td><span :class="Utils.outcomeBadgeClass(s.outcome)" x-text="s.outcome"></span></td>
-                                    <td><span style="font-size:11px;color:var(--text-secondary);" x-text="s.regime || '--'"></span></td>
-                                    <td><span style="font-size:11px;color:var(--text-secondary);" x-text="s.session || '--'"></span></td>
+                                    <td>
+                                        <span :class="Utils.outcomeBadgeClass(s.outcome)" x-text="s.outcome"></span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            style="font-size:11px;color:var(--text-muted);"
+                                            x-text="s.regime || '--'"
+                                        ></span>
+                                    </td>
                                 </tr>
-                            </template>
 
-                            <template x-if="expanded !== null">
-                                <tr>
-                                    <td colspan="14" style="padding:0;">
-                                        <template x-for="s in paginated.filter(s => s.id === expanded)" :key="'exp-' + s.id">
+                                <template x-if="expanded === s.id">
+                                    <tr>
+                                        <td
+                                            colspan="13"
+                                            style="padding:0;background:var(--bg-tertiary);"
+                                        >
                                             <div
-                                                style="padding:16px;background:var(--bg-tertiary);border-top:1px solid var(--bg-border);"
+                                                style="padding:16px;"
                                                 role="region"
                                                 :aria-label="'Details for signal ' + s.id"
                                             >
                                                 <div class="grid-4" style="gap:8px;">
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Signal ID</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.id"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Signal ID</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:13px;"
+                                                            x-text="s.id"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Risk Amount</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.risk_amt ? '$' + parseFloat(s.risk_amt).toFixed(2) : '--'"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Risk Amount</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:13px;"
+                                                            x-text="s.risk_amt ? '$' + parseFloat(s.risk_amt).toFixed(2) : '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Market Score</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.market_score != null ? s.market_score + '/100' : '--'"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Market Score</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:13px;"
+                                                            x-text="s.market_score != null ? s.market_score + '/100' : '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Entry Score</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.entry_score != null ? s.entry_score + '/100' : '--'"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Entry Score</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:13px;"
+                                                            x-text="s.entry_score != null ? s.entry_score + '/100' : '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">BTC Score</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.btc_score != null ? s.btc_score + '/8' : '--'"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">BTC Score</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:13px;"
+                                                            x-text="s.btc_score != null ? s.btc_score + '/8' : '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Signal Type</div>
-                                                        <div style="font-family:var(--font-mono);font-size:13px;" x-text="s.signal_type || '--'"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Session</div>
+                                                        <div
+                                                            style="font-size:12px;"
+                                                            x-text="s.session || '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Timestamp</div>
-                                                        <div style="font-size:12px;color:var(--text-secondary);" x-text="Utils.fmtTime(s.timestamp)"></div>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Signal Type</div>
+                                                        <div
+                                                            style="font-family:var(--font-mono);font-size:12px;"
+                                                            x-text="s.signal_type || '--'"
+                                                        ></div>
                                                     </div>
-                                                    <div>
-                                                        <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:4px;">Outcome</div>
-                                                        <span :class="Utils.outcomeBadgeClass(s.outcome)" x-text="s.outcome"></span>
+                                                    <div class="level-item">
+                                                        <div class="level-label">Timestamp</div>
+                                                        <div
+                                                            style="font-size:11px;color:var(--text-secondary);"
+                                                            x-text="Utils.fmtTime(s.timestamp)"
+                                                        ></div>
                                                     </div>
                                                 </div>
                                             </div>
-                                        </template>
-                                    </td>
-                                </tr>
+                                        </td>
+                                    </tr>
+                                </template>
                             </template>
-
                         </tbody>
                     </table>
                 </div>
 
-                <div class="flex justify-between items-center mt-12" style="font-size:12px;color:var(--text-secondary);">
-                    <span aria-live="polite" x-text="'Page ' + currentPage + ' of ' + totalPages + ' · ' + filtered.length + ' signals'"></span>
-                    <div class="flex gap-8" role="navigation" aria-label="Pagination">
+                <div class="pagination" role="navigation" aria-label="Signal pagination">
+                    <span
+                        class="pagination-info"
+                        aria-live="polite"
+                        x-text="'Page ' + currentPage + ' of ' + totalPages + ' · ' + filtered.length + ' signals'"
+                    ></span>
+                    <div class="pagination-controls">
                         <button
                             class="btn btn-ghost btn-sm"
                             @click="currentPage = 1"
@@ -228,7 +330,10 @@ function signalsPage() {
                             :disabled="currentPage <= 1"
                             aria-label="Previous page"
                         >Prev</button>
-                        <span style="padding:4px 8px;font-family:var(--font-mono);" x-text="currentPage + ' / ' + totalPages"></span>
+                        <span
+                            style="padding:4px 10px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);"
+                            x-text="currentPage + ' / ' + totalPages"
+                        ></span>
                         <button
                             class="btn btn-ghost btn-sm"
                             @click="currentPage++"
@@ -256,7 +361,7 @@ function signalsData() {
         loading:     false,
         expanded:    null,
         currentPage: 1,
-        pageSize:    25,
+        pageSize:    30,
 
         filters: {
             grade:     '',
@@ -264,10 +369,6 @@ function signalsData() {
             direction: '',
             coin:      '',
             limit:     '100',
-        },
-
-        get total() {
-            return this.signals.length
         },
 
         get totalPages() {
@@ -286,6 +387,10 @@ function signalsData() {
             })
         },
 
+        onPageChange(detail) {
+            if (detail.page === 'signals') this.load()
+        },
+
         async load(reset = false) {
             if (reset) {
                 this.currentPage = 1
@@ -295,19 +400,11 @@ function signalsData() {
             this.loading = true
 
             try {
-                const limit = parseInt(this.filters.limit) || 100
-
-                const params = { limit }
-
-                if (this.filters.grade)   params.grade   = this.filters.grade
-                if (this.filters.coin)    params.coin    = this.filters.coin.toUpperCase().trim()
-                if (this.filters.outcome) params.outcome = this.filters.outcome
-
                 const q = new URLSearchParams()
-                q.set('limit', limit)
-                if (params.grade)   q.set('grade',   params.grade)
-                if (params.coin)    q.set('coin',    params.coin)
-                if (params.outcome) q.set('outcome', params.outcome)
+                q.set('limit', parseInt(this.filters.limit) || 100)
+                if (this.filters.grade)   q.set('grade',   this.filters.grade)
+                if (this.filters.coin)    q.set('coin',    this.filters.coin.toUpperCase().trim())
+                if (this.filters.outcome) q.set('outcome', this.filters.outcome)
 
                 const res = await fetch('/api/signals?' + q.toString(), {
                     credentials: 'include'
@@ -317,6 +414,8 @@ function signalsData() {
                     window.location.href = '/login.html'
                     return
                 }
+
+                if (!res.ok) throw new Error('Failed to load signals')
 
                 this.signals = await res.json() || []
                 this.applyFilters()
