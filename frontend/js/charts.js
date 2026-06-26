@@ -3,10 +3,10 @@ const Charts = {
 
     _theme: {
         grid:    '#1e1e30',
-        text:    '#55557a',
+        text:    '#6e6e99',
         tooltip: {
             bg:     '#111120',
-            title:  '#8888bb',
+            title:  '#9999cc',
             body:   '#f0f0ff',
             border: '#1e1e30',
         },
@@ -82,7 +82,7 @@ const Charts = {
                 if (config.data.datasets) {
                     config.data.datasets.forEach((ds, i) => {
                         if (chart.data.datasets[i]) {
-                            chart.data.datasets[i].data   = ds.data
+                            chart.data.datasets[i].data            = ds.data
                             chart.data.datasets[i].backgroundColor = ds.backgroundColor || chart.data.datasets[i].backgroundColor
                             chart.data.datasets[i].borderColor     = ds.borderColor     || chart.data.datasets[i].borderColor
                         }
@@ -116,16 +116,13 @@ const Charts = {
             values.push(parseFloat(equity.toFixed(4)))
         })
 
-        const isPositive = equity >= 0
-        const lineColor  = isPositive ? '#00e5b8' : '#ff3d5a'
-        const ctx        = el.getContext('2d')
+        const lineColor = '#3d8bff'
+        const ctx       = el.getContext('2d')
 
         const gradient = ctx.createLinearGradient(0, 0, 0, 220)
         gradient.addColorStop(0,   lineColor + '30')
         gradient.addColorStop(0.7, lineColor + '08')
         gradient.addColorStop(1,   lineColor + '00')
-
-        el.style.height = '220px'
 
         return this._getOrCreate(elId, {
             type: 'line',
@@ -173,19 +170,15 @@ const Charts = {
         const el = document.getElementById(elId)
         if (!el || !curve.length) return
 
-        const labels = curve.map(c => c.date || '')
-        const values = curve.map(c => parseFloat(c.equity || 0))
-        const last   = values[values.length - 1] || 0
-
-        const lineColor = last >= 0 ? '#00e5b8' : '#ff3d5a'
+        const labels    = curve.map(c => c.date || '')
+        const values    = curve.map(c => parseFloat(c.equity || 0))
+        const lineColor = '#3d8bff'
         const ctx       = el.getContext('2d')
 
         const gradient = ctx.createLinearGradient(0, 0, 0, 200)
-        gradient.addColorStop(0,   lineColor + '30')
-        gradient.addColorStop(0.7, lineColor + '08')
+        gradient.addColorStop(0,   lineColor + '25')
+        gradient.addColorStop(0.6, lineColor + '08')
         gradient.addColorStop(1,   lineColor + '00')
-
-        el.style.height = '200px'
 
         return this._getOrCreate(elId, {
             type: 'line',
@@ -239,8 +232,6 @@ const Charts = {
 
         if (!hasData) return
 
-        el.style.height = '180px'
-
         return this._getOrCreate(elId, {
             type: 'doughnut',
             data: {
@@ -262,7 +253,7 @@ const Charts = {
                     legend: {
                         position: 'bottom',
                         labels: {
-                            color:           '#8888bb',
+                            color:           '#9999cc',
                             font:            this._theme.font,
                             padding:         12,
                             usePointStyle:   true,
@@ -297,10 +288,8 @@ const Charts = {
             if (s >= 68) return '#3d8bff'
             if (s >= 52) return '#ff9500'
             if (s >= 38) return '#fbbf24'
-            return '#55557a'
+            return '#6e6e99'
         })
-
-        el.style.height = '220px'
 
         return this._getOrCreate(elId, {
             type: 'bar',
@@ -342,13 +331,11 @@ const Charts = {
         const el = document.getElementById(elId)
         if (!el || !history.length) return
 
-        const recent = history.slice(-20)
-        const labels = recent.map(t => t.coin || '--')
-        const values = recent.map(t => parseFloat(t.pnl_raw || 0))
-        const colors = values.map(v => v >= 0 ? '#00e5b8cc' : '#ff3d5acc')
+        const recent  = history.slice(-20)
+        const labels  = recent.map(t => t.coin || '--')
+        const values  = recent.map(t => parseFloat(t.pnl_raw || 0))
+        const colors  = values.map(v => v >= 0 ? '#00e5b8cc' : '#ff3d5acc')
         const borders = values.map(v => v >= 0 ? '#00e5b8' : '#ff3d5a')
-
-        el.style.height = '160px'
 
         return this._getOrCreate(elId, {
             type: 'bar',
@@ -404,9 +391,9 @@ const Charts = {
             .sort((a, b) => b.edge - a.edge)
             .slice(0, 12)
 
-        const labels = sorted.map(f => f.factor.replace(/_/g, ' '))
-        const values = sorted.map(f => parseFloat(f.edge) || 0)
-        const colors = values.map(v =>
+        const labels  = sorted.map(f => f.factor.replace(/_/g, ' '))
+        const values  = sorted.map(f => parseFloat(f.edge) || 0)
+        const colors  = values.map(v =>
             v > 10  ? '#00e5b8cc' :
             v > 0   ? '#3d8bffcc' :
             v > -10 ? '#ff9500cc' : '#ff3d5acc'
@@ -416,8 +403,6 @@ const Charts = {
             v > 0   ? '#3d8bff' :
             v > -10 ? '#ff9500' : '#ff3d5a'
         )
-
-        el.style.height = '300px'
 
         return this._getOrCreate(elId, {
             type: 'bar',
@@ -484,8 +469,6 @@ const Charts = {
         const values  = dailyData.map(d => parseFloat(d.profit_abs || 0))
         const colors  = values.map(v => v >= 0 ? '#00e5b8cc' : '#ff3d5acc')
         const borders = values.map(v => v >= 0 ? '#00e5b8' : '#ff3d5a')
-
-        el.style.height = '160px'
 
         return this._getOrCreate(elId, {
             type: 'bar',

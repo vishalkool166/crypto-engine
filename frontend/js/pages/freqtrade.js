@@ -1,6 +1,6 @@
 import { h, Fragment } from '/js/preact.min.js'
 import { useState, useEffect, useRef } from '/js/preact-hooks.min.js'
-import { html, DirBadge, HealthBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
+import { html, DirBadge, HealthBar, TradeProgressBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
 import { useFtUpdate, showToast, requireTotp } from '/js/store.js'
 
 export function FreqtradePage() {
@@ -28,10 +28,10 @@ export function FreqtradePage() {
     }, [])
 
     useEffect(() => {
-        if (ftData.trades?.length)                              setOpenTrades(ftData.trades)
-        if (ftData.profit?.trade_count        != null)         setProfit(ftData.profit)
-        if (ftData.balance?.total             != null)         setBalance(ftData.balance)
-        if (ftData.botState && ftData.botState !== 'unknown')  setBotState(ftData.botState)
+        if (ftData.trades?.length)                             setOpenTrades(ftData.trades)
+        if (ftData.profit?.trade_count        != null)        setProfit(ftData.profit)
+        if (ftData.balance?.total             != null)        setBalance(ftData.balance)
+        if (ftData.botState && ftData.botState !== 'unknown') setBotState(ftData.botState)
     }, [ftData])
 
     useEffect(() => {
@@ -204,32 +204,35 @@ export function FreqtradePage() {
                 <div>
                     <div class="page-title">Freqtrade</div>
                     <div class="page-subtitle flex items-center gap-8">
-                        <div class=${'ws-dot ' + (botState === 'running' ? '' : 'disconnected')}></div>
-                        <span>Bot ${botState}</span>
+                        <div class=${'ws-dot ' + (botState === 'running' ? '' : 'disconnected')} aria-hidden="true"></div>
+                        <span role="status" aria-label=${'Bot state: ' + botState}>Bot ${botState}</span>
                     </div>
                 </div>
                 <div class="flex gap-8">
                     <button class="btn btn-success btn-sm" onClick=${startBot}
-                        disabled=${actionLoading === 'start' || botState === 'running'}>
+                        disabled=${actionLoading === 'start' || botState === 'running'}
+                        aria-label="Start Freqtrade bot">
                         ${actionLoading === 'start' ? html`<${Spinner}/>` : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                                 <polygon points="5 3 19 12 5 21 5 3"/>
                             </svg>
                         `}
                         Start
                     </button>
                     <button class="btn btn-danger btn-sm" onClick=${stopBot}
-                        disabled=${actionLoading === 'stop' || botState === 'stopped'}>
+                        disabled=${actionLoading === 'stop' || botState === 'stopped'}
+                        aria-label="Stop Freqtrade bot">
                         ${actionLoading === 'stop' ? html`<${Spinner}/>` : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                                 <rect x="3" y="3" width="18" height="18"/>
                             </svg>
                         `}
                         Stop
                     </button>
-                    <button class="btn btn-ghost btn-sm" onClick=${refresh} disabled=${loading}>
+                    <button class="btn btn-ghost btn-sm" onClick=${refresh} disabled=${loading}
+                        aria-label="Refresh Freqtrade data">
                         ${loading ? html`<${Spinner}/>` : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <polyline points="1 20 1 14 7 14"/>
                                 <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
@@ -240,10 +243,10 @@ export function FreqtradePage() {
                 </div>
             </div>
 
-            ${error && html`<div class="alert alert-error mb-12">${error}</div>`}
+            ${error && html`<div class="alert alert-error mb-12" role="alert">${error}</div>`}
 
             <div class="grid-4 mb-12">
-                <div class="stat-card stat-card-blue">
+                <div class="stat-card stat-card-blue" role="region" aria-label="Bot state">
                     <div class="card-title">Bot State</div>
                     <div style="margin-top:6px;">
                         <span class=${'badge ' + (botState === 'running' ? 'badge-online' : 'badge-offline')}>
@@ -252,27 +255,28 @@ export function FreqtradePage() {
                     </div>
                     <div class="card-sub" style="font-family:var(--font-mono);">${openTrades.length} open trades</div>
                 </div>
-                <div class="stat-card stat-card-green">
+                <div class="stat-card stat-card-green" role="region" aria-label="Balance">
                     <div class="card-title">Balance</div>
-                    <div class="card-value" style="color:var(--green);">
+                    <div class="card-value" style="color:var(--green);" aria-live="polite">
                         ${balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'}
                     </div>
                     <div class="card-sub" style="font-family:var(--font-mono);">
                         ${balance.free != null ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'}
                     </div>
                 </div>
-                <div class=${'stat-card ' + ((profit.profit_all_coin || 0) >= 0 ? 'stat-card-green' : 'stat-card-red')}>
+                <div class=${'stat-card ' + ((profit.profit_all_coin || 0) >= 0 ? 'stat-card-green' : 'stat-card-red')}
+                    role="region" aria-label="Total PnL">
                     <div class="card-title">Total PnL</div>
-                    <div class="card-value" style="color:${Utils.pnlColor(profit.profit_all_coin)};">
+                    <div class="card-value" style="color:${Utils.pnlColor(profit.profit_all_coin)};" aria-live="polite">
                         ${profit.profit_all_coin != null ? Utils.fmtPnl(profit.profit_all_coin) : '--'}
                     </div>
                     <div class="card-sub">
                         ${profit.trade_count != null ? profit.trade_count + ' total trades' : '--'}
                     </div>
                 </div>
-                <div class="stat-card stat-card-purple">
+                <div class="stat-card stat-card-purple" role="region" aria-label="Win Rate">
                     <div class="card-title">Win Rate</div>
-                    <div class="card-value" style="color:${Utils.winRateColor((profit.winrate || 0) * 100)};">
+                    <div class="card-value" style="color:${Utils.winRateColor((profit.winrate || 0) * 100)};" aria-live="polite">
                         ${profit.winrate != null ? ((profit.winrate || 0) * 100).toFixed(1) + '%' : '--'}
                     </div>
                     <div class="card-sub">
@@ -292,11 +296,15 @@ export function FreqtradePage() {
                     : !openTrades.length
                     ? html`<div class="card"><${EmptyState} message="No open trades"/></div>`
                     : openTrades.map(trade => {
-                        const pair = (trade.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
-                        const dir  = trade.is_short ? 'SHORT' : 'LONG'
-                        const pnl  = parseFloat(trade.profit_abs || 0)
+                        const pair  = (trade.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+                        const dir   = trade.is_short ? 'SHORT' : 'LONG'
+                        const pnl   = parseFloat(trade.profit_abs || 0)
+                        const lev   = trade.leverage || '--'
+                        const stake = trade.stake_amount ? parseFloat(trade.stake_amount).toFixed(2) : '--'
                         return html`
-                            <div key=${trade.trade_id} class="trade-card">
+                            <div key=${trade.trade_id} class="trade-card"
+                                role="article"
+                                aria-label=${pair + ' ' + dir + ' trade'}>
                                 <div class="trade-card-header">
                                     <div class="flex items-center gap-8">
                                         <span style="font-family:var(--font-mono);font-size:15px;font-weight:800;">${pair}</span>
@@ -305,7 +313,8 @@ export function FreqtradePage() {
                                     </div>
                                     <div class="flex items-center gap-12">
                                         <div style="text-align:right;">
-                                            <div style="font-family:var(--font-mono);font-size:16px;font-weight:800;color:${Utils.pnlColor(pnl)};">
+                                            <div style="font-family:var(--font-mono);font-size:16px;font-weight:800;color:${Utils.pnlColor(pnl)};"
+                                                aria-live="polite">
                                                 ${Utils.fmtPnl(pnl)}
                                             </div>
                                             <div style="font-family:var(--font-mono);font-size:11px;color:${Utils.pnlColor(trade.profit_ratio)};">
@@ -314,7 +323,8 @@ export function FreqtradePage() {
                                         </div>
                                         <button class="btn btn-danger btn-sm"
                                             onClick=${() => forceSell(trade.trade_id, trade.pair)}
-                                            disabled=${forceSelling === trade.trade_id}>
+                                            disabled=${forceSelling === trade.trade_id}
+                                            aria-label=${'Force sell ' + pair}>
                                             ${forceSelling === trade.trade_id
                                                 ? html`<${Spinner}/>`
                                                 : 'Force Sell'
@@ -322,6 +332,7 @@ export function FreqtradePage() {
                                         </button>
                                     </div>
                                 </div>
+
                                 <div class="trade-card-levels">
                                     <div class="level-item">
                                         <div class="level-label">Entry</div>
@@ -346,22 +357,31 @@ export function FreqtradePage() {
                                         </div>
                                     </div>
                                     <div class="level-item">
+                                        <div class="level-label">Stake</div>
+                                        <div class="level-value">
+                                            $${stake}
+                                        </div>
+                                    </div>
+                                    <div class="level-item">
+                                        <div class="level-label">Leverage</div>
+                                        <div class="level-value" style="color:var(--blue);">
+                                            ${lev}x
+                                        </div>
+                                    </div>
+                                    <div class="level-item">
                                         <div class="level-label">Open</div>
                                         <div class="level-value">${Utils.fmtDuration(trade.open_date)}</div>
                                     </div>
                                     <div class="level-item">
-                                        <div class="level-label">Stake</div>
-                                        <div class="level-value">
-                                            ${trade.stake_amount ? '$' + parseFloat(trade.stake_amount).toFixed(2) : '--'}
+                                        <div class="level-label">Tag</div>
+                                        <div class="level-value" style="font-size:10px;color:var(--text-muted);">
+                                            ${trade.enter_tag || '--'}
                                         </div>
                                     </div>
                                 </div>
+
+                                <${TradeProgressBar} trade=${trade}/>
                                 <${HealthBar} health=${trade.health}/>
-                                ${trade.enter_tag && html`
-                                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
-                                        Tag: <span style="font-family:var(--font-mono);">${trade.enter_tag}</span>
-                                    </div>
-                                `}
                             </div>
                         `
                     })
@@ -373,7 +393,8 @@ export function FreqtradePage() {
                     <div class="flex justify-between items-center mb-12">
                         <div class="section-title">Daily PnL</div>
                         <select class="select" style="width:100px;" value=${dailyDays}
-                            onChange=${e => { setDailyDays(e.target.value); loadDaily() }}>
+                            onChange=${e => { setDailyDays(e.target.value); loadDaily() }}
+                            aria-label="Select daily PnL period">
                             <option value="7">7 days</option>
                             <option value="14">14 days</option>
                             <option value="30">30 days</option>
@@ -420,11 +441,18 @@ export function FreqtradePage() {
                     <span class="tag">${tradeHistory.length} trades</span>
                 </div>
                 <div class="table-wrap">
-                    <table>
+                    <table aria-label="Closed trades">
                         <thead>
                             <tr>
-                                <th>#</th><th>Pair</th><th>Dir</th><th>Entry</th>
-                                <th>Exit</th><th>PnL</th><th>%</th><th>Duration</th><th>Reason</th>
+                                <th scope="col">#</th>
+                                <th scope="col">Pair</th>
+                                <th scope="col">Dir</th>
+                                <th scope="col">Entry</th>
+                                <th scope="col">Exit</th>
+                                <th scope="col">PnL</th>
+                                <th scope="col">%</th>
+                                <th scope="col">Duration</th>
+                                <th scope="col">Reason</th>
                             </tr>
                         </thead>
                         <tbody>

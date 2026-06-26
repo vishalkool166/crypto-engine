@@ -1,19 +1,19 @@
 import { h, Fragment } from '/js/preact.min.js'
 import { useState, useEffect, useRef } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradesBanner, CoinDetailModal } from '/js/components.js'
+import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradesBanner, CoinDetailModal, TradeProgressBar, HealthBar } from '/js/components.js'
 import { useDashboard, useFtUpdate, showToast } from '/js/store.js'
 
 export function OverviewPage() {
-    const data          = useDashboard()
-    const ftData        = useFtUpdate()
-    const [scanning,    setScanning]    = useState(false)
-    const [histLoading, setHistLoading] = useState(false)
-    const [history,     setHistory]     = useState([])
-    const [activeTrades,setActiveTrades]= useState([])
-    const [equityRange, setEquityRange] = useState('all')
-    const [selectedCoin,setSelectedCoin]= useState(null)
-    const chartsDrawn   = useRef(false)
-    const prevCurveKey  = useRef(null)
+    const data           = useDashboard()
+    const ftData         = useFtUpdate()
+    const [scanning,     setScanning]     = useState(false)
+    const [histLoading,  setHistLoading]  = useState(false)
+    const [history,      setHistory]      = useState([])
+    const [activeTrades, setActiveTrades] = useState([])
+    const [equityRange,  setEquityRange]  = useState('all')
+    const [selectedCoin, setSelectedCoin] = useState(null)
+    const chartsDrawn    = useRef(false)
+    const prevCurveKey   = useRef(null)
 
     const summary = data.summary     || {}
     const perf    = data.performance || {}
@@ -36,24 +36,22 @@ export function OverviewPage() {
         try {
             const res  = await fetch('/api/ft/summary', { credentials: 'include' })
             if (!res.ok) return
-            const data = await res.json().catch(() => null)
-            if (data && Array.isArray(data.status)) {
-                setActiveTrades(data.status)
-            }
+            const d = await res.json().catch(() => null)
+            if (d && Array.isArray(d.status)) setActiveTrades(d.status)
         } catch(e) {}
     }
 
     useEffect(() => {
         if (!perf.equity_curve?.length) return
-        const filtered  = filterEquityCurve(perf.equity_curve, equityRange)
+        const filtered = filterEquityCurve(perf.equity_curve, equityRange)
         if (!filtered.length) return
-        const curveKey  = equityRange + '_' + filtered.length + '_' + (filtered[filtered.length - 1]?.equity || 0)
+        const curveKey = equityRange + '_' + filtered.length + '_' + (filtered[filtered.length - 1]?.equity || 0)
         if (prevCurveKey.current === curveKey && chartsDrawn.current) return
         prevCurveKey.current = curveKey
         setTimeout(() => {
+            Charts.destroy('overview-equity')
             const el = document.getElementById('overview-equity')
             if (el && el.tagName === 'CANVAS') {
-                Charts.destroy('overview-equity')
                 Charts.equityFromCurve('overview-equity', filtered)
             }
             chartsDrawn.current = true
@@ -71,13 +69,9 @@ export function OverviewPage() {
     function filterEquityCurve(curve, range) {
         if (!curve?.length) return []
         if (range === 'all') return curve
-        const now  = new Date()
-        const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
-        const cutoff = new Date(now.getTime() - days * 86400000)
-        return curve.filter(c => {
-            if (!c.date) return false
-            return new Date(c.date) >= cutoff
-        })
+        const days   = range === '7d' ? 7 : range === '30d' ? 30 : 90
+        const cutoff = new Date(Date.now() - days * 86400000)
+        return curve.filter(c => c.date && new Date(c.date) >= cutoff)
     }
 
     async function triggerScan() {
@@ -107,8 +101,6 @@ export function OverviewPage() {
 
     return html`
         <div>
-            <${TradesBanner} trades=${activeTrades}/>
-
             <div class="page-header flex justify-between items-center">
                 <div>
                     <div class="page-title">Overview</div>
@@ -129,16 +121,14 @@ export function OverviewPage() {
             <div class="grid-4 mb-12">
                 <div class="stat-card stat-card-green" role="region" aria-label="Today PnL">
                     <div class="card-title">Today PnL</div>
-                    <div class="card-value" style="color:${summary.today_pnl_color || 'var(--text-muted)'};"
-                        aria-live="polite">
+                    <div class="card-value" style="color:${summary.today_pnl_color || 'var(--text-muted)'};" aria-live="polite">
                         ${summary.today_pnl || '--'}
                     </div>
                     <div class="card-sub">${summary.today_trades || 0} trades today</div>
                 </div>
                 <div class="stat-card stat-card-blue" role="region" aria-label="Win Rate">
                     <div class="card-title">Win Rate</div>
-                    <div class="card-value" style="color:${perf.win_rate_color || 'var(--text-muted)'};"
-                        aria-live="polite">
+                    <div class="card-value" style="color:${perf.win_rate_color || 'var(--text-muted)'};" aria-live="polite">
                         ${perf.win_rate || '--'}
                     </div>
                     <div class="card-sub">${perf.win_rate_sub || '0 closed'}</div>
@@ -152,8 +142,7 @@ export function OverviewPage() {
                 </div>
                 <div class="stat-card stat-card-gold" role="region" aria-label="Total PnL">
                     <div class="card-title">Total PnL</div>
-                    <div class="card-value" style="color:${perf.pnl_color || 'var(--text-muted)'};"
-                        aria-live="polite">
+                    <div class="card-value" style="color:${perf.pnl_color || 'var(--text-muted)'};" aria-live="polite">
                         ${perf.total_pnl || '--'}
                     </div>
                     <div class="card-sub">${perf.pnl_sub || '0W · 0L'}</div>
@@ -161,71 +150,147 @@ export function OverviewPage() {
             </div>
 
             <div class="grid-2 mb-12">
-                <div class="card">
+                <div class="card" style="display:flex;flex-direction:column;">
                     <div class="section-header">
                         <div class="section-title">Signal Queue</div>
-                        <span class="tag" aria-label=${queue.length + ' signals in queue'}>
-                            ${queue.length} signals
-                        </span>
+                        <span class="tag">${queue.length} signals</span>
                     </div>
-                    ${!queue.length
-                        ? html`<${EmptyState} message="No tradeable signals — run scan"/>`
-                        : html`
-                            <div class="signal-grid">
-                                ${queue.map(sig => html`
-                                    <div key=${sig.coin}
-                                        class=${'signal-queue-card grade-' + (sig.grade === 'A+' ? 'aplus' : (sig.grade || '').toLowerCase())}
-                                        role="article"
-                                        aria-label=${sig.coin + ' ' + sig.direction + ' Grade ' + sig.grade}>
-                                        <div class="flex justify-between items-center mb-8">
-                                            <div class="flex items-center gap-8">
-                                                <span style="font-family:var(--font-mono);font-size:13px;font-weight:800;">
-                                                    ${sig.coin}
-                                                </span>
-                                                <${GradeBadge} grade=${sig.grade}/>
-                                            </div>
+                    <div style="flex:1;overflow-y:auto;max-height:520px;">
+                        ${!queue.length
+                            ? html`<${EmptyState} message="No tradeable signals — run scan"/>`
+                            : queue.slice(0, 3).map(sig => html`
+                                <div key=${sig.coin}
+                                    class=${'signal-queue-card grade-' + (sig.grade === 'A+' ? 'aplus' : (sig.grade || '').toLowerCase())}
+                                    role="article"
+                                    aria-label=${sig.coin + ' ' + sig.direction + ' Grade ' + sig.grade}
+                                    style="margin-bottom:10px;">
+                                    <div class="flex justify-between items-center mb-8">
+                                        <div class="flex items-center gap-8">
+                                            <span style="font-family:var(--font-mono);font-size:14px;font-weight:800;">
+                                                ${sig.coin}USDT
+                                            </span>
+                                            <${GradeBadge} grade=${sig.grade}/>
                                             <${DirBadge} dir=${sig.direction}/>
                                         </div>
-                                        <div style="font-family:var(--font-mono);font-size:18px;font-weight:800;color:${Utils.scoreBarColor(sig.score)};margin-bottom:8px;">
+                                        <span style="font-family:var(--font-mono);font-size:14px;font-weight:800;color:${Utils.scoreBarColor(sig.score)};">
                                             ${sig.score}/100
-                                        </div>
-                                        <div class="trade-card-levels" style="grid-template-columns:repeat(3,1fr);">
-                                            <div class="level-item">
-                                                <div class="level-label">Entry</div>
-                                                <div class="level-value">${sig.entry || '--'}</div>
-                                            </div>
-                                            <div class="level-item">
-                                                <div class="level-label">SL</div>
-                                                <div class="level-value" style="color:var(--red);">${sig.sl || '--'}</div>
-                                            </div>
-                                            <div class="level-item">
-                                                <div class="level-label">TP</div>
-                                                <div class="level-value" style="color:var(--green);">${sig.tp1 || '--'}</div>
-                                            </div>
-                                        </div>
-                                        <div class="flex justify-between items-center" style="font-size:10px;color:var(--text-muted);margin-top:6px;">
-                                            <span>R:R <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:600;">1:${sig.actual_rr || '--'}</span></span>
-                                            <span style="font-family:var(--font-mono);">${sig.regime || '--'}</span>
-                                        </div>
-                                        ${sig.stake && html`
-                                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
-                                                Stake <span style="font-family:var(--font-mono);color:var(--blue);font-weight:600;">$${parseFloat(sig.stake).toFixed(2)}</span>
-                                                <span style="font-family:var(--font-mono);color:var(--text-muted);">${sig.leverage}x</span>
-                                            </div>
-                                        `}
+                                        </span>
                                     </div>
-                                `)}
+                                    <div class="trade-card-levels" style="grid-template-columns:repeat(3,1fr);">
+                                        <div class="level-item">
+                                            <div class="level-label">Entry</div>
+                                            <div class="level-value">${sig.entry || '--'}</div>
+                                        </div>
+                                        <div class="level-item">
+                                            <div class="level-label">Stop Loss</div>
+                                            <div class="level-value" style="color:var(--red);">${sig.sl || '--'}</div>
+                                        </div>
+                                        <div class="level-item">
+                                            <div class="level-label">Take Profit</div>
+                                            <div class="level-value" style="color:var(--green);">${sig.tp1 || '--'}</div>
+                                        </div>
+                                    </div>
+                                    <div class="flex justify-between items-center" style="font-size:10px;color:var(--text-muted);margin-top:6px;">
+                                        <span>R:R <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:600;">1:${sig.actual_rr || '--'}</span></span>
+                                        <span style="font-family:var(--font-mono);">${sig.regime || '--'}</span>
+                                        <span>${sig.session || '--'}</span>
+                                    </div>
+                                    ${sig.stake && html`
+                                        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
+                                            Stake <span style="font-family:var(--font-mono);color:var(--blue);font-weight:600;">$${parseFloat(sig.stake).toFixed(2)}</span>
+                                            <span style="font-family:var(--font-mono);color:var(--text-muted);margin-left:4px;">${sig.leverage}x</span>
+                                        </div>
+                                    `}
+                                </div>
+                            `)
+                        }
+                        ${queue.length > 3 && html`
+                            <div style="font-size:11px;color:var(--text-muted);text-align:center;padding:8px 0;">
+                                +${queue.length - 3} more signals — view in Signals page
                             </div>
-                        `
-                    }
+                        `}
+                    </div>
                 </div>
 
+                <div class="card" style="display:flex;flex-direction:column;">
+                    <div class="section-header">
+                        <div class="section-title">Active Trades</div>
+                        <span class="tag">${activeTrades.length} open</span>
+                    </div>
+                    <div style="flex:1;overflow-y:auto;max-height:520px;">
+                        ${!activeTrades.length
+                            ? html`<${EmptyState} message="No open trades"/>`
+                            : activeTrades.map(trade => {
+                                const pair = (trade.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+                                const dir  = trade.is_short ? 'SHORT' : 'LONG'
+                                const pnl  = parseFloat(trade.profit_abs || 0)
+                                const lev  = trade.leverage || '--'
+                                const stake = trade.stake_amount ? parseFloat(trade.stake_amount).toFixed(2) : '--'
+                                return html`
+                                    <div key=${trade.trade_id} class="trade-card" style="margin-bottom:10px;">
+                                        <div class="trade-card-header">
+                                            <div class="flex items-center gap-8">
+                                                <span style="font-family:var(--font-mono);font-size:13px;font-weight:800;">${pair}</span>
+                                                <${DirBadge} dir=${dir}/>
+                                                <span class="tag">#${trade.trade_id}</span>
+                                            </div>
+                                            <div style="text-align:right;">
+                                                <div style="font-family:var(--font-mono);font-size:14px;font-weight:800;color:${Utils.pnlColor(pnl)};"
+                                                    aria-live="polite">
+                                                    ${Utils.fmtPnl(pnl)}
+                                                </div>
+                                                <div style="font-family:var(--font-mono);font-size:11px;color:${Utils.pnlColor(trade.profit_ratio)};">
+                                                    ${Utils.fmtPct((trade.profit_ratio || 0) * 100)}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="trade-card-levels">
+                                            <div class="level-item">
+                                                <div class="level-label">Entry</div>
+                                                <div class="level-value">${Utils.fmtPrice(trade.open_rate)}</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">Current</div>
+                                                <div class="level-value" style="color:${Utils.pnlColor(pnl)};">
+                                                    ${Utils.fmtPrice(trade.current_rate)}
+                                                </div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">Open</div>
+                                                <div class="level-value">${Utils.fmtDuration(trade.open_date)}</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">Stake</div>
+                                                <div class="level-value">$${stake}</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">Leverage</div>
+                                                <div class="level-value" style="color:var(--blue);">${lev}x</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">Tag</div>
+                                                <div class="level-value" style="font-size:10px;color:var(--text-muted);">
+                                                    ${trade.enter_tag || '--'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <${TradeProgressBar} trade=${trade}/>
+                                        <${HealthBar} health=${trade.health}/>
+                                    </div>
+                                `
+                            })
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2-1 mb-12">
                 <div class="card">
                     <div class="section-header">
                         <div class="section-title">Coin Radar</div>
                         <span class="tag">${radar.length} coins</span>
                     </div>
-                    <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
+                    <div class="table-wrap" style="max-height:360px;overflow-y:auto;">
                         <table aria-label="Coin radar">
                             <thead>
                                 <tr>
@@ -267,9 +332,7 @@ export function OverviewPage() {
                         </table>
                     </div>
                 </div>
-            </div>
 
-            <div class="grid-2-1 mb-12">
                 <div class="card">
                     <div class="section-header">
                         <div class="section-title">Performance</div>
@@ -305,35 +368,36 @@ export function OverviewPage() {
                         </div>
                     `)}
                 </div>
+            </div>
 
-                <div class="card">
-                    <div class="section-header">
-                        <div class="section-title">Equity Curve</div>
-                        <div class="flex items-center gap-6">
-                            <span class="tag">${equityCurveFiltered.length} trades</span>
-                            <select class="select" style="width:80px;font-size:11px;padding:3px 24px 3px 8px;"
-                                value=${equityRange}
-                                onChange=${e => {
-                                    chartsDrawn.current = false
-                                    setEquityRange(e.target.value)
-                                }}
-                                aria-label="Equity curve date range">
-                                <option value="7d">7d</option>
-                                <option value="30d">30d</option>
-                                <option value="90d">90d</option>
-                                <option value="all">All</option>
-                            </select>
-                        </div>
+            <div class="card mb-12">
+                <div class="section-header">
+                    <div class="section-title">Equity Curve</div>
+                    <div class="flex items-center gap-6">
+                        <span class="tag">${equityCurveFiltered.length} trades</span>
+                        <select class="select"
+                            style="width:80px;font-size:11px;padding:3px 24px 3px 8px;"
+                            value=${equityRange}
+                            onChange=${e => {
+                                chartsDrawn.current = false
+                                setEquityRange(e.target.value)
+                            }}
+                            aria-label="Equity curve date range">
+                            <option value="7d">7d</option>
+                            <option value="30d">30d</option>
+                            <option value="90d">90d</option>
+                            <option value="all">All</option>
+                        </select>
                     </div>
-                    ${!equityCurveFiltered.length
-                        ? html`<${EmptyState} message="No closed trades in this range"/>`
-                        : html`
-                            <div style="position:relative;height:200px;">
-                                <canvas id="overview-equity"></canvas>
-                            </div>
-                        `
-                    }
                 </div>
+                ${!equityCurveFiltered.length
+                    ? html`<${EmptyState} message="No closed trades in this range"/>`
+                    : html`
+                        <div style="position:relative;height:200px;">
+                            <canvas id="overview-equity"></canvas>
+                        </div>
+                    `
+                }
             </div>
 
             <div class="card">
