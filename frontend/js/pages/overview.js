@@ -1,16 +1,19 @@
 import { h, Fragment } from '/js/preact.min.js'
 import { useState, useEffect, useRef } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradesBanner } from '/js/components.js'
+import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradesBanner, CoinDetailModal } from '/js/components.js'
 import { useDashboard, useFtUpdate, showToast } from '/js/store.js'
 
 export function OverviewPage() {
-    const data         = useDashboard()
-    const ftData       = useFtUpdate()
-    const [scanning,   setScanning]   = useState(false)
-    const [histLoading,setHistLoading]= useState(false)
-    const [history,    setHistory]    = useState([])
-    const chartsDrawn  = useRef(false)
-    const prevCurve    = useRef(null)
+    const data          = useDashboard()
+    const ftData        = useFtUpdate()
+    const [scanning,    setScanning]    = useState(false)
+    const [histLoading, setHistLoading] = useState(false)
+    const [history,     setHistory]     = useState([])
+    const [activeTrades,setActiveTrades]= useState([])
+    const [equityRange, setEquityRange] = useState('all')
+    const [selectedCoin,setSelectedCoin]= useState(null)
+    const chartsDrawn   = useRef(false)
+    const prevCurveKey  = useRef(null)
 
     const summary = data.summary     || {}
     const perf    = data.performance || {}
@@ -22,40 +25,60 @@ export function OverviewPage() {
     }, [data.history])
 
     useEffect(() => {
+        fetchActiveTrades()
+    }, [])
+
+    useEffect(() => {
+        if (ftData.trades?.length) setActiveTrades(ftData.trades)
+    }, [ftData.trades])
+
+    async function fetchActiveTrades() {
+        try {
+            const res  = await fetch('/api/ft/summary', { credentials: 'include' })
+            if (!res.ok) return
+            const data = await res.json().catch(() => null)
+            if (data && Array.isArray(data.status)) {
+                setActiveTrades(data.status)
+            }
+        } catch(e) {}
+    }
+
+    useEffect(() => {
         if (!perf.equity_curve?.length) return
-        const curveKey = perf.equity_curve.length + '_' + (perf.equity_curve[perf.equity_curve.length - 1]?.equity || 0)
-        if (prevCurve.current === curveKey && chartsDrawn.current) return
-        prevCurve.current = curveKey
+        const filtered  = filterEquityCurve(perf.equity_curve, equityRange)
+        if (!filtered.length) return
+        const curveKey  = equityRange + '_' + filtered.length + '_' + (filtered[filtered.length - 1]?.equity || 0)
+        if (prevCurveKey.current === curveKey && chartsDrawn.current) return
+        prevCurveKey.current = curveKey
         setTimeout(() => {
             const el = document.getElementById('overview-equity')
             if (el && el.tagName === 'CANVAS') {
-                Charts.equityFromCurve('overview-equity', perf.equity_curve)
-            }
-            const hasGrade = (parseFloat(perf.aplus_bar) || 0) > 0
-                          || (parseFloat(perf.a_bar)     || 0) > 0
-                          || (parseFloat(perf.b_bar)     || 0) > 0
-            if (hasGrade) {
-                const donutEl = document.getElementById('overview-donut')
-                if (donutEl && donutEl.tagName === 'CANVAS') {
-                    Charts.gradeDonut('overview-donut', {
-                        'A+': { total: parseFloat(perf.aplus_bar) || 0 },
-                        'A':  { total: parseFloat(perf.a_bar)     || 0 },
-                        'B':  { total: parseFloat(perf.b_bar)     || 0 },
-                    })
-                }
+                Charts.destroy('overview-equity')
+                Charts.equityFromCurve('overview-equity', filtered)
             }
             chartsDrawn.current = true
         }, 100)
-    }, [perf.equity_curve])
+    }, [perf.equity_curve, equityRange])
 
     useEffect(() => {
         return () => {
             Charts.destroy('overview-equity')
-            Charts.destroy('overview-donut')
-            chartsDrawn.current = false
-            prevCurve.current   = null
+            chartsDrawn.current  = false
+            prevCurveKey.current = null
         }
     }, [])
+
+    function filterEquityCurve(curve, range) {
+        if (!curve?.length) return []
+        if (range === 'all') return curve
+        const now  = new Date()
+        const days = range === '7d' ? 7 : range === '30d' ? 30 : 90
+        const cutoff = new Date(now.getTime() - days * 86400000)
+        return curve.filter(c => {
+            if (!c.date) return false
+            return new Date(c.date) >= cutoff
+        })
+    }
 
     async function triggerScan() {
         setScanning(true)
@@ -80,18 +103,21 @@ export function OverviewPage() {
         }
     }
 
+    const equityCurveFiltered = filterEquityCurve(perf.equity_curve || [], equityRange)
+
     return html`
         <div>
-            <${TradesBanner} trades=${ftData.trades}/>
+            <${TradesBanner} trades=${activeTrades}/>
 
             <div class="page-header flex justify-between items-center">
                 <div>
                     <div class="page-title">Overview</div>
                     <div class="page-subtitle">Updated ${Utils.fmtTimeAgo(data.timestamp)}</div>
                 </div>
-                <button class="btn btn-ghost btn-sm" onClick=${triggerScan} disabled=${scanning}>
+                <button class="btn btn-ghost btn-sm" onClick=${triggerScan} disabled=${scanning}
+                    aria-label="Trigger market scan">
                     ${scanning ? html`<${Spinner}/>` : html`
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <circle cx="11" cy="11" r="8"/>
                             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                         </svg>
@@ -101,28 +127,33 @@ export function OverviewPage() {
             </div>
 
             <div class="grid-4 mb-12">
-                <div class="stat-card stat-card-green">
+                <div class="stat-card stat-card-green" role="region" aria-label="Today PnL">
                     <div class="card-title">Today PnL</div>
-                    <div class="card-value" style="color:${summary.today_pnl_color || 'var(--text-muted)'};">
+                    <div class="card-value" style="color:${summary.today_pnl_color || 'var(--text-muted)'};"
+                        aria-live="polite">
                         ${summary.today_pnl || '--'}
                     </div>
                     <div class="card-sub">${summary.today_trades || 0} trades today</div>
                 </div>
-                <div class="stat-card stat-card-blue">
+                <div class="stat-card stat-card-blue" role="region" aria-label="Win Rate">
                     <div class="card-title">Win Rate</div>
-                    <div class="card-value" style="color:${perf.win_rate_color || 'var(--text-muted)'};">
+                    <div class="card-value" style="color:${perf.win_rate_color || 'var(--text-muted)'};"
+                        aria-live="polite">
                         ${perf.win_rate || '--'}
                     </div>
                     <div class="card-sub">${perf.win_rate_sub || '0 closed'}</div>
                 </div>
-                <div class="stat-card stat-card-purple">
+                <div class="stat-card stat-card-purple" role="region" aria-label="Coins scanning">
                     <div class="card-title">Scanning</div>
-                    <div class="card-value" style="color:var(--purple);">${summary.coins_count || '--'}</div>
+                    <div class="card-value" style="color:var(--purple);" aria-live="polite">
+                        ${summary.coins_count || '--'}
+                    </div>
                     <div class="card-sub">${summary.tradeable_count || 0} tradeable now</div>
                 </div>
-                <div class="stat-card stat-card-gold">
+                <div class="stat-card stat-card-gold" role="region" aria-label="Total PnL">
                     <div class="card-title">Total PnL</div>
-                    <div class="card-value" style="color:${perf.pnl_color || 'var(--text-muted)'};">
+                    <div class="card-value" style="color:${perf.pnl_color || 'var(--text-muted)'};"
+                        aria-live="polite">
                         ${perf.total_pnl || '--'}
                     </div>
                     <div class="card-sub">${perf.pnl_sub || '0W · 0L'}</div>
@@ -133,58 +164,59 @@ export function OverviewPage() {
                 <div class="card">
                     <div class="section-header">
                         <div class="section-title">Signal Queue</div>
-                        <span class="tag">${queue.length} signals</span>
+                        <span class="tag" aria-label=${queue.length + ' signals in queue'}>
+                            ${queue.length} signals
+                        </span>
                     </div>
                     ${!queue.length
                         ? html`<${EmptyState} message="No tradeable signals — run scan"/>`
-                        : queue.map(sig => html`
-                            <div key=${sig.coin}
-                                class=${'signal-queue-card grade-' + (sig.grade === 'A+' ? 'aplus' : (sig.grade || '').toLowerCase())}>
-                                <div class="flex justify-between items-center mb-8">
-                                    <div class="flex items-center gap-8">
-                                        <span style="font-family:var(--font-mono);font-size:15px;font-weight:800;">
-                                            ${sig.coin}USDT
-                                        </span>
-                                        <${GradeBadge} grade=${sig.grade}/>
-                                        <${DirBadge} dir=${sig.direction}/>
-                                    </div>
-                                    <div class="flex items-center gap-8">
-                                        <span style="font-size:11px;color:var(--text-muted);">Score</span>
-                                        <span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:${Utils.scoreBarColor(sig.score)};">
+                        : html`
+                            <div class="signal-grid">
+                                ${queue.map(sig => html`
+                                    <div key=${sig.coin}
+                                        class=${'signal-queue-card grade-' + (sig.grade === 'A+' ? 'aplus' : (sig.grade || '').toLowerCase())}
+                                        role="article"
+                                        aria-label=${sig.coin + ' ' + sig.direction + ' Grade ' + sig.grade}>
+                                        <div class="flex justify-between items-center mb-8">
+                                            <div class="flex items-center gap-8">
+                                                <span style="font-family:var(--font-mono);font-size:13px;font-weight:800;">
+                                                    ${sig.coin}
+                                                </span>
+                                                <${GradeBadge} grade=${sig.grade}/>
+                                            </div>
+                                            <${DirBadge} dir=${sig.direction}/>
+                                        </div>
+                                        <div style="font-family:var(--font-mono);font-size:18px;font-weight:800;color:${Utils.scoreBarColor(sig.score)};margin-bottom:8px;">
                                             ${sig.score}/100
-                                        </span>
+                                        </div>
+                                        <div class="trade-card-levels" style="grid-template-columns:repeat(3,1fr);">
+                                            <div class="level-item">
+                                                <div class="level-label">Entry</div>
+                                                <div class="level-value">${sig.entry || '--'}</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">SL</div>
+                                                <div class="level-value" style="color:var(--red);">${sig.sl || '--'}</div>
+                                            </div>
+                                            <div class="level-item">
+                                                <div class="level-label">TP</div>
+                                                <div class="level-value" style="color:var(--green);">${sig.tp1 || '--'}</div>
+                                            </div>
+                                        </div>
+                                        <div class="flex justify-between items-center" style="font-size:10px;color:var(--text-muted);margin-top:6px;">
+                                            <span>R:R <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:600;">1:${sig.actual_rr || '--'}</span></span>
+                                            <span style="font-family:var(--font-mono);">${sig.regime || '--'}</span>
+                                        </div>
+                                        ${sig.stake && html`
+                                            <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
+                                                Stake <span style="font-family:var(--font-mono);color:var(--blue);font-weight:600;">$${parseFloat(sig.stake).toFixed(2)}</span>
+                                                <span style="font-family:var(--font-mono);color:var(--text-muted);">${sig.leverage}x</span>
+                                            </div>
+                                        `}
                                     </div>
-                                </div>
-                                <div class="trade-card-levels" style="grid-template-columns:repeat(3,1fr);">
-                                    <div class="level-item">
-                                        <div class="level-label">Entry</div>
-                                        <div class="level-value">${sig.entry || '--'}</div>
-                                    </div>
-                                    <div class="level-item">
-                                        <div class="level-label">Stop Loss</div>
-                                        <div class="level-value" style="color:var(--red);">${sig.sl || '--'}</div>
-                                    </div>
-                                    <div class="level-item">
-                                        <div class="level-label">Take Profit</div>
-                                        <div class="level-value" style="color:var(--green);">${sig.tp1 || '--'}</div>
-                                    </div>
-                                </div>
-                                <div class="flex justify-between items-center" style="font-size:11px;color:var(--text-muted);margin-top:6px;">
-                                    <span>R:R <span style="font-family:var(--font-mono);color:var(--text-primary);font-weight:600;">1:${sig.actual_rr || '--'}</span></span>
-                                    <span>${sig.regime || '--'}</span>
-                                    <span>${sig.session || '--'}</span>
-                                    ${sig.stake && html`
-                                        <span>
-                                            Stake <span style="font-family:var(--font-mono);color:var(--blue);font-weight:600;">$${parseFloat(sig.stake).toFixed(2)}</span>
-                                            <span style="font-family:var(--font-mono);color:var(--text-muted);">${sig.leverage}x</span>
-                                        </span>
-                                    `}
-                                </div>
-                                ${sig.thesis && html`
-                                    <div class="thesis-block">${sig.thesis}</div>
-                                `}
+                                `)}
                             </div>
-                        `)
+                        `
                     }
                 </div>
 
@@ -194,19 +226,34 @@ export function OverviewPage() {
                         <span class="tag">${radar.length} coins</span>
                     </div>
                     <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
-                        <table>
+                        <table aria-label="Coin radar">
                             <thead>
                                 <tr>
-                                    <th>Coin</th><th>Grade</th><th>Score</th>
-                                    <th>Direction</th><th>Price</th><th>24h</th><th>Regime</th>
+                                    <th scope="col">Coin</th>
+                                    <th scope="col">Grade</th>
+                                    <th scope="col">Score</th>
+                                    <th scope="col">Dir</th>
+                                    <th scope="col">Price</th>
+                                    <th scope="col">24h</th>
+                                    <th scope="col">Regime</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 ${!radar.length
                                     ? html`<tr><td colspan="7"><${EmptyState} message="Run scan to populate radar"/></td></tr>`
                                     : radar.map(r => html`
-                                        <tr key=${r.coin}>
-                                            <td><span style="font-family:var(--font-mono);font-weight:700;">${r.coin}</span></td>
+                                        <tr key=${r.coin}
+                                            style="cursor:pointer;"
+                                            onClick=${() => setSelectedCoin(r.coin)}
+                                            tabindex="0"
+                                            role="button"
+                                            aria-label=${'View details for ' + r.coin}
+                                            onKeyDown=${e => (e.key === 'Enter' || e.key === ' ') && setSelectedCoin(r.coin)}>
+                                            <td>
+                                                <span style="font-family:var(--font-mono);font-weight:700;color:var(--blue);">
+                                                    ${r.coin}
+                                                </span>
+                                            </td>
                                             <td><${GradeBadge} grade=${r.grade}/></td>
                                             <td><${ScoreBar} score=${r.score}/></td>
                                             <td><${DirBadge} dir=${r.direction}/></td>
@@ -257,37 +304,60 @@ export function OverviewPage() {
                             </div>
                         </div>
                     `)}
-                    <div class="divider"></div>
-                    <div style="position:relative;height:180px;">
-                        <canvas id="overview-donut"></canvas>
-                    </div>
                 </div>
 
                 <div class="card">
                     <div class="section-header">
                         <div class="section-title">Equity Curve</div>
-                        <span class="tag">${perf.equity_curve?.length || 0} trades</span>
+                        <div class="flex items-center gap-6">
+                            <span class="tag">${equityCurveFiltered.length} trades</span>
+                            <select class="select" style="width:80px;font-size:11px;padding:3px 24px 3px 8px;"
+                                value=${equityRange}
+                                onChange=${e => {
+                                    chartsDrawn.current = false
+                                    setEquityRange(e.target.value)
+                                }}
+                                aria-label="Equity curve date range">
+                                <option value="7d">7d</option>
+                                <option value="30d">30d</option>
+                                <option value="90d">90d</option>
+                                <option value="all">All</option>
+                            </select>
+                        </div>
                     </div>
-                    <div style="position:relative;height:200px;">
-                        <canvas id="overview-equity"></canvas>
-                    </div>
+                    ${!equityCurveFiltered.length
+                        ? html`<${EmptyState} message="No closed trades in this range"/>`
+                        : html`
+                            <div style="position:relative;height:200px;">
+                                <canvas id="overview-equity"></canvas>
+                            </div>
+                        `
+                    }
                 </div>
             </div>
 
             <div class="card">
                 <div class="section-header">
                     <div class="section-title">Recent Signals</div>
-                    <button class="btn btn-ghost btn-sm" onClick=${loadHistory} disabled=${histLoading}>
+                    <button class="btn btn-ghost btn-sm" onClick=${loadHistory}
+                        disabled=${histLoading} aria-label="Refresh signal history">
                         ${histLoading ? html`<${Spinner}/>` : 'Refresh'}
                     </button>
                 </div>
                 <div class="table-wrap">
-                    <table>
+                    <table aria-label="Recent closed signals">
                         <thead>
                             <tr>
-                                <th>#</th><th>Time</th><th>Coin</th><th>Direction</th>
-                                <th>Grade</th><th>Score</th><th>Entry</th><th>Exit</th>
-                                <th>PnL</th><th>Result</th>
+                                <th scope="col">#</th>
+                                <th scope="col">Time</th>
+                                <th scope="col">Coin</th>
+                                <th scope="col">Direction</th>
+                                <th scope="col">Grade</th>
+                                <th scope="col">Score</th>
+                                <th scope="col">Entry</th>
+                                <th scope="col">Exit</th>
+                                <th scope="col">PnL</th>
+                                <th scope="col">Result</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -312,6 +382,13 @@ export function OverviewPage() {
                     </table>
                 </div>
             </div>
+
+            ${selectedCoin && html`
+                <${CoinDetailModal}
+                    coin=${selectedCoin}
+                    onClose=${() => setSelectedCoin(null)}
+                />
+            `}
         </div>
     `
 }

@@ -1,5 +1,5 @@
 import { h } from '/js/preact.min.js'
-import { useState, useEffect, useCallback } from '/js/preact-hooks.min.js'
+import { useState, useEffect } from '/js/preact-hooks.min.js'
 
 const _listeners = {}
 
@@ -66,8 +66,8 @@ function _applyDashboard(data) {
         _store.nextScanEpoch = summary.next_scan_epoch
     }
 
-    emit('dashboard', data)
-    emit('summary',   summary)
+    emit('dashboard',    data)
+    emit('summary',      summary)
 
     if (data.signals) emit('signals', data.signals)
     if (data.history) emit('history', data.history)
@@ -214,6 +214,9 @@ function confirmTotp(code) {
 }
 
 function closeTotp() {
+    if (_store.totp.resolve) {
+        _store.totp.resolve(null)
+    }
     _store.totp.show    = false
     _store.totp.code    = ''
     _store.totp.error   = ''
@@ -245,6 +248,16 @@ function navigate(page) {
 
 function getState() {
     return _store
+}
+
+async function getCoinDetail(coin) {
+    try {
+        const res = await fetch(`/api/dashboard/coin/${coin}`, { credentials: 'include' })
+        if (!res.ok) return null
+        return await res.json()
+    } catch(e) {
+        return null
+    }
 }
 
 function useStore(selector) {
@@ -295,8 +308,11 @@ function useWsState() {
 }
 
 function useTicker() {
-    const [ticker, setTicker] = useState(_store.ticker)
+    const [ticker, setTicker] = useState(() => [..._store.ticker])
     useEffect(() => {
+        if (_store.ticker.length > 0) {
+            setTicker([..._store.ticker])
+        }
         return on('ticker', t => setTicker([...t]))
     }, [])
     return ticker
@@ -310,7 +326,7 @@ function useFtUpdate() {
         botState: _store.ftBotState,
     })
     useEffect(() => {
-        return on('ft_update', d => setData({
+        return on('ft_update', () => setData({
             trades:   _store.ftTrades,
             profit:   _store.ftProfit,
             balance:  _store.ftBalance,
@@ -321,8 +337,11 @@ function useFtUpdate() {
 }
 
 function useDashboard() {
-    const [data, setData] = useState(_store.dashboardData)
+    const [data, setData] = useState(() => ({ ..._store.dashboardData }))
     useEffect(() => {
+        if (Object.keys(_store.dashboardData).length > 0) {
+            setData({ ..._store.dashboardData })
+        }
         return on('dashboard', d => setData({ ...d }))
     }, [])
     return data
@@ -361,6 +380,9 @@ function useToast() {
 function useMode() {
     const [mode, setMode] = useState(_store.mode)
     useEffect(() => {
+        if (_store.mode && _store.mode !== 'paper') {
+            setMode(_store.mode)
+        }
         const check = (data) => {
             if (data?.mode) setMode(data.mode)
         }
@@ -375,6 +397,7 @@ export {
     init,
     navigate,
     getState,
+    getCoinDetail,
     requireTotp,
     confirmTotp,
     closeTotp,

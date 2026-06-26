@@ -148,8 +148,8 @@ def get_performance() -> dict:
             if dd > max_dd:
                 max_dd = dd
             equity_curve.append({
-                "date": s.timestamp.strftime("%Y-%m-%d") if s.timestamp else "",
-                "pnl":  round(float(s.pnl or 0), 4),
+                "date":   s.timestamp.strftime("%Y-%m-%d") if s.timestamp else "",
+                "pnl":    round(float(s.pnl or 0), 4),
                 "equity": round(equity, 4)
             })
 
@@ -161,36 +161,36 @@ def get_performance() -> dict:
         tp    = stats.get("total_pnl", 0)
 
         result = {
-            "win_rate":       f"{wr}%",
-            "win_rate_raw":   wr,
-            "win_rate_color": _wr_color(wr),
-            "win_rate_sub":   f"{stats.get('closed', 0)} closed",
-            "total_pnl":      _fmt_pnl(tp),
-            "total_pnl_raw":  tp,
-            "pnl_color":      _pnl_color(tp),
-            "pnl_sub":        f"{stats.get('wins', 0)}W · {stats.get('losses', 0)}L",
-            "profit_factor":  str(pf) if pf > 0 else "∞",
-            "pf_sub":         f"${gross_p:.2f} / ${gross_l:.2f}",
-            "best_trade":     _fmt_pnl(best),
-            "best_sub":       best_sig.coin if best_sig else "--",
-            "max_drawdown":   f"{max_dd:.1f}%",
+            "win_rate":         f"{wr}%",
+            "win_rate_raw":     wr,
+            "win_rate_color":   _wr_color(wr),
+            "win_rate_sub":     f"{stats.get('closed', 0)} closed",
+            "total_pnl":        _fmt_pnl(tp),
+            "total_pnl_raw":    tp,
+            "pnl_color":        _pnl_color(tp),
+            "pnl_sub":          f"{stats.get('wins', 0)}W · {stats.get('losses', 0)}L",
+            "profit_factor":    str(pf) if pf > 0 else "∞",
+            "pf_sub":           f"${gross_p:.2f} / ${gross_l:.2f}",
+            "best_trade":       _fmt_pnl(best),
+            "best_sub":         best_sig.coin if best_sig else "--",
+            "max_drawdown":     f"{max_dd:.1f}%",
             "max_drawdown_raw": max_dd,
             "dd_color": (
                 "#00d4aa" if max_dd < 10 else
                 "#ff9500" if max_dd < 20 else
                 "#ff4466"
             ),
-            "dd_sub":         f"peak: ${peak:.2f}",
-            "aplus_wr":       f"{ap.get('win_rate', 0)}%",
-            "aplus_bar":      ap.get("win_rate", 0),
-            "aplus_detail":   f"{ap.get('wins', 0)}W · {ap.get('total', 0) - ap.get('wins', 0)}L · {ap.get('total', 0)} trades · {_fmt_pnl(ap.get('total_pnl', 0))}",
-            "a_wr":           f"{a.get('win_rate', 0)}%",
-            "a_bar":          a.get("win_rate", 0),
-            "a_detail":       f"{a.get('wins', 0)}W · {a.get('total', 0) - a.get('wins', 0)}L · {a.get('total', 0)} trades · {_fmt_pnl(a.get('total_pnl', 0))}",
-            "b_wr":           f"{b.get('win_rate', 0)}%",
-            "b_bar":          b.get("win_rate", 0),
-            "b_detail":       f"{b.get('wins', 0)}W · {b.get('total', 0) - b.get('wins', 0)}L · {b.get('total', 0)} trades · {_fmt_pnl(b.get('total_pnl', 0))}",
-            "equity_curve":   equity_curve[-100:],
+            "dd_sub":           f"peak: ${peak:.2f}",
+            "aplus_wr":         f"{ap.get('win_rate', 0)}%",
+            "aplus_bar":        ap.get("win_rate", 0),
+            "aplus_detail":     f"{ap.get('wins', 0)}W · {ap.get('total', 0) - ap.get('wins', 0)}L · {ap.get('total', 0)} trades · {_fmt_pnl(ap.get('total_pnl', 0))}",
+            "a_wr":             f"{a.get('win_rate', 0)}%",
+            "a_bar":            a.get("win_rate", 0),
+            "a_detail":         f"{a.get('wins', 0)}W · {a.get('total', 0) - a.get('wins', 0)}L · {a.get('total', 0)} trades · {_fmt_pnl(a.get('total_pnl', 0))}",
+            "b_wr":             f"{b.get('win_rate', 0)}%",
+            "b_bar":            b.get("win_rate", 0),
+            "b_detail":         f"{b.get('wins', 0)}W · {b.get('total', 0) - b.get('wins', 0)}L · {b.get('total', 0)} trades · {_fmt_pnl(b.get('total_pnl', 0))}",
+            "equity_curve":     equity_curve[-200:],
         }
 
         _store(key, result)
@@ -279,8 +279,8 @@ def get_signals_data() -> dict:
             })
 
         result = {
-            "radar": radar,
-            "queue": queue,
+            "radar":     radar,
+            "queue":     queue,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -304,24 +304,24 @@ def get_history(limit: int = 10) -> list:
         for s in signals:
             pnl = float(s.pnl or 0)
             result.append({
-                "id":            s.id,
-                "coin":          s.coin,
-                "direction":     s.direction,
-                "grade":         s.grade,
-                "grade_color":   _grade_color(s.grade),
-                "outcome":       s.outcome,
-                "pnl":           _fmt_pnl(pnl),
-                "pnl_raw":       round(pnl, 4),
-                "pnl_color":     _pnl_color(pnl),
-                "entry_price":   s.entry,
-                "exit_price":    s.exit_price,
-                "sl_price":      s.sl,
-                "tp1_price":     s.tp1,
-                "risk_amt":      s.risk_amt,
-                "score":         s.score,
-                "regime":        s.regime,
-                "session":       s.session,
-                "timestamp":     s.timestamp.isoformat() if s.timestamp else None,
+                "id":          s.id,
+                "coin":        s.coin,
+                "direction":   s.direction,
+                "grade":       s.grade,
+                "grade_color": _grade_color(s.grade),
+                "outcome":     s.outcome,
+                "pnl":         _fmt_pnl(pnl),
+                "pnl_raw":     round(pnl, 4),
+                "pnl_color":   _pnl_color(pnl),
+                "entry_price": s.entry,
+                "exit_price":  s.exit_price,
+                "sl_price":    s.sl,
+                "tp1_price":   s.tp1,
+                "risk_amt":    s.risk_amt,
+                "score":       s.score,
+                "regime":      s.regime,
+                "session":     s.session,
+                "timestamp":   s.timestamp.isoformat() if s.timestamp else None,
             })
         return result
 
@@ -404,23 +404,92 @@ def get_ticker_bar() -> list:
         return []
 
 
+def get_coin_detail(coin: str) -> dict:
+    try:
+        c = cache.get_raw(f"signal_{coin}")
+        if not c:
+            return {}
+
+        market  = c.get("market", {})
+        signal  = c.get("signal", {})
+        expl    = c.get("explanation", {})
+        wconf   = c.get("wconf", {})
+        factors = wconf.get("factors", [])
+
+        factor_list = []
+        for f in factors:
+            earned = f.get("earned", 0)
+            max_w  = f.get("max", f.get("weight", 1))
+            pct    = round(earned / max_w * 100) if max_w > 0 else 0
+            factor_list.append({
+                "key":     f.get("key", ""),
+                "label":   f.get("key", "").replace("_", " ").title(),
+                "earned":  earned,
+                "max":     max_w,
+                "pct":     pct,
+                "color":   "#00e5b8" if pct >= 70 else "#3d8bff" if pct >= 40 else "#ff9500" if pct > 0 else "#1e1e30",
+            })
+
+        factor_list.sort(key=lambda x: x["earned"], reverse=True)
+
+        return {
+            "coin":           coin,
+            "grade":          c.get("grade", "--"),
+            "score":          c.get("score", 0),
+            "direction":      c.get("direction", "--"),
+            "regime":         c.get("regime", "--"),
+            "session":        c.get("session", "--"),
+            "ml_probability": c.get("ml_probability"),
+            "actual_rr":      c.get("actual_rr", 0),
+            "market": {
+                "price":       _fmt_price(market.get("price", 0)),
+                "change":      _fmt_pct(market.get("change24", 0)),
+                "change_color":_pnl_color(market.get("change24", 0)),
+                "funding":     round(market.get("funding", 0) * 100, 4),
+                "oi_change":   round(market.get("oi_change", 0), 2),
+                "long_ratio":  round(market.get("long_ratio", 50), 1),
+                "short_ratio": round(market.get("short_ratio", 50), 1),
+            },
+            "signal": {
+                "entry":    _fmt_price(signal.get("entry")),
+                "sl":       _fmt_price(signal.get("sl")),
+                "tp1":      _fmt_price(signal.get("tp1")),
+                "sl_pct":   f"{signal.get('sl_pct', 0):.2f}%",
+                "risk_amt": f"${signal.get('risk_amt', 0):.2f}",
+                "leverage": signal.get("leverage", 10),
+                "stake":    signal.get("stake", 0),
+            },
+            "thesis":         expl.get("thesis", ""),
+            "confidence":     expl.get("confidence_label", ""),
+            "factors":        factor_list,
+            "norm_score":     wconf.get("norm_score", 0),
+            "market_score":   wconf.get("market_score", 0),
+            "entry_score":    wconf.get("entry_score", 0),
+            "btc_score":      wconf.get("btc_score", 0),
+        }
+
+    except Exception as e:
+        log.error(f"get_coin_detail error {coin}: {e}")
+        return {}
+
+
 def _empty_performance() -> dict:
     return {
         "win_rate":         "--%",
         "win_rate_raw":     0,
-        "win_rate_color":   "#7777aa",
+        "win_rate_color":   "#6e6e99",
         "win_rate_sub":     "0 trades",
-        "total_pnl":        "$--",
+        "total_pnl":        "--",
         "total_pnl_raw":    0,
-        "pnl_color":        "#7777aa",
+        "pnl_color":        "#6e6e99",
         "pnl_sub":          "0W · 0L",
         "profit_factor":    "--",
         "pf_sub":           "$0 / $0",
-        "best_trade":       "$--",
+        "best_trade":       "--",
         "best_sub":         "--",
         "max_drawdown":     "--%",
         "max_drawdown_raw": 0,
-        "dd_color":         "#7777aa",
+        "dd_color":         "#6e6e99",
         "dd_sub":           "peak: $0",
         "aplus_wr":         "0%",
         "aplus_bar":        0,
@@ -446,6 +515,7 @@ def _fmt_price(n) -> str:
         if n >= 1:     return f"${n:.4f}"
         if n >= 0.1:   return f"${n:.5f}"
         if n >= 0.01:  return f"${n:.6f}"
+        if n >= 0.001: return f"${n:.7f}"
         return f"${n:.8f}"
     except Exception:
         return "--"
@@ -456,7 +526,7 @@ def _fmt_pnl(n) -> str:
         return "--"
     try:
         n    = float(n)
-        sign = "+" if n >= 0 else ""
+        sign = "+" if n >= 0 else "-"
         return f"{sign}${abs(n):.4f}"
     except Exception:
         return "--"
@@ -477,7 +547,7 @@ def _pnl_color(n) -> str:
     try:
         return "#00d4aa" if float(n) >= 0 else "#ff4466"
     except Exception:
-        return "#7777aa"
+        return "#6e6e99"
 
 
 def _wr_color(wr) -> str:
@@ -487,7 +557,7 @@ def _wr_color(wr) -> str:
         if wr >= 40: return "#ff9500"
         return "#ff4466"
     except Exception:
-        return "#7777aa"
+        return "#6e6e99"
 
 
 def _grade_color(grade: str) -> str:
@@ -496,5 +566,5 @@ def _grade_color(grade: str) -> str:
         "A":  "#4488ff",
         "B":  "#ff9500",
         "C":  "#ffcc00",
-        "F":  "#7777aa",
-    }.get(str(grade), "#7777aa")
+        "F":  "#6e6e99",
+    }.get(str(grade), "#6e6e99")

@@ -1214,12 +1214,15 @@ async def docker_purge(request: Request):
 
         disk_before = psutil.disk_usage('/').used
 
+        import os as _os
+
         result = subprocess.run(
-            ["docker", "system", "prune", "-f", "--volumes"],
+            ["/usr/bin/docker", "system", "prune", "-f", "--volumes"],
             capture_output = True,
             text           = True,
             timeout        = 120,
-            cwd            = "/home/ubuntu/crypto-engine"
+            cwd            = "/home/ubuntu/crypto-engine",
+            env            = {**_os.environ, "HOME": "/root", "PATH": "/usr/bin:/usr/local/bin:/bin"}
         )
 
         disk_after = psutil.disk_usage('/').used
@@ -1250,6 +1253,21 @@ async def docker_purge(request: Request):
         raise HTTPException(408, "Docker purge timed out")
     except Exception as e:
         log.error(f"Docker purge error: {e}")
+        raise HTTPException(500, str(e))
+    
+@router.get("/dashboard/coin/{coin}")
+async def dashboard_coin_detail(request: Request, coin: str):
+    _auth(request)
+    try:
+        from api.dashboard import get_coin_detail
+        data = get_coin_detail(coin.upper())
+        if not data:
+            raise HTTPException(404, f"No cached data for {coin} — run scan first")
+        return JSONResponse(content=make_serializable(data))
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Coin detail error: {e}")
         raise HTTPException(500, str(e))
 
 
