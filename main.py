@@ -382,8 +382,8 @@ async def auth_login(request: Request):
                 key      = "se_token",
                 value    = result["token"],
                 httponly = True,
-                secure   = cfg.ENV == "production",
-                samesite = "lax",
+                secure   = True,
+                samesite = "none",
                 max_age  = 86400
             )
             return response
