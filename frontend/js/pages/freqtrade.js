@@ -480,7 +480,10 @@ function freqtradeData() {
         async init() {
             await this.refresh()
             window.addEventListener('page-change', e => {
-                if (e.detail.page === 'freqtrade') this.refresh()
+                if (e.detail.page === 'freqtrade') {
+                    Charts.destroy('ft-daily-chart')
+                    this.refresh()
+                }
             })
         },
 
@@ -625,6 +628,8 @@ function freqtradeData() {
         _renderChart() {
             if (window._app?.page !== 'freqtrade') return
             if (!this.daily.length) return
+            const el = document.getElementById('ft-daily-chart')
+            if (!el || el.offsetParent === null) return
             Charts.dailyPnl('ft-daily-chart', this.daily)
         },
 

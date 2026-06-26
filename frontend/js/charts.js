@@ -74,6 +74,7 @@ const Charts = {
     _getOrCreate(elId, config) {
         const el = document.getElementById(elId)
         if (!el) return null
+        if (typeof el.getContext !== 'function') return null
 
         if (this._instances[elId]) {
             const chart = this._instances[elId]
