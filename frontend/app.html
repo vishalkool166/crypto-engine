@@ -242,16 +242,29 @@
         </div>
 
         <main class="page-content" role="main" id="main-content">
-            <div x-show="page==='overview'"  x-html="pageHtml.overview"  @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='signals'"   x-html="pageHtml.signals"   @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='freqtrade'" x-html="pageHtml.freqtrade" @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='coins'"     x-html="pageHtml.coins"     @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='backtest'"  x-html="pageHtml.backtest"  @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='analysis'"  x-html="pageHtml.analysis"  @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='audit'"     x-html="pageHtml.audit"     @click.capture="handlePageClick($event)"></div>
-            <div x-show="page==='settings'"  x-html="pageHtml.settings"  @click.capture="handlePageClick($event)"></div>
+            <div x-show="page==='overview'" x-html="pageHtml.overview"></div>
+            <template x-if="page==='signals'">
+                <div x-html="pageHtml.signals"></div>
+            </template>
+            <template x-if="page==='freqtrade'">
+                <div x-html="pageHtml.freqtrade"></div>
+            </template>
+            <template x-if="page==='coins'">
+                <div x-html="pageHtml.coins"></div>
+            </template>
+            <template x-if="page==='backtest'">
+                <div x-html="pageHtml.backtest"></div>
+            </template>
+            <template x-if="page==='analysis'">
+                <div x-html="pageHtml.analysis"></div>
+            </template>
+            <template x-if="page==='audit'">
+                <div x-html="pageHtml.audit"></div>
+            </template>
+            <template x-if="page==='settings'">
+                <div x-html="pageHtml.settings"></div>
+            </template>
         </main>
-
     </div>
 </div>
 
