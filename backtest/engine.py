@@ -129,8 +129,8 @@ def _calculate_pnl(
 
 def run_backtest(
     coin:     str,
-    capital:  float = cfg.CAPITAL,
-    leverage: int   = cfg.LEVERAGE,
+    capital:  float = 1000.0,
+    leverage: int   = 10,
     window:   int   = 200
 ) -> dict:
 
