@@ -6,7 +6,7 @@ import websockets
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from config import cfg
-from auth import is_authenticated
+from auth import is_authenticated, verify_totp
 
 log    = logging.getLogger(__name__)
 router = APIRouter()
@@ -466,10 +466,19 @@ async def ft_stop(request: Request):
 async def ft_forcesell(request: Request):
     _auth(request)
     try:
-        body    = await request.json()
-        tradeid = body.get("tradeid")
+        body      = await request.json()
+        tradeid   = body.get("tradeid")
+        totp_code = body.get("totp_code", "")
+
         if not tradeid:
             raise HTTPException(400, "tradeid required")
+
+        if not verify_totp(totp_code):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid TOTP code"}
+            )
+
         data = await _ft_post("/forcesell", {"tradeid": str(tradeid)})
         return JSONResponse(content=data)
     except HTTPException:

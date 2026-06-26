@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from database import (
@@ -36,7 +37,9 @@ log     = logging.getLogger(__name__)
 router  = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
 
-_boot_time = time.time()
+_boot_time       = time.time()
+_cpu_cache       = {"pct": 0.0, "updated_at": 0.0}
+_CPU_CACHE_TTL   = 30.0
 
 
 def _auth(request: Request):
@@ -44,10 +47,18 @@ def _auth(request: Request):
         raise HTTPException(401, "Unauthorized")
 
 
+def _get_cpu_pct() -> float:
+    now = time.time()
+    if now - _cpu_cache["updated_at"] > _CPU_CACHE_TTL:
+        _cpu_cache["pct"]        = psutil.cpu_percent(interval=None)
+        _cpu_cache["updated_at"] = now
+    return _cpu_cache["pct"]
+
+
 def _get_system_stats() -> dict:
     try:
         mem  = psutil.virtual_memory()
-        cpu  = psutil.cpu_percent(interval=0.1)
+        cpu  = _get_cpu_pct()
         disk = psutil.disk_usage('/')
 
         uptime_secs = int(time.time() - psutil.boot_time())
@@ -98,23 +109,85 @@ def _get_system_stats() -> dict:
 
 
 async def build_dashboard_payload() -> dict:
-    summary    = get_summary()
-    perf       = get_performance()
-    signals    = get_signals_data()
-    history    = get_history(limit=10)
-    universe   = get_universe()
-    ticker     = get_ticker_bar()
+    summary  = get_summary()
+    perf     = get_performance()
+    signals  = get_signals_data()
+    history  = get_history(limit=10)
+    universe = get_universe()
+    ticker   = get_ticker_bar()
 
     return make_serializable({
-        "type":          "dashboard",
-        "summary":       summary,
-        "performance":   perf,
-        "signals":       signals,
-        "history":       history,
-        "universe":      universe,
-        "ticker":        ticker,
-        "timestamp":     datetime.now(timezone.utc).isoformat(),
+        "type":        "dashboard",
+        "summary":     summary,
+        "performance": perf,
+        "signals":     signals,
+        "history":     history,
+        "universe":    universe,
+        "ticker":      ticker,
+        "timestamp":   datetime.now(timezone.utc).isoformat(),
     })
+
+
+def get_db_stats_optimized() -> dict:
+    try:
+        with SessionLocal() as db:
+            total   = db.query(func.count(SignalModel.id)).scalar() or 0
+            pending = db.query(func.count(SignalModel.id)).filter(
+                SignalModel.outcome == "pending"
+            ).scalar() or 0
+            wins    = db.query(func.count(SignalModel.id)).filter(
+                SignalModel.outcome == "win"
+            ).scalar() or 0
+            losses  = db.query(func.count(SignalModel.id)).filter(
+                SignalModel.outcome == "loss"
+            ).scalar() or 0
+
+            closed    = wins + losses
+            win_rate  = round(wins / closed * 100, 1) if closed > 0 else 0
+
+            total_pnl = db.query(func.sum(SignalModel.pnl)).filter(
+                SignalModel.outcome.in_(["win", "loss"])
+            ).scalar() or 0.0
+
+            by_grade = {}
+            for g in ["A+", "A", "B"]:
+                g_total = db.query(func.count(SignalModel.id)).filter(
+                    SignalModel.grade   == g,
+                    SignalModel.outcome.in_(["win", "loss"])
+                ).scalar() or 0
+
+                g_wins = db.query(func.count(SignalModel.id)).filter(
+                    SignalModel.grade   == g,
+                    SignalModel.outcome == "win"
+                ).scalar() or 0
+
+                g_pnl = db.query(func.sum(SignalModel.pnl)).filter(
+                    SignalModel.grade   == g,
+                    SignalModel.outcome.in_(["win", "loss"])
+                ).scalar() or 0.0
+
+                by_grade[g] = {
+                    "total":     g_total,
+                    "wins":      g_wins,
+                    "losses":    g_total - g_wins,
+                    "win_rate":  round(g_wins / g_total * 100, 1) if g_total > 0 else 0,
+                    "total_pnl": round(float(g_pnl), 2)
+                }
+
+            return {
+                "total":     total,
+                "closed":    closed,
+                "pending":   pending,
+                "wins":      wins,
+                "losses":    losses,
+                "win_rate":  win_rate,
+                "total_pnl": round(float(total_pnl), 2),
+                "by_grade":  by_grade
+            }
+
+    except Exception as e:
+        log.error(f"get_db_stats_optimized error: {e}")
+        return {}
 
 
 @router.get("/dashboard")
@@ -390,7 +463,7 @@ async def coins_active():
 async def get_stats(request: Request):
     _auth(request)
     try:
-        return JSONResponse(content=make_serializable(get_db_stats()))
+        return JSONResponse(content=make_serializable(get_db_stats_optimized()))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))

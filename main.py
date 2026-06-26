@@ -35,8 +35,26 @@ templates = Jinja2Templates(directory="frontend")
 _dashboard_clients:   set          = set()
 _last_payload_hash:   str          = ""
 _dashboard_push_task: asyncio.Task = None
+_cpu_warmup_task:     asyncio.Task = None
 
 limiter = Limiter(key_func=get_remote_address)
+
+
+async def _build_ticker_payload() -> dict:
+    from api.dashboard import get_ticker_bar, get_summary
+    summary = get_summary()
+    return {
+        "type":    "ticker",
+        "items":   get_ticker_bar(),
+        "summary": {
+            "next_scan_epoch": summary.get("next_scan_epoch", 0),
+            "mode":            summary.get("mode", "paper"),
+            "today_pnl":       summary.get("today_pnl", "--"),
+            "today_pnl_color": summary.get("today_pnl_color", "var(--text-muted)"),
+            "today_trades":    summary.get("today_trades", 0),
+            "coins_count":     summary.get("coins_count", 0),
+        }
+    }
 
 
 async def _build_ws_payload() -> dict:
@@ -64,14 +82,18 @@ async def push_event(event_type: str, data: dict = None):
     if not _dashboard_clients:
         return
     try:
-        payload      = await _build_ws_payload()
-        payload_str  = json.dumps(payload)
-        payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
-
-        if payload_hash == _last_payload_hash and event_type == "ping":
+        if event_type == "ping":
+            payload      = await _build_ticker_payload()
+            payload_str  = json.dumps(payload)
+            payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
+            if payload_hash == _last_payload_hash:
+                return
+            _last_payload_hash = payload_hash
+            await _push_to_clients(payload_str)
             return
 
-        _last_payload_hash = payload_hash
+        payload     = await _build_ws_payload()
+        payload_str = json.dumps(payload)
         await _push_to_clients(payload_str)
 
     except Exception as e:
@@ -177,14 +199,21 @@ async def _on_ft_event(event_type: str, data: dict):
 
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(15)
+        await asyncio.sleep(30)
         if _dashboard_clients:
             await push_event("ping")
 
 
+async def _cpu_warmup_loop():
+    import psutil
+    while True:
+        psutil.cpu_percent(interval=None)
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _dashboard_push_task
+    global _dashboard_push_task, _cpu_warmup_task
 
     rs.load()
     _bootstrap_secrets()
@@ -203,6 +232,7 @@ async def lifespan(app: FastAPI):
         log.warning("=" * 60)
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
+    _cpu_warmup_task     = asyncio.create_task(_cpu_warmup_loop())
 
     start_scheduler()
     await register_webhook()
@@ -238,6 +268,13 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    if _cpu_warmup_task:
+        _cpu_warmup_task.cancel()
+        try:
+            await _cpu_warmup_task
+        except asyncio.CancelledError:
+            pass
+
     await stop_ft_ws()
     stop_scheduler()
 
@@ -270,12 +307,23 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def no_cache_js(request: Request, call_next):
+async def cache_headers(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.endswith(('.js', '.css')):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    path = request.url.path
+
+    if any(path.endswith(f) for f in [
+        'preact.min.js',
+        'preact-hooks.min.js',
+        'htm.min.js',
+        'chartjs.min.js',
+        'alpine.min.js',
+    ]):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.endswith(('.js', '.css')):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
         response.headers["Pragma"]        = "no-cache"
         response.headers["Expires"]       = "0"
+
     return response
 
 

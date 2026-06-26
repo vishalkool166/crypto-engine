@@ -35,6 +35,7 @@
     --sidebar-expanded-width: 220px;
     --topbar-height:          52px;
     --ticker-height:          32px;
+    --bottom-nav-height:      56px;
 
     --radius-xs: 4px;
     --radius-sm: 6px;
@@ -52,7 +53,7 @@
     --shadow-glow-purple: 0 0 20px rgba(168,85,247,0.20);
     --shadow-glow-gold:   0 0 20px rgba(245,158,11,0.20);
 
-    --transition: 0.15s ease;
+    --transition:      0.15s ease;
     --transition-slow: 0.3s ease;
 }
 
@@ -251,17 +252,16 @@ html, body {
     cursor: pointer;
     color: var(--text-muted);
     transition: all var(--transition);
+    background: none;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    width: 100%;
 }
 
 .sidebar-toggle:hover {
     color: var(--text-primary);
     background: var(--bg-hover);
-}
-
-.sidebar-footer {
-    padding: 10px 14px;
-    border-top: 1px solid var(--bg-border);
-    overflow: hidden;
 }
 
 .main-area {
@@ -429,7 +429,7 @@ html, body {
     padding: 16px;
     position: relative;
     overflow: hidden;
-    transition: all var(--transition);
+    transition: border-color var(--transition);
 }
 
 .stat-card::before {
@@ -441,12 +441,6 @@ html, body {
     height: 2px;
     background: var(--accent-color, var(--blue));
     opacity: 0.6;
-}
-
-.stat-card:hover {
-    border-color: #2a2a40;
-    transform: translateY(-1px);
-    box-shadow: var(--shadow);
 }
 
 .stat-card-green  { --accent-color: var(--green);  }
@@ -540,6 +534,7 @@ html, body {
     white-space: nowrap;
     user-select: none;
     letter-spacing: 0.2px;
+    background: none;
 }
 
 .btn:disabled {
@@ -891,7 +886,7 @@ tbody tr:last-child td {
     border-radius: var(--radius);
     padding: 16px;
     margin-bottom: 10px;
-    transition: all var(--transition);
+    transition: border-color var(--transition);
 }
 
 .trade-card:hover {
@@ -933,56 +928,6 @@ tbody tr:last-child td {
     font-family: var(--font-mono);
     font-size: 12px;
     font-weight: 700;
-}
-
-.rr-bar {
-    position: relative;
-    height: 6px;
-    background: var(--bg-tertiary);
-    border-radius: 3px;
-    overflow: visible;
-    margin: 8px 0;
-}
-
-.rr-bar-sl {
-    position: absolute;
-    left: 0;
-    top: 0;
-    height: 100%;
-    background: var(--red-dim);
-    border-radius: 3px 0 0 3px;
-    border: 1px solid rgba(255,61,90,0.3);
-}
-
-.rr-bar-tp {
-    position: absolute;
-    right: 0;
-    top: 0;
-    height: 100%;
-    background: var(--green-dim);
-    border-radius: 0 3px 3px 0;
-    border: 1px solid rgba(0,229,184,0.3);
-}
-
-.rr-bar-entry {
-    position: absolute;
-    top: -3px;
-    width: 2px;
-    height: 12px;
-    background: var(--text-primary);
-    border-radius: 1px;
-    transform: translateX(-50%);
-}
-
-.rr-bar-current {
-    position: absolute;
-    top: -4px;
-    width: 3px;
-    height: 14px;
-    background: var(--blue);
-    border-radius: 1px;
-    transform: translateX(-50%);
-    box-shadow: 0 0 6px var(--blue);
 }
 
 .health-bar {
@@ -1094,7 +1039,7 @@ tbody tr:last-child td {
     border-radius: var(--radius);
     padding: 14px;
     margin-bottom: 8px;
-    transition: all var(--transition);
+    transition: border-color var(--transition);
     position: relative;
     overflow: hidden;
 }
@@ -1188,11 +1133,6 @@ tbody tr:last-child td {
 .pagination-controls {
     display: flex;
     gap: 4px;
-}
-
-.virtual-table-container {
-    overflow-y: auto;
-    position: relative;
 }
 
 .loading-skeleton {
@@ -1307,7 +1247,6 @@ tbody tr:last-child td {
     color: var(--text-secondary);
     line-height: 1.7;
     white-space: pre-line;
-    border-left: 2px solid var(--blue-dim);
     margin-top: 10px;
     border: 1px solid var(--bg-border);
     border-left: 3px solid var(--blue);
@@ -1348,7 +1287,46 @@ tbody tr:last-child td {
     background: var(--bg-border);
 }
 
-[x-cloak] { display: none !important; }
+.trades-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--bg-border);
+    background: var(--bg-card);
+    cursor: pointer;
+    transition: border-color var(--transition);
+}
+
+.trades-banner:hover {
+    border-color: #2a2a40;
+}
+
+.trades-banner.has-healthy {
+    border-color: rgba(0,229,184,0.2);
+    background: var(--green-dim);
+    color: var(--green);
+}
+
+.trades-banner.has-warning {
+    border-color: rgba(255,149,0,0.2);
+    background: var(--orange-dim);
+    color: var(--orange);
+}
+
+.trades-banner.has-invalidated {
+    border-color: rgba(255,61,90,0.2);
+    background: var(--red-dim);
+    color: var(--red);
+}
+
+.bottom-nav {
+    display: none;
+}
 
 @media (max-width: 1200px) {
     .grid-4 { grid-template-columns: repeat(2, 1fr); }
@@ -1361,12 +1339,83 @@ tbody tr:last-child td {
     .trade-card-levels { grid-template-columns: repeat(2, 1fr); }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
+    .sidebar {
+        display: none;
+    }
+
+    .ticker-bar {
+        display: none;
+    }
+
+    .topbar {
+        padding: 0 12px;
+        gap: 8px;
+    }
+
+    .topbar-divider {
+        display: none;
+    }
+
+    .next-scan-badge {
+        display: none;
+    }
+
+    .page-content {
+        padding: 12px;
+        padding-bottom: calc(12px + var(--bottom-nav-height));
+    }
+
+    .bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: var(--bottom-nav-height);
+        background: var(--bg-secondary);
+        border-top: 1px solid var(--bg-border);
+        z-index: 200;
+        align-items: center;
+        justify-content: space-around;
+        padding: 0 8px;
+    }
+
+    .bottom-nav-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        padding: 6px 12px;
+        cursor: pointer;
+        color: var(--text-muted);
+        font-size: 9px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        border-radius: var(--radius-sm);
+        transition: all var(--transition);
+        min-width: 52px;
+        border: none;
+        background: none;
+    }
+
+    .bottom-nav-item svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .bottom-nav-item.active {
+        color: var(--blue);
+    }
+
+    .bottom-nav-item:hover {
+        color: var(--text-primary);
+    }
+
     .grid-4   { grid-template-columns: 1fr 1fr; }
     .grid-3   { grid-template-columns: 1fr; }
     .grid-2   { grid-template-columns: 1fr; }
-    .page-content { padding: 12px; }
-    .topbar   { padding: 0 12px; }
     .card-value { font-size: 22px; }
 }
 
