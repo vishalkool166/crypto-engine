@@ -595,6 +595,9 @@ async def health(request: Request):
     if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
         return JSONResponse(content=_health_cache["data"])
 
+    from ml.eligibility import get_ml_status
+    from trade.sync import get_sync_status
+
     redis_connected = False
     try:
         from redis_client import get_redis
