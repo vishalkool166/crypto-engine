@@ -1,20 +1,23 @@
-const { useFtUpdate, showToast, requireTotp } = Store
-const { DirBadge, HealthBar, TradeProgressBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { useFtUpdate, showToast, requireTotp } = Store
+var { DirBadge, HealthBar, TradeProgressBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
 function FreqtradePage() {
-    const ftData                              = useFtUpdate()
-    const [loading,       setLoading]         = useState(false)
-    const [openTrades,    setOpenTrades]      = useState([])
-    const [profit,        setProfit]          = useState({})
-    const [balance,       setBalance]         = useState({})
-    const [botState,      setBotState]        = useState('unknown')
-    const [daily,         setDaily]           = useState([])
-    const [dailyDays,     setDailyDays]       = useState('7')
-    const [dailyLoading,  setDailyLoading]    = useState(false)
-    const [tradeHistory,  setTradeHistory]    = useState([])
-    const [actionLoading, setActionLoading]   = useState(null)
-    const [forceSelling,  setForceSelling]    = useState(null)
-    const [error,         setError]           = useState('')
+    const ftData                            = useFtUpdate()
+    const [loading,       setLoading]       = useState(false)
+    const [openTrades,    setOpenTrades]    = useState([])
+    const [profit,        setProfit]        = useState({})
+    const [balance,       setBalance]       = useState({})
+    const [botState,      setBotState]      = useState('unknown')
+    const [daily,         setDaily]         = useState([])
+    const [dailyDays,     setDailyDays]     = useState('7')
+    const [dailyLoading,  setDailyLoading]  = useState(false)
+    const [tradeHistory,  setTradeHistory]  = useState([])
+    const [actionLoading, setActionLoading] = useState(null)
+    const [forceSelling,  setForceSelling]  = useState(null)
+    const [error,         setError]         = useState('')
     const chartRef = useRef(false)
 
     useEffect(() => {
@@ -23,10 +26,10 @@ function FreqtradePage() {
     }, [])
 
     useEffect(() => {
-        if (ftData.trades?.length)                              setOpenTrades(ftData.trades)
-        if (ftData.profit?.trade_count        != null)         setProfit(ftData.profit)
-        if (ftData.balance?.total             != null)         setBalance(ftData.balance)
-        if (ftData.botState && ftData.botState !== 'unknown')  setBotState(ftData.botState)
+        if (ftData.trades?.length)                             setOpenTrades(ftData.trades)
+        if (ftData.profit?.trade_count        != null)        setProfit(ftData.profit)
+        if (ftData.balance?.total             != null)        setBalance(ftData.balance)
+        if (ftData.botState && ftData.botState !== 'unknown') setBotState(ftData.botState)
     }, [ftData])
 
     useEffect(() => {
@@ -53,10 +56,9 @@ function FreqtradePage() {
             if (!res.ok) { setError('Freqtrade unavailable — check if container is running'); return }
             const data = await res.json().catch(() => null)
             if (!data) return
-
-            if (data.bot_state)                         setBotState(data.bot_state)
-            if (Array.isArray(data.status))             setOpenTrades(data.status)
-            if (data.profit  && !data.profit.detail)    setProfit(data.profit)
+            if (data.bot_state)                        setBotState(data.bot_state)
+            if (Array.isArray(data.status))            setOpenTrades(data.status)
+            if (data.profit  && !data.profit.detail)   setProfit(data.profit)
             if (data.balance && !data.balance.detail) {
                 const currencies = data.balance.currencies || []
                 const usdt       = currencies.find(c => c.currency === 'USDT') || {}
@@ -312,9 +314,7 @@ function FreqtradePage() {
             <div class="grid-2 mb-24">
                 <div class="card">
                     <div class="flex justify-between items-center mb-16">
-                        <div>
-                            <div class="section-title">Daily PnL</div>
-                        </div>
+                        <div class="section-title">Daily PnL</div>
                         <select class="select" style="width:100px;" value=${dailyDays}
                             onChange=${e => { setDailyDays(e.target.value); loadDaily() }}>
                             <option value="7">7 days</option>

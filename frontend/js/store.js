@@ -1,3 +1,5 @@
+var html = window.html
+
 const _listeners = {}
 
 function emit(event, data) {
@@ -26,10 +28,10 @@ const _store = {
     ftBotState:    'unknown',
     theme:         localStorage.getItem('theme') || 'light',
     totp: {
-        show:    false,
-        title:   '',
-        subtitle:'',
-        resolve: null,
+        show:     false,
+        title:    '',
+        subtitle: '',
+        resolve:  null,
     },
     toast: {
         show:    false,
@@ -83,8 +85,8 @@ function _applyTicker(data) {
 
 function _applyFtUpdate(data) {
     if (!data) return
-    if (Array.isArray(data.status))          _store.ftTrades   = data.status
-    if (data.profit && !data.profit.detail)  _store.ftProfit   = data.profit
+    if (Array.isArray(data.status))           _store.ftTrades   = data.status
+    if (data.profit && !data.profit.detail)   _store.ftProfit   = data.profit
     if (data.balance && !data.balance.detail) {
         const currencies = data.balance.currencies || []
         const usdt       = currencies.find(c => c.currency === 'USDT') || {}
@@ -99,10 +101,8 @@ function _applyFtUpdate(data) {
 
 function _connect() {
     if (_ws && _ws.readyState === WebSocket.OPEN) return
-
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const url   = `${proto}://${location.host}/ws/dashboard`
-
     try { _ws = new WebSocket(url) } catch(e) { _scheduleReconnect(); return }
 
     _ws.onopen = () => {
@@ -153,19 +153,16 @@ function _startCountdown() {
 
 async function init() {
     _applyTheme(_store.theme)
-
     try {
         const res = await fetch('/api/health', { credentials: 'include' })
         if (res.status === 401) { window.location.href = '/login.html'; return false }
     } catch(e) {}
-
     try {
         const res = await fetch('/api/dashboard', { credentials: 'include' })
         if (res.status === 401) { window.location.href = '/login.html'; return false }
         const data = await res.json()
         if (data) _applyDashboard(data)
     } catch(e) {}
-
     _connect()
     _startCountdown()
     return true
@@ -195,7 +192,7 @@ function closeTotp() {
 function showToast(message, type = 'success', duration = 3500) {
     if (_store.toast.timer) clearTimeout(_store.toast.timer)
     _store.toast = {
-        show:    true,
+        show:  true,
         message,
         type,
         timer: setTimeout(() => {
@@ -221,8 +218,8 @@ function useStore(selector) {
     const { useState, useEffect } = preactHooks
     const [val, setVal] = useState(() => selector(_store))
     useEffect(() => {
-        const events  = ['dashboard','ticker','ft_update','wsState','navigate','totp','toast','summary','summary-lite','countdown','theme']
-        const unsubs  = events.map(e => on(e, () => {
+        const events = ['dashboard','ticker','ft_update','wsState','navigate','totp','toast','summary','summary-lite','countdown','theme']
+        const unsubs = events.map(e => on(e, () => {
             const next = selector(_store)
             setVal(prev => JSON.stringify(prev) !== JSON.stringify(next) ? next : prev)
         }))

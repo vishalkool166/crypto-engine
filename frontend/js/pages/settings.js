@@ -1,5 +1,8 @@
-const { showToast, requireTotp, useMode } = Store
-const { Spinner, EmptyState, LoadingSkeleton } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { showToast, requireTotp, useMode } = Store
+var { Spinner, EmptyState, LoadingSkeleton } = Components
 
 function SettingsPage() {
     const [health,        setHealth]        = useState(null)

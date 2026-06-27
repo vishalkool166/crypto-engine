@@ -1,5 +1,8 @@
-const { showToast } = Store
-const { GradeBadge, Spinner, EmptyState, LoadingSkeleton } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { showToast } = Store
+var { GradeBadge, Spinner, EmptyState, LoadingSkeleton } = Components
 
 function AnalysisPage() {
     const [factors, setFactors] = useState(null)

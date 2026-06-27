@@ -1,5 +1,8 @@
-const { useDashboard, useFtUpdate, showToast } = Store
-const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradeProgressBar, HealthBar, CoinDetailModal } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { useDashboard, useFtUpdate, showToast } = Store
+var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradeProgressBar, HealthBar, CoinDetailModal } = Components
 
 function OverviewPage() {
     const data           = useDashboard()
@@ -29,9 +32,9 @@ function OverviewPage() {
 
     useEffect(() => {
         if (!perf.equity_curve?.length) return
-        const filtered  = filterCurve(perf.equity_curve, equityRange)
+        const filtered = filterCurve(perf.equity_curve, equityRange)
         if (!filtered.length) return
-        const curveKey  = equityRange + '_' + filtered.length + '_' + (filtered[filtered.length - 1]?.equity || 0)
+        const curveKey = equityRange + '_' + filtered.length + '_' + (filtered[filtered.length - 1]?.equity || 0)
         if (prevCurveKey.current === curveKey && chartDrawn.current) return
         prevCurveKey.current = curveKey
         setTimeout(() => {
@@ -47,7 +50,7 @@ function OverviewPage() {
     useEffect(() => {
         return () => {
             Charts.destroy('overview-equity')
-            chartDrawn.current  = false
+            chartDrawn.current   = false
             prevCurveKey.current = null
         }
     }, [])
@@ -199,9 +202,9 @@ function OverviewPage() {
                         ${!activeTrades.length
                             ? html`<${EmptyState} message="No open trades"/>`
                             : activeTrades.map(trade => {
-                                const pair  = (trade.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
-                                const dir   = trade.is_short ? 'SHORT' : 'LONG'
-                                const pnl   = parseFloat(trade.profit_abs || 0)
+                                const pair   = (trade.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+                                const dir    = trade.is_short ? 'SHORT' : 'LONG'
+                                const pnl    = parseFloat(trade.profit_abs || 0)
                                 const pnlPos = pnl >= 0
                                 return html`
                                     <div key=${trade.trade_id} class="trade-card">

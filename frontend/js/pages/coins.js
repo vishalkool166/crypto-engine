@@ -1,5 +1,9 @@
-const { showToast, requireTotp } = Store
-const { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { showToast, requireTotp } = Store
+var { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
+
 
 function CoinsPage() {
     const [coins,        setCoins]        = useState([])

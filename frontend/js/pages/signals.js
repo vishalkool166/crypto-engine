@@ -1,5 +1,8 @@
-const { showToast } = Store
-const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { showToast } = Store
+var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
 function SignalsPage() {
     const [signals,     setSignals]     = useState([])

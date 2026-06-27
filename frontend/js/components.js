@@ -1,8 +1,7 @@
-const {
-    confirmTotp, closeTotp, useTotp, useToast, useWsState,
-    useMode, useNextScan, useTicker, usePage, logout, navigate,
-    requireTotp, toggleTheme, useTheme,
-} = Store
+var { h, Fragment } = preact
+var { useState, useEffect, useRef } = preactHooks
+var html = window.html
+var { confirmTotp, closeTotp, useTotp, useToast, useWsState, useMode, useNextScan, useTicker, usePage, logout, navigate, requireTotp, toggleTheme, useTheme } = Store
 
 function GradeBadge({ grade }) {
     return html`<span class=${Utils.gradeBadgeClass(grade)}>${grade}</span>`
@@ -151,7 +150,6 @@ function CoinDetailModal({ coin, onClose }) {
                         </svg>
                     </button>
                 </div>
-
                 ${loading && html`<${LoadingSkeleton} rows=${6}/>`}
                 ${!loading && !data && html`<div class="alert alert-warning">No cached data for ${coin} — run scan first.</div>`}
                 ${!loading && data && html`
@@ -170,7 +168,6 @@ function CoinDetailModal({ coin, onClose }) {
                                 <div style="font-size:13px;font-weight:600;">${data.session || '--'}</div>
                             </div>
                         </div>
-
                         <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Signal Levels</div>
                         <div class="grid-3 mb-16" style="gap:8px;">
                             <div class="level-item">
@@ -198,7 +195,6 @@ function CoinDetailModal({ coin, onClose }) {
                                 <div class="level-value">${data.signal?.risk_amt ? '$' + parseFloat(data.signal.risk_amt).toFixed(2) : '--'}</div>
                             </div>
                         </div>
-
                         <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Market</div>
                         <div class="grid-3 mb-16" style="gap:8px;">
                             <div class="level-item">
@@ -207,9 +203,7 @@ function CoinDetailModal({ coin, onClose }) {
                             </div>
                             <div class="level-item">
                                 <div class="level-label">24h</div>
-                                <div class="level-value" style="color:${Utils.pnlColor(data.market?.change_pos)};">
-                                    ${Utils.fmtPct(data.market?.change)}
-                                </div>
+                                <div class="level-value" style="color:${Utils.pnlColor(data.market?.change_pos)};">${Utils.fmtPct(data.market?.change)}</div>
                             </div>
                             <div class="level-item">
                                 <div class="level-label">Funding</div>
@@ -232,16 +226,13 @@ function CoinDetailModal({ coin, onClose }) {
                                 <div class="level-value">${data.market?.oi_change != null ? data.market.oi_change + '%' : '--'}</div>
                             </div>
                         </div>
-
                         ${data.factors?.length && html`
                             <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Confluence</div>
                             ${data.factors.map(f => html`
                                 <div key=${f.key} style="margin-bottom:10px;">
                                     <div class="flex justify-between items-center" style="margin-bottom:4px;">
                                         <span style="font-size:12px;color:var(--text-secondary);">${f.label}</span>
-                                        <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${Utils.scoreColor(f.pct)};">
-                                            ${f.earned}/${f.max}
-                                        </span>
+                                        <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${Utils.scoreColor(f.pct)};">${f.earned}/${f.max}</span>
                                     </div>
                                     <div class="progress-bar">
                                         <div class="progress-fill" style="width:${f.pct}%;background:${Utils.scoreColor(f.pct)};"></div>
@@ -249,7 +240,6 @@ function CoinDetailModal({ coin, onClose }) {
                                 </div>
                             `)}
                         `}
-
                         ${data.ml_probability != null && html`
                             <div class="stat-row">
                                 <span class="stat-label">ML Probability</span>
@@ -258,10 +248,7 @@ function CoinDetailModal({ coin, onClose }) {
                                 </span>
                             </div>
                         `}
-
-                        ${data.thesis && html`
-                            <div class="thesis-block mt-16">${data.thesis}</div>
-                        `}
+                        ${data.thesis && html`<div class="thesis-block mt-16">${data.thesis}</div>`}
                     </div>
                 `}
             </div>
@@ -299,9 +286,7 @@ function TotpModal() {
                 />
                 <div class="modal-actions">
                     <button class="btn btn-ghost" onClick=${closeTotp}>Cancel</button>
-                    <button class="btn btn-primary" onClick=${() => confirmTotp(code)} disabled=${code.length < 6}>
-                        Confirm
-                    </button>
+                    <button class="btn btn-primary" onClick=${() => confirmTotp(code)} disabled=${code.length < 6}>Confirm</button>
                 </div>
             </div>
         </div>
@@ -365,7 +350,6 @@ function Topbar({ page }) {
                 </svg>
                 <span class="topbar-brand-name">Signal Engine</span>
             </div>
-
             <nav class="topbar-nav">
                 ${navItems.map(item => html`
                     <button key=${item.id}
@@ -375,7 +359,6 @@ function Topbar({ page }) {
                     </button>
                 `)}
             </nav>
-
             <div class="topbar-right">
                 <div class="next-scan-badge">
                     <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -383,27 +366,20 @@ function Topbar({ page }) {
                     </svg>
                     <span>${nextScan}</span>
                 </div>
-
                 <div class="topbar-divider"></div>
-
                 <div class=${'mode-indicator ' + mode}>${mode.toUpperCase()}</div>
-
                 <div class="topbar-divider"></div>
-
                 <div class="ws-status-bar">
                     <div class=${'ws-dot ' + (wsState === 'connected' ? '' : wsState === 'connecting' ? 'connecting' : 'disconnected')}></div>
                     <span>${wsLabel}</span>
                 </div>
-
                 <div class="topbar-divider"></div>
-
                 <button class="theme-toggle" onClick=${toggleTheme} title="Toggle theme">
                     ${theme === 'light'
                         ? html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
                         : html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
                     }
                 </button>
-
                 <button class="btn btn-ghost btn-sm" onClick=${logout}>
                     <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
