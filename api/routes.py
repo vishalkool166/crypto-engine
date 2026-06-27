@@ -588,10 +588,12 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(500, str(e))
 
 
+_health_cache: dict = {"data": None, "at": 0.0}
+
 @router.get("/health")
 async def health(request: Request):
-    from ml.eligibility import get_ml_status
-    from trade.sync import get_sync_status
+    if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
+        return JSONResponse(content=_health_cache["data"])
 
     redis_connected = False
     try:
@@ -606,7 +608,7 @@ async def health(request: Request):
     loop   = asyncio.get_running_loop()
     system = await loop.run_in_executor(None, _get_system_stats)
 
-    return JSONResponse(content={
+    result = {
         "status":          "ok",
         "timestamp":       datetime.now(timezone.utc).isoformat(),
         "trading_mode":    "live" if not cfg.PAPER_TRADING else "paper",
@@ -616,7 +618,12 @@ async def health(request: Request):
         "ml_status":       get_ml_status(),
         "sync_status":     await get_sync_status(),
         "system":          system,
-    })
+    }
+
+    _health_cache["data"] = result
+    _health_cache["at"]   = time.time()
+
+    return JSONResponse(content=result)
 
 
 @router.post("/sync/outcomes")

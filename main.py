@@ -199,7 +199,7 @@ async def _on_ft_event(event_type: str, data: dict):
 
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)
         if _dashboard_clients:
             await push_event("ping")
 
