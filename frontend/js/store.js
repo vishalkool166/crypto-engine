@@ -72,10 +72,22 @@ function _applyDashboard(data) {
 
 function _applyTicker(data) {
     if (!data) return
+
     if (data.items?.length) {
         _store.ticker = data.items
         emit('ticker', data.items)
     }
+
+    if (data.status && Array.isArray(data.status)) {
+        _store.ftTrades = data.status
+        emit('ft_update', {
+            status:   data.status,
+            profit:   _store.ftProfit,
+            balance:  _store.ftBalance,
+            botState: _store.ftBotState,
+        })
+    }
+
     if (data.summary) {
         if (data.summary.next_scan_epoch) _store.nextScanEpoch = data.summary.next_scan_epoch
         if (data.summary.mode)            _store.mode          = data.summary.mode

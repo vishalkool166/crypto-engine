@@ -42,17 +42,22 @@ limiter = Limiter(key_func=get_remote_address)
 
 async def _build_ticker_payload() -> dict:
     from api.dashboard import get_ticker_bar, get_summary
+    from api.freqtrade import _ft_get_safe
+
     summary = get_summary()
+    status  = await _ft_get_safe("/status") or []
+
     return {
         "type":    "ticker",
         "items":   get_ticker_bar(),
+        "status":  status,
         "summary": {
             "next_scan_epoch": summary.get("next_scan_epoch", 0),
-            "mode":            summary.get("mode", "paper"),
-            "today_pnl":       summary.get("today_pnl", "--"),
-            "today_pnl_color": summary.get("today_pnl_color", "var(--text-muted)"),
+            "mode":            summary.get("mode",        "paper"),
+            "today_pnl":       summary.get("today_pnl",   0),
+            "today_pnl_pos":   summary.get("today_pnl_pos", True),
             "today_trades":    summary.get("today_trades", 0),
-            "coins_count":     summary.get("coins_count", 0),
+            "coins_count":     summary.get("coins_count",  0),
         }
     }
 
