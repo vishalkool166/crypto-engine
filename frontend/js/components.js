@@ -84,31 +84,24 @@ function TradeProgressBar({ trade }) {
 
     if (!entry || !current || !sl || !tp) return null
 
-    const rangeMin = Math.min(sl, tp, entry, current) * 0.999
-    const rangeMax = Math.max(sl, tp, entry, current) * 1.001
-    const range    = rangeMax - rangeMin
-    if (range <= 0) return null
-
-    const toPos   = val => Math.max(0, Math.min(100, ((val - rangeMin) / range) * 100))
-    const slPos   = toPos(sl)
-    const tpPos   = toPos(tp)
-    const currPos = toPos(current)
+    const totalRange = Math.abs(tp - sl)
+    if (totalRange <= 0) return null
 
     const movingTowardTp = isShort ? current < entry : current > entry
     const currColor      = movingTowardTp ? 'var(--green)' : 'var(--red)'
-    const slLeft         = Math.min(slPos, tpPos)
-    const tpRight        = 100 - Math.max(slPos, tpPos)
 
-    const totalDist = Math.abs(tp - sl)
-    const distToTp  = Math.abs(tp - current)
-    const distToSl  = Math.abs(sl - current)
+    const distFromSl  = Math.abs(current - sl)
+    const fillPct     = Math.min(100, Math.max(0, (distFromSl / totalRange) * 100))
 
-    const pctToTp = totalDist > 0
+    const distToTp = Math.abs(tp - current)
+    const distToSl = Math.abs(sl - current)
+
+    const pctToTp = Math.abs(tp - entry) > 0
         ? Math.abs((current - entry) / (tp - entry) * 100).toFixed(1)
         : '0'
 
-    const pctToSl = totalDist > 0
-        ? (distToSl / totalDist * 100).toFixed(1)
+    const pctToSl = totalRange > 0
+        ? (distToSl / totalRange * 100).toFixed(1)
         : '0'
 
     const label = movingTowardTp
@@ -117,20 +110,18 @@ function TradeProgressBar({ trade }) {
 
     return html`
         <div style="margin:10px 0 4px;">
-            <div class="trade-progress-bar"
+            <div style="height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;"
                 role="progressbar"
-                aria-valuenow=${movingTowardTp ? pctToTp : pctToSl}
+                aria-valuenow=${fillPct.toFixed(0)}
                 aria-valuemin="0"
                 aria-valuemax="100"
                 aria-label=${'Trade progress: ' + label}>
-                <div class="trade-progress-sl" style="width:${slLeft}%;" aria-hidden="true"></div>
-                <div class="trade-progress-tp" style="width:${tpRight}%;" aria-hidden="true"></div>
-                <div class="trade-progress-current" style="left:${currPos}%;background:${currColor};" aria-hidden="true"></div>
+                <div style="height:100%;width:${fillPct}%;background:${currColor};border-radius:3px;transition:width 0.4s ease;"></div>
             </div>
-            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;" aria-hidden="true">
-                <span style="font-family:var(--font-mono);">SL ${Utils.fmtPrice(sl)}</span>
+            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;">
+                <span style="font-family:var(--font-mono);color:var(--red);">SL ${Utils.fmtPrice(sl)}</span>
                 <span style="font-family:var(--font-mono);color:${currColor};">${label}</span>
-                <span style="font-family:var(--font-mono);">TP ${Utils.fmtPrice(tp)}</span>
+                <span style="font-family:var(--font-mono);color:var(--green);">TP ${Utils.fmtPrice(tp)}</span>
             </div>
         </div>
     `
