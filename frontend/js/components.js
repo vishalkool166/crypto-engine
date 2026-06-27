@@ -84,41 +84,68 @@ function TradeProgressBar({ trade }) {
 
     if (!entry || !current || !sl || !tp) return null
 
-    const totalRange = Math.abs(tp - sl)
+    const totalRange = Math.abs(sl - tp)
     if (totalRange <= 0) return null
+
+    const entryFromLeft = (Math.abs(sl - entry) / totalRange) * 100
 
     const movingTowardTp = isShort ? current < entry : current > entry
     const currColor      = movingTowardTp ? 'var(--green)' : 'var(--red)'
 
-    const distFromSl  = Math.abs(current - sl)
-    const fillPct     = Math.min(100, Math.max(0, (distFromSl / totalRange) * 100))
+    const distEntryToSl  = Math.abs(sl - entry)
+    const distEntryToTp  = Math.abs(tp - entry)
+    const distTraveled   = Math.abs(current - entry)
 
-    const distToTp = Math.abs(tp - current)
-    const distToSl = Math.abs(sl - current)
+    const fillPct = movingTowardTp
+        ? Math.min(100, (distTraveled / distEntryToTp) * 100)
+        : Math.min(100, (distTraveled / distEntryToSl) * 100)
 
-    const pctToTp = Math.abs(tp - entry) > 0
-        ? Math.abs((current - entry) / (tp - entry) * 100).toFixed(1)
-        : '0'
-
-    const pctToSl = totalRange > 0
-        ? (distToSl / totalRange * 100).toFixed(1)
-        : '0'
+    const remaining = movingTowardTp
+        ? Math.max(0, 100 - (distTraveled / distEntryToTp) * 100).toFixed(1)
+        : Math.max(0, 100 - (distTraveled / distEntryToSl) * 100).toFixed(1)
 
     const label = movingTowardTp
-        ? pctToTp + '% to TP'
-        : pctToSl + '% to SL'
+        ? remaining + '% to TP'
+        : remaining + '% to SL'
+
+    const fillLeft  = movingTowardTp
+        ? entryFromLeft
+        : entryFromLeft - fillPct * (entryFromLeft / 100)
+
+    const fillWidth = fillPct * (movingTowardTp
+        ? (100 - entryFromLeft) / 100
+        : entryFromLeft / 100)
 
     return html`
         <div style="margin:10px 0 4px;">
-            <div style="height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;"
+            <div style="position:relative;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;"
                 role="progressbar"
                 aria-valuenow=${fillPct.toFixed(0)}
                 aria-valuemin="0"
                 aria-valuemax="100"
                 aria-label=${'Trade progress: ' + label}>
-                <div style="height:100%;width:${fillPct}%;background:${currColor};border-radius:3px;transition:width 0.4s ease;"></div>
+                <div style="
+                    position:absolute;
+                    top:0;
+                    height:100%;
+                    left:${fillLeft}%;
+                    width:${fillWidth}%;
+                    background:${currColor};
+                    border-radius:3px;
+                    transition:width 0.4s ease, left 0.4s ease;
+                "></div>
+                <div style="
+                    position:absolute;
+                    top:-2px;
+                    left:${entryFromLeft}%;
+                    width:2px;
+                    height:10px;
+                    background:var(--text-secondary);
+                    transform:translateX(-50%);
+                    border-radius:1px;
+                "></div>
             </div>
-            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:4px;">
                 <span style="font-family:var(--font-mono);color:var(--red);">SL ${Utils.fmtPrice(sl)}</span>
                 <span style="font-family:var(--font-mono);color:${currColor};">${label}</span>
                 <span style="font-family:var(--font-mono);color:var(--green);">TP ${Utils.fmtPrice(tp)}</span>
