@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { showToast } = Store
-var { Spinner, EmptyState, LoadingSkeleton } = Components
+var { Spinner, EmptyState, LoadingSkeleton } = SE
 
 function AuditPage() {
     const [logs,          setLogs]          = useState([])

@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { showToast } = Store
-var { GradeBadge, Spinner, EmptyState, LoadingSkeleton } = Components
+var { GradeBadge, Spinner, EmptyState, LoadingSkeleton } = SE
 
 function AnalysisPage() {
     const [factors, setFactors] = useState(null)

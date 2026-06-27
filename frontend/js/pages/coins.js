@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { showToast, requireTotp } = Store
-var { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = SE
 
 
 function CoinsPage() {

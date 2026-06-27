@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { useDashboard, useFtUpdate, showToast } = Store
-var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradeProgressBar, HealthBar, CoinDetailModal } = Components
+var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, TradeProgressBar, HealthBar, CoinDetailModal } = SE
 
 function OverviewPage() {
     const data           = useDashboard()

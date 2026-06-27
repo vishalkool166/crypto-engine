@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { showToast } = Store
-var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = SE
 
 function BacktestPage() {
     const [coins,          setCoins]          = useState([])

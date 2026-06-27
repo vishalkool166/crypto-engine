@@ -4,7 +4,7 @@ var html = window.html
 var { init, usePage, navigate } = Store
 var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState,
       LoadingSkeleton, HealthBar, TradeProgressBar, CoinDetailModal,
-      TotpModal, Toast, Ticker, Topbar, BottomNav } = Components
+      TotpModal, Toast, Ticker, Topbar, BottomNav } = SE
 
 function App() {
     const page              = usePage()
@@ -39,7 +39,7 @@ function App() {
         <div class="app-layout">
             <${Topbar} page=${page}/>
             <${Ticker}/>
-            <main class="page-content">
+            <main id="main-content" class="page-content" role="main">
                 ${pages[page] || pages.overview}
             </main>
             <${BottomNav} page=${page}/>

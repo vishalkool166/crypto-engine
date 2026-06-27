@@ -2,7 +2,7 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { useFtUpdate, showToast, requireTotp } = Store
-var { DirBadge, HealthBar, TradeProgressBar, Spinner, EmptyState, LoadingSkeleton } = Components
+var { DirBadge, HealthBar, TradeProgressBar, Spinner, EmptyState, LoadingSkeleton } = SE
 
 function FreqtradePage() {
     const ftData                            = useFtUpdate()

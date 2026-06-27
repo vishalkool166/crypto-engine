@@ -4,26 +4,26 @@ var html = window.html
 var { confirmTotp, closeTotp, useTotp, useToast, useWsState, useMode, useNextScan, useTicker, usePage, logout, navigate, requireTotp, toggleTheme, useTheme } = Store
 
 function GradeBadge({ grade }) {
-    return html`<span class=${Utils.gradeBadgeClass(grade)}>${grade}</span>`
+    return html`<span class=${Utils.gradeBadgeClass(grade)} aria-label=${'Grade ' + grade}>${grade}</span>`
 }
 
 function DirBadge({ dir }) {
-    return html`<span class=${Utils.dirBadgeClass(dir)}>${dir}</span>`
+    return html`<span class=${Utils.dirBadgeClass(dir)} aria-label=${'Direction: ' + dir}>${dir}</span>`
 }
 
 function OutcomeBadge({ outcome }) {
-    return html`<span class=${Utils.outcomeBadgeClass(outcome)}>${outcome}</span>`
+    return html`<span class=${Utils.outcomeBadgeClass(outcome)} aria-label=${'Outcome: ' + outcome}>${outcome}</span>`
 }
 
 function ScoreBar({ score }) {
     const s     = parseFloat(score) || 0
     const color = Utils.scoreColor(s)
     return html`
-        <div class="score-bar">
+        <div class="score-bar" role="meter" aria-valuenow=${Math.round(s)} aria-valuemin="0" aria-valuemax="100" aria-label=${'Score: ' + Math.round(s) + ' out of 100'}>
             <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${color};min-width:28px;">
                 ${Math.round(s)}
             </span>
-            <div class="score-bar-track">
+            <div class="score-bar-track" aria-hidden="true">
                 <div class="score-bar-fill" style="width:${s}%;background:${color};"></div>
             </div>
         </div>
@@ -31,13 +31,13 @@ function ScoreBar({ score }) {
 }
 
 function Spinner() {
-    return html`<span class="spinner"></span>`
+    return html`<span class="spinner" role="status" aria-label="Loading"></span>`
 }
 
 function EmptyState({ message }) {
     return html`
-        <div class="empty-state">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <div class="empty-state" role="status">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="12" y1="8" x2="12" y2="12"/>
                 <line x1="12" y1="16" x2="12.01" y2="16"/>
@@ -49,9 +49,9 @@ function EmptyState({ message }) {
 
 function LoadingSkeleton({ rows = 4 }) {
     return html`
-        <div class="loading-skeleton">
+        <div class="loading-skeleton" role="status" aria-label="Loading" aria-busy="true">
             ${Array.from({ length: rows }).map((_, i) =>
-                html`<div key=${i} class="skeleton skeleton-row"></div>`
+                html`<div key=${i} class="skeleton skeleton-row" aria-hidden="true"></div>`
             )}
         </div>
     `
@@ -59,16 +59,16 @@ function LoadingSkeleton({ rows = 4 }) {
 
 function HealthBar({ health }) {
     if (!health) return html`
-        <div class="health-indicator unknown">
-            <div class="health-dot unknown"></div>
+        <div class="health-indicator unknown" role="status" aria-label="Health status: checking">
+            <div class="health-dot unknown" aria-hidden="true"></div>
             <span>Checking...</span>
         </div>
     `
     const cls = Utils.healthClass(health.state)
     const msg = health.failures?.[0] || health.warnings?.[0] || ''
     return html`
-        <div class=${'health-indicator ' + cls}>
-            <div class=${'health-dot ' + cls}></div>
+        <div class=${'health-indicator ' + cls} role="status" aria-label=${'Health: ' + health.state + (msg ? ' — ' + msg : '')}>
+            <div class=${'health-dot ' + cls} aria-hidden="true"></div>
             <span style="font-weight:700;">${health.state}</span>
             ${msg && html`<span style="font-size:11px;opacity:0.8;">— ${msg}</span>`}
         </div>
@@ -104,12 +104,17 @@ function TradeProgressBar({ trade }) {
 
     return html`
         <div style="margin:10px 0 4px;">
-            <div class="trade-progress-bar">
-                <div class="trade-progress-sl" style="width:${slLeft}%;"></div>
-                <div class="trade-progress-tp" style="width:${tpRight}%;"></div>
-                <div class="trade-progress-current" style="left:${currPos}%;background:${currColor};color:${currColor};"></div>
+            <div class="trade-progress-bar"
+                role="progressbar"
+                aria-valuenow=${pctToTp}
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-label=${'Trade progress: ' + pctToTp + '% toward TP'}>
+                <div class="trade-progress-sl" style="width:${slLeft}%;" aria-hidden="true"></div>
+                <div class="trade-progress-tp" style="width:${tpRight}%;" aria-hidden="true"></div>
+                <div class="trade-progress-current" style="left:${currPos}%;background:${currColor};" aria-hidden="true"></div>
             </div>
-            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;">
+            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;" aria-hidden="true">
                 <span style="font-family:var(--font-mono);">SL ${Utils.fmtPrice(sl)}</span>
                 <span style="font-family:var(--font-mono);color:${currColor};">${pctToTp}% to TP</span>
                 <span style="font-family:var(--font-mono);">TP ${Utils.fmtPrice(tp)}</span>
@@ -137,27 +142,31 @@ function CoinDetailModal({ coin, onClose }) {
     if (!coin) return null
 
     return html`
-        <div class="modal-overlay" onClick=${e => e.target === e.currentTarget && onClose()}>
+        <div class="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="coin-modal-title"
+            onClick=${e => e.target === e.currentTarget && onClose()}>
             <div class="modal" style="max-width:580px;max-height:85vh;overflow-y:auto;">
                 <div class="flex justify-between items-center" style="margin-bottom:20px;">
                     <div class="flex items-center gap-8">
-                        <span style="font-size:20px;font-weight:800;font-family:var(--font-mono);">${coin}USDT</span>
+                        <span id="coin-modal-title" style="font-size:20px;font-weight:800;font-family:var(--font-mono);">${coin}USDT</span>
                         ${data && html`<${GradeBadge} grade=${data.grade}/><${DirBadge} dir=${data.direction}/>`}
                     </div>
-                    <button class="btn btn-ghost btn-sm btn-icon" onClick=${onClose}>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <button class="btn btn-ghost btn-sm btn-icon" onClick=${onClose} aria-label="Close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                         </svg>
                     </button>
                 </div>
                 ${loading && html`<${LoadingSkeleton} rows=${6}/>`}
-                ${!loading && !data && html`<div class="alert alert-warning">No cached data for ${coin} — run scan first.</div>`}
+                ${!loading && !data && html`<div class="alert alert-warning" role="alert">No cached data for ${coin} — run scan first.</div>`}
                 ${!loading && data && html`
                     <div>
                         <div class="grid-3 mb-16" style="gap:8px;">
                             <div class="level-item">
                                 <div class="level-label">Score</div>
-                                <div style="font-size:24px;font-weight:800;color:${Utils.scoreColor(data.score)};">${data.score}/100</div>
+                                <div style="font-size:24px;font-weight:800;color:${Utils.scoreColor(data.score)};" aria-label=${'Score: ' + data.score + ' out of 100'}>${data.score}/100</div>
                             </div>
                             <div class="level-item">
                                 <div class="level-label">Regime</div>
@@ -234,8 +243,8 @@ function CoinDetailModal({ coin, onClose }) {
                                         <span style="font-size:12px;color:var(--text-secondary);">${f.label}</span>
                                         <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${Utils.scoreColor(f.pct)};">${f.earned}/${f.max}</span>
                                     </div>
-                                    <div class="progress-bar">
-                                        <div class="progress-fill" style="width:${f.pct}%;background:${Utils.scoreColor(f.pct)};"></div>
+                                    <div class="progress-bar" role="meter" aria-valuenow=${f.pct} aria-valuemin="0" aria-valuemax="100" aria-label=${f.label + ': ' + f.pct + '%'}>
+                                        <div class="progress-fill" style="width:${f.pct}%;background:${Utils.scoreColor(f.pct)};" aria-hidden="true"></div>
                                     </div>
                                 </div>
                             `)}
@@ -248,7 +257,7 @@ function CoinDetailModal({ coin, onClose }) {
                                 </span>
                             </div>
                         `}
-                        ${data.thesis && html`<div class="thesis-block mt-16">${data.thesis}</div>`}
+                        ${data.thesis && html`<div class="thesis-block mt-16" role="note">${data.thesis}</div>`}
                     </div>
                 `}
             </div>
@@ -268,11 +277,18 @@ function TotpModal() {
     if (!totp.show) return null
 
     return html`
-        <div class="modal-overlay" onClick=${e => e.target === e.currentTarget && closeTotp()}>
+        <div class="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="totp-modal-title"
+            aria-describedby="totp-modal-desc"
+            onClick=${e => e.target === e.currentTarget && closeTotp()}>
             <div class="modal">
-                <div class="modal-title">${totp.title}</div>
-                <div class="modal-sub">${totp.subtitle}</div>
+                <div id="totp-modal-title" class="modal-title">${totp.title}</div>
+                <div id="totp-modal-desc"  class="modal-sub">${totp.subtitle}</div>
+                <label for="totp-code-input" class="sr-only">6-digit TOTP code</label>
                 <input
+                    id="totp-code-input"
                     ref=${inputRef}
                     class="totp-input"
                     type="text"
@@ -281,12 +297,17 @@ function TotpModal() {
                     value=${code}
                     placeholder="000000"
                     autocomplete="one-time-code"
+                    aria-required="true"
                     onInput=${e => setCode(e.target.value.replace(/\D/g, ''))}
                     onKeyDown=${e => e.key === 'Enter' && code.length === 6 && confirmTotp(code)}
                 />
                 <div class="modal-actions">
-                    <button class="btn btn-ghost" onClick=${closeTotp}>Cancel</button>
-                    <button class="btn btn-primary" onClick=${() => confirmTotp(code)} disabled=${code.length < 6}>Confirm</button>
+                    <button class="btn btn-ghost" onClick=${closeTotp} aria-label="Cancel">Cancel</button>
+                    <button class="btn btn-primary" onClick=${() => confirmTotp(code)}
+                        disabled=${code.length < 6}
+                        aria-label="Confirm with TOTP code">
+                        Confirm
+                    </button>
                 </div>
             </div>
         </div>
@@ -297,7 +318,10 @@ function Toast() {
     const toast = useToast()
     if (!toast.show) return null
     return html`
-        <div style="position:fixed;bottom:calc(24px + var(--safe-bottom));right:calc(24px + var(--safe-right));z-index:2000;min-width:280px;max-width:380px;">
+        <div style="position:fixed;bottom:calc(24px + var(--safe-bottom));right:calc(24px + var(--safe-right));z-index:2000;min-width:280px;max-width:380px;"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true">
             <div class=${'alert alert-' + toast.type}>${toast.message}</div>
         </div>
     `
@@ -308,10 +332,15 @@ function Ticker() {
     if (!ticker.length) return null
     const items = [...ticker, ...ticker]
     return html`
-        <div style="height:32px;min-height:32px;background:var(--bg-secondary);border-bottom:1px solid var(--bg-border);display:flex;align-items:center;overflow:hidden;">
+        <div style="height:32px;min-height:32px;background:var(--bg-secondary);border-bottom:1px solid var(--bg-border);display:flex;align-items:center;overflow:hidden;"
+            role="marquee"
+            aria-label="Live price ticker"
+            aria-live="off">
             <div style="display:flex;align-items:center;animation:ticker-scroll 60s linear infinite;white-space:nowrap;">
                 ${items.map((item, i) => html`
-                    <div key=${item.coin + '_' + i} style="display:inline-flex;align-items:center;gap:6px;padding:0 16px;border-right:1px solid var(--bg-border);font-size:11px;">
+                    <div key=${item.coin + '_' + i}
+                        style="display:inline-flex;align-items:center;gap:6px;padding:0 16px;border-right:1px solid var(--bg-border);font-size:11px;"
+                        aria-hidden=${i >= ticker.length ? 'true' : 'false'}>
                         <span style="font-family:var(--font-mono);font-weight:700;color:var(--text-secondary);">${item.coin}</span>
                         <span style="font-family:var(--font-mono);font-weight:600;">${Utils.fmtPrice(item.price)}</span>
                         <span style="font-family:var(--font-mono);font-size:10px;color:${Utils.changeColor(item.change)};">${Utils.fmtPct(item.change)}</span>
@@ -342,46 +371,50 @@ function Topbar({ page }) {
     const wsLabel = wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'
 
     return html`
-        <header class="topbar">
-            <div class="topbar-brand">
-                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+        <header class="topbar" role="banner">
+            <div class="topbar-brand" aria-label="Signal Engine v5">
+                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
                     <rect width="32" height="32" rx="8" fill="${theme === 'light' ? '#f5f5f7' : '#1c1c1e'}"/>
                     <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="var(--blue)" stroke="var(--blue)" stroke-width="0.5" stroke-linejoin="round"/>
                 </svg>
                 <span class="topbar-brand-name">Signal Engine</span>
             </div>
-            <nav class="topbar-nav">
+            <nav class="topbar-nav" role="navigation" aria-label="Main navigation">
                 ${navItems.map(item => html`
                     <button key=${item.id}
                         class=${'topbar-nav-item ' + (page === item.id ? 'active' : '')}
-                        onClick=${() => navigate(item.id)}>
+                        onClick=${() => navigate(item.id)}
+                        aria-current=${page === item.id ? 'page' : 'false'}>
                         ${item.label}
                     </button>
                 `)}
             </nav>
             <div class="topbar-right">
-                <div class="next-scan-badge">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <div class="next-scan-badge" aria-label=${'Next scan in ' + nextScan}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                     </svg>
-                    <span>${nextScan}</span>
+                    <span aria-hidden="true">${nextScan}</span>
                 </div>
-                <div class="topbar-divider"></div>
-                <div class=${'mode-indicator ' + mode}>${mode.toUpperCase()}</div>
-                <div class="topbar-divider"></div>
-                <div class="ws-status-bar">
-                    <div class=${'ws-dot ' + (wsState === 'connected' ? '' : wsState === 'connecting' ? 'connecting' : 'disconnected')}></div>
+                <div class="topbar-divider" aria-hidden="true"></div>
+                <div class=${'mode-indicator ' + mode} role="status" aria-label=${'Trading mode: ' + mode}>
+                    ${mode.toUpperCase()}
+                </div>
+                <div class="topbar-divider" aria-hidden="true"></div>
+                <div class="ws-status-bar" role="status" aria-label=${'Connection: ' + wsLabel}>
+                    <div class=${'ws-dot ' + (wsState === 'connected' ? '' : wsState === 'connecting' ? 'connecting' : 'disconnected')} aria-hidden="true"></div>
                     <span>${wsLabel}</span>
                 </div>
-                <div class="topbar-divider"></div>
-                <button class="theme-toggle" onClick=${toggleTheme} title="Toggle theme">
+                <div class="topbar-divider" aria-hidden="true"></div>
+                <button class="theme-toggle" onClick=${toggleTheme}
+                    aria-label=${theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
                     ${theme === 'light'
-                        ? html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
-                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+                        ? html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
+                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
                     }
                 </button>
-                <button class="btn btn-ghost btn-sm" onClick=${logout}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <button class="btn btn-ghost btn-sm" onClick=${logout} aria-label="Log out">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
                         <polyline points="16 17 21 12 16 7"/>
                         <line x1="21" y1="12" x2="9" y2="12"/>
@@ -395,27 +428,29 @@ function Topbar({ page }) {
 
 function BottomNav({ page }) {
     const items = [
-        { id: 'overview',  label: 'Overview', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>` },
-        { id: 'freqtrade', label: 'Trades',   icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
-        { id: 'signals',   label: 'Signals',  icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>` },
-        { id: 'coins',     label: 'Coins',    icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
-        { id: 'settings',  label: 'Settings', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
+        { id: 'overview',  label: 'Overview', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>` },
+        { id: 'freqtrade', label: 'Trades',   icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
+        { id: 'signals',   label: 'Signals',  icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>` },
+        { id: 'coins',     label: 'Coins',    icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
+        { id: 'settings',  label: 'Settings', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
     ]
     return html`
-        <nav class="bottom-nav">
+        <nav class="bottom-nav" role="navigation" aria-label="Mobile navigation">
             ${items.map(item => html`
                 <button key=${item.id}
                     class=${'bottom-nav-item ' + (page === item.id ? 'active' : '')}
-                    onClick=${() => navigate(item.id)}>
+                    onClick=${() => navigate(item.id)}
+                    aria-label=${item.label}
+                    aria-current=${page === item.id ? 'page' : 'false'}>
                     ${item.icon}
-                    <span>${item.label}</span>
+                    <span aria-hidden="true">${item.label}</span>
                 </button>
             `)}
         </nav>
     `
 }
 
-window.Components = {
+window.SE = {
     GradeBadge, DirBadge, OutcomeBadge, ScoreBar,
     Spinner, EmptyState, LoadingSkeleton,
     HealthBar, TradeProgressBar, CoinDetailModal,
