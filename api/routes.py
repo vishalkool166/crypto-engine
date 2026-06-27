@@ -25,7 +25,23 @@ from api.dashboard import (
     get_history, get_universe, get_ticker_bar,
     invalidate_all
 )
-from api.formatters import make_serializable
+
+def make_serializable(obj):
+    import math
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return {k: make_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_serializable(i) for i in obj]
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, (int, str, bool)):
+        return obj
+    return str(obj)
+
 import runtime_state as rs
 import httpx
 import psutil
