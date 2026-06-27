@@ -331,6 +331,30 @@ html, body {
     .grid-2 { grid-template-columns: 1fr; }
 
     .page-title { font-size: 22px; }
+
+    .topbar-nav { display: none; }
+
+    .topbar {
+        padding: 0 12px;
+        padding-left:  calc(12px + var(--safe-left));
+        padding-right: calc(12px + var(--safe-right));
+        overflow: hidden;
+    }
+
+    .topbar-brand-name { display: none; }
+
+    .topbar-right {
+        gap: 6px;
+        overflow: hidden;
+    }
+
+    .next-scan-badge { display: none; }
+
+    .topbar-divider { display: none; }
+
+    .ws-status-bar span { display: none; }
+
+    .mode-indicator span { display: none; }
 }
 
 @media (max-width: 400px) {

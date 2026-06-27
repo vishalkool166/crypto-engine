@@ -157,6 +157,79 @@ async def _ft_delete(path: str) -> dict:
         raise HTTPException(503, f"Freqtrade unavailable: {e}")
 
 
+def _parse_signal_id_from_tag(enter_tag: str) -> int | None:
+    try:
+        if not enter_tag or not enter_tag.startswith("SE_"):
+            return None
+        parts = enter_tag.split("_")
+        if len(parts) >= 3:
+            return int(parts[-1])
+        return None
+    except Exception:
+        return None
+
+
+async def _enrich_trades(trades: list) -> list:
+    if not trades or not isinstance(trades, list):
+        return trades
+
+    try:
+        from database import SessionLocal, Signal as SignalModel
+
+        tp1_map = {}
+        sl_map  = {}
+
+        with SessionLocal() as db:
+            for trade in trades:
+                pair      = trade.get("pair", "")
+                coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                enter_tag = trade.get("enter_tag", "")
+                signal_id = _parse_signal_id_from_tag(enter_tag)
+
+                signal = None
+
+                if signal_id:
+                    signal = db.query(SignalModel).filter(
+                        SignalModel.id == signal_id
+                    ).first()
+
+                if not signal:
+                    is_short  = trade.get("is_short", False)
+                    direction = "SHORT" if is_short else "LONG"
+                    signal = db.query(SignalModel).filter(
+                        SignalModel.coin      == coin,
+                        SignalModel.direction == direction,
+                        SignalModel.outcome   == "pending"
+                    ).order_by(SignalModel.timestamp.desc()).first()
+
+                if signal:
+                    if signal.tp1: tp1_map[coin] = float(signal.tp1)
+                    if signal.sl:  sl_map[coin]  = float(signal.sl)
+
+    except Exception as e:
+        log.warning(f"enrich_trades signal lookup error: {e}")
+
+    enriched = []
+    for trade in trades:
+        pair  = trade.get("pair", "")
+        coin  = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+
+        health = None
+        try:
+            from trade.health_monitor import get_health_from_redis
+            health = get_health_from_redis(coin)
+        except Exception:
+            pass
+
+        trade_copy              = dict(trade)
+        trade_copy["tp1"]       = tp1_map.get(coin)
+        trade_copy["sl_signal"] = sl_map.get(coin)
+        trade_copy["health"]    = health
+        enriched.append(trade_copy)
+
+    return enriched
+
+
 async def ft_force_enter(
     coin:      str,
     side:      str,
@@ -170,7 +243,6 @@ async def ft_force_enter(
 ) -> dict:
     try:
         pair = f"{coin}/USDT:USDT"
-
         body = {
             "pair":         pair,
             "side":         side,
@@ -178,7 +250,6 @@ async def ft_force_enter(
             "stake_amount": round(stake, 2),
             "leverage":     leverage,
         }
-
         if signal_id:
             body["enter_tag"] = f"SE_{grade}_{signal_id}"
 
@@ -190,14 +261,10 @@ async def ft_force_enter(
         )
 
         result = await _ft_post("/forceenter", body)
-
         log.info(f"Freqtrade forceenter response: {result}")
 
         if result and result.get("trade_id"):
-            log.info(
-                f"Trade opened: {coin} {side} "
-                f"trade_id:{result['trade_id']}"
-            )
+            log.info(f"Trade opened: {coin} {side} trade_id:{result['trade_id']}")
             return {"success": True, "trade_id": result["trade_id"], "result": result}
         else:
             log.error(f"Freqtrade forceenter failed: {coin} {side} response:{result}")
@@ -231,18 +298,6 @@ async def ft_open_trade_count() -> int:
         return len(status)
     except Exception:
         return 0
-
-
-def _parse_signal_id_from_tag(enter_tag: str) -> int | None:
-    try:
-        if not enter_tag or not enter_tag.startswith("SE_"):
-            return None
-        parts = enter_tag.split("_")
-        if len(parts) >= 3:
-            return int(parts[-1])
-        return None
-    except Exception:
-        return None
 
 
 async def _ft_ws_listener():
@@ -279,15 +334,12 @@ async def _ft_ws_listener():
                     try:
                         data     = json.loads(message)
                         msg_type = data.get("type", "")
-
                         log.debug(f"FT WS event: {msg_type}")
-
                         for cb in _trade_event_callbacks:
                             try:
                                 await cb(msg_type, data.get("data", {}))
                             except Exception as e:
                                 log.error(f"FT WS callback error: {e}")
-
                     except Exception as e:
                         log.error(f"FT WS message parse error: {e}")
 
@@ -334,8 +386,9 @@ async def stop_ft_ws():
 async def ft_status(request: Request):
     _auth(request)
     try:
-        data = await _ft_get("/status")
-        return JSONResponse(content=data)
+        data     = await _ft_get("/status")
+        enriched = await _enrich_trades(data)
+        return JSONResponse(content=enriched)
     except HTTPException:
         raise
     except Exception as e:
@@ -503,8 +556,6 @@ async def ft_delete_trade(request: Request, tradeid: int):
 async def ft_summary(request: Request):
     _auth(request)
     try:
-        from database import SessionLocal, Signal as SignalModel
-
         status, profit, balance, daily, config = await asyncio.gather(
             _ft_get("/status"),
             _ft_get("/profit"),
@@ -520,57 +571,7 @@ async def ft_summary(request: Request):
 
         trades_with_health = []
         if not isinstance(status, Exception) and status and isinstance(status, list):
-
-            tp1_map = {}
-            sl_map  = {}
-
-            try:
-                with SessionLocal() as db:
-                    for trade in status:
-                        pair      = trade.get("pair", "")
-                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                        enter_tag = trade.get("enter_tag", "")
-                        signal_id = _parse_signal_id_from_tag(enter_tag)
-
-                        signal = None
-
-                        if signal_id:
-                            signal = db.query(SignalModel).filter(
-                                SignalModel.id == signal_id
-                            ).first()
-
-                        if not signal:
-                            is_short  = trade.get("is_short", False)
-                            direction = "SHORT" if is_short else "LONG"
-                            signal = db.query(SignalModel).filter(
-                                SignalModel.coin      == coin,
-                                SignalModel.direction == direction,
-                                SignalModel.outcome   == "pending"
-                            ).order_by(SignalModel.timestamp.asc()).first()
-
-                        if signal:
-                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
-                            if signal.sl:  sl_map[coin]  = float(signal.sl)
-
-            except Exception as e:
-                log.warning(f"tp1/sl fetch error: {e}")
-
-            for trade in status:
-                pair = trade.get("pair", "")
-                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-
-                health = None
-                try:
-                    from trade.health_monitor import get_health_from_redis
-                    health = get_health_from_redis(coin)
-                except Exception:
-                    pass
-
-                trade_copy              = dict(trade)
-                trade_copy["health"]    = health
-                trade_copy["tp1"]       = tp1_map.get(coin, None)
-                trade_copy["sl_signal"] = sl_map.get(coin, None)
-                trades_with_health.append(trade_copy)
+            trades_with_health = await _enrich_trades(status)
 
         return JSONResponse(content={
             "status":    trades_with_health,

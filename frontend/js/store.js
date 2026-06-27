@@ -79,17 +79,9 @@ function _applyTicker(data) {
     }
 
     if (data.status && Array.isArray(data.status)) {
-        _store.ftTrades = data.status.map(newTrade => {
-            const existing = _store.ftTrades.find(t => t.trade_id === newTrade.trade_id)
-            return existing ? {
-                ...newTrade,
-                sl_signal: existing.sl_signal || newTrade.sl_signal,
-                tp1:       existing.tp1       || newTrade.tp1,
-                health:    existing.health    || newTrade.health,
-            } : newTrade
-        })
+        _store.ftTrades = data.status
         emit('ft_update', {
-            status:   _store.ftTrades,
+            status:   data.status,
             profit:   _store.ftProfit,
             balance:  _store.ftBalance,
             botState: _store.ftBotState,
@@ -105,8 +97,9 @@ function _applyTicker(data) {
 
 function _applyFtUpdate(data) {
     if (!data) return
-    if (Array.isArray(data.status))           _store.ftTrades   = data.status
-    if (data.profit && !data.profit.detail)   _store.ftProfit   = data.profit
+
+    if (Array.isArray(data.status))           _store.ftTrades  = data.status
+    if (data.profit && !data.profit.detail)   _store.ftProfit  = data.profit
     if (data.balance && !data.balance.detail) {
         const currencies = data.balance.currencies || []
         const usdt       = currencies.find(c => c.currency === 'USDT') || {}

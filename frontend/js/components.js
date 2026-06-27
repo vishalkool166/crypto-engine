@@ -373,10 +373,10 @@ function Topbar({ page }) {
     return html`
         <header class="topbar" role="banner">
             <div class="topbar-brand" aria-label="Signal Engine v5">
-                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                    <rect width="32" height="32" rx="8" fill="${theme === 'light' ? '#f5f5f7' : '#1c1c1e'}"/>
-                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="var(--blue)" stroke="var(--blue)" stroke-width="0.5" stroke-linejoin="round"/>
-                </svg>
+                    <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                        <rect width="32" height="32" rx="8" fill="#111118"/>
+                        <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
+                    </svg>
                 <span class="topbar-brand-name">Signal Engine</span>
             </div>
             <nav class="topbar-nav" role="navigation" aria-label="Main navigation">
