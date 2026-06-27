@@ -98,25 +98,38 @@ function TradeProgressBar({ trade }) {
     const currColor      = movingTowardTp ? 'var(--green)' : 'var(--red)'
     const slLeft         = Math.min(slPos, tpPos)
     const tpRight        = 100 - Math.max(slPos, tpPos)
-    const pctToTp        = tp !== entry
+
+    const totalDist = Math.abs(tp - sl)
+    const distToTp  = Math.abs(tp - current)
+    const distToSl  = Math.abs(sl - current)
+
+    const pctToTp = totalDist > 0
         ? Math.abs((current - entry) / (tp - entry) * 100).toFixed(1)
         : '0'
+
+    const pctToSl = totalDist > 0
+        ? (distToSl / totalDist * 100).toFixed(1)
+        : '0'
+
+    const label = movingTowardTp
+        ? pctToTp + '% to TP'
+        : pctToSl + '% to SL'
 
     return html`
         <div style="margin:10px 0 4px;">
             <div class="trade-progress-bar"
                 role="progressbar"
-                aria-valuenow=${pctToTp}
+                aria-valuenow=${movingTowardTp ? pctToTp : pctToSl}
                 aria-valuemin="0"
                 aria-valuemax="100"
-                aria-label=${'Trade progress: ' + pctToTp + '% toward TP'}>
+                aria-label=${'Trade progress: ' + label}>
                 <div class="trade-progress-sl" style="width:${slLeft}%;" aria-hidden="true"></div>
                 <div class="trade-progress-tp" style="width:${tpRight}%;" aria-hidden="true"></div>
                 <div class="trade-progress-current" style="left:${currPos}%;background:${currColor};" aria-hidden="true"></div>
             </div>
             <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:3px;" aria-hidden="true">
                 <span style="font-family:var(--font-mono);">SL ${Utils.fmtPrice(sl)}</span>
-                <span style="font-family:var(--font-mono);color:${currColor};">${pctToTp}% to TP</span>
+                <span style="font-family:var(--font-mono);color:${currColor};">${label}</span>
                 <span style="font-family:var(--font-mono);">TP ${Utils.fmtPrice(tp)}</span>
             </div>
         </div>
@@ -373,10 +386,10 @@ function Topbar({ page }) {
     return html`
         <header class="topbar" role="banner">
             <div class="topbar-brand" aria-label="Signal Engine v5">
-                    <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                        <rect width="32" height="32" rx="8" fill="#111118"/>
-                        <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
-                    </svg>
+                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                    <rect width="32" height="32" rx="8" fill="#111118"/>
+                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
+                </svg>
                 <span class="topbar-brand-name">Signal Engine</span>
             </div>
             <nav class="topbar-nav" role="navigation" aria-label="Main navigation">
