@@ -26,9 +26,22 @@ function FreqtradePage() {
     }, [])
 
     useEffect(() => {
-        if (ftData.trades?.length)                             setOpenTrades(ftData.trades)
-        if (ftData.profit?.trade_count        != null)        setProfit(ftData.profit)
-        if (ftData.balance?.total             != null)        setBalance(ftData.balance)
+        if (ftData.trades?.length) {
+            setOpenTrades(prev => {
+                if (!prev.length) return ftData.trades
+                return ftData.trades.map(newTrade => {
+                    const existing = prev.find(t => t.trade_id === newTrade.trade_id)
+                    return {
+                        ...newTrade,
+                        sl_signal: newTrade.sl_signal ?? existing?.sl_signal,
+                        tp1:       newTrade.tp1       ?? existing?.tp1,
+                        health:    newTrade.health    ?? existing?.health,
+                    }
+                })
+            })
+        }
+        if (ftData.profit?.trade_count != null) setProfit(ftData.profit)
+        if (ftData.balance?.total      != null) setBalance(ftData.balance)
         if (ftData.botState && ftData.botState !== 'unknown') setBotState(ftData.botState)
     }, [ftData])
 
