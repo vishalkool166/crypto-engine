@@ -81,7 +81,7 @@ function _applyTicker(data) {
     if (data.status && Array.isArray(data.status)) {
         _store.ftTrades = data.status
         emit('ft_update', {
-            status:   data.status,
+            trades:   _store.ftTrades,
             profit:   _store.ftProfit,
             balance:  _store.ftBalance,
             botState: _store.ftBotState,
@@ -98,8 +98,10 @@ function _applyTicker(data) {
 function _applyFtUpdate(data) {
     if (!data) return
 
-    if (Array.isArray(data.status))           _store.ftTrades  = data.status
-    if (data.profit && !data.profit.detail)   _store.ftProfit  = data.profit
+    if (Array.isArray(data.status)) _store.ftTrades = data.status
+
+    if (data.profit && !data.profit.detail)  _store.ftProfit  = data.profit
+
     if (data.balance && !data.balance.detail) {
         const currencies = data.balance.currencies || []
         const usdt       = currencies.find(c => c.currency === 'USDT') || {}
@@ -108,8 +110,15 @@ function _applyFtUpdate(data) {
             free:  usdt.free           != null ? parseFloat(usdt.free)          : null,
         }
     }
+
     if (data.bot_state) _store.ftBotState = data.bot_state
-    emit('ft_update', data)
+
+    emit('ft_update', {
+        trades:   _store.ftTrades,
+        profit:   _store.ftProfit,
+        balance:  _store.ftBalance,
+        botState: _store.ftBotState,
+    })
 }
 
 function _connect() {

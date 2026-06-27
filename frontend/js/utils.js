@@ -20,7 +20,7 @@ const Utils = {
         if (isNaN(n)) return '--'
         const positive = pos != null ? pos : n >= 0
         const sign     = positive ? '+' : '-'
-        return sign + '$' + Math.abs(n).toFixed(4)
+        return sign + '$' + Math.abs(n).toFixed(2)
     },
 
     fmtPct(n) {
