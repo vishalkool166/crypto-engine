@@ -1,7 +1,3 @@
-const { h, render } = preact
-const { useState, useEffect } = preactHooks
-const html = htm.bind(h)
-
 const { init, usePage, navigate } = Store
 const {
     GradeBadge, DirBadge, OutcomeBadge, ScoreBar,

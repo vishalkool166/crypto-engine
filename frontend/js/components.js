@@ -1,7 +1,3 @@
-const { h, Fragment } = preact
-const { useState, useEffect, useRef } = preactHooks
-const html = htm.bind(h)
-
 const {
     confirmTotp, closeTotp, useTotp, useToast, useWsState,
     useMode, useNextScan, useTicker, usePage, logout, navigate,

@@ -1,6 +1,3 @@
-const { h, Fragment } = preact
-const { useState, useEffect } = preactHooks
-const html = htm.bind(h)
 const { showToast } = Store
 const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
