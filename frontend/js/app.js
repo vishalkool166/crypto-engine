@@ -1,11 +1,10 @@
-import { h, render } from 'preact'
-import { useState, useEffect } from 'preact/hooks'
-
-const html = window.html
-const { init, usePage, navigate } = Store
-const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState,
-        LoadingSkeleton, HealthBar, TradeProgressBar, CoinDetailModal,
-        TotpModal, Toast, Ticker, Topbar, BottomNav } = Components
+var { h, render } = preact
+var { useState, useEffect } = preactHooks
+var html = window.html
+var { init, usePage, navigate } = Store
+var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState,
+      LoadingSkeleton, HealthBar, TradeProgressBar, CoinDetailModal,
+      TotpModal, Toast, Ticker, Topbar, BottomNav } = Components
 
 function App() {
     const page              = usePage()
