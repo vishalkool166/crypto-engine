@@ -1,9 +1,10 @@
-import { h } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
-import { showToast, requireTotp } from '/js/store.js'
+const { h } = preact
+const { useState, useEffect } = preactHooks
+const html = htm.bind(h)
+const { showToast, requireTotp } = Store
+const { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
-export function CoinsPage() {
+function CoinsPage() {
     const [coins,        setCoins]        = useState([])
     const [filtered,     setFiltered]     = useState([])
     const [loading,      setLoading]      = useState(false)
@@ -82,9 +83,7 @@ export function CoinsPage() {
         setToggling(coin.coin)
         try {
             await API.toggleCoin(coin.coin, !coin.enabled)
-            const updated = coins.map(c =>
-                c.coin === coin.coin ? { ...c, enabled: !c.enabled } : c
-            )
+            const updated = coins.map(c => c.coin === coin.coin ? { ...c, enabled: !c.enabled } : c)
             setCoins(updated)
             applyFilter(updated, filterStatus, search)
             showToast(coin.coin + (!coin.enabled ? ' enabled' : ' disabled'), 'success')
@@ -96,10 +95,7 @@ export function CoinsPage() {
     }
 
     async function deleteCoin(coinName) {
-        const code = await requireTotp(
-            'Delete ' + coinName,
-            'Enter your TOTP code to permanently remove ' + coinName
-        )
+        const code = await requireTotp('Delete ' + coinName, 'Enter your TOTP code to permanently remove ' + coinName)
         if (!code) return
         setDeleting(coinName)
         try {
@@ -144,7 +140,7 @@ export function CoinsPage() {
                 </button>
             </div>
 
-            <div class="card mb-12">
+            <div class="card mb-16">
                 <div class="section-title mb-12">Add Coin</div>
                 <div class="flex gap-8" style="flex-wrap:wrap;">
                     <input class="input" style="max-width:180px;" type="text"
@@ -169,18 +165,13 @@ export function CoinsPage() {
                         <${Spinner}/> Validating on Binance Futures...
                     </div>
                 `}
-                ${addMsg && html`
-                    <div class=${'alert mt-12 ' + (addOk ? 'alert-success' : 'alert-error')}>${addMsg}</div>
-                `}
+                ${addMsg && html`<div class=${'alert mt-12 ' + (addOk ? 'alert-success' : 'alert-error')}>${addMsg}</div>`}
             </div>
 
             <div class="card">
                 <div class="filter-bar mb-12">
                     <select class="select" style="width:130px;" value=${filterStatus}
-                        onChange=${e => {
-                            setFilterStatus(e.target.value)
-                            applyFilter(coins, e.target.value, search)
-                        }}>
+                        onChange=${e => { setFilterStatus(e.target.value); applyFilter(coins, e.target.value, search) }}>
                         <option value="">All Coins</option>
                         <option value="enabled">Enabled Only</option>
                         <option value="disabled">Disabled Only</option>
@@ -188,12 +179,9 @@ export function CoinsPage() {
                     <input class="input" style="width:130px;" type="text"
                         placeholder="Search coin..."
                         value=${search}
-                        onInput=${e => {
-                            setSearch(e.target.value)
-                            applyFilter(coins, filterStatus, e.target.value)
-                        }}/>
+                        onInput=${e => { setSearch(e.target.value); applyFilter(coins, filterStatus, e.target.value) }}/>
                     <div class="flex-1"></div>
-                    <span style="font-size:11px;color:var(--text-secondary);">
+                    <span style="font-size:12px;color:var(--text-secondary);">
                         <span style="font-family:var(--font-mono);color:var(--text-primary);">${filtered.length}</span> coins
                     </span>
                 </div>
@@ -244,54 +232,32 @@ export function CoinsPage() {
                                                         : html`<span style="color:var(--text-muted);">--</span>`
                                                     }
                                                 </td>
+                                                <td><span style="font-family:var(--font-mono);">${Utils.fmtPrice(coin.price)}</span></td>
+                                                <td><span style="font-family:var(--font-mono);color:${Utils.changeColor(coin.change)};">${Utils.fmtPct(coin.change)}</span></td>
                                                 <td>
-                                                    <span style="font-family:var(--font-mono);">${coin.price || '--'}</span>
-                                                </td>
-                                                <td>
-                                                    <span style="font-family:var(--font-mono);color:${coin.change_color};">
-                                                        ${coin.change || '--'}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <span style="font-family:var(--font-mono);font-size:11px;color:${
-                                                        Math.abs(coin.funding || 0) > 0.05 ? 'var(--red)'
-                                                        : Math.abs(coin.funding || 0) > 0.03 ? 'var(--orange)'
-                                                        : 'var(--text-secondary)'
-                                                    };">
+                                                    <span style="font-family:var(--font-mono);font-size:11px;color:${Math.abs(coin.funding || 0) > 0.05 ? 'var(--red)' : Math.abs(coin.funding || 0) > 0.03 ? 'var(--orange)' : 'var(--text-secondary)'};">
                                                         ${coin.funding != null ? coin.funding.toFixed(4) + '%' : '--'}
                                                     </span>
                                                 </td>
                                                 <td><span class="tag">${coin.source || 'manual'}</span></td>
-                                                <td>
-                                                    <span style="font-size:11px;color:var(--text-secondary);">
-                                                        ${Utils.fmtTimeAgo(coin.added_at)}
-                                                    </span>
-                                                </td>
+                                                <td><span style="font-size:11px;color:var(--text-secondary);">${Utils.fmtTimeAgo(coin.added_at)}</span></td>
                                                 <td>
                                                     <div class="flex gap-6">
-                                                        <button
-                                                            class=${'btn btn-sm ' + (coin.enabled ? 'btn-warning' : 'btn-success')}
+                                                        <button class=${'btn btn-sm ' + (coin.enabled ? 'btn-warning' : 'btn-success')}
                                                             onClick=${() => toggleCoin(coin)}
                                                             disabled=${toggling === coin.coin}>
-                                                            ${toggling === coin.coin
-                                                                ? html`<${Spinner}/>`
-                                                                : (coin.enabled ? 'Disable' : 'Enable')
-                                                            }
+                                                            ${toggling === coin.coin ? html`<${Spinner}/>` : (coin.enabled ? 'Disable' : 'Enable')}
                                                         </button>
-                                                        <button
-                                                            class="btn btn-danger btn-sm btn-icon"
+                                                        <button class="btn btn-danger btn-sm btn-icon"
                                                             onClick=${() => deleteCoin(coin.coin)}
                                                             disabled=${deleting === coin.coin}>
-                                                            ${deleting === coin.coin
-                                                                ? html`<${Spinner}/>`
-                                                                : html`
-                                                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                                        <polyline points="3 6 5 6 21 6"/>
-                                                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                                                                        <path d="M10 11v6M14 11v6"/>
-                                                                    </svg>
-                                                                `
-                                                            }
+                                                            ${deleting === coin.coin ? html`<${Spinner}/>` : html`
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                                    <polyline points="3 6 5 6 21 6"/>
+                                                                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                                                    <path d="M10 11v6M14 11v6"/>
+                                                                </svg>
+                                                            `}
                                                         </button>
                                                     </div>
                                                 </td>

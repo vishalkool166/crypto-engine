@@ -1,9 +1,10 @@
-import { h } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-import { html, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
-import { showToast } from '/js/store.js'
+const { h } = preact
+const { useState, useEffect } = preactHooks
+const html = htm.bind(h)
+const { showToast } = Store
+const { Spinner, EmptyState, LoadingSkeleton } = Components
 
-export function AuditPage() {
+function AuditPage() {
     const [logs,          setLogs]          = useState([])
     const [filtered,      setFiltered]      = useState([])
     const [loading,       setLoading]       = useState(false)
@@ -34,7 +35,7 @@ export function AuditPage() {
 
     function applyFilter(l, action, success, s) {
         let result = [...(l || logs)]
-        if (action) result = result.filter(x => x.action === action)
+        if (action)    result = result.filter(x => x.action === action)
         if (success !== '') {
             const ok = success === 'true'
             result   = result.filter(x => x.success === ok)
@@ -92,13 +93,10 @@ export function AuditPage() {
                 </div>
             </div>
 
-            <div class="card mb-12">
+            <div class="card mb-16">
                 <div class="filter-bar">
-                    <select class="select" style="width:150px;" value=${filterAction}
-                        onChange=${e => {
-                            setFilterAction(e.target.value)
-                            applyFilter(logs, e.target.value, filterSuccess, search)
-                        }}>
+                    <select class="select" style="width:160px;" value=${filterAction}
+                        onChange=${e => { setFilterAction(e.target.value); applyFilter(logs, e.target.value, filterSuccess, search) }}>
                         <option value="">All Actions</option>
                         <option value="dashboard_login">Login</option>
                         <option value="mode_toggle">Mode Toggle</option>
@@ -109,21 +107,15 @@ export function AuditPage() {
                         <option value="docker_purge">Docker Purge</option>
                     </select>
                     <select class="select" style="width:120px;" value=${filterSuccess}
-                        onChange=${e => {
-                            setFilterSuccess(e.target.value)
-                            applyFilter(logs, filterAction, e.target.value, search)
-                        }}>
+                        onChange=${e => { setFilterSuccess(e.target.value); applyFilter(logs, filterAction, e.target.value, search) }}>
                         <option value="">All Results</option>
                         <option value="true">Success</option>
                         <option value="false">Failed</option>
                     </select>
-                    <input class="input" style="width:150px;" type="text"
-                        placeholder="Search detail..."
+                    <input class="input" style="width:160px;" type="text"
+                        placeholder="Search..."
                         value=${search}
-                        onInput=${e => {
-                            setSearch(e.target.value)
-                            applyFilter(logs, filterAction, filterSuccess, e.target.value)
-                        }}/>
+                        onInput=${e => { setSearch(e.target.value); applyFilter(logs, filterAction, filterSuccess, e.target.value) }}/>
                     <button class="btn btn-ghost btn-sm" onClick=${() => {
                         setFilterAction('')
                         setFilterSuccess('')
@@ -131,7 +123,7 @@ export function AuditPage() {
                         applyFilter(logs, '', '', '')
                     }}>Clear</button>
                     <div class="flex-1"></div>
-                    <span style="font-size:11px;color:var(--text-secondary);">
+                    <span style="font-size:12px;color:var(--text-secondary);">
                         <span style="font-family:var(--font-mono);color:var(--text-primary);">${filtered.length}</span> entries
                     </span>
                 </div>
@@ -154,18 +146,10 @@ export function AuditPage() {
                                         ? html`<tr><td colspan="7"><${EmptyState} message="No audit entries found"/></td></tr>`
                                         : paginated.map(log => html`
                                             <tr key=${log.id}>
+                                                <td><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">${log.id}</span></td>
                                                 <td>
-                                                    <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">
-                                                        ${log.id}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <div style="font-size:11px;color:var(--text-primary);">
-                                                        ${Utils.fmtTimeAgo(log.timestamp)}
-                                                    </div>
-                                                    <div style="font-size:10px;color:var(--text-muted);">
-                                                        ${Utils.fmtTime(log.timestamp)}
-                                                    </div>
+                                                    <div style="font-size:12px;">${Utils.fmtTimeAgo(log.timestamp)}</div>
+                                                    <div style="font-size:10px;color:var(--text-muted);">${Utils.fmtTime(log.timestamp)}</div>
                                                 </td>
                                                 <td>
                                                     <span style="font-family:var(--font-mono);font-size:11px;font-weight:700;color:${actionColor(log.action)};">
@@ -173,16 +157,8 @@ export function AuditPage() {
                                                     </span>
                                                 </td>
                                                 <td><span class="tag">${log.source || '--'}</span></td>
-                                                <td>
-                                                    <span style="font-size:11px;color:var(--text-secondary);">
-                                                        ${log.detail || '--'}
-                                                    </span>
-                                                </td>
-                                                <td>
-                                                    <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">
-                                                        ${log.ip || '--'}
-                                                    </span>
-                                                </td>
+                                                <td><span style="font-size:11px;color:var(--text-secondary);">${log.detail || '--'}</span></td>
+                                                <td><span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted);">${log.ip || '--'}</span></td>
                                                 <td>
                                                     <span class=${'badge ' + (log.success ? 'badge-win' : 'badge-loss')}>
                                                         ${log.success ? '✓ OK' : '✗ FAIL'}
@@ -197,15 +173,9 @@ export function AuditPage() {
                         <div class="pagination">
                             <span class="pagination-info">Page ${currentPage} of ${totalPages}</span>
                             <div class="pagination-controls">
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(p => p - 1)}
-                                    disabled=${currentPage <= 1}>Prev</button>
-                                <span style="padding:4px 10px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">
-                                    ${currentPage} / ${totalPages}
-                                </span>
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(p => p + 1)}
-                                    disabled=${currentPage >= totalPages}>Next</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(p => p - 1)} disabled=${currentPage <= 1}>Prev</button>
+                                <span style="padding:4px 10px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${currentPage} / ${totalPages}</span>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(p => p + 1)} disabled=${currentPage >= totalPages}>Next</button>
                             </div>
                         </div>
                     `

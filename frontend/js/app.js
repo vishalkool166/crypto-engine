@@ -1,34 +1,30 @@
-import { h, render } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-import htm from '/js/htm.min.js'
-import { init, usePage } from '/js/store.js'
-import { Sidebar, BottomNav, Topbar, Ticker, TotpModal, Toast } from '/js/components.js'
-import { OverviewPage }  from '/js/pages/overview.js'
-import { SignalsPage }   from '/js/pages/signals.js'
-import { FreqtradePage } from '/js/pages/freqtrade.js'
-import { CoinsPage }     from '/js/pages/coins.js'
-import { BacktestPage }  from '/js/pages/backtest.js'
-import { AnalysisPage }  from '/js/pages/analysis.js'
-import { AuditPage }     from '/js/pages/audit.js'
-import { SettingsPage }  from '/js/pages/settings.js'
-
+const { h, render } = preact
+const { useState, useEffect } = preactHooks
 const html = htm.bind(h)
 
+const { init, usePage, navigate } = Store
+const {
+    GradeBadge, DirBadge, OutcomeBadge, ScoreBar,
+    Spinner, EmptyState, LoadingSkeleton,
+    HealthBar, TradeProgressBar, CoinDetailModal,
+    TotpModal, Toast, Ticker, Topbar, BottomNav,
+} = Components
+
 function App() {
-    const page                    = usePage()
-    const [expanded, setExpanded] = useState(false)
-    const [ready,    setReady]    = useState(false)
+    const page            = usePage()
+    const [ready, setReady] = useState(false)
 
     useEffect(() => {
-        init().then(ok => {
-            if (ok) setReady(true)
-        })
+        init().then(ok => { if (ok) setReady(true) })
     }, [])
 
     if (!ready) return html`
-        <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;">
-            <div class="spinner" style="width:24px;height:24px;border-width:3px;"></div>
-            <span style="color:var(--text-muted);font-size:13px;">Loading Signal Engine...</span>
+        <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:16px;background:var(--bg-primary);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 32 32" fill="none">
+                <rect width="32" height="32" rx="8" fill="var(--bg-secondary)"/>
+                <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="var(--blue)" stroke="var(--blue)" stroke-width="0.5" stroke-linejoin="round"/>
+            </svg>
+            <div class="spinner" style="width:20px;height:20px;border-width:2px;"></div>
         </div>
     `
 
@@ -45,18 +41,11 @@ function App() {
 
     return html`
         <div class="app-layout">
-            <${Sidebar}
-                page=${page}
-                expanded=${expanded}
-                onToggle=${() => setExpanded(p => !p)}
-            />
-            <div class="main-area">
-                <${Topbar} page=${page}/>
-                <${Ticker}/>
-                <main class="page-content">
-                    ${pages[page] || pages.overview}
-                </main>
-            </div>
+            <${Topbar} page=${page}/>
+            <${Ticker}/>
+            <main class="page-content">
+                ${pages[page] || pages.overview}
+            </main>
             <${BottomNav} page=${page}/>
             <${TotpModal}/>
             <${Toast}/>

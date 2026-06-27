@@ -1,6 +1,3 @@
-import { h } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-
 const _listeners = {}
 
 function emit(event, data) {
@@ -17,25 +14,22 @@ function on(event, fn) {
 }
 
 const _store = {
-    page:           'overview',
-    wsState:        'connecting',
-    mode:           'paper',
-    nextScanEpoch:  0,
-    ticker:         [],
-    summary:        {},
-    ftTrades:       [],
-    ftProfit:       {},
-    ftBalance:      {},
-    ftBotState:     'unknown',
-    dashboardData:  {},
+    page:          'overview',
+    wsState:       'connecting',
+    mode:          'paper',
+    nextScanEpoch: 0,
+    ticker:        [],
+    dashboardData: {},
+    ftTrades:      [],
+    ftProfit:      {},
+    ftBalance:     {},
+    ftBotState:    'unknown',
+    theme:         localStorage.getItem('theme') || 'light',
     totp: {
-        show:     false,
-        title:    '',
-        subtitle: '',
-        code:     '',
-        error:    '',
-        loading:  false,
-        resolve:  null,
+        show:    false,
+        title:   '',
+        subtitle:'',
+        resolve: null,
     },
     toast: {
         show:    false,
@@ -43,7 +37,6 @@ const _store = {
         type:    'success',
         timer:   null,
     },
-    sidebarExpanded: false,
 }
 
 let _ws         = null
@@ -51,49 +44,47 @@ let _wsTimer    = null
 let _wsDelay    = 3000
 let _countTimer = null
 
+function _applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('theme', theme)
+    _store.theme = theme
+    emit('theme', theme)
+}
+
+function toggleTheme() {
+    _applyTheme(_store.theme === 'light' ? 'dark' : 'light')
+}
+
 function _applyDashboard(data) {
     if (!data) return
     const summary = data.summary || {}
-
     _store.dashboardData = data
-    _store.mode          = summary.mode || _store.mode
-
-    if (data.ticker && data.ticker.length) {
-        _store.ticker = data.ticker
-    }
-
-    if (summary.next_scan_epoch) {
-        _store.nextScanEpoch = summary.next_scan_epoch
-    }
-
+    if (summary.mode)            _store.mode          = summary.mode
+    if (data.ticker?.length)     _store.ticker        = data.ticker
+    if (summary.next_scan_epoch) _store.nextScanEpoch = summary.next_scan_epoch
     emit('dashboard',    data)
     emit('summary',      summary)
-
     if (data.signals) emit('signals', data.signals)
     if (data.history) emit('history', data.history)
 }
 
 function _applyTicker(data) {
     if (!data) return
-    if (data.items && data.items.length) {
+    if (data.items?.length) {
         _store.ticker = data.items
         emit('ticker', data.items)
     }
     if (data.summary) {
-        if (data.summary.next_scan_epoch) {
-            _store.nextScanEpoch = data.summary.next_scan_epoch
-        }
-        if (data.summary.mode) {
-            _store.mode = data.summary.mode
-        }
+        if (data.summary.next_scan_epoch) _store.nextScanEpoch = data.summary.next_scan_epoch
+        if (data.summary.mode)            _store.mode          = data.summary.mode
         emit('summary-lite', data.summary)
     }
 }
 
 function _applyFtUpdate(data) {
     if (!data) return
-    if (Array.isArray(data.status))           _store.ftTrades   = data.status
-    if (data.profit && !data.profit.detail)   _store.ftProfit   = data.profit
+    if (Array.isArray(data.status))          _store.ftTrades   = data.status
+    if (data.profit && !data.profit.detail)  _store.ftProfit   = data.profit
     if (data.balance && !data.balance.detail) {
         const currencies = data.balance.currencies || []
         const usdt       = currencies.find(c => c.currency === 'USDT') || {}
@@ -112,12 +103,7 @@ function _connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const url   = `${proto}://${location.host}/ws/dashboard`
 
-    try {
-        _ws = new WebSocket(url)
-    } catch(e) {
-        _scheduleReconnect()
-        return
-    }
+    try { _ws = new WebSocket(url) } catch(e) { _scheduleReconnect(); return }
 
     _ws.onopen = () => {
         _store.wsState = 'connected'
@@ -129,9 +115,9 @@ function _connect() {
     _ws.onmessage = (e) => {
         try {
             const data = JSON.parse(e.data)
-            if      (data.type === 'dashboard')  _applyDashboard(data)
-            else if (data.type === 'ticker')     _applyTicker(data)
-            else if (data.type === 'ft_update')  _applyFtUpdate(data)
+            if      (data.type === 'dashboard') _applyDashboard(data)
+            else if (data.type === 'ticker')    _applyTicker(data)
+            else if (data.type === 'ft_update') _applyFtUpdate(data)
         } catch(err) {}
     }
 
@@ -166,20 +152,16 @@ function _startCountdown() {
 }
 
 async function init() {
+    _applyTheme(_store.theme)
+
     try {
         const res = await fetch('/api/health', { credentials: 'include' })
-        if (res.status === 401) {
-            window.location.href = '/login.html'
-            return false
-        }
+        if (res.status === 401) { window.location.href = '/login.html'; return false }
     } catch(e) {}
 
     try {
         const res = await fetch('/api/dashboard', { credentials: 'include' })
-        if (res.status === 401) {
-            window.location.href = '/login.html'
-            return false
-        }
+        if (res.status === 401) { window.location.href = '/login.html'; return false }
         const data = await res.json()
         if (data) _applyDashboard(data)
     } catch(e) {}
@@ -191,13 +173,7 @@ async function init() {
 
 async function requireTotp(title, subtitle) {
     return new Promise((resolve) => {
-        _store.totp.title    = title    || 'Confirm Action'
-        _store.totp.subtitle = subtitle || 'Enter your TOTP code to continue'
-        _store.totp.code     = ''
-        _store.totp.error    = ''
-        _store.totp.loading  = false
-        _store.totp.show     = true
-        _store.totp.resolve  = resolve
+        _store.totp = { show: true, title: title || 'Confirm Action', subtitle: subtitle || 'Enter your TOTP code to continue', resolve }
         emit('totp', { ..._store.totp })
     })
 }
@@ -205,40 +181,33 @@ async function requireTotp(title, subtitle) {
 function confirmTotp(code) {
     if (_store.totp.resolve) {
         _store.totp.resolve(code)
-        _store.totp.show    = false
-        _store.totp.resolve = null
-        _store.totp.code    = ''
-        _store.totp.error   = ''
+        _store.totp = { show: false, title: '', subtitle: '', resolve: null }
         emit('totp', { ..._store.totp })
     }
 }
 
 function closeTotp() {
-    if (_store.totp.resolve) {
-        _store.totp.resolve(null)
-    }
-    _store.totp.show    = false
-    _store.totp.code    = ''
-    _store.totp.error   = ''
-    _store.totp.resolve = null
+    if (_store.totp.resolve) _store.totp.resolve(null)
+    _store.totp = { show: false, title: '', subtitle: '', resolve: null }
     emit('totp', { ..._store.totp })
 }
 
 function showToast(message, type = 'success', duration = 3500) {
     if (_store.toast.timer) clearTimeout(_store.toast.timer)
-    _store.toast.message = message
-    _store.toast.type    = type
-    _store.toast.show    = true
-    _store.toast.timer   = setTimeout(() => {
-        _store.toast.show = false
-        emit('toast', { ..._store.toast })
-    }, duration)
+    _store.toast = {
+        show:    true,
+        message,
+        type,
+        timer: setTimeout(() => {
+            _store.toast.show = false
+            emit('toast', { ..._store.toast })
+        }, duration)
+    }
     emit('toast', { ..._store.toast })
 }
 
-async function logout() {
-    await fetch('/auth/logout')
-    window.location.href = '/login.html'
+function logout() {
+    fetch('/auth/logout').finally(() => { window.location.href = '/login.html' })
 }
 
 function navigate(page) {
@@ -246,173 +215,123 @@ function navigate(page) {
     emit('navigate', page)
 }
 
-function getState() {
-    return _store
-}
-
-async function getCoinDetail(coin) {
-    try {
-        const res = await fetch(`/api/dashboard/coin/${coin}`, { credentials: 'include' })
-        if (!res.ok) return null
-        return await res.json()
-    } catch(e) {
-        return null
-    }
-}
+function getState() { return _store }
 
 function useStore(selector) {
+    const { useState, useEffect } = preactHooks
     const [val, setVal] = useState(() => selector(_store))
-
     useEffect(() => {
-        const check = () => {
+        const events  = ['dashboard','ticker','ft_update','wsState','navigate','totp','toast','summary','summary-lite','countdown','theme']
+        const unsubs  = events.map(e => on(e, () => {
             const next = selector(_store)
-            setVal(prev => {
-                if (JSON.stringify(prev) !== JSON.stringify(next)) return next
-                return prev
-            })
-        }
-
-        const unsubs = [
-            on('dashboard',    check),
-            on('ticker',       check),
-            on('ft_update',    check),
-            on('wsState',      check),
-            on('navigate',     check),
-            on('totp',         check),
-            on('toast',        check),
-            on('summary',      check),
-            on('summary-lite', check),
-            on('countdown',    check),
-        ]
-
+            setVal(prev => JSON.stringify(prev) !== JSON.stringify(next) ? next : prev)
+        }))
         return () => unsubs.forEach(fn => fn())
     }, [])
-
     return val
 }
 
 function usePage() {
+    const { useState, useEffect } = preactHooks
     const [page, setPage] = useState(_store.page)
-    useEffect(() => {
-        return on('navigate', p => setPage(p))
-    }, [])
+    useEffect(() => on('navigate', p => setPage(p)), [])
     return page
 }
 
 function useWsState() {
+    const { useState, useEffect } = preactHooks
     const [state, setState] = useState(_store.wsState)
-    useEffect(() => {
-        return on('wsState', s => setState(s))
-    }, [])
+    useEffect(() => on('wsState', s => setState(s)), [])
     return state
 }
 
 function useTicker() {
+    const { useState, useEffect } = preactHooks
     const [ticker, setTicker] = useState(() => [..._store.ticker])
     useEffect(() => {
-        if (_store.ticker.length > 0) {
-            setTicker([..._store.ticker])
-        }
+        if (_store.ticker.length) setTicker([..._store.ticker])
         return on('ticker', t => setTicker([...t]))
     }, [])
     return ticker
 }
 
 function useFtUpdate() {
+    const { useState, useEffect } = preactHooks
     const [data, setData] = useState({
         trades:   _store.ftTrades,
         profit:   _store.ftProfit,
         balance:  _store.ftBalance,
         botState: _store.ftBotState,
     })
-    useEffect(() => {
-        return on('ft_update', () => setData({
-            trades:   _store.ftTrades,
-            profit:   _store.ftProfit,
-            balance:  _store.ftBalance,
-            botState: _store.ftBotState,
-        }))
-    }, [])
+    useEffect(() => on('ft_update', () => setData({
+        trades:   _store.ftTrades,
+        profit:   _store.ftProfit,
+        balance:  _store.ftBalance,
+        botState: _store.ftBotState,
+    })), [])
     return data
 }
 
 function useDashboard() {
+    const { useState, useEffect } = preactHooks
     const [data, setData] = useState(() => ({ ..._store.dashboardData }))
     useEffect(() => {
-        if (Object.keys(_store.dashboardData).length > 0) {
-            setData({ ..._store.dashboardData })
-        }
+        if (Object.keys(_store.dashboardData).length) setData({ ..._store.dashboardData })
         return on('dashboard', d => setData({ ...d }))
     }, [])
     return data
 }
 
 function useNextScan() {
+    const { useState, useEffect } = preactHooks
     const [label, setLabel] = useState('--')
-    useEffect(() => {
-        return on('countdown', epoch => {
-            if (!epoch) { setLabel('--'); return }
-            const diff = Math.max(0, epoch - Date.now())
-            const mins = Math.floor(diff / 60000)
-            const secs = Math.floor((diff % 60000) / 1000)
-            setLabel(`${mins}m ${secs}s`)
-        })
-    }, [])
+    useEffect(() => on('countdown', epoch => {
+        if (!epoch) { setLabel('--'); return }
+        const diff = Math.max(0, epoch - Date.now())
+        const mins = Math.floor(diff / 60000)
+        const secs = Math.floor((diff % 60000) / 1000)
+        setLabel(`${mins}m ${secs}s`)
+    }), [])
     return label
 }
 
 function useTotp() {
+    const { useState, useEffect } = preactHooks
     const [state, setState] = useState({ ..._store.totp })
-    useEffect(() => {
-        return on('totp', s => setState({ ...s }))
-    }, [])
+    useEffect(() => on('totp', s => setState({ ...s })), [])
     return state
 }
 
 function useToast() {
+    const { useState, useEffect } = preactHooks
     const [state, setState] = useState({ ..._store.toast })
-    useEffect(() => {
-        return on('toast', s => setState({ ...s }))
-    }, [])
+    useEffect(() => on('toast', s => setState({ ...s })), [])
     return state
 }
 
 function useMode() {
+    const { useState, useEffect } = preactHooks
     const [mode, setMode] = useState(_store.mode)
     useEffect(() => {
-        if (_store.mode && _store.mode !== 'paper') {
-            setMode(_store.mode)
-        }
-        const check = (data) => {
-            if (data?.mode) setMode(data.mode)
-        }
-        const u1 = on('summary',      check)
-        const u2 = on('summary-lite', check)
+        if (_store.mode && _store.mode !== 'paper') setMode(_store.mode)
+        const u1 = on('summary',      d => { if (d?.mode) setMode(d.mode) })
+        const u2 = on('summary-lite', d => { if (d?.mode) setMode(d.mode) })
         return () => { u1(); u2() }
     }, [])
     return mode
 }
 
-export {
-    init,
-    navigate,
-    getState,
-    getCoinDetail,
-    requireTotp,
-    confirmTotp,
-    closeTotp,
-    showToast,
-    logout,
-    on,
-    emit,
-    useStore,
-    usePage,
-    useWsState,
-    useTicker,
-    useFtUpdate,
-    useDashboard,
-    useNextScan,
-    useTotp,
-    useToast,
-    useMode,
+function useTheme() {
+    const { useState, useEffect } = preactHooks
+    const [theme, setTheme] = useState(_store.theme)
+    useEffect(() => on('theme', t => setTheme(t)), [])
+    return theme
+}
+
+window.Store = {
+    init, navigate, getState, requireTotp, confirmTotp,
+    closeTotp, showToast, logout, toggleTheme,
+    on, emit,
+    useStore, usePage, useWsState, useTicker, useFtUpdate,
+    useDashboard, useNextScan, useTotp, useToast, useMode, useTheme,
 }

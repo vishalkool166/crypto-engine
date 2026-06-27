@@ -1,20 +1,21 @@
-import { h } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-import { html, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
-import { showToast, requireTotp, useMode } from '/js/store.js'
+const { h } = preact
+const { useState, useEffect } = preactHooks
+const html = htm.bind(h)
+const { showToast, requireTotp, useMode } = Store
+const { Spinner, EmptyState, LoadingSkeleton } = Components
 
-export function SettingsPage() {
-    const [health,        setHealth]       = useState(null)
-    const [system,        setSystem]       = useState(null)
-    const [loading,       setLoading]      = useState(false)
-    const [modeLoading,   setModeLoading]  = useState(null)
-    const [modeMsg,       setModeMsg]      = useState('')
-    const [modeOk,        setModeOk]       = useState(false)
-    const [actionLoading, setActionLoading]= useState(null)
-    const [actionMsg,     setActionMsg]    = useState('')
-    const [actionOk,      setActionOk]     = useState(false)
-    const [purgeLoading,  setPurgeLoading] = useState(false)
-    const [purgeResult,   setPurgeResult]  = useState(null)
+function SettingsPage() {
+    const [health,        setHealth]        = useState(null)
+    const [system,        setSystem]        = useState(null)
+    const [loading,       setLoading]       = useState(false)
+    const [modeLoading,   setModeLoading]   = useState(null)
+    const [modeMsg,       setModeMsg]       = useState('')
+    const [modeOk,        setModeOk]        = useState(false)
+    const [actionLoading, setActionLoading] = useState(null)
+    const [actionMsg,     setActionMsg]     = useState('')
+    const [actionOk,      setActionOk]      = useState(false)
+    const [purgeLoading,  setPurgeLoading]  = useState(false)
+    const [purgeResult,   setPurgeResult]   = useState(null)
     const mode = useMode()
 
     useEffect(() => { load() }, [])
@@ -104,7 +105,7 @@ export function SettingsPage() {
         setPurgeResult(null)
         const code = await requireTotp(
             'Docker System Purge',
-            '⚠️ This will remove all unused Docker images, containers and volumes. Enter TOTP to confirm.'
+            '⚠️ This will remove all unused Docker images, containers and volumes.'
         )
         if (!code) return
         setPurgeLoading(true)
@@ -144,25 +145,19 @@ export function SettingsPage() {
                 </button>
             </div>
 
-            <div class="grid-2 mb-12">
+            <div class="grid-2 mb-16">
                 <div class="card">
-                    <div class="section-title mb-12">Trading Mode</div>
-                    <div class="flex items-center gap-12" style="margin-bottom:16px;">
-                        <div style="font-size:28px;font-weight:900;letter-spacing:-1px;color:${mode === 'live' ? 'var(--red)' : 'var(--blue)'};">
-                            ${mode === 'live' ? '🔴 LIVE' : '🔵 PAPER'}
-                        </div>
+                    <div class="section-title mb-16">Trading Mode</div>
+                    <div style="font-size:36px;font-weight:900;letter-spacing:-1.5px;color:${mode === 'live' ? 'var(--red)' : 'var(--blue)'};margin-bottom:12px;">
+                        ${mode === 'live' ? '🔴 LIVE' : '🔵 PAPER'}
                     </div>
-                    <div class=${'alert mb-12 ' + (mode === 'live' ? 'alert-error' : 'alert-info')} style="font-size:12px;">
+                    <div class=${'alert mb-16 ' + (mode === 'live' ? 'alert-error' : 'alert-info')} style="font-size:12px;">
                         ${mode === 'live'
                             ? '🔴 LIVE MODE — Real money at risk. All trades execute on Binance.'
                             : '🔵 PAPER MODE — Simulated trading. No real money at risk.'
                         }
                     </div>
-                    ${modeMsg && html`
-                        <div class=${'alert mb-12 ' + (modeOk ? 'alert-success' : 'alert-error')}>
-                            ${modeMsg}
-                        </div>
-                    `}
+                    ${modeMsg && html`<div class=${'alert mb-16 ' + (modeOk ? 'alert-success' : 'alert-error')}>${modeMsg}</div>`}
                     <div class="flex gap-8">
                         <button class="btn btn-success" onClick=${() => switchMode('paper')}
                             disabled=${!!modeLoading || mode === 'paper'}>
@@ -178,18 +173,15 @@ export function SettingsPage() {
                     <div class="divider"></div>
                     <div class="section-title mb-12">Quick Actions</div>
                     <div class="flex gap-8" style="flex-wrap:wrap;">
-                        <button class="btn btn-ghost" onClick=${triggerScan}
-                            disabled=${actionLoading === 'scan'}>
+                        <button class="btn btn-ghost" onClick=${triggerScan} disabled=${actionLoading === 'scan'}>
                             ${actionLoading === 'scan' ? html`<${Spinner}/>` : html`
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <circle cx="11" cy="11" r="8"/>
-                                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                    <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                                 </svg>
                             `}
                             Trigger Scan
                         </button>
-                        <button class="btn btn-ghost" onClick=${syncOutcomes}
-                            disabled=${actionLoading === 'sync'}>
+                        <button class="btn btn-ghost" onClick=${syncOutcomes} disabled=${actionLoading === 'sync'}>
                             ${actionLoading === 'sync' ? html`<${Spinner}/>` : html`
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <polyline points="23 4 23 10 17 10"/>
@@ -200,15 +192,11 @@ export function SettingsPage() {
                             Sync Outcomes
                         </button>
                     </div>
-                    ${actionMsg && html`
-                        <div class=${'alert mt-12 ' + (actionOk ? 'alert-success' : 'alert-error')} style="font-size:12px;">
-                            ${actionMsg}
-                        </div>
-                    `}
+                    ${actionMsg && html`<div class=${'alert mt-12 ' + (actionOk ? 'alert-success' : 'alert-error')} style="font-size:12px;">${actionMsg}</div>`}
                 </div>
 
                 <div class="card">
-                    <div class="section-title mb-12">System Status</div>
+                    <div class="section-title mb-16">System Status</div>
                     ${loading
                         ? html`<${LoadingSkeleton} rows=${5}/>`
                         : html`
@@ -223,13 +211,13 @@ export function SettingsPage() {
                                     { label: 'ML Progress',     val: (health?.ml_status?.closed_trades || 0) + ' / ' + (health?.ml_status?.required || 100) },
                                     { label: 'Pending Signals', val: health?.sync_status?.pending_signals || 0 },
                                     { label: 'Win Rate',        val: (health?.sync_status?.win_rate || 0) + '%', color: Utils.winRateColor(health?.sync_status?.win_rate || 0) },
-                                    { label: 'Last Check',      val: Utils.fmtTime(health?.timestamp), small: true },
+                                    { label: 'Last Check',      val: Utils.fmtTime(health?.timestamp) },
                                 ].map(row => html`
                                     <div key=${row.label} class="stat-row">
                                         <span class="stat-label">${row.label}</span>
-                                        ${typeof row.val === 'object' && row.val !== null && !Array.isArray(row.val)
+                                        ${typeof row.val === 'object' && row.val !== null
                                             ? row.val
-                                            : html`<span class="stat-value" style="font-family:var(--font-mono);${row.color ? 'color:' + row.color + ';' : ''}${row.small ? 'font-size:11px;' : ''}">${row.val}</span>`
+                                            : html`<span class="stat-value" style="${row.color ? 'color:' + row.color : ''}">${row.val}</span>`
                                         }
                                     </div>
                                 `)}
@@ -239,17 +227,17 @@ export function SettingsPage() {
                 </div>
             </div>
 
-            <div class="card mb-12">
-                <div class="section-title mb-12">Server Performance</div>
+            <div class="card mb-16">
+                <div class="section-title mb-16">Server Performance</div>
                 ${loading
                     ? html`<${LoadingSkeleton} rows=${2}/>`
                     : system
                     ? html`
                         <div>
-                            <div class="grid-3 mb-12" style="gap:12px;">
+                            <div class="grid-3 mb-16" style="gap:12px;">
                                 ${[
-                                    { label: 'RAM Usage',  pct: system.ram_pct,  color: Utils.ramColor(system.ram_pct),   detail: system.ram_used_mb + 'MB / ' + system.ram_total_mb + 'MB · Free: ' + system.ram_available + 'MB' },
-                                    { label: 'CPU Usage',  pct: system.cpu_pct,  color: Utils.cpuColor(system.cpu_pct),   detail: 't2.small · 1 vCPU · burstable' },
+                                    { label: 'RAM Usage',  pct: system.ram_pct,  color: Utils.ramColor(system.ram_pct),   detail: system.ram_used_mb + 'MB / ' + system.ram_total_mb + 'MB' },
+                                    { label: 'CPU Usage',  pct: system.cpu_pct,  color: Utils.cpuColor(system.cpu_pct),   detail: '1 vCPU · burstable' },
                                     { label: 'Disk Usage', pct: system.disk_pct, color: Utils.diskColor(system.disk_pct), detail: system.disk_used_gb + 'GB / ' + system.disk_total_gb + 'GB' },
                                 ].map(item => html`
                                     <div key=${item.label} class="level-item">
@@ -268,16 +256,12 @@ export function SettingsPage() {
                             </div>
                             <div class="stat-row">
                                 <span class="stat-label">Uptime</span>
-                                <span style="font-family:var(--font-mono);font-weight:700;color:var(--green);">
-                                    ${Utils.fmtUptime(system.uptime_secs)}
-                                </span>
+                                <span class="stat-value" style="color:var(--green);">${Utils.fmtUptime(system.uptime_secs)}</span>
                             </div>
                             ${system.containers?.length
                                 ? html`
-                                    <div class="mt-12">
-                                        <div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">
-                                            Containers
-                                        </div>
+                                    <div class="mt-16">
+                                        <div style="font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Containers</div>
                                         ${system.containers.map(c => html`
                                             <div key=${c.name} class="container-row">
                                                 <div class="flex items-center gap-8">
@@ -293,11 +277,7 @@ export function SettingsPage() {
                                         `)}
                                     </div>
                                 `
-                                : html`
-                                    <div class="alert alert-warning mt-12" style="font-size:12px;">
-                                        Container stats unavailable — Docker socket may not be mounted
-                                    </div>
-                                `
+                                : html`<div class="alert alert-warning mt-12" style="font-size:12px;">Container stats unavailable — Docker socket may not be mounted</div>`
                             }
                         </div>
                     `
@@ -305,17 +285,14 @@ export function SettingsPage() {
                 }
             </div>
 
-            <div class="card mb-12">
-                <div class="section-title mb-12" style="color:var(--red);">Docker Maintenance</div>
+            <div class="card mb-16">
+                <div class="section-title mb-16" style="color:var(--red);">Docker Maintenance</div>
                 <div class="docker-purge-card">
                     <div class="flex justify-between items-center mb-12">
                         <div>
-                            <div style="font-size:13px;font-weight:700;color:var(--red);">
-                                Purge Unused Docker Images
-                            </div>
+                            <div style="font-size:13px;font-weight:700;color:var(--red);">Purge Unused Docker Images</div>
                             <div style="font-size:12px;color:var(--text-secondary);margin-top:3px;">
-                                Runs <span style="font-family:var(--font-mono);color:var(--text-primary);">docker system prune -f --volumes</span> on the host.
-                                Requires TOTP confirmation.
+                                Runs <span style="font-family:var(--font-mono);">docker system prune -f --volumes</span> on the host.
                             </div>
                         </div>
                         <button class="btn btn-danger" onClick=${dockerPurge} disabled=${purgeLoading}>
@@ -331,19 +308,19 @@ export function SettingsPage() {
                     <div class="grid-3" style="gap:8px;margin-bottom:12px;">
                         <div class="level-item">
                             <div class="level-label">Disk Used</div>
-                            <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:${Utils.diskColor(system?.disk_pct || 0)};">
+                            <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${Utils.diskColor(system?.disk_pct || 0)};">
                                 ${system ? system.disk_used_gb + 'GB' : '--'}
                             </div>
                         </div>
                         <div class="level-item">
                             <div class="level-label">Disk Free</div>
-                            <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:var(--green);">
+                            <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:var(--green);">
                                 ${system ? (system.disk_total_gb - system.disk_used_gb).toFixed(1) + 'GB' : '--'}
                             </div>
                         </div>
                         <div class="level-item">
-                            <div class="level-label">Disk Usage</div>
-                            <div style="font-family:var(--font-mono);font-size:14px;font-weight:700;color:${Utils.diskColor(system?.disk_pct || 0)};">
+                            <div class="level-label">Usage</div>
+                            <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${Utils.diskColor(system?.disk_pct || 0)};">
                                 ${system ? system.disk_pct + '%' : '--'}
                             </div>
                         </div>
@@ -353,21 +330,17 @@ export function SettingsPage() {
                             <div class=${'alert ' + (purgeResult.success ? 'alert-success' : 'alert-error')}>
                                 ${purgeResult.message || purgeResult.reason}
                                 ${purgeResult.freed_mb > 0 && html`
-                                    <span style="font-family:var(--font-mono);font-weight:700;margin-left:8px;">
-                                        Freed: ${purgeResult.freed_mb}MB
-                                    </span>
+                                    <span style="font-family:var(--font-mono);font-weight:700;margin-left:8px;">Freed: ${purgeResult.freed_mb}MB</span>
                                 `}
                             </div>
-                            ${purgeResult.output && html`
-                                <div class="docker-purge-output">${purgeResult.output}</div>
-                            `}
+                            ${purgeResult.output && html`<div class="docker-purge-output">${purgeResult.output}</div>`}
                         </div>
                     `}
                 </div>
             </div>
 
             <div class="card">
-                <div class="section-title mb-12">ML Configuration</div>
+                <div class="section-title mb-16">ML Configuration</div>
                 ${!loading && health && html`
                     <div class="grid-2" style="gap:12px;">
                         <div>
@@ -380,7 +353,7 @@ export function SettingsPage() {
                                     <span class="stat-label">${row.label}</span>
                                     ${typeof row.val === 'object' && row.val !== null
                                         ? row.val
-                                        : html`<span class="stat-value" style="font-family:var(--font-mono);">${row.val}</span>`
+                                        : html`<span class="stat-value">${row.val}</span>`
                                     }
                                 </div>
                             `)}
@@ -397,14 +370,12 @@ export function SettingsPage() {
                             ${[
                                 { label: 'CV AUC',       val: health?.ml_status?.cv_auc || '--', color: 'var(--green)' },
                                 { label: 'Win Rate',     val: (health?.ml_status?.win_rate || 0) + '%', color: Utils.winRateColor(health?.ml_status?.win_rate || 0) },
-                                { label: 'Last Trained', val: health?.ml_status?.trained_at && health.ml_status.trained_at !== '--' ? Utils.fmtTimeAgo(health.ml_status.trained_at) : '--', small: true },
-                                { label: 'Message',      val: Utils.truncate(health?.ml_status?.message || '--', 50), small: true },
+                                { label: 'Last Trained', val: health?.ml_status?.trained_at && health.ml_status.trained_at !== '--' ? Utils.fmtTimeAgo(health.ml_status.trained_at) : '--' },
+                                { label: 'Message',      val: Utils.truncate(health?.ml_status?.message || '--', 50) },
                             ].map(row => html`
                                 <div key=${row.label} class="stat-row">
                                     <span class="stat-label">${row.label}</span>
-                                    <span class="stat-value" style="font-family:var(--font-mono);${row.color ? 'color:' + row.color + ';' : ''}${row.small ? 'font-size:11px;' : ''}">
-                                        ${row.val}
-                                    </span>
+                                    <span class="stat-value" style="${row.color ? 'color:' + row.color : ''}">${row.val}</span>
                                 </div>
                             `)}
                         </div>

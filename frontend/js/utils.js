@@ -14,11 +14,12 @@ const Utils = {
         return '$' + n.toFixed(8)
     },
 
-    fmtPnl(n) {
+    fmtPnl(n, pos) {
         if (n == null) return '--'
         n = parseFloat(n)
         if (isNaN(n)) return '--'
-        const sign = n >= 0 ? '+' : '-'
+        const positive = pos != null ? pos : n >= 0
+        const sign     = positive ? '+' : '-'
         return sign + '$' + Math.abs(n).toFixed(4)
     },
 
@@ -30,42 +31,31 @@ const Utils = {
         return sign + n.toFixed(2) + '%'
     },
 
-    fmtScore(n) {
-        if (n == null) return '--'
-        return Math.round(parseFloat(n)) + '/100'
-    },
-
     fmtDuration(openedAt) {
         if (!openedAt) return '--'
         try {
-            const opened = new Date(openedAt)
-            const diff   = Date.now() - opened.getTime()
-            const mins   = Math.floor(diff / 60000)
-            const hrs    = Math.floor(mins / 60)
-            const days   = Math.floor(hrs / 24)
-            if (days > 0)  return `${days}d ${hrs % 24}h`
-            if (hrs > 0)   return `${hrs}h ${mins % 60}m`
+            const diff  = Date.now() - new Date(openedAt).getTime()
+            const mins  = Math.floor(diff / 60000)
+            const hrs   = Math.floor(mins / 60)
+            const days  = Math.floor(hrs / 24)
+            if (days > 0) return `${days}d ${hrs % 24}h`
+            if (hrs > 0)  return `${hrs}h ${mins % 60}m`
             return `${mins}m`
-        } catch (e) {
-            return '--'
-        }
+        } catch (e) { return '--' }
     },
 
     fmtTime(ts) {
         if (!ts) return '--'
         try {
-            const d = new Date(ts)
-            return d.toLocaleString('en-IN', {
-                timeZone:  'Asia/Kolkata',
-                day:       '2-digit',
-                month:     'short',
-                hour:      '2-digit',
-                minute:    '2-digit',
-                hour12:    true
+            return new Date(ts).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day:      '2-digit',
+                month:    'short',
+                hour:     '2-digit',
+                minute:   '2-digit',
+                hour12:   true
             }) + ' IST'
-        } catch (e) {
-            return '--'
-        }
+        } catch (e) { return '--' }
     },
 
     fmtTimeAgo(ts) {
@@ -75,13 +65,11 @@ const Utils = {
             const mins = Math.floor(diff / 60000)
             const hrs  = Math.floor(mins / 60)
             const days = Math.floor(hrs / 24)
-            if (days > 0)  return `${days}d ago`
-            if (hrs > 0)   return `${hrs}h ago`
-            if (mins > 0)  return `${mins}m ago`
+            if (days > 0) return `${days}d ago`
+            if (hrs > 0)  return `${hrs}h ago`
+            if (mins > 0) return `${mins}m ago`
             return 'Just now'
-        } catch (e) {
-            return '--'
-        }
+        } catch (e) { return '--' }
     },
 
     fmtUptime(secs) {
@@ -94,34 +82,27 @@ const Utils = {
         return `${m}m`
     },
 
-    pnlColor(n) {
-        if (n == null) return 'var(--text-muted)'
-        try {
-            return parseFloat(n) >= 0 ? 'var(--green)' : 'var(--red)'
-        } catch (e) {
-            return 'var(--text-muted)'
-        }
+    pnlColor(pos) {
+        if (pos == null) return 'var(--text-muted)'
+        const positive = typeof pos === 'boolean' ? pos : parseFloat(pos) >= 0
+        return positive ? 'var(--green)' : 'var(--red)'
     },
 
     changeColor(n) {
         if (n == null) return 'var(--text-muted)'
         try {
-            const v = typeof n === 'string'
-                ? parseFloat(n.replace('%','').replace('+',''))
-                : parseFloat(n)
+            const v = parseFloat(String(n).replace('%','').replace('+',''))
             if (isNaN(v)) return 'var(--text-muted)'
             return v >= 0 ? 'var(--green)' : 'var(--red)'
-        } catch (e) {
-            return 'var(--text-muted)'
-        }
+        } catch (e) { return 'var(--text-muted)' }
     },
 
     gradeColor(grade) {
         const map = {
-            'A+': 'var(--purple)',
+            'A+': 'var(--gold)',
             'A':  'var(--blue)',
             'B':  'var(--orange)',
-            'C':  'var(--yellow)',
+            'C':  'var(--text-secondary)',
             'F':  'var(--text-muted)',
         }
         return map[grade] || 'var(--text-muted)'
@@ -158,39 +139,21 @@ const Utils = {
         return 'badge ' + (map[outcome] || 'badge-f')
     },
 
-    healthBadgeClass(state) {
-        const map = {
-            'HEALTHY':     'badge-healthy',
-            'WARNING':     'badge-warning',
-            'INVALIDATED': 'badge-invalidated',
-        }
-        return 'badge ' + (map[state] || 'badge-f')
-    },
-
-    healthBarClass(state) {
+    healthClass(state) {
         const map = {
             'HEALTHY':     'healthy',
             'WARNING':     'warning',
             'INVALIDATED': 'invalidated',
         }
-        return 'health-bar ' + (map[state] || '')
+        return map[state] || 'unknown'
     },
 
-    healthEmoji(state) {
-        const map = {
-            'HEALTHY':     '✅',
-            'WARNING':     '⚠️',
-            'INVALIDATED': '🚨',
-        }
-        return map[state] || '⏳'
-    },
-
-    scoreBarColor(score) {
+    scoreColor(score) {
         score = parseFloat(score) || 0
-        if (score >= 85) return 'var(--purple)'
+        if (score >= 85) return 'var(--gold)'
         if (score >= 68) return 'var(--blue)'
         if (score >= 52) return 'var(--orange)'
-        if (score >= 38) return 'var(--yellow)'
+        if (score >= 38) return 'var(--text-secondary)'
         return 'var(--text-muted)'
     },
 
@@ -231,26 +194,6 @@ const Utils = {
         return 'var(--red)'
     },
 
-    dirEmoji(dir) {
-        const map = {
-            'LONG':  '📈',
-            'SHORT': '📉',
-            'WATCH': '👁',
-        }
-        return map[dir] || '—'
-    },
-
-    gradeEmoji(grade) {
-        const map = {
-            'A+': '🏆',
-            'A':  '✅',
-            'B':  '👀',
-            'C':  '⏳',
-            'F':  '🚫',
-        }
-        return map[grade] || '—'
-    },
-
     truncate(str, len = 40) {
         if (!str) return '--'
         return str.length > len ? str.slice(0, len) + '...' : str
@@ -261,59 +204,6 @@ const Utils = {
         if (Array.isArray(val)) return val.length === 0
         if (typeof val === 'object') return Object.keys(val).length === 0
         return false
-    },
-
-    progressBar(pct, color) {
-        pct   = Math.min(100, Math.max(0, parseFloat(pct) || 0))
-        color = color || 'var(--blue)'
-        return `
-            <div class="progress-bar">
-                <div class="progress-fill" style="width:${pct}%;background:${color};"></div>
-            </div>
-        `
-    },
-
-    scoreBar(score) {
-        score = parseFloat(score) || 0
-        const color = Utils.scoreBarColor(score)
-        return `
-            <div class="score-bar">
-                <span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:${color};min-width:32px;">${Math.round(score)}</span>
-                <div class="score-bar-track">
-                    <div class="score-bar-fill" style="width:${score}%;background:${color};"></div>
-                </div>
-            </div>
-        `
-    },
-
-    emptyState(message = 'No data available') {
-        return `
-            <div class="empty-state">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="12" y1="8" x2="12" y2="12"/>
-                    <line x1="12" y1="16" x2="12.01" y2="16"/>
-                </svg>
-                <span class="empty-state-text">${message}</span>
-            </div>
-        `
-    },
-
-    loadingState() {
-        return `
-            <div class="empty-state">
-                <div class="spinner"></div>
-                <span class="empty-state-text" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">Loading...</span>
-            </div>
-        `
-    },
-
-    safeGet(obj, path, fallback = '--') {
-        try {
-            return path.split('.').reduce((o, k) => o?.[k], obj) ?? fallback
-        } catch (e) {
-            return fallback
-        }
     },
 }
 

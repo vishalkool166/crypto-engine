@@ -1,9 +1,10 @@
-import { h, Fragment } from '/js/preact.min.js'
-import { useState, useEffect, useCallback } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
-import { showToast } from '/js/store.js'
+const { h, Fragment } = preact
+const { useState, useEffect } = preactHooks
+const html = htm.bind(h)
+const { showToast } = Store
+const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
-export function SignalsPage() {
+function SignalsPage() {
     const [signals,     setSignals]     = useState([])
     const [filtered,    setFiltered]    = useState([])
     const [loading,     setLoading]     = useState(false)
@@ -28,7 +29,7 @@ export function SignalsPage() {
             if (f.grade)   q.set('grade',   f.grade)
             if (f.coin)    q.set('coin',     f.coin.toUpperCase().trim())
             if (f.outcome) q.set('outcome',  f.outcome)
-            const res = await fetch('/api/signals?' + q.toString(), { credentials: 'include' })
+            const res  = await fetch('/api/signals?' + q.toString(), { credentials: 'include' })
             if (res.status === 401) { window.location.href = '/login.html'; return }
             const data = await res.json()
             const sigs = data || []
@@ -51,11 +52,8 @@ export function SignalsPage() {
     function handleFilterChange(key, val) {
         const next = { ...filters, [key]: val }
         setFilters(next)
-        if (key === 'direction') {
-            applyClientFilters(signals, next)
-        } else {
-            load(next, true)
-        }
+        if (key === 'direction') applyClientFilters(signals, next)
+        else load(next, true)
     }
 
     function clearFilters() {
@@ -69,12 +67,11 @@ export function SignalsPage() {
             <div class="page-header flex justify-between items-center">
                 <div>
                     <div class="page-title">Signals</div>
-                    <div class="page-subtitle" aria-live="polite">${filtered.length} signals</div>
+                    <div class="page-subtitle">${filtered.length} signals</div>
                 </div>
-                <button class="btn btn-ghost btn-sm" onClick=${() => load(filters, true)}
-                    disabled=${loading} aria-label="Refresh signals">
+                <button class="btn btn-ghost btn-sm" onClick=${() => load(filters, true)} disabled=${loading}>
                     ${loading ? html`<${Spinner}/>` : html`
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="23 4 23 10 17 10"/>
                             <polyline points="1 20 1 14 7 14"/>
                             <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
@@ -84,10 +81,9 @@ export function SignalsPage() {
                 </button>
             </div>
 
-            <div class="card mb-12">
-                <div class="filter-bar" role="search" aria-label="Signal filters">
+            <div class="card mb-16">
+                <div class="filter-bar">
                     <select class="select" style="width:120px;" value=${filters.grade}
-                        aria-label="Filter by grade"
                         onChange=${e => handleFilterChange('grade', e.target.value)}>
                         <option value="">All Grades</option>
                         <option value="A+">A+</option>
@@ -97,7 +93,6 @@ export function SignalsPage() {
                         <option value="F">F</option>
                     </select>
                     <select class="select" style="width:130px;" value=${filters.outcome}
-                        aria-label="Filter by outcome"
                         onChange=${e => handleFilterChange('outcome', e.target.value)}>
                         <option value="">All Outcomes</option>
                         <option value="win">Win</option>
@@ -105,7 +100,6 @@ export function SignalsPage() {
                         <option value="pending">Pending</option>
                     </select>
                     <select class="select" style="width:120px;" value=${filters.direction}
-                        aria-label="Filter by direction"
                         onChange=${e => handleFilterChange('direction', e.target.value)}>
                         <option value="">All Directions</option>
                         <option value="LONG">Long</option>
@@ -113,22 +107,19 @@ export function SignalsPage() {
                     </select>
                     <input class="input" style="width:110px;" type="text"
                         placeholder="Coin..."
-                        aria-label="Filter by coin symbol"
                         value=${filters.coin}
                         onInput=${e => setFilters(f => ({ ...f, coin: e.target.value }))}
                         onKeyDown=${e => e.key === 'Enter' && handleFilterChange('coin', e.target.value)}/>
                     <select class="select" style="width:100px;" value=${filters.limit}
-                        aria-label="Number of rows to show"
                         onChange=${e => handleFilterChange('limit', e.target.value)}>
                         <option value="50">50 rows</option>
                         <option value="100">100 rows</option>
                         <option value="200">200 rows</option>
                         <option value="500">500 rows</option>
                     </select>
-                    <button class="btn btn-ghost btn-sm" onClick=${clearFilters}
-                        aria-label="Clear all filters">Clear</button>
+                    <button class="btn btn-ghost btn-sm" onClick=${clearFilters}>Clear</button>
                     <div class="flex-1"></div>
-                    <span style="font-size:11px;color:var(--text-secondary);" aria-live="polite">
+                    <span style="font-size:12px;color:var(--text-secondary);">
                         <span style="font-family:var(--font-mono);color:var(--text-primary);">${filtered.length}</span>
                         ${' '}of${' '}
                         <span style="font-family:var(--font-mono);">${signals.length}</span>
@@ -141,22 +132,12 @@ export function SignalsPage() {
                     ? html`<${LoadingSkeleton} rows=${5}/>`
                     : html`
                         <div class="table-wrap" style="max-height:600px;overflow-y:auto;">
-                            <table aria-label="Trading signals">
+                            <table>
                                 <thead>
                                     <tr>
-                                        <th scope="col">#</th>
-                                        <th scope="col">Time</th>
-                                        <th scope="col">Coin</th>
-                                        <th scope="col">Dir</th>
-                                        <th scope="col">Grade</th>
-                                        <th scope="col">Score</th>
-                                        <th scope="col">Entry</th>
-                                        <th scope="col">SL</th>
-                                        <th scope="col">TP</th>
-                                        <th scope="col">Exit</th>
-                                        <th scope="col">PnL</th>
-                                        <th scope="col">Result</th>
-                                        <th scope="col">Regime</th>
+                                        <th>#</th><th>Time</th><th>Coin</th><th>Dir</th>
+                                        <th>Grade</th><th>Score</th><th>Entry</th><th>SL</th>
+                                        <th>TP</th><th>Exit</th><th>PnL</th><th>Result</th><th>Regime</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -165,12 +146,7 @@ export function SignalsPage() {
                                         : paginated.map(s => html`
                                             <${Fragment} key=${s.id}>
                                                 <tr style="cursor:pointer;background:${expanded === s.id ? 'var(--bg-tertiary)' : ''};"
-                                                    onClick=${() => setExpanded(expanded === s.id ? null : s.id)}
-                                                    role="button"
-                                                    tabindex="0"
-                                                    aria-expanded=${expanded === s.id}
-                                                    aria-label=${'Signal ' + s.id + ' ' + s.coin + ' ' + s.direction}
-                                                    onKeyDown=${e => (e.key === 'Enter' || e.key === ' ') && setExpanded(expanded === s.id ? null : s.id)}>
+                                                    onClick=${() => setExpanded(expanded === s.id ? null : s.id)}>
                                                     <td><span style="font-family:var(--font-mono);color:var(--text-muted);font-size:11px;">${s.id}</span></td>
                                                     <td><span style="font-size:11px;color:var(--text-secondary);">${Utils.fmtTimeAgo(s.timestamp)}</span></td>
                                                     <td><span style="font-family:var(--font-mono);font-weight:700;">${s.coin}</span></td>
@@ -181,15 +157,14 @@ export function SignalsPage() {
                                                     <td><span style="font-family:var(--font-mono);color:var(--red);">${Utils.fmtPrice(s.sl)}</span></td>
                                                     <td><span style="font-family:var(--font-mono);color:var(--green);">${Utils.fmtPrice(s.tp1)}</span></td>
                                                     <td><span style="font-family:var(--font-mono);">${Utils.fmtPrice(s.exit_price)}</span></td>
-                                                    <td><span style="font-family:var(--font-mono);font-weight:700;color:${Utils.pnlColor(s.pnl)};">${s.pnl != null ? Utils.fmtPnl(s.pnl) : '--'}</span></td>
+                                                    <td><span style="font-family:var(--font-mono);font-weight:700;color:${Utils.pnlColor(s.pnl_pos)};">${s.pnl != null ? Utils.fmtPnl(s.pnl, s.pnl_pos) : '--'}</span></td>
                                                     <td><${OutcomeBadge} outcome=${s.outcome}/></td>
                                                     <td><span style="font-size:11px;color:var(--text-muted);">${s.regime || '--'}</span></td>
                                                 </tr>
                                                 ${expanded === s.id && html`
                                                     <tr>
                                                         <td colspan="13" style="padding:0;background:var(--bg-tertiary);">
-                                                            <div style="padding:16px;" role="region"
-                                                                aria-label=${'Details for signal ' + s.id}>
+                                                            <div style="padding:16px;">
                                                                 <div class="grid-4" style="gap:8px;">
                                                                     <div class="level-item">
                                                                         <div class="level-label">Signal ID</div>
@@ -229,9 +204,7 @@ export function SignalsPage() {
                                                                     </div>
                                                                     <div class="level-item">
                                                                         <div class="level-label">Timestamp</div>
-                                                                        <div style="font-size:11px;color:var(--text-secondary);">
-                                                                            ${Utils.fmtTime(s.timestamp)}
-                                                                        </div>
+                                                                        <div style="font-size:11px;color:var(--text-secondary);">${Utils.fmtTime(s.timestamp)}</div>
                                                                     </div>
                                                                 </div>
                                                             </div>
@@ -244,33 +217,18 @@ export function SignalsPage() {
                                 </tbody>
                             </table>
                         </div>
-                        <div class="pagination" role="navigation" aria-label="Signal pagination">
-                            <span class="pagination-info" aria-live="polite">
-                                Page ${currentPage} of ${totalPages} · ${filtered.length} signals
-                            </span>
+                        <div class="pagination">
+                            <span class="pagination-info">Page ${currentPage} of ${totalPages} · ${filtered.length} signals</span>
                             <div class="pagination-controls">
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(1)}
-                                    disabled=${currentPage <= 1}
-                                    aria-label="First page">First</button>
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(p => p - 1)}
-                                    disabled=${currentPage <= 1}
-                                    aria-label="Previous page">Prev</button>
-                                <span style="padding:4px 10px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">
-                                    ${currentPage} / ${totalPages}
-                                </span>
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(p => p + 1)}
-                                    disabled=${currentPage >= totalPages}
-                                    aria-label="Next page">Next</button>
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setCurrentPage(totalPages)}
-                                    disabled=${currentPage >= totalPages}
-                                    aria-label="Last page">Last</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(1)} disabled=${currentPage <= 1}>First</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(p => p - 1)} disabled=${currentPage <= 1}>Prev</button>
+                                <span style="padding:4px 10px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${currentPage} / ${totalPages}</span>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(p => p + 1)} disabled=${currentPage >= totalPages}>Next</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setCurrentPage(totalPages)} disabled=${currentPage >= totalPages}>Last</button>
                             </div>
                         </div>
-                    `}
+                    `
+                }
             </div>
         </div>
     `

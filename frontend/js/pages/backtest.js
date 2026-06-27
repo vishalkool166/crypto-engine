@@ -1,9 +1,10 @@
-import { h } from '/js/preact.min.js'
-import { useState, useEffect } from '/js/preact-hooks.min.js'
-import { html, GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } from '/js/components.js'
-import { showToast } from '/js/store.js'
+const { h } = preact
+const { useState, useEffect } = preactHooks
+const html = htm.bind(h)
+const { showToast } = Store
+const { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton } = Components
 
-export function BacktestPage() {
+function BacktestPage() {
     const [coins,          setCoins]          = useState([])
     const [selectedCoin,   setSelectedCoin]   = useState('')
     const [result,         setResult]         = useState(null)
@@ -58,10 +59,7 @@ export function BacktestPage() {
         try {
             const data = await API.backtestHistory()
             setHistory(data || [])
-        } catch(e) {
-        } finally {
-            setHistoryLoading(false)
-        }
+        } catch(e) {} finally { setHistoryLoading(false) }
     }
 
     async function runBacktest() {
@@ -79,9 +77,7 @@ export function BacktestPage() {
         } catch(e) {
             setError(e.message || 'Backtest failed')
             showToast('Backtest failed: ' + e.message, 'error')
-        } finally {
-            setRunning(false)
-        }
+        } finally { setRunning(false) }
     }
 
     return html`
@@ -91,7 +87,7 @@ export function BacktestPage() {
                 <div class="page-subtitle">Historical signal simulation on stored candle data</div>
             </div>
 
-            <div class="card mb-12">
+            <div class="card mb-16">
                 <div class="section-title mb-12">Run Backtest</div>
                 <div class="flex gap-8" style="flex-wrap:wrap;align-items:center;">
                     <select class="select" style="width:160px;" value=${selectedCoin}
@@ -108,9 +104,8 @@ export function BacktestPage() {
                         `}
                         ${running ? 'Running... (up to 2 min)' : 'Run Backtest'}
                     </button>
-                    <button class="btn btn-ghost btn-sm" onClick=${loadHistory}
-                        disabled=${historyLoading}>
-                        ${historyLoading ? html`<${Spinner}/>` : 'History'}
+                    <button class="btn btn-ghost btn-sm" onClick=${loadHistory} disabled=${historyLoading}>
+                        ${historyLoading ? html`<${Spinner}/>` : 'Refresh History'}
                     </button>
                 </div>
                 ${running && html`
@@ -125,34 +120,34 @@ export function BacktestPage() {
 
             ${result && html`
                 <div>
-                    <div class="grid-4 mb-12">
-                        <div class="stat-card stat-card-blue">
-                            <div class="card-title">Win Rate</div>
-                            <div class="card-value" style="color:${Utils.winRateColor(result.win_rate)};">
+                    <div class="grid-4 mb-16">
+                        <div class="stat-card">
+                            <div class="stat-card-label">Win Rate</div>
+                            <div class="stat-card-value" style="color:${Utils.winRateColor(result.win_rate)};">
                                 ${result.win_rate}%
                             </div>
-                            <div class="card-sub">${result.wins}W · ${result.losses}L · ${result.total_trades} trades</div>
+                            <div class="stat-card-sub">${result.wins}W · ${result.losses}L · ${result.total_trades} trades</div>
                         </div>
-                        <div class=${'stat-card ' + (result.total_pnl >= 0 ? 'stat-card-green' : 'stat-card-red')}>
-                            <div class="card-title">Total PnL</div>
-                            <div class="card-value" style="color:${Utils.pnlColor(result.total_pnl)};">
-                                ${Utils.fmtPnl(result.total_pnl)}
+                        <div class="stat-card">
+                            <div class="stat-card-label">Total PnL</div>
+                            <div class="stat-card-value" style="color:${Utils.pnlColor(result.total_pnl >= 0)};">
+                                ${Utils.fmtPnl(result.total_pnl, result.total_pnl >= 0)}
                             </div>
-                            <div class="card-sub">Return: ${result.total_return}%</div>
+                            <div class="stat-card-sub">Return: ${result.total_return}%</div>
                         </div>
-                        <div class="stat-card stat-card-red">
-                            <div class="card-title">Max Drawdown</div>
-                            <div class="card-value" style="color:var(--red);">${result.max_drawdown}%</div>
-                            <div class="card-sub">Profit Factor: ${result.profit_factor}</div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Max Drawdown</div>
+                            <div class="stat-card-value" style="color:var(--red);">${result.max_drawdown}%</div>
+                            <div class="stat-card-sub">Profit Factor: ${result.profit_factor}</div>
                         </div>
-                        <div class="stat-card stat-card-purple">
-                            <div class="card-title">Signals</div>
-                            <div class="card-value" style="color:var(--purple);">${result.total_signals}</div>
-                            <div class="card-sub">A+: ${result.aplus_signals} · A: ${result.a_signals}</div>
+                        <div class="stat-card">
+                            <div class="stat-card-label">Signals</div>
+                            <div class="stat-card-value" style="color:var(--purple);">${result.total_signals}</div>
+                            <div class="stat-card-sub">A+: ${result.aplus_signals} · A: ${result.a_signals}</div>
                         </div>
                     </div>
 
-                    <div class="grid-2 mb-12">
+                    <div class="grid-2 mb-16">
                         <div class="card">
                             <div class="section-title mb-12">Equity Curve</div>
                             <div style="position:relative;height:220px;">
@@ -175,8 +170,8 @@ export function BacktestPage() {
                                             <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${Utils.winRateColor(data.win_rate)};">
                                                 ${data.win_rate}%
                                             </span>
-                                            <span style="font-family:var(--font-mono);font-size:11px;color:${Utils.pnlColor(data.pnl)};">
-                                                ${Utils.fmtPnl(data.pnl)}
+                                            <span style="font-family:var(--font-mono);font-size:11px;color:${Utils.pnlColor(data.pnl >= 0)};">
+                                                ${Utils.fmtPnl(data.pnl, data.pnl >= 0)}
                                             </span>
                                         </div>
                                     </div>
@@ -188,25 +183,23 @@ export function BacktestPage() {
                             <div class="divider"></div>
                             ${[
                                 { label: 'Period',            val: result.period_start + ' → ' + result.period_end },
-                                { label: 'Best Trade',        val: Utils.fmtPnl(result.best_trade),  color: 'var(--green)' },
-                                { label: 'Worst Trade',       val: Utils.fmtPnl(result.worst_trade), color: 'var(--red)' },
-                                { label: 'Avg Trade',         val: Utils.fmtPnl(result.avg_trade),   color: Utils.pnlColor(result.avg_trade) },
-                                { label: 'Expectancy',        val: Utils.fmtPnl(result.expectancy),  color: Utils.pnlColor(result.expectancy) },
+                                { label: 'Best Trade',        val: Utils.fmtPnl(result.best_trade, true),  color: 'var(--green)' },
+                                { label: 'Worst Trade',       val: Utils.fmtPnl(result.worst_trade, false), color: 'var(--red)' },
+                                { label: 'Avg Trade',         val: Utils.fmtPnl(result.avg_trade, result.avg_trade >= 0), color: Utils.pnlColor(result.avg_trade >= 0) },
+                                { label: 'Expectancy',        val: Utils.fmtPnl(result.expectancy, result.expectancy >= 0), color: Utils.pnlColor(result.expectancy >= 0) },
                                 { label: 'Max Consec Wins',   val: result.max_consec_wins   || '--', color: 'var(--green)' },
-                                { label: 'Max Consec Losses', val: result.max_consec_losses || '--', color: 'var(--red)' },
+                                { label: 'Max Consec Losses', val: result.max_consec_losses || '--', color: 'var(--red)'   },
                                 { label: 'TP1 Hit Rate',      val: result.phase_breakdown?.tp1_hit_rate != null ? result.phase_breakdown.tp1_hit_rate + '%' : '--' },
                             ].map(row => html`
                                 <div key=${row.label} class="stat-row">
                                     <span class="stat-label">${row.label}</span>
-                                    <span class="stat-value" style="font-family:var(--font-mono);${row.color ? 'color:' + row.color : ''}">
-                                        ${row.val}
-                                    </span>
+                                    <span class="stat-value" style="${row.color ? 'color:' + row.color : ''}">${row.val}</span>
                                 </div>
                             `)}
                         </div>
                     </div>
 
-                    <div class="card mb-12">
+                    <div class="card mb-16">
                         <div class="section-header">
                             <div class="section-title">Trade Log</div>
                             <span class="tag">${result.trades?.length} trades</span>
@@ -231,7 +224,7 @@ export function BacktestPage() {
                                                 <td><${ScoreBar} score=${t.score}/></td>
                                                 <td><span style="font-family:var(--font-mono);">${Utils.fmtPrice(t.entry)}</span></td>
                                                 <td><span style="font-family:var(--font-mono);">${Utils.fmtPrice(t.exit_price)}</span></td>
-                                                <td><span style="font-family:var(--font-mono);font-weight:700;color:${Utils.pnlColor(t.pnl)};">${Utils.fmtPnl(t.pnl)}</span></td>
+                                                <td><span style="font-family:var(--font-mono);font-weight:700;color:${Utils.pnlColor(t.pnl >= 0)};">${Utils.fmtPnl(t.pnl, t.pnl >= 0)}</span></td>
                                                 <td><${OutcomeBadge} outcome=${t.outcome}/></td>
                                                 <td><span style="font-size:11px;color:var(--text-muted);">${t.reason || '--'}</span></td>
                                                 <td><span style="font-family:var(--font-mono);font-size:11px;">${t.candles || '--'}</span></td>
@@ -244,12 +237,8 @@ export function BacktestPage() {
                         <div class="pagination">
                             <span class="pagination-info">Page ${tradePage} of ${totalTradePages}</span>
                             <div class="pagination-controls">
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setTradePage(p => p - 1)}
-                                    disabled=${tradePage <= 1}>Prev</button>
-                                <button class="btn btn-ghost btn-sm"
-                                    onClick=${() => setTradePage(p => p + 1)}
-                                    disabled=${tradePage >= totalTradePages}>Next</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setTradePage(p => p - 1)} disabled=${tradePage <= 1}>Prev</button>
+                                <button class="btn btn-ghost btn-sm" onClick=${() => setTradePage(p => p + 1)} disabled=${tradePage >= totalTradePages}>Next</button>
                             </div>
                         </div>
                     </div>
@@ -275,7 +264,7 @@ export function BacktestPage() {
                                         <td><span style="font-size:11px;color:var(--text-secondary);">${h.period_start} → ${h.period_end}</span></td>
                                         <td><span style="font-family:var(--font-mono);">${h.total_trades}</span></td>
                                         <td><span style="font-family:var(--font-mono);color:${Utils.winRateColor(h.win_rate)};">${h.win_rate}%</span></td>
-                                        <td><span style="font-family:var(--font-mono);color:${Utils.pnlColor(h.total_pnl)};">${Utils.fmtPnl(h.total_pnl)}</span></td>
+                                        <td><span style="font-family:var(--font-mono);color:${Utils.pnlColor(h.total_pnl >= 0)};">${Utils.fmtPnl(h.total_pnl, h.total_pnl >= 0)}</span></td>
                                         <td><span style="font-family:var(--font-mono);color:var(--red);">${h.max_drawdown}%</span></td>
                                         <td><span style="font-size:11px;color:var(--text-muted);">${Utils.truncate(h.notes, 50)}</span></td>
                                     </tr>
