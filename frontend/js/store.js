@@ -79,9 +79,17 @@ function _applyTicker(data) {
     }
 
     if (data.status && Array.isArray(data.status)) {
-        _store.ftTrades = data.status
+        _store.ftTrades = data.status.map(newTrade => {
+            const existing = _store.ftTrades.find(t => t.trade_id === newTrade.trade_id)
+            return existing ? {
+                ...newTrade,
+                sl_signal: existing.sl_signal || newTrade.sl_signal,
+                tp1:       existing.tp1       || newTrade.tp1,
+                health:    existing.health    || newTrade.health,
+            } : newTrade
+        })
         emit('ft_update', {
-            status:   data.status,
+            status:   _store.ftTrades,
             profit:   _store.ftProfit,
             balance:  _store.ftBalance,
             botState: _store.ftBotState,
