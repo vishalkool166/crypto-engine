@@ -976,3 +976,147 @@
     color: var(--label-2);
     font-variant-numeric: tabular-nums;
 }
+
+[data-theme="light"] .card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 4px 24px rgba(0, 0, 0, 0.08),
+        0 1px 4px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .stat-card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .signal-card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .signal-card-aplus {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-aplus-border),
+        0 4px 16px rgba(0, 0, 0, 0.08),
+        0 0 32px var(--grade-aplus-glow);
+}
+
+[data-theme="light"] .signal-card-a {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-a-border),
+        0 4px 16px rgba(0, 0, 0, 0.08),
+        0 0 32px var(--grade-a-glow);
+}
+
+[data-theme="light"] .signal-card-b {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-b-border),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .signal-hero-card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .signal-hero-card-aplus {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-aplus-border),
+        0 4px 24px rgba(0, 0, 0, 0.08),
+        0 0 60px rgba(255, 214, 10, 0.06);
+}
+
+[data-theme="light"] .signal-hero-card-a {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-a-border),
+        0 4px 24px rgba(0, 0, 0, 0.08),
+        0 0 60px rgba(0, 122, 255, 0.06);
+}
+
+[data-theme="light"] .signal-hero-card-b {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-b-border),
+        0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trade-card {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trade-card-healthy {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--profit-border),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trade-card-warning {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--warning-border),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .trade-card-invalidated {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--loss-border),
+        0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coin-tile {
+    background: rgba(255, 255, 255, 0.72);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+    box-shadow:
+        var(--inset-highlight),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .coin-tile-aplus {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-aplus-border),
+        0 2px 8px rgba(0, 0, 0, 0.08),
+        0 0 24px var(--grade-aplus-glow);
+}
+
+[data-theme="light"] .coin-tile-a {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-a-border),
+        0 2px 8px rgba(0, 0, 0, 0.08),
+        0 0 24px var(--grade-a-glow);
+}
+
+[data-theme="light"] .coin-tile-b {
+    box-shadow:
+        var(--inset-highlight),
+        0 0 0 0.5px var(--grade-b-border),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .signal-hero-level {
+    background: rgba(0, 0, 0, 0.04);
+    border: 0.5px solid rgba(0, 0, 0, 0.06);
+}
