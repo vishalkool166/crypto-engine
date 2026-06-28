@@ -1,773 +1,691 @@
-const Charts = {
-    _instances: {},
+var { h, Fragment } = preact
+var { useState, useEffect, useRef, useCallback } = preactHooks
+var html = window.html
+var {
+    confirmTotp, closeTotp, useTotp, useToast, useWsState,
+    useMode, useNextScan, useTicker, usePage, logout,
+    navigate, requireTotp, toggleTheme, useTheme,
+    useRegime, useConfidence, hideToast
+} = Store
 
-    _dark: {
-        grid:    'rgba(255,255,255,0.04)',
-        border:  'rgba(255,255,255,0.06)',
-        text:    'rgba(255,255,255,0.35)',
-        tooltip: {
-            bg:     '#1c1c24',
-            title:  'rgba(255,255,255,0.35)',
-            body:   '#ffffff',
-            border: 'rgba(255,255,255,0.12)',
-        },
-    },
-
-    _light: {
-        grid:    'rgba(0,0,0,0.04)',
-        border:  'rgba(0,0,0,0.06)',
-        text:    'rgba(0,0,0,0.35)',
-        tooltip: {
-            bg:     '#ffffff',
-            title:  'rgba(0,0,0,0.35)',
-            body:   '#000000',
-            border: 'rgba(0,0,0,0.12)',
-        },
-    },
-
-    _theme() {
-        const t = document.documentElement.getAttribute('data-theme')
-        return t === 'light' ? this._light : this._dark
-    },
-
-    _font: {
-        family: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
-        size:   11,
-    },
-
-    _baseOptions(height = 200) {
-        const th = this._theme()
-        return {
-            responsive:          true,
-            maintainAspectRatio: false,
-            animation:           { duration: 350, easing: 'easeOutQuart' },
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: th.tooltip.bg,
-                    titleColor:      th.tooltip.title,
-                    bodyColor:       th.tooltip.body,
-                    borderColor:     th.tooltip.border,
-                    borderWidth:     1,
-                    padding:         12,
-                    cornerRadius:    8,
-                    displayColors:   false,
-                    titleFont:       { ...this._font, size: 11 },
-                    bodyFont:        { ...this._font, size: 13, weight: '700' },
-                }
-            },
-            scales: {
-                x: {
-                    ticks: {
-                        color:         th.text,
-                        font:          this._font,
-                        maxTicksLimit: 8,
-                        maxRotation:   0,
-                    },
-                    grid:   { display: false },
-                    border: { display: false }
-                },
-                y: {
-                    ticks: {
-                        color: th.text,
-                        font:  this._font,
-                    },
-                    grid: {
-                        color:     th.grid,
-                        lineWidth: 1,
-                    },
-                    border: { display: false }
-                }
-            }
-        }
-    },
-
-    destroy(id) {
-        if (this._instances[id]) {
-            try { this._instances[id].destroy() } catch(e) {}
-            delete this._instances[id]
-        }
-    },
-
-    destroyAll() {
-        Object.keys(this._instances).forEach(id => this.destroy(id))
-    },
-
-    _getOrCreate(elId, config) {
-        const el = document.getElementById(elId)
-        if (!el || typeof el.getContext !== 'function') return null
-
-        if (this._instances[elId]) {
-            const chart = this._instances[elId]
-            try {
-                if (config.data.datasets) {
-                    config.data.datasets.forEach((ds, i) => {
-                        if (chart.data.datasets[i]) {
-                            Object.assign(chart.data.datasets[i], ds)
-                        }
-                    })
-                    chart.data.labels = config.data.labels
-                    chart.update('none')
-                    return chart
-                }
-            } catch(e) {
-                this.destroy(elId)
-            }
-        }
-
-        const ctx   = el.getContext('2d')
-        const chart = new Chart(ctx, config)
-        this._instances[elId] = chart
-        return chart
-    },
-
-    _gradientLine(ctx, color, height = 200) {
-        const gradient = ctx.createLinearGradient(0, 0, 0, height)
-        gradient.addColorStop(0,   color + '28')
-        gradient.addColorStop(0.5, color + '0a')
-        gradient.addColorStop(1,   color + '00')
-        return gradient
-    },
-
-    equity(elId, curve = []) {
-        const el = document.getElementById(elId)
-        if (!el || !curve.length) return
-
-        const labels = curve.map(c => c.date || '')
-        const values = curve.map(c => parseFloat(c.equity || 0))
-        const isUp   = values[values.length - 1] >= values[0]
-        const color  = isUp ? '#00d4aa' : '#ff453a'
-
-        const ctx      = el.getContext('2d')
-        const height   = el.offsetHeight || 200
-        const gradient = this._gradientLine(ctx, color, height)
-        const th       = this._theme()
-
-        return this._getOrCreate(elId, {
-            type: 'line',
-            data: {
-                labels,
-                datasets: [{
-                    data:                 values,
-                    borderColor:          color,
-                    backgroundColor:      gradient,
-                    borderWidth:          2,
-                    pointRadius:          0,
-                    pointHoverRadius:     5,
-                    pointHoverBackgroundColor: color,
-                    pointHoverBorderColor:     th.tooltip.bg,
-                    pointHoverBorderWidth:     2,
-                    fill:                 true,
-                    tension:              0.4,
-                }]
-            },
-            options: {
-                ...this._baseOptions(height),
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    ...this._baseOptions().plugins,
-                    tooltip: {
-                        ...this._baseOptions().plugins.tooltip,
-                        callbacks: {
-                            title: ctx => ctx[0].label,
-                            label: ctx => {
-                                const v = ctx.parsed.y
-                                return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2)
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    ...this._baseOptions().scales,
-                    y: {
-                        ...this._baseOptions().scales.y,
-                        ticks: {
-                            ...this._baseOptions().scales.y.ticks,
-                            callback: v => '$' + v.toFixed(0)
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    equityMini(elId, curve = []) {
-        const el = document.getElementById(elId)
-        if (!el || !curve.length) return
-
-        const values = curve.map(c => parseFloat(c.equity || 0))
-        const isUp   = values[values.length - 1] >= values[0]
-        const color  = isUp ? '#00d4aa' : '#ff453a'
-        const ctx    = el.getContext('2d')
-        const height = el.offsetHeight || 64
-        const grad   = this._gradientLine(ctx, color, height)
-
-        return this._getOrCreate(elId, {
-            type: 'line',
-            data: {
-                labels:   curve.map(c => c.date || ''),
-                datasets: [{
-                    data:             values,
-                    borderColor:      color,
-                    backgroundColor:  grad,
-                    borderWidth:      1.5,
-                    pointRadius:      0,
-                    fill:             true,
-                    tension:          0.4,
-                }]
-            },
-            options: {
-                responsive:          true,
-                maintainAspectRatio: false,
-                animation:           { duration: 300 },
-                plugins: { legend: { display: false }, tooltip: { enabled: false } },
-                scales: {
-                    x: { display: false },
-                    y: { display: false }
-                }
-            }
-        })
-    },
-
-    gradeDonut(elId, data = {}) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const grades  = ['A+', 'A', 'B']
-        const colors  = ['#ffd60a', '#00d4aa', '#ff9f0a']
-        const values  = grades.map(g => data[g]?.total || 0)
-        const hasData = values.some(v => v > 0)
-        if (!hasData) return
-
-        const th = this._theme()
-
-        return this._getOrCreate(elId, {
-            type: 'doughnut',
-            data: {
-                labels:   grades,
-                datasets: [{
-                    data:             values,
-                    backgroundColor:  colors.map(c => c + 'cc'),
-                    borderColor:      colors,
-                    borderWidth:      2,
-                    hoverBorderWidth: 3,
-                    hoverOffset:      4,
-                }]
-            },
-            options: {
-                responsive:          true,
-                maintainAspectRatio: false,
-                animation:           { duration: 400 },
-                cutout:              '70%',
-                plugins: {
-                    legend: {
-                        position: 'bottom',
-                        labels: {
-                            color:           th.text,
-                            font:            this._font,
-                            padding:         16,
-                            usePointStyle:   true,
-                            pointStyleWidth: 8,
-                        }
-                    },
-                    tooltip: {
-                        backgroundColor: th.tooltip.bg,
-                        titleColor:      th.tooltip.title,
-                        bodyColor:       th.tooltip.body,
-                        borderColor:     th.tooltip.border,
-                        borderWidth:     1,
-                        callbacks: {
-                            label: ctx => ` ${ctx.label}: ${ctx.parsed} trades`
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    scoreBar(elId, coins = []) {
-        const el = document.getElementById(elId)
-        if (!el || !coins.length) return
-
-        const top    = coins.slice(0, 12)
-        const labels = top.map(c => c.coin)
-        const scores = top.map(c => parseFloat(c.score) || 0)
-        const colors = top.map(c => {
-            const s = parseFloat(c.score) || 0
-            if (s >= 85) return '#ffd60a'
-            if (s >= 68) return '#00d4aa'
-            if (s >= 52) return '#ff9f0a'
-            return 'rgba(255,255,255,0.18)'
-        })
-
-        return this._getOrCreate(elId, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data:            scores,
-                    backgroundColor: colors.map(c => c + 'cc'),
-                    borderColor:     colors,
-                    borderWidth:     1,
-                    borderRadius:    4,
-                    borderSkipped:   false,
-                }]
-            },
-            options: {
-                ...this._baseOptions(220),
-                plugins: {
-                    ...this._baseOptions().plugins,
-                    tooltip: {
-                        ...this._baseOptions().plugins.tooltip,
-                        callbacks: {
-                            label: ctx => ` ${ctx.parsed.y}/100`
-                        }
-                    }
-                },
-                scales: {
-                    ...this._baseOptions().scales,
-                    y: {
-                        ...this._baseOptions().scales.y,
-                        min: 0,
-                        max: 100,
-                        ticks: {
-                            ...this._baseOptions().scales.y.ticks,
-                            callback: v => v
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    pnlBar(elId, history = []) {
-        const el = document.getElementById(elId)
-        if (!el || !history.length) return
-
-        const recent  = history.slice(-20)
-        const labels  = recent.map(t => t.coin || '--')
-        const values  = recent.map(t => parseFloat(t.pnl || 0))
-        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
-        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
-
-        return this._getOrCreate(elId, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data:            values,
-                    backgroundColor: colors,
-                    borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
-                    borderSkipped:   false,
-                }]
-            },
-            options: {
-                ...this._baseOptions(160),
-                plugins: {
-                    ...this._baseOptions().plugins,
-                    tooltip: {
-                        ...this._baseOptions().plugins.tooltip,
-                        callbacks: {
-                            label: ctx => {
-                                const v = ctx.parsed.y
-                                return (v >= 0 ? ' +$' : ' -$') + Math.abs(v).toFixed(4)
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    ...this._baseOptions().scales,
-                    x: {
-                        ...this._baseOptions().scales.x,
-                        ticks: {
-                            ...this._baseOptions().scales.x.ticks,
-                            maxRotation: 45,
-                        }
-                    },
-                    y: {
-                        ...this._baseOptions().scales.y,
-                        ticks: {
-                            ...this._baseOptions().scales.y.ticks,
-                            callback: v => '$' + v.toFixed(2)
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    dailyPnl(elId, dailyData = []) {
-        const el = document.getElementById(elId)
-        if (!el || !dailyData.length) return
-
-        const labels  = dailyData.map(d => d.date || '')
-        const values  = dailyData.map(d => parseFloat(d.profit_abs || 0))
-        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
-        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
-
-        return this._getOrCreate(elId, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data:            values,
-                    backgroundColor: colors,
-                    borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
-                    borderSkipped:   false,
-                }]
-            },
-            options: {
-                ...this._baseOptions(160),
-                plugins: {
-                    ...this._baseOptions().plugins,
-                    tooltip: {
-                        ...this._baseOptions().plugins.tooltip,
-                        callbacks: {
-                            label: ctx => {
-                                const v = ctx.parsed.y
-                                return (v >= 0 ? ' +$' : ' -$') + Math.abs(v).toFixed(4)
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    ...this._baseOptions().scales,
-                    x: {
-                        ...this._baseOptions().scales.x,
-                        ticks: {
-                            ...this._baseOptions().scales.x.ticks,
-                            maxTicksLimit: 10,
-                            maxRotation:   30,
-                        }
-                    },
-                    y: {
-                        ...this._baseOptions().scales.y,
-                        ticks: {
-                            ...this._baseOptions().scales.y.ticks,
-                            callback: v => '$' + v.toFixed(2)
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    factorBar(elId, factors = []) {
-        const el = document.getElementById(elId)
-        if (!el || !factors.length) return
-
-        const sorted = [...factors]
-            .filter(f => f.edge != null)
-            .sort((a, b) => b.edge - a.edge)
-            .slice(0, 12)
-
-        const labels  = sorted.map(f => f.factor.replace(/_/g, ' '))
-        const values  = sorted.map(f => parseFloat(f.edge) || 0)
-        const colors  = values.map(v =>
-            v > 10  ? '#00d4aacc' :
-            v > 0   ? '#30d158cc' :
-            v > -10 ? '#ff9f0acc' : '#ff453acc'
-        )
-        const borders = values.map(v =>
-            v > 10  ? '#00d4aa' :
-            v > 0   ? '#30d158' :
-            v > -10 ? '#ff9f0a' : '#ff453a'
-        )
-
-        const th = this._theme()
-
-        return this._getOrCreate(elId, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data:            values,
-                    backgroundColor: colors,
-                    borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
-                    borderSkipped:   false,
-                }]
-            },
-            options: {
-                indexAxis:           'y',
-                responsive:          true,
-                maintainAspectRatio: false,
-                animation:           { duration: 400 },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: th.tooltip.bg,
-                        titleColor:      th.tooltip.title,
-                        bodyColor:       th.tooltip.body,
-                        borderColor:     th.tooltip.border,
-                        borderWidth:     1,
-                        callbacks: {
-                            label: ctx => {
-                                const v = ctx.parsed.x
-                                return (v >= 0 ? ' +' : ' ') + v.toFixed(1) + '% edge'
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        ticks: {
-                            color:    th.text,
-                            font:     this._font,
-                            callback: v => v.toFixed(0) + '%'
-                        },
-                        grid: {
-                            color:     th.grid,
-                            lineWidth: 1,
-                        },
-                        border: { display: false }
-                    },
-                    y: {
-                        ticks: {
-                            color: th.text,
-                            font:  { ...this._font, size: 10 },
-                        },
-                        grid:   { display: false },
-                        border: { display: false }
-                    }
-                }
-            }
-        })
-    },
-
-    winRateDonut(elId, wins = 0, losses = 0) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const total = wins + losses
-        if (!total) return
-
-        const th = this._theme()
-
-        return this._getOrCreate(elId, {
-            type: 'doughnut',
-            data: {
-                labels:   ['Wins', 'Losses'],
-                datasets: [{
-                    data:             [wins, losses],
-                    backgroundColor:  ['#30d158cc', '#ff453acc'],
-                    borderColor:      ['#30d158',   '#ff453a'],
-                    borderWidth:      2,
-                    hoverBorderWidth: 3,
-                    hoverOffset:      4,
-                }]
-            },
-            options: {
-                responsive:          true,
-                maintainAspectRatio: false,
-                animation:           { duration: 400 },
-                cutout:              '72%',
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: th.tooltip.bg,
-                        titleColor:      th.tooltip.title,
-                        bodyColor:       th.tooltip.body,
-                        borderColor:     th.tooltip.border,
-                        borderWidth:     1,
-                        callbacks: {
-                            label: ctx => ` ${ctx.label}: ${ctx.parsed} (${((ctx.parsed / total) * 100).toFixed(1)}%)`
-                        }
-                    }
-                }
-            }
-        })
-    },
-
-    mlProgress(elId, pct = 0) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const p     = Math.min(100, parseFloat(pct) || 0)
-        const color = p >= 100 ? '#30d158' : '#00d4aa'
-
-        el.innerHTML = `
-            <div class="ml-progress">
-                <div class="ml-progress-header">
-                    <span class="ml-progress-label">Training Progress</span>
-                    <span class="ml-progress-value">${p.toFixed(0)}%</span>
-                </div>
-                <div class="ml-progress-track">
-                    <div class="ml-progress-fill ${p >= 100 ? 'complete' : ''}"
-                         style="width:${p}%"></div>
-                </div>
-            </div>
-        `
-    },
-
-    serverStat(elId, label, value, pct, colorClass) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        el.innerHTML = `
-            <div class="server-stat">
-                <div class="server-stat-header">
-                    <span class="server-stat-label">${label}</span>
-                    <span class="server-stat-value ${colorClass}">${value}</span>
-                </div>
-                <div class="server-stat-track">
-                    <div class="server-stat-fill ${colorClass}"
-                         style="width:${Math.min(100, pct)}%"></div>
-                </div>
-            </div>
-        `
-    },
-
-    scoreRing(elId, score, grade, size = 64) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const radius      = (size / 2) - 5
-        const circumf     = 2 * Math.PI * radius
-        const pct         = Math.min(100, Math.max(0, parseFloat(score) || 0)) / 100
-        const filled      = circumf * pct
-        const empty       = circumf - filled
-        const strokeWidth = size <= 48 ? 3 : 4
-
-        const colorMap = {
-            'A+': '#ffd60a',
-            'A':  '#00d4aa',
-            'B':  '#ff9f0a',
-            'C':  'rgba(255,255,255,0.35)',
-            'F':  'rgba(255,255,255,0.18)',
-        }
-        const color = colorMap[grade] || 'rgba(255,255,255,0.18)'
-
-        const fontSize = size <= 48 ? 13 : size <= 64 ? 16 : 20
-
-        el.innerHTML = `
-            <div class="score-ring" style="width:${size}px;height:${size}px;">
-                <svg width="${size}" height="${size}" style="transform:rotate(-90deg);">
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="rgba(255,255,255,0.06)"
-                        stroke-width="${strokeWidth}"
-                    />
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="${color}"
-                        stroke-width="${strokeWidth}"
-                        stroke-linecap="round"
-                        stroke-dasharray="${filled} ${empty}"
-                        style="transition:stroke-dasharray 0.5s cubic-bezier(0.16,1,0.3,1);"
-                    />
-                </svg>
-                <div class="score-ring-label">
-                    <span class="score-ring-number" style="font-size:${fontSize}px;color:${color};">${Math.round(score)}</span>
-                </div>
-            </div>
-        `
-    },
-
-    confidenceGauge(elId, value, size = 56) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const radius      = (size / 2) - 5
-        const circumf     = 2 * Math.PI * radius
-        const pct         = Math.min(100, Math.max(0, parseFloat(value) || 0)) / 100
-        const filled      = circumf * pct
-        const empty       = circumf - filled
-        const strokeWidth = 3.5
-
-        const color = value >= 70 ? '#30d158' : value >= 40 ? '#00d4aa' : value >= 20 ? '#ff9f0a' : '#ff453a'
-        const cls   = value >= 70 ? 'high'    : value >= 40 ? 'medium'  : value >= 20 ? 'low'     : 'none'
-
-        el.innerHTML = `
-            <div class="confidence-gauge" style="width:${size}px;height:${size}px;">
-                <svg width="${size}" height="${size}" style="transform:rotate(-90deg);">
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="rgba(255,255,255,0.06)"
-                        stroke-width="${strokeWidth}"
-                        stroke-linecap="round"
-                    />
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="${color}"
-                        stroke-width="${strokeWidth}"
-                        stroke-linecap="round"
-                        stroke-dasharray="${filled} ${empty}"
-                        style="transition:stroke-dasharray 0.5s cubic-bezier(0.16,1,0.3,1);"
-                    />
-                </svg>
-                <div class="confidence-gauge-center">
-                    <span class="confidence-gauge-value" style="font-size:14px;color:${color};">${Math.round(value)}</span>
-                </div>
-            </div>
-        `
-    },
-
-    scanArc(elId, pct, mins, secs, scanning = false) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const size        = 36
-        const radius      = 13
-        const circumf     = 2 * Math.PI * radius
-        const filled      = circumf * Math.min(1, Math.max(0, pct))
-        const empty       = circumf - filled
-        const color       = scanning ? '#ff9f0a' : '#00d4aa'
-        const strokeWidth = 2.5
-
-        el.innerHTML = `
-            <div class="scan-arc-container" style="width:${size}px;height:${size}px;">
-                <svg width="${size}" height="${size}" class="scan-arc-svg">
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="rgba(255,255,255,0.06)"
-                        stroke-width="${strokeWidth}"
-                    />
-                    <circle
-                        cx="${size/2}" cy="${size/2}" r="${radius}"
-                        fill="none"
-                        stroke="${color}"
-                        stroke-width="${strokeWidth}"
-                        stroke-linecap="round"
-                        stroke-dasharray="${filled} ${empty}"
-                        style="transition:stroke-dasharray 1s linear;"
-                    />
-                </svg>
-                <div class="scan-arc-center">
-                    <span class="scan-arc-time" style="font-size:8px;color:${color};">${mins}:${secs}</span>
-                </div>
-            </div>
-        `
-    },
-
-    exists(elId) {
-        return !!this._instances[elId]
-    },
-
-    updateData(elId, newData) {
-        const chart = this._instances[elId]
-        if (!chart) return false
-        try {
-            if (Array.isArray(newData.labels)) chart.data.labels = newData.labels
-            if (Array.isArray(newData.datasets)) {
-                newData.datasets.forEach((ds, i) => {
-                    if (chart.data.datasets[i]) Object.assign(chart.data.datasets[i], ds)
-                })
-            }
-            chart.update('none')
-            return true
-        } catch(e) { return false }
-    },
+function GradeBadge({ grade, size }) {
+    const cls = size === 'lg' ? Utils.gradeBadgeClass(grade) + ' badge-grade-lg'
+              : size === 'xl' ? Utils.gradeBadgeClass(grade) + ' badge-grade-xl'
+              : Utils.gradeBadgeClass(grade)
+    return html`<span class=${cls}>${grade}</span>`
 }
 
-window.Charts = Charts
+function DirBadge({ dir }) {
+    const isLong  = dir === 'LONG'
+    const isShort = dir === 'SHORT'
+    return html`
+        <span class=${Utils.dirBadgeClass(dir)}>
+            ${isLong && html`
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="19" x2="12" y2="5"/>
+                    <polyline points="5 12 12 5 19 12"/>
+                </svg>
+            `}
+            ${isShort && html`
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <polyline points="19 12 12 19 5 12"/>
+                </svg>
+            `}
+            ${dir}
+        </span>
+    `
+}
+
+function OutcomeBadge({ outcome }) {
+    return html`<span class=${Utils.outcomeBadgeClass(outcome)}>${outcome}</span>`
+}
+
+function RegimeBadge({ regime }) {
+    if (!regime) return null
+    return html`<span class=${Utils.regimeBadgeClass(regime)}>${regime}</span>`
+}
+
+function SessionBadge({ session }) {
+    if (!session) return null
+    return html`<span class=${Utils.sessionBadgeClass(session)}>${session}</span>`
+}
+
+function HealthDot({ state, size = 'md' }) {
+    const cls = size === 'sm'
+        ? Utils.healthDotClass(state).replace('status-dot-md', 'status-dot-sm')
+        : Utils.healthDotClass(state)
+    return html`
+        <div class=${cls}>
+            <div class="status-dot-inner"></div>
+        </div>
+    `
+}
+
+function ScoreBar({ score, grade }) {
+    const g   = grade || Utils.scoreGrade(score)
+    const pct = Math.min(100, Math.max(0, parseFloat(score) || 0))
+    return html`
+        <div class="score-bar">
+            <span class=${'score-bar-value ' + g}>${Math.round(pct)}</span>
+            <div class="score-bar-track">
+                <div class=${'score-bar-fill ' + g} style=${'width:' + pct + '%'}></div>
+            </div>
+        </div>
+    `
+}
+
+function ScoreRing({ score, grade, size = 64 }) {
+    const ref = useRef(null)
+    useEffect(() => {
+        if (ref.current) Charts.scoreRing(ref.current.id, score, grade, size)
+    }, [score, grade, size])
+    const id = 'score-ring-' + (grade || 'x') + '-' + Math.round(score || 0)
+    return html`<div id=${id} ref=${ref}></div>`
+}
+
+function ConfidenceGauge({ value, size = 56 }) {
+    const ref = useRef(null)
+    useEffect(() => {
+        if (ref.current) Charts.confidenceGauge(ref.current.id, value, size)
+    }, [value, size])
+    const id = 'conf-gauge-' + Math.round(value || 0)
+    return html`<div id=${id} ref=${ref}></div>`
+}
+
+function ScanArc({ epoch }) {
+    const arc = useNextScan()
+    const ref = useRef(null)
+
+    useEffect(() => {
+        if (ref.current) {
+            Charts.scanArc(
+                ref.current.id,
+                arc.pct,
+                arc.mins,
+                arc.secs,
+                false
+            )
+        }
+    }, [arc])
+
+    return html`<div id="scan-arc-topbar" ref=${ref}></div>`
+}
+
+function Spinner({ size = 'sm', color = 'brand' }) {
+    return html`<span class=${'spinner spinner-' + size + ' spinner-' + color}
+        role="status" aria-label="Loading"></span>`
+}
+
+function EmptyState({ icon, title, desc, action, size = 'md' }) {
+    const cls = size === 'sm' ? 'empty-state empty-state-sm' : 'empty-state'
+    return html`
+        <div class=${cls} role="status">
+            <div class="empty-state-icon">
+                ${icon || html`
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                `}
+            </div>
+            ${title && html`<div class="empty-state-title">${title}</div>`}
+            ${desc  && html`<div class="empty-state-desc">${desc}</div>`}
+            ${action && html`<div class="empty-state-action">${action}</div>`}
+        </div>
+    `
+}
+
+function LoadingSkeleton({ rows = 4, type = 'row' }) {
+    return html`
+        <div class="skeleton-list" role="status" aria-label="Loading" aria-busy="true">
+            ${Array.from({ length: rows }).map((_, i) => html`
+                <div key=${i} class=${'skeleton skeleton-' + type} aria-hidden="true"></div>
+            `)}
+        </div>
+    `
+}
+
+function Alert({ type = 'info', title, children }) {
+    const icons = {
+        error:   html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+        success: html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
+        warning: html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+        info:    html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+    }
+    return html`
+        <div class=${'alert alert-' + type}>
+            ${icons[type]}
+            <div class="alert-content">
+                ${title && html`<div class="alert-title">${title}</div>`}
+                <div class="alert-desc">${children}</div>
+            </div>
+        </div>
+    `
+}
+
+function TradeProgressBar({ trade }) {
+    const entry   = parseFloat(trade.open_rate    || 0)
+    const current = parseFloat(trade.current_rate || 0)
+    const sl      = parseFloat(trade.sl_signal    || trade.stop_loss_abs || 0)
+    const tp      = parseFloat(trade.tp1          || 0)
+    const isShort = trade.is_short
+
+    if (!entry || !current || !sl || !tp) return null
+
+    const totalRange = Math.abs(tp - sl)
+    if (totalRange <= 0) return null
+
+    const slPct      = (Math.abs(sl - sl) / totalRange) * 100
+    const tpPct      = 100
+    const entryPct   = (Math.abs(entry - sl) / totalRange) * 100
+    const currentPct = Utils.clamp((Math.abs(current - sl) / totalRange) * 100, 0, 100)
+
+    const movingTowardTp = isShort ? current < entry : current > entry
+    const dotClass       = movingTowardTp ? 'profit' : 'loss'
+
+    const remaining = movingTowardTp
+        ? Math.max(0, 100 - ((Math.abs(current - entry) / Math.abs(tp - entry)) * 100)).toFixed(1)
+        : Math.max(0, 100 - ((Math.abs(current - entry) / Math.abs(sl - entry)) * 100)).toFixed(1)
+
+    const label = movingTowardTp
+        ? remaining + '% to TP'
+        : remaining + '% to SL'
+
+    return html`
+        <div class="trade-progress">
+            <div class="trade-progress-track">
+                <div class="trade-progress-sl-fill" style=${'width:' + entryPct + '%'}></div>
+                <div class="trade-progress-tp-fill" style=${'width:' + (100 - entryPct) + '%'}></div>
+                <div class="trade-progress-entry"   style=${'left:' + entryPct + '%'}></div>
+                <div class=${'trade-progress-current ' + dotClass}
+                     style=${'left:' + currentPct + '%'}></div>
+            </div>
+            <div class="trade-progress-labels">
+                <span class="trade-progress-label sl">${Utils.fmtPrice(sl)}</span>
+                <span class="trade-progress-label center">${label}</span>
+                <span class="trade-progress-label tp">${Utils.fmtPrice(tp)}</span>
+            </div>
+        </div>
+    `
+}
+
+function HealthRow({ health }) {
+    if (!health) return html`
+        <div class="health-row health-row-unknown">
+            <${HealthDot} state="unknown"/>
+            <span>Checking...</span>
+        </div>
+    `
+    const state   = health.state || 'UNKNOWN'
+    const msg     = health.failures?.[0] || health.warnings?.[0] || ''
+    const cls     = Utils.healthRowClass(state)
+    return html`
+        <div class=${cls}>
+            <${HealthDot} state=${state}/>
+            <span style="font-weight:700;">${state}</span>
+            ${msg && html`<span class="health-row-message">— ${msg}</span>`}
+        </div>
+    `
+}
+
+function ConfluenceBar({ factor }) {
+    const pct     = factor.max > 0 ? (factor.earned / factor.max) * 100 : 0
+    const passing = factor.earned >= factor.max * 0.6
+    const cls     = passing ? 'pass' : factor.earned > 0 ? 'partial' : 'fail'
+    return html`
+        <div class="confluence-bar">
+            <div class="confluence-bar-header">
+                <span class="confluence-bar-label">${(factor.key || '').replace(/_/g, ' ')}</span>
+                <span class=${'confluence-bar-score ' + cls}>${factor.earned}/${factor.max}</span>
+            </div>
+            <div class="confluence-bar-track">
+                <div class=${'confluence-bar-fill ' + cls} style=${'width:' + pct + '%'}></div>
+            </div>
+        </div>
+    `
+}
+
+function InfoRow({ label, value, mono, color, children }) {
+    return html`
+        <div class="info-row">
+            <span class="info-row-label">${label}</span>
+            <span class=${'info-row-value' + (mono ? ' text-mono' : '')}
+                  style=${color ? 'color:' + color : ''}>
+                ${children || value}
+            </span>
+        </div>
+    `
+}
+
+function Panel({ show, onClose, title, subtitle, children, footer, width }) {
+    useEffect(() => {
+        if (!show) return
+        const handler = e => e.key === 'Escape' && onClose()
+        document.addEventListener('keydown', handler)
+        return () => document.removeEventListener('keydown', handler)
+    }, [show])
+
+    useEffect(() => {
+        document.body.style.overflow = show ? 'hidden' : ''
+        return () => { document.body.style.overflow = '' }
+    }, [show])
+
+    if (!show) return null
+
+    return html`
+        <div>
+            <div class="panel-overlay" onClick=${onClose}></div>
+            <div class="panel" style=${width ? 'width:' + width : ''}
+                role="dialog" aria-modal="true" aria-label=${title}>
+                <div class="panel-header">
+                    <div style="min-width:0;">
+                        <div class="panel-title">${title}</div>
+                        ${subtitle && html`<div style="font-size:var(--text-xs);color:var(--text-3);margin-top:3px;">${subtitle}</div>`}
+                    </div>
+                    <button class="panel-close" onClick=${onClose} aria-label="Close panel">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="panel-body">${children}</div>
+                ${footer && html`<div class="panel-footer">${footer}</div>`}
+            </div>
+        </div>
+    `
+}
+
+function Modal({ show, onClose, title, subtitle, icon, iconType, danger, children, footer, size }) {
+    useEffect(() => {
+        if (!show) return
+        const handler = e => e.key === 'Escape' && onClose()
+        document.addEventListener('keydown', handler)
+        return () => document.removeEventListener('keydown', handler)
+    }, [show])
+
+    useEffect(() => {
+        document.body.style.overflow = show ? 'hidden' : ''
+        return () => { document.body.style.overflow = '' }
+    }, [show])
+
+    if (!show) return null
+
+    const modalCls = [
+        'modal',
+        size === 'sm' ? 'modal-sm' : size === 'lg' ? 'modal-lg' : size === 'xl' ? 'modal-xl' : '',
+        danger ? 'modal-danger' : ''
+    ].filter(Boolean).join(' ')
+
+    return html`
+        <div class="modal-overlay"
+            role="dialog" aria-modal="true" aria-label=${title}
+            onClick=${e => e.target === e.currentTarget && onClose()}>
+            <div class=${modalCls}>
+                <div class="modal-header">
+                    <div class="modal-header-left">
+                        ${icon && html`
+                            <div class=${'modal-icon modal-icon-' + (iconType || 'brand')}>
+                                ${icon}
+                            </div>
+                        `}
+                        <div class="modal-title">${title}</div>
+                        ${subtitle && html`<div class="modal-subtitle">${subtitle}</div>`}
+                    </div>
+                    <button class="modal-close" onClick=${onClose} aria-label="Close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body">${children}</div>
+                ${footer && html`
+                    <div>
+                        <div class="modal-divider"></div>
+                        <div class="modal-footer">${footer}</div>
+                    </div>
+                `}
+            </div>
+        </div>
+    `
+}
+
+function TotpModal() {
+    const totp     = useTotp()
+    const [code,   setCode]    = useState('')
+    const [sent,   setSent]    = useState(false)
+    const [sending,setSending] = useState(false)
+    const inputRef = useRef(null)
+
+    useEffect(() => {
+        if (totp.show) {
+            setCode('')
+            setSent(false)
+            setTimeout(() => inputRef.current?.focus(), 80)
+        }
+    }, [totp.show])
+
+    async function sendViaTelegram() {
+        setSending(true)
+        try {
+            const res  = await fetch('/auth/request-totp', { method: 'POST' })
+            const data = await res.json()
+            if (data.success) {
+                setSent(true)
+                setTimeout(() => setSent(false), 35000)
+            }
+        } catch(e) {}
+        setSending(false)
+    }
+
+    if (!totp.show) return null
+
+    return html`
+        <div class="modal-overlay totp-modal"
+            role="dialog" aria-modal="true" aria-label=${totp.title}
+            onClick=${e => e.target === e.currentTarget && closeTotp()}>
+            <div class="modal modal-sm">
+                <div class="modal-header">
+                    <div class="modal-header-left">
+                        <div class="modal-icon modal-icon-brand">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"
+                                viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            </svg>
+                        </div>
+                        <div class="modal-title">${totp.title}</div>
+                        <div class="modal-subtitle">${totp.subtitle}</div>
+                    </div>
+                    <button class="modal-close" onClick=${closeTotp} aria-label="Close">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="modal-body" style="align-items:center;text-align:center;gap:16px;">
+                    <label for="totp-modal-input" class="sr-only">6-digit TOTP code</label>
+                    <input
+                        id="totp-modal-input"
+                        ref=${inputRef}
+                        class=${'totp-input' + (code.length === 6 ? ' totp-input-success' : '')}
+                        type="text"
+                        inputmode="numeric"
+                        maxlength="6"
+                        value=${code}
+                        placeholder="000000"
+                        autocomplete="one-time-code"
+                        aria-required="true"
+                        onInput=${e => setCode(e.target.value.replace(/\D/g, ''))}
+                        onKeyDown=${e => e.key === 'Enter' && code.length === 6 && confirmTotp(code)}
+                    />
+                    <button class="totp-modal-telegram" onClick=${sendViaTelegram}
+                        disabled=${sending || sent}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15"
+                            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"/>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                        ${sent ? 'Code sent — check Telegram' : sending ? 'Sending...' : 'Send code via Telegram'}
+                    </button>
+                    ${sent && html`
+                        <div style="font-size:var(--text-xs);color:var(--profit);">
+                            Valid for 30 seconds
+                        </div>
+                    `}
+                </div>
+                <div class="modal-divider"></div>
+                <div class="modal-footer">
+                    <button class="btn btn-ghost btn-sm" onClick=${closeTotp}>Cancel</button>
+                    <button class="btn btn-primary"
+                        onClick=${() => confirmTotp(code)}
+                        disabled=${code.length < 6}
+                        aria-label="Confirm">
+                        Confirm
+                    </button>
+                </div>
+            </div>
+        </div>
+    `
+}
+
+function Toast() {
+    const toast = useToast()
+    if (!toast.show) return null
+
+    const icons = {
+        success: html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>`,
+        error:   html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        warning: html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+        info:    html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+        signal:  html`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    }
+
+    return html`
+        <div class="toast-container" role="status" aria-live="polite" aria-atomic="true">
+            <div class=${'toast toast-' + (toast.type || 'info')}>
+                <div class="toast-icon">${icons[toast.type] || icons.info}</div>
+                <div class="toast-content">
+                    <div class="toast-title">${toast.message}</div>
+                </div>
+                <button class="toast-close" onClick=${hideToast} aria-label="Dismiss">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    `
+}
+
+function Ticker() {
+    const ticker = useTicker()
+    if (!ticker.length) return null
+    const items = [...ticker, ...ticker]
+    return html`
+        <div class="ticker-bar" role="marquee" aria-label="Live price ticker" aria-live="off">
+            <div class="ticker-track">
+                ${items.map((item, i) => html`
+                    <div key=${item.coin + '_' + i} class="ticker-item"
+                        aria-hidden=${i >= ticker.length ? 'true' : 'false'}>
+                        <span class="ticker-coin">${item.coin}</span>
+                        <span class="ticker-price">${Utils.fmtPrice(item.price)}</span>
+                        <span class=${'ticker-change ' + Utils.changeClass(item.change)}>
+                            ${Utils.fmtPct(item.change)}
+                        </span>
+                    </div>
+                `)}
+            </div>
+        </div>
+    `
+}
+
+function Topbar({ page }) {
+    const wsState  = useWsState()
+    const mode     = useMode()
+    const regime   = useRegime()
+    const conf     = useConfidence()
+    const theme    = useTheme()
+    const arc      = useNextScan()
+
+    const navItems = [
+        { id: 'now',         label: 'Now'         },
+        { id: 'positions',   label: 'Positions'   },
+        { id: 'performance', label: 'Performance' },
+        { id: 'universe',    label: 'Universe'    },
+        { id: 'system',      label: 'System'      },
+    ]
+
+    const wsLabel = wsState === 'connected'   ? 'Live'
+                  : wsState === 'connecting'  ? 'Connecting'
+                  : 'Offline'
+
+    return html`
+        <header class="topbar" role="banner">
+            <a class="topbar-brand" href="#" onClick=${e => { e.preventDefault(); navigate('now') }}
+                aria-label="Signal Engine v5">
+                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 32 32" fill="none" aria-hidden="true">
+                    <rect width="32" height="32" rx="8" fill="#0a0a0f"/>
+                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14"
+                        fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5"
+                        stroke-linejoin="round"/>
+                </svg>
+                <div>
+                    <div class="topbar-brand-name">Signal Engine</div>
+                </div>
+            </a>
+
+            <nav class="topbar-nav" role="navigation" aria-label="Main navigation">
+                ${navItems.map(item => html`
+                    <button key=${item.id}
+                        class=${'topbar-nav-item ' + (page === item.id ? 'active' : '')}
+                        onClick=${() => navigate(item.id)}
+                        aria-current=${page === item.id ? 'page' : 'false'}>
+                        ${item.label}
+                    </button>
+                `)}
+            </nav>
+
+            <div class="topbar-right">
+                ${regime && html`
+                    <div class=${Utils.regimeTopbarClass(regime)}
+                        aria-label=${'Market regime: ' + regime}>
+                        <span>${regime}</span>
+                    </div>
+                `}
+
+                <div class="topbar-confidence" aria-label=${'Bot confidence: ' + conf}>
+                    <span>Conf</span>
+                    <span class="topbar-confidence-value">${conf}</span>
+                </div>
+
+                <div class="topbar-divider" aria-hidden="true"></div>
+
+                <div class=${'topbar-mode ' + mode}
+                    role="status" aria-label=${'Trading mode: ' + mode}>
+                    <div class="topbar-mode-dot" aria-hidden="true"></div>
+                    <span>${mode.toUpperCase()}</span>
+                </div>
+
+                <div class="topbar-divider" aria-hidden="true"></div>
+
+                <div class="topbar-ws" role="status" aria-label=${'Connection: ' + wsLabel}>
+                    <div class=${'topbar-ws-dot ' + wsState} aria-hidden="true"></div>
+                    <span>${wsLabel}</span>
+                </div>
+
+                <div class="topbar-divider" aria-hidden="true"></div>
+
+                <div class="topbar-scan-arc" aria-label=${'Next scan in ' + arc.mins + ':' + arc.secs}>
+                    <svg viewBox="0 0 28 28" style="transform:rotate(-90deg);">
+                        <circle cx="14" cy="14" r="11"
+                            fill="none" stroke="rgba(255,255,255,0.06)"
+                            stroke-width="2.5" class="topbar-scan-arc-track"/>
+                        <circle cx="14" cy="14" r="11"
+                            fill="none" stroke="var(--brand)"
+                            stroke-width="2.5" stroke-linecap="round"
+                            class="topbar-scan-arc-fill"
+                            stroke-dasharray=${(() => {
+                                const c = 2 * Math.PI * 11
+                                const f = c * (arc.pct || 0)
+                                return f + ' ' + (c - f)
+                            })()}
+                        />
+                    </svg>
+                    <div class="topbar-scan-arc-label">${arc.mins}m</div>
+                </div>
+
+                <button class="topbar-theme-btn" onClick=${toggleTheme}
+                    aria-label=${theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+                    ${theme === 'dark'
+                        ? html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
+                    }
+                </button>
+
+                <button class="topbar-logout-btn" onClick=${logout} aria-label="Log out">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14"
+                        viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                        aria-hidden="true">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                        <polyline points="16 17 21 12 16 7"/>
+                        <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                    Logout
+                </button>
+            </div>
+        </header>
+    `
+}
+
+function BottomNav({ page }) {
+    const items = [
+        {
+            id: 'now',
+            label: 'Now',
+            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`
+        },
+        {
+            id: 'positions',
+            label: 'Positions',
+            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`
+        },
+        {
+            id: 'performance',
+            label: 'Performance',
+            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
+        },
+        {
+            id: 'universe',
+            label: 'Universe',
+            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
+        },
+        {
+            id: 'system',
+            label: 'System',
+            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`
+        },
+    ]
+    return html`
+        <nav class="bottom-nav" role="navigation" aria-label="Mobile navigation">
+            ${items.map(item => html`
+                <button key=${item.id}
+                    class=${'bottom-nav-item ' + (page === item.id ? 'active' : '')}
+                    onClick=${() => navigate(item.id)}
+                    aria-label=${item.label}
+                    aria-current=${page === item.id ? 'page' : 'false'}>
+                    ${item.icon}
+                    <span aria-hidden="true">${item.label}</span>
+                </button>
+            `)}
+        </nav>
+    `
+}
+
+window.SE = {
+    GradeBadge, DirBadge, OutcomeBadge, RegimeBadge, SessionBadge,
+    HealthDot, HealthRow, ScoreBar, ScoreRing, ConfidenceGauge, ScanArc,
+    Spinner, EmptyState, LoadingSkeleton, Alert,
+    TradeProgressBar, ConfluenceBar, InfoRow,
+    Panel, Modal, TotpModal, Toast,
+    Ticker, Topbar, BottomNav,
+}
