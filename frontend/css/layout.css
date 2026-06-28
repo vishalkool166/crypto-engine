@@ -11,11 +11,12 @@
     height: calc(var(--navbar-h) + env(safe-area-inset-top, 0px));
     min-height: calc(var(--navbar-h) + env(safe-area-inset-top, 0px));
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     padding: 0 20px;
     padding-top: env(safe-area-inset-top, 0px);
-    padding-left:  calc(20px + var(--safe-left));
-    padding-right: calc(20px + var(--safe-right));
+    padding-bottom: 0;
+    padding-left:  calc(20px + env(safe-area-inset-left, 0px));
+    padding-right: calc(20px + env(safe-area-inset-right, 0px));
     gap: 4px;
     position: relative;
     z-index: var(--z-sticky);
@@ -406,9 +407,9 @@
     overflow-y: auto;
     overflow-x: hidden;
     padding: 24px 20px;
-    padding-left:  calc(20px + var(--safe-left));
-    padding-right: calc(20px + var(--safe-right));
-    padding-bottom: calc(24px + var(--safe-bottom));
+    padding-left:  calc(20px + env(safe-area-inset-left, 0px));
+    padding-right: calc(20px + env(safe-area-inset-right, 0px));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;
     scroll-padding-top: 24px;
 }
@@ -651,7 +652,7 @@
 
 .panel-footer {
     padding: 14px 22px;
-    padding-bottom: calc(14px + var(--safe-bottom));
+    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     border-top: 0.5px solid var(--separator);
     flex-shrink: 0;
     background: var(--material-regular);
@@ -745,14 +746,14 @@
 
 @media (max-width: 768px) {
     .topbar {
-        height: calc(56px + var(--safe-top));
-        min-height: calc(56px + var(--safe-top));
-        padding-top: calc(var(--safe-top) + 8px);
-        padding-bottom: 8px;
-        padding-left:  calc(12px + var(--safe-left));
-        padding-right: calc(12px + var(--safe-right));
+        height: calc(56px + env(safe-area-inset-top, 0px));
+        min-height: calc(56px + env(safe-area-inset-top, 0px));
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: 0;
+        padding-left:  calc(12px + env(safe-area-inset-left, 0px));
+        padding-right: calc(12px + env(safe-area-inset-right, 0px));
         flex-direction: row;
-        align-items: center;
+        align-items: flex-end;
         gap: 0;
         background: var(--material-thick);
         backdrop-filter: var(--blur-ultra);
@@ -761,7 +762,7 @@
     }
 
     [data-theme="light"] .topbar {
-        background: rgba(242, 242, 247, 0.92);
+        background: rgba(242, 242, 247, 0.96);
         border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
     }
 
@@ -777,9 +778,9 @@
 
     .page-content {
         padding: 16px 14px;
-        padding-left:   calc(14px + var(--safe-left));
-        padding-right:  calc(14px + var(--safe-right));
-        padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 32px);
+        padding-left:   calc(14px + env(safe-area-inset-left, 0px));
+        padding-right:  calc(14px + env(safe-area-inset-right, 0px));
+        padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 32px);
     }
 
     .grid-2 { grid-template-columns: 1fr; }
@@ -794,10 +795,10 @@
         bottom: 0;
         left: 0;
         right: 0;
-        height: calc(var(--tabbar-h) + var(--safe-bottom));
-        padding-bottom: var(--safe-bottom);
-        padding-left:   var(--safe-left);
-        padding-right:  var(--safe-right);
+        height: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px));
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        padding-left:   env(safe-area-inset-left, 0px);
+        padding-right:  env(safe-area-inset-right, 0px);
         background: var(--material-thick);
         backdrop-filter: var(--blur-thick);
         -webkit-backdrop-filter: var(--blur-thick);
@@ -805,6 +806,11 @@
         z-index: var(--z-sticky);
         align-items: flex-start;
         justify-content: space-around;
+    }
+
+    [data-theme="light"] .bottom-nav {
+        background: rgba(242, 242, 247, 0.96);
+        border-top: 0.5px solid rgba(0, 0, 0, 0.08);
     }
 
     .bottom-nav-item {
@@ -869,13 +875,48 @@
     .grid-4 { grid-template-columns: 1fr; }
     .page-content {
         padding: 12px;
-        padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 28px);
+        padding-left:   env(safe-area-inset-left, 0px);
+        padding-right:  env(safe-area-inset-right, 0px);
+        padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 28px);
+    }
+}
+
+html {
+    background-color: #000000;
+}
+
+[data-theme="light"] html,
+html[data-theme="light"] {
+    background-color: #F2F2F7;
+}
+
+@media (prefers-color-scheme: light) {
+    html:not([data-theme="dark"]) {
+        background-color: #F2F2F7;
     }
 }
 
 @media (display-mode: standalone) {
-    body {
+    html {
         background-color: #000000;
+    }
+
+    html[data-theme="light"] {
+        background-color: #F2F2F7;
+    }
+
+    @media (prefers-color-scheme: light) {
+        html:not([data-theme="dark"]) {
+            background-color: #F2F2F7;
+        }
+    }
+
+    body {
+        background: var(--grad-page);
+        background-attachment: fixed;
+    }
+
+    [data-theme="light"] body {
         background: var(--grad-page);
         background-attachment: fixed;
     }
@@ -884,37 +925,19 @@
         background: rgba(10, 10, 15, 0.96);
         backdrop-filter: var(--blur-ultra);
         -webkit-backdrop-filter: var(--blur-ultra);
-        height: calc(var(--navbar-h) + env(safe-area-inset-top, 0px));
-        min-height: calc(var(--navbar-h) + env(safe-area-inset-top, 0px));
-        padding-top: env(safe-area-inset-top, 0px);
-        padding-left: calc(20px + env(safe-area-inset-left, 0px));
-        padding-right: calc(20px + env(safe-area-inset-right, 0px));
+    }
+
+    [data-theme="light"] .topbar {
+        background: rgba(242, 242, 247, 0.96);
     }
 
     .bottom-nav {
         background: rgba(10, 10, 15, 0.96);
         backdrop-filter: var(--blur-ultra);
         -webkit-backdrop-filter: var(--blur-ultra);
-        padding-bottom: env(safe-area-inset-bottom, 0px);
-        padding-left: env(safe-area-inset-left, 0px);
-        padding-right: env(safe-area-inset-right, 0px);
     }
 
-    .page-content {
-        padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
-    }
-}
-
-@media (display-mode: standalone) and (prefers-color-scheme: light) {
-    body {
-        background-color: #F2F2F7;
-    }
-
-    .topbar {
-        background: rgba(242, 242, 247, 0.96);
-    }
-
-    .bottom-nav {
+    [data-theme="light"] .bottom-nav {
         background: rgba(242, 242, 247, 0.96);
     }
 }

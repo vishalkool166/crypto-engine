@@ -29,6 +29,30 @@
     <link rel="stylesheet" href="/css/components/feedback.css">
     <link rel="stylesheet" href="/css/components/progress.css">
 
+    <script>
+        (function() {
+            const saved = localStorage.getItem('se_theme')
+            const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+            const theme = saved || (systemDark ? 'dark' : 'light')
+            document.documentElement.setAttribute('data-theme', theme)
+
+            function applyThemeColor(t) {
+                const color = t === 'light' ? '#F2F2F7' : '#000000'
+                document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.remove())
+                const meta = document.createElement('meta')
+                meta.name = 'theme-color'
+                meta.content = color
+                document.head.appendChild(meta)
+            }
+
+            if (saved) {
+                applyThemeColor(saved)
+            }
+
+            window.__applyThemeColor = applyThemeColor
+        })()
+    </script>
+
     <script type="importmap">
     {
         "imports": {
@@ -101,6 +125,19 @@
                 document.body.appendChild(s)
             })
         }
+
+        Store.on('theme', theme => {
+            if (window.__applyThemeColor) {
+                window.__applyThemeColor(theme)
+            }
+        })
+
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
+            const saved = localStorage.getItem('se_theme')
+            if (!saved && window.__applyThemeColor) {
+                window.__applyThemeColor(e.matches ? 'dark' : 'light')
+            }
+        })
     </script>
 </body>
 </html>
