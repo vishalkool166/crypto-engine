@@ -62,29 +62,6 @@ def _reset_api_fail():
     _api_fail_alerted = False
 
 
-def _read_candles_from_redis(coin: str, tf: str) -> pd.DataFrame | None:
-    try:
-        from redis_client import get_redis
-        r = get_redis()
-        if not r:
-            return None
-        key  = f"candles:{coin}USDT:{tf}"
-        data = r.get(key)
-        if not data:
-            return None
-        df = pd.read_json(data)
-        if df.empty:
-            return None
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-            df = df.set_index("timestamp")
-        log.debug(f"Redis candle hit: {key} ({len(df)} rows)")
-        return df
-    except Exception as e:
-        log.warning(f"Redis candle read failed {coin} {tf}: {e}")
-        return None
-
-
 async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
     sym     = f"{coin}/USDT"
     limit   = limit or TF_LIMITS.get(tf, 1000)
@@ -124,10 +101,6 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
 
 
 async def get_ohlcv(coin: str, tf: str, limit: int = None) -> pd.DataFrame:
-    df = _read_candles_from_redis(coin, tf)
-    if df is not None:
-        save_candles(coin, tf, df)
-        return df
     return await fetch_and_store(coin, tf, limit=limit)
 
 
@@ -338,12 +311,6 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
     cached    = cache.get_raw(cache_key)
     if cached is not None:
         return cached
-
-    df = _read_candles_from_redis(coin, "15m")
-    if df is not None:
-        save_candles(coin, "15m", df)
-        cache.set(cache_key, df, ttl=300)
-        return df
 
     try:
         df = await fetch_and_store(coin, "15m", limit=200)

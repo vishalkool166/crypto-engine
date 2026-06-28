@@ -1,489 +1,773 @@
-var { h, Fragment } = preact
-var { useState, useEffect, useRef } = preactHooks
-var html = window.html
-var { confirmTotp, closeTotp, useTotp, useToast, useWsState, useMode, useNextScan, useTicker, usePage, logout, navigate, requireTotp, toggleTheme, useTheme } = Store
+const Charts = {
+    _instances: {},
 
-function GradeBadge({ grade }) {
-    return html`<span class=${Utils.gradeBadgeClass(grade)} aria-label=${'Grade ' + grade}>${grade}</span>`
-}
+    _dark: {
+        grid:    'rgba(255,255,255,0.04)',
+        border:  'rgba(255,255,255,0.06)',
+        text:    'rgba(255,255,255,0.35)',
+        tooltip: {
+            bg:     '#1c1c24',
+            title:  'rgba(255,255,255,0.35)',
+            body:   '#ffffff',
+            border: 'rgba(255,255,255,0.12)',
+        },
+    },
 
-function DirBadge({ dir }) {
-    return html`<span class=${Utils.dirBadgeClass(dir)} aria-label=${'Direction: ' + dir}>${dir}</span>`
-}
+    _light: {
+        grid:    'rgba(0,0,0,0.04)',
+        border:  'rgba(0,0,0,0.06)',
+        text:    'rgba(0,0,0,0.35)',
+        tooltip: {
+            bg:     '#ffffff',
+            title:  'rgba(0,0,0,0.35)',
+            body:   '#000000',
+            border: 'rgba(0,0,0,0.12)',
+        },
+    },
 
-function OutcomeBadge({ outcome }) {
-    return html`<span class=${Utils.outcomeBadgeClass(outcome)} aria-label=${'Outcome: ' + outcome}>${outcome}</span>`
-}
+    _theme() {
+        const t = document.documentElement.getAttribute('data-theme')
+        return t === 'light' ? this._light : this._dark
+    },
 
-function ScoreBar({ score }) {
-    const s     = parseFloat(score) || 0
-    const color = Utils.scoreColor(s)
-    return html`
-        <div class="score-bar" role="meter" aria-valuenow=${Math.round(s)} aria-valuemin="0" aria-valuemax="100" aria-label=${'Score: ' + Math.round(s) + ' out of 100'}>
-            <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${color};min-width:28px;">
-                ${Math.round(s)}
-            </span>
-            <div class="score-bar-track" aria-hidden="true">
-                <div class="score-bar-fill" style="width:${s}%;background:${color};"></div>
-            </div>
-        </div>
-    `
-}
+    _font: {
+        family: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
+        size:   11,
+    },
 
-function Spinner() {
-    return html`<span class="spinner" role="status" aria-label="Loading"></span>`
-}
+    _baseOptions(height = 200) {
+        const th = this._theme()
+        return {
+            responsive:          true,
+            maintainAspectRatio: false,
+            animation:           { duration: 350, easing: 'easeOutQuart' },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: th.tooltip.bg,
+                    titleColor:      th.tooltip.title,
+                    bodyColor:       th.tooltip.body,
+                    borderColor:     th.tooltip.border,
+                    borderWidth:     1,
+                    padding:         12,
+                    cornerRadius:    8,
+                    displayColors:   false,
+                    titleFont:       { ...this._font, size: 11 },
+                    bodyFont:        { ...this._font, size: 13, weight: '700' },
+                }
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        color:         th.text,
+                        font:          this._font,
+                        maxTicksLimit: 8,
+                        maxRotation:   0,
+                    },
+                    grid:   { display: false },
+                    border: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: th.text,
+                        font:  this._font,
+                    },
+                    grid: {
+                        color:     th.grid,
+                        lineWidth: 1,
+                    },
+                    border: { display: false }
+                }
+            }
+        }
+    },
 
-function EmptyState({ message }) {
-    return html`
-        <div class="empty-state" role="status">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <span class="empty-state-text">${message || 'No data available'}</span>
-        </div>
-    `
-}
+    destroy(id) {
+        if (this._instances[id]) {
+            try { this._instances[id].destroy() } catch(e) {}
+            delete this._instances[id]
+        }
+    },
 
-function LoadingSkeleton({ rows = 4 }) {
-    return html`
-        <div class="loading-skeleton" role="status" aria-label="Loading" aria-busy="true">
-            ${Array.from({ length: rows }).map((_, i) =>
-                html`<div key=${i} class="skeleton skeleton-row" aria-hidden="true"></div>`
-            )}
-        </div>
-    `
-}
+    destroyAll() {
+        Object.keys(this._instances).forEach(id => this.destroy(id))
+    },
 
-function HealthBar({ health }) {
-    if (!health) return html`
-        <div class="health-indicator unknown" role="status" aria-label="Health status: checking">
-            <div class="health-dot unknown" aria-hidden="true"></div>
-            <span>Checking...</span>
-        </div>
-    `
-    const cls = Utils.healthClass(health.state)
-    const msg = health.failures?.[0] || health.warnings?.[0] || ''
-    return html`
-        <div class=${'health-indicator ' + cls} role="status" aria-label=${'Health: ' + health.state + (msg ? ' — ' + msg : '')}>
-            <div class=${'health-dot ' + cls} aria-hidden="true"></div>
-            <span style="font-weight:700;">${health.state}</span>
-            ${msg && html`<span style="font-size:11px;opacity:0.8;">— ${msg}</span>`}
-        </div>
-    `
-}
+    _getOrCreate(elId, config) {
+        const el = document.getElementById(elId)
+        if (!el || typeof el.getContext !== 'function') return null
 
-function TradeProgressBar({ trade }) {
-    const entry   = parseFloat(trade.open_rate    || 0)
-    const current = parseFloat(trade.current_rate || 0)
-    const sl      = parseFloat(trade.sl_signal    || trade.stop_loss_abs || 0)
-    const tp      = parseFloat(trade.tp1          || 0)
-    const isShort = trade.is_short
+        if (this._instances[elId]) {
+            const chart = this._instances[elId]
+            try {
+                if (config.data.datasets) {
+                    config.data.datasets.forEach((ds, i) => {
+                        if (chart.data.datasets[i]) {
+                            Object.assign(chart.data.datasets[i], ds)
+                        }
+                    })
+                    chart.data.labels = config.data.labels
+                    chart.update('none')
+                    return chart
+                }
+            } catch(e) {
+                this.destroy(elId)
+            }
+        }
 
-    if (!entry || !current || !sl || !tp) return null
+        const ctx   = el.getContext('2d')
+        const chart = new Chart(ctx, config)
+        this._instances[elId] = chart
+        return chart
+    },
 
-    const totalRange = Math.abs(sl - tp)
-    if (totalRange <= 0) return null
+    _gradientLine(ctx, color, height = 200) {
+        const gradient = ctx.createLinearGradient(0, 0, 0, height)
+        gradient.addColorStop(0,   color + '28')
+        gradient.addColorStop(0.5, color + '0a')
+        gradient.addColorStop(1,   color + '00')
+        return gradient
+    },
 
-    const entryFromLeft = (Math.abs(sl - entry) / totalRange) * 100
+    equity(elId, curve = []) {
+        const el = document.getElementById(elId)
+        if (!el || !curve.length) return
 
-    const movingTowardTp = isShort ? current < entry : current > entry
-    const currColor      = movingTowardTp ? 'var(--green)' : 'var(--red)'
+        const labels = curve.map(c => c.date || '')
+        const values = curve.map(c => parseFloat(c.equity || 0))
+        const isUp   = values[values.length - 1] >= values[0]
+        const color  = isUp ? '#00d4aa' : '#ff453a'
 
-    const distEntryToSl  = Math.abs(sl - entry)
-    const distEntryToTp  = Math.abs(tp - entry)
-    const distTraveled   = Math.abs(current - entry)
+        const ctx      = el.getContext('2d')
+        const height   = el.offsetHeight || 200
+        const gradient = this._gradientLine(ctx, color, height)
+        const th       = this._theme()
 
-    const fillPct = movingTowardTp
-        ? Math.min(100, (distTraveled / distEntryToTp) * 100)
-        : Math.min(100, (distTraveled / distEntryToSl) * 100)
-
-    const remaining = movingTowardTp
-        ? Math.max(0, 100 - (distTraveled / distEntryToTp) * 100).toFixed(1)
-        : Math.max(0, 100 - (distTraveled / distEntryToSl) * 100).toFixed(1)
-
-    const label = movingTowardTp
-        ? remaining + '% to TP'
-        : remaining + '% to SL'
-
-    const fillLeft  = movingTowardTp
-        ? entryFromLeft
-        : entryFromLeft - fillPct * (entryFromLeft / 100)
-
-    const fillWidth = fillPct * (movingTowardTp
-        ? (100 - entryFromLeft) / 100
-        : entryFromLeft / 100)
-
-    return html`
-        <div style="margin:10px 0 4px;">
-            <div style="position:relative;height:6px;background:var(--bg-tertiary);border-radius:3px;overflow:hidden;"
-                role="progressbar"
-                aria-valuenow=${fillPct.toFixed(0)}
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-label=${'Trade progress: ' + label}>
-                <div style="
-                    position:absolute;
-                    top:0;
-                    height:100%;
-                    left:${fillLeft}%;
-                    width:${fillWidth}%;
-                    background:${currColor};
-                    border-radius:3px;
-                    transition:width 0.4s ease, left 0.4s ease;
-                "></div>
-                <div style="
-                    position:absolute;
-                    top:-2px;
-                    left:${entryFromLeft}%;
-                    width:2px;
-                    height:10px;
-                    background:var(--text-secondary);
-                    transform:translateX(-50%);
-                    border-radius:1px;
-                "></div>
-            </div>
-            <div class="flex justify-between" style="font-size:10px;color:var(--text-muted);margin-top:4px;">
-                <span style="font-family:var(--font-mono);color:var(--red);">SL ${Utils.fmtPrice(sl)}</span>
-                <span style="font-family:var(--font-mono);color:${currColor};">${label}</span>
-                <span style="font-family:var(--font-mono);color:var(--green);">TP ${Utils.fmtPrice(tp)}</span>
-            </div>
-        </div>
-    `
-}
-
-function CoinDetailModal({ coin, onClose }) {
-    const [data,    setData]    = useState(null)
-    const [loading, setLoading] = useState(true)
-
-    useEffect(() => {
-        if (!coin) return
-        setLoading(true)
-        API.dashboardCoin(coin).then(d => { setData(d); setLoading(false) })
-    }, [coin])
-
-    useEffect(() => {
-        const handler = e => e.key === 'Escape' && onClose()
-        document.addEventListener('keydown', handler)
-        return () => document.removeEventListener('keydown', handler)
-    }, [])
-
-    if (!coin) return null
-
-    return html`
-        <div class="modal-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="coin-modal-title"
-            onClick=${e => e.target === e.currentTarget && onClose()}>
-            <div class="modal" style="max-width:580px;max-height:85vh;overflow-y:auto;">
-                <div class="flex justify-between items-center" style="margin-bottom:20px;">
-                    <div class="flex items-center gap-8">
-                        <span id="coin-modal-title" style="font-size:20px;font-weight:800;font-family:var(--font-mono);">${coin}USDT</span>
-                        ${data && html`<${GradeBadge} grade=${data.grade}/><${DirBadge} dir=${data.direction}/>`}
-                    </div>
-                    <button class="btn btn-ghost btn-sm btn-icon" onClick=${onClose} aria-label="Close">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
-                    </button>
-                </div>
-                ${loading && html`<${LoadingSkeleton} rows=${6}/>`}
-                ${!loading && !data && html`<div class="alert alert-warning" role="alert">No cached data for ${coin} — run scan first.</div>`}
-                ${!loading && data && html`
-                    <div>
-                        <div class="grid-3 mb-16" style="gap:8px;">
-                            <div class="level-item">
-                                <div class="level-label">Score</div>
-                                <div style="font-size:24px;font-weight:800;color:${Utils.scoreColor(data.score)};" aria-label=${'Score: ' + data.score + ' out of 100'}>${data.score}/100</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Regime</div>
-                                <div style="font-size:13px;font-weight:600;">${data.regime || '--'}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Session</div>
-                                <div style="font-size:13px;font-weight:600;">${data.session || '--'}</div>
-                            </div>
-                        </div>
-                        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Signal Levels</div>
-                        <div class="grid-3 mb-16" style="gap:8px;">
-                            <div class="level-item">
-                                <div class="level-label">Entry</div>
-                                <div class="level-value">${Utils.fmtPrice(data.signal?.entry)}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Stop Loss</div>
-                                <div class="level-value" style="color:var(--red);">${Utils.fmtPrice(data.signal?.sl)}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Take Profit</div>
-                                <div class="level-value" style="color:var(--green);">${Utils.fmtPrice(data.signal?.tp1)}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">R:R</div>
-                                <div class="level-value">1:${data.actual_rr || '--'}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Leverage</div>
-                                <div class="level-value" style="color:var(--blue);">${data.signal?.leverage || '--'}x</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Risk</div>
-                                <div class="level-value">${data.signal?.risk_amt ? '$' + parseFloat(data.signal.risk_amt).toFixed(2) : '--'}</div>
-                            </div>
-                        </div>
-                        <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Market</div>
-                        <div class="grid-3 mb-16" style="gap:8px;">
-                            <div class="level-item">
-                                <div class="level-label">Price</div>
-                                <div class="level-value">${Utils.fmtPrice(data.market?.price)}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">24h</div>
-                                <div class="level-value" style="color:${Utils.pnlColor(data.market?.change_pos)};">${Utils.fmtPct(data.market?.change)}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Funding</div>
-                                <div class="level-value" style="color:${Math.abs(data.market?.funding || 0) > 0.05 ? 'var(--red)' : 'var(--text-secondary)'};">
-                                    ${data.market?.funding != null ? data.market.funding.toFixed(4) + '%' : '--'}
-                                </div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Long Ratio</div>
-                                <div class="level-value" style="color:${(data.market?.long_ratio || 0) > 65 ? 'var(--red)' : 'var(--text-secondary)'};">
-                                    ${data.market?.long_ratio != null ? data.market.long_ratio + '%' : '--'}
-                                </div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">Short Ratio</div>
-                                <div class="level-value">${data.market?.short_ratio != null ? data.market.short_ratio + '%' : '--'}</div>
-                            </div>
-                            <div class="level-item">
-                                <div class="level-label">OI Change</div>
-                                <div class="level-value">${data.market?.oi_change != null ? data.market.oi_change + '%' : '--'}</div>
-                            </div>
-                        </div>
-                        ${data.factors?.length && html`
-                            <div style="font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;">Confluence</div>
-                            ${data.factors.map(f => html`
-                                <div key=${f.key} style="margin-bottom:10px;">
-                                    <div class="flex justify-between items-center" style="margin-bottom:4px;">
-                                        <span style="font-size:12px;color:var(--text-secondary);">${f.label}</span>
-                                        <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:${Utils.scoreColor(f.pct)};">${f.earned}/${f.max}</span>
-                                    </div>
-                                    <div class="progress-bar" role="meter" aria-valuenow=${f.pct} aria-valuemin="0" aria-valuemax="100" aria-label=${f.label + ': ' + f.pct + '%'}>
-                                        <div class="progress-fill" style="width:${f.pct}%;background:${Utils.scoreColor(f.pct)};" aria-hidden="true"></div>
-                                    </div>
-                                </div>
-                            `)}
-                        `}
-                        ${data.ml_probability != null && html`
-                            <div class="stat-row">
-                                <span class="stat-label">ML Probability</span>
-                                <span style="font-family:var(--font-mono);font-weight:700;color:${Utils.winRateColor(data.ml_probability * 100)};">
-                                    ${(data.ml_probability * 100).toFixed(1)}%
-                                </span>
-                            </div>
-                        `}
-                        ${data.thesis && html`<div class="thesis-block mt-16" role="note">${data.thesis}</div>`}
-                    </div>
-                `}
-            </div>
-        </div>
-    `
-}
-
-function TotpModal() {
-    const totp     = useTotp()
-    const [code,   setCode]  = useState('')
-    const inputRef = useRef(null)
-
-    useEffect(() => {
-        if (totp.show) { setCode(''); setTimeout(() => inputRef.current?.focus(), 50) }
-    }, [totp.show])
-
-    if (!totp.show) return null
-
-    return html`
-        <div class="modal-overlay"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="totp-modal-title"
-            aria-describedby="totp-modal-desc"
-            onClick=${e => e.target === e.currentTarget && closeTotp()}>
-            <div class="modal">
-                <div id="totp-modal-title" class="modal-title">${totp.title}</div>
-                <div id="totp-modal-desc"  class="modal-sub">${totp.subtitle}</div>
-                <label for="totp-code-input" class="sr-only">6-digit TOTP code</label>
-                <input
-                    id="totp-code-input"
-                    ref=${inputRef}
-                    class="totp-input"
-                    type="text"
-                    inputmode="numeric"
-                    maxlength="6"
-                    value=${code}
-                    placeholder="000000"
-                    autocomplete="one-time-code"
-                    aria-required="true"
-                    onInput=${e => setCode(e.target.value.replace(/\D/g, ''))}
-                    onKeyDown=${e => e.key === 'Enter' && code.length === 6 && confirmTotp(code)}
-                />
-                <div class="modal-actions">
-                    <button class="btn btn-ghost" onClick=${closeTotp} aria-label="Cancel">Cancel</button>
-                    <button class="btn btn-primary" onClick=${() => confirmTotp(code)}
-                        disabled=${code.length < 6}
-                        aria-label="Confirm with TOTP code">
-                        Confirm
-                    </button>
-                </div>
-            </div>
-        </div>
-    `
-}
-
-function Toast() {
-    const toast = useToast()
-    if (!toast.show) return null
-    return html`
-        <div style="position:fixed;bottom:calc(24px + var(--safe-bottom));right:calc(24px + var(--safe-right));z-index:2000;min-width:280px;max-width:380px;"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true">
-            <div class=${'alert alert-' + toast.type}>${toast.message}</div>
-        </div>
-    `
-}
-
-function Ticker() {
-    const ticker = useTicker()
-    if (!ticker.length) return null
-    const items = [...ticker, ...ticker]
-    return html`
-        <div style="height:32px;min-height:32px;background:var(--bg-secondary);border-bottom:1px solid var(--bg-border);display:flex;align-items:center;overflow:hidden;"
-            role="marquee"
-            aria-label="Live price ticker"
-            aria-live="off">
-            <div style="display:flex;align-items:center;animation:ticker-scroll 60s linear infinite;white-space:nowrap;">
-                ${items.map((item, i) => html`
-                    <div key=${item.coin + '_' + i}
-                        style="display:inline-flex;align-items:center;gap:6px;padding:0 16px;border-right:1px solid var(--bg-border);font-size:11px;"
-                        aria-hidden=${i >= ticker.length ? 'true' : 'false'}>
-                        <span style="font-family:var(--font-mono);font-weight:700;color:var(--text-secondary);">${item.coin}</span>
-                        <span style="font-family:var(--font-mono);font-weight:600;">${Utils.fmtPrice(item.price)}</span>
-                        <span style="font-family:var(--font-mono);font-size:10px;color:${Utils.changeColor(item.change)};">${Utils.fmtPct(item.change)}</span>
-                    </div>
-                `)}
-            </div>
-        </div>
-    `
-}
-
-function Topbar({ page }) {
-    const wsState  = useWsState()
-    const mode     = useMode()
-    const nextScan = useNextScan()
-    const theme    = useTheme()
-
-    const navItems = [
-        { id: 'overview',  label: 'Overview'  },
-        { id: 'freqtrade', label: 'Trades'    },
-        { id: 'signals',   label: 'Signals'   },
-        { id: 'coins',     label: 'Coins'     },
-        { id: 'backtest',  label: 'Backtest'  },
-        { id: 'analysis',  label: 'Analysis'  },
-        { id: 'audit',     label: 'Audit'     },
-        { id: 'settings',  label: 'Settings'  },
-    ]
-
-    const wsLabel = wsState === 'connected' ? 'Live' : wsState === 'connecting' ? 'Connecting' : 'Offline'
-
-    return html`
-        <header class="topbar" role="banner">
-            <div class="topbar-brand" aria-label="Signal Engine v5">
-                <svg class="topbar-brand-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                    <rect width="32" height="32" rx="8" fill="#111118"/>
-                    <polygon points="18,3 8,18 15,18 14,29 24,14 17,14" fill="#00d4aa" stroke="#00d4aa" stroke-width="0.5" stroke-linejoin="round"/>
-                </svg>
-                <span class="topbar-brand-name">Signal Engine</span>
-            </div>
-            <nav class="topbar-nav" role="navigation" aria-label="Main navigation">
-                ${navItems.map(item => html`
-                    <button key=${item.id}
-                        class=${'topbar-nav-item ' + (page === item.id ? 'active' : '')}
-                        onClick=${() => navigate(item.id)}
-                        aria-current=${page === item.id ? 'page' : 'false'}>
-                        ${item.label}
-                    </button>
-                `)}
-            </nav>
-            <div class="topbar-right">
-                <div class="next-scan-badge" aria-label=${'Next scan in ' + nextScan}>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
-                    </svg>
-                    <span aria-hidden="true">${nextScan}</span>
-                </div>
-                <div class="topbar-divider" aria-hidden="true"></div>
-                <div class=${'mode-indicator ' + mode} role="status" aria-label=${'Trading mode: ' + mode}>
-                    ${mode.toUpperCase()}
-                </div>
-                <div class="topbar-divider" aria-hidden="true"></div>
-                <div class="ws-status-bar" role="status" aria-label=${'Connection: ' + wsLabel}>
-                    <div class=${'ws-dot ' + (wsState === 'connected' ? '' : wsState === 'connecting' ? 'connecting' : 'disconnected')} aria-hidden="true"></div>
-                    <span>${wsLabel}</span>
-                </div>
-                <div class="topbar-divider" aria-hidden="true"></div>
-                <button class="theme-toggle" onClick=${toggleTheme}
-                    aria-label=${theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
-                    ${theme === 'light'
-                        ? html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
-                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+        return this._getOrCreate(elId, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [{
+                    data:                 values,
+                    borderColor:          color,
+                    backgroundColor:      gradient,
+                    borderWidth:          2,
+                    pointRadius:          0,
+                    pointHoverRadius:     5,
+                    pointHoverBackgroundColor: color,
+                    pointHoverBorderColor:     th.tooltip.bg,
+                    pointHoverBorderWidth:     2,
+                    fill:                 true,
+                    tension:              0.4,
+                }]
+            },
+            options: {
+                ...this._baseOptions(height),
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    ...this._baseOptions().plugins,
+                    tooltip: {
+                        ...this._baseOptions().plugins.tooltip,
+                        callbacks: {
+                            title: ctx => ctx[0].label,
+                            label: ctx => {
+                                const v = ctx.parsed.y
+                                return (v >= 0 ? '+' : '') + '$' + Math.abs(v).toFixed(2)
+                            }
+                        }
                     }
-                </button>
-                <button class="btn btn-ghost btn-sm" onClick=${logout} aria-label="Log out">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                        <polyline points="16 17 21 12 16 7"/>
-                        <line x1="21" y1="12" x2="9" y2="12"/>
-                    </svg>
-                    Logout
-                </button>
+                },
+                scales: {
+                    ...this._baseOptions().scales,
+                    y: {
+                        ...this._baseOptions().scales.y,
+                        ticks: {
+                            ...this._baseOptions().scales.y.ticks,
+                            callback: v => '$' + v.toFixed(0)
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    equityMini(elId, curve = []) {
+        const el = document.getElementById(elId)
+        if (!el || !curve.length) return
+
+        const values = curve.map(c => parseFloat(c.equity || 0))
+        const isUp   = values[values.length - 1] >= values[0]
+        const color  = isUp ? '#00d4aa' : '#ff453a'
+        const ctx    = el.getContext('2d')
+        const height = el.offsetHeight || 64
+        const grad   = this._gradientLine(ctx, color, height)
+
+        return this._getOrCreate(elId, {
+            type: 'line',
+            data: {
+                labels:   curve.map(c => c.date || ''),
+                datasets: [{
+                    data:             values,
+                    borderColor:      color,
+                    backgroundColor:  grad,
+                    borderWidth:      1.5,
+                    pointRadius:      0,
+                    fill:             true,
+                    tension:          0.4,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 300 },
+                plugins: { legend: { display: false }, tooltip: { enabled: false } },
+                scales: {
+                    x: { display: false },
+                    y: { display: false }
+                }
+            }
+        })
+    },
+
+    gradeDonut(elId, data = {}) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const grades  = ['A+', 'A', 'B']
+        const colors  = ['#ffd60a', '#00d4aa', '#ff9f0a']
+        const values  = grades.map(g => data[g]?.total || 0)
+        const hasData = values.some(v => v > 0)
+        if (!hasData) return
+
+        const th = this._theme()
+
+        return this._getOrCreate(elId, {
+            type: 'doughnut',
+            data: {
+                labels:   grades,
+                datasets: [{
+                    data:             values,
+                    backgroundColor:  colors.map(c => c + 'cc'),
+                    borderColor:      colors,
+                    borderWidth:      2,
+                    hoverBorderWidth: 3,
+                    hoverOffset:      4,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 400 },
+                cutout:              '70%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color:           th.text,
+                            font:            this._font,
+                            padding:         16,
+                            usePointStyle:   true,
+                            pointStyleWidth: 8,
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: th.tooltip.bg,
+                        titleColor:      th.tooltip.title,
+                        bodyColor:       th.tooltip.body,
+                        borderColor:     th.tooltip.border,
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => ` ${ctx.label}: ${ctx.parsed} trades`
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    scoreBar(elId, coins = []) {
+        const el = document.getElementById(elId)
+        if (!el || !coins.length) return
+
+        const top    = coins.slice(0, 12)
+        const labels = top.map(c => c.coin)
+        const scores = top.map(c => parseFloat(c.score) || 0)
+        const colors = top.map(c => {
+            const s = parseFloat(c.score) || 0
+            if (s >= 85) return '#ffd60a'
+            if (s >= 68) return '#00d4aa'
+            if (s >= 52) return '#ff9f0a'
+            return 'rgba(255,255,255,0.18)'
+        })
+
+        return this._getOrCreate(elId, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data:            scores,
+                    backgroundColor: colors.map(c => c + 'cc'),
+                    borderColor:     colors,
+                    borderWidth:     1,
+                    borderRadius:    4,
+                    borderSkipped:   false,
+                }]
+            },
+            options: {
+                ...this._baseOptions(220),
+                plugins: {
+                    ...this._baseOptions().plugins,
+                    tooltip: {
+                        ...this._baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => ` ${ctx.parsed.y}/100`
+                        }
+                    }
+                },
+                scales: {
+                    ...this._baseOptions().scales,
+                    y: {
+                        ...this._baseOptions().scales.y,
+                        min: 0,
+                        max: 100,
+                        ticks: {
+                            ...this._baseOptions().scales.y.ticks,
+                            callback: v => v
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    pnlBar(elId, history = []) {
+        const el = document.getElementById(elId)
+        if (!el || !history.length) return
+
+        const recent  = history.slice(-20)
+        const labels  = recent.map(t => t.coin || '--')
+        const values  = recent.map(t => parseFloat(t.pnl || 0))
+        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
+        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
+
+        return this._getOrCreate(elId, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data:            values,
+                    backgroundColor: colors,
+                    borderColor:     borders,
+                    borderWidth:     1,
+                    borderRadius:    3,
+                    borderSkipped:   false,
+                }]
+            },
+            options: {
+                ...this._baseOptions(160),
+                plugins: {
+                    ...this._baseOptions().plugins,
+                    tooltip: {
+                        ...this._baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const v = ctx.parsed.y
+                                return (v >= 0 ? ' +$' : ' -$') + Math.abs(v).toFixed(4)
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    ...this._baseOptions().scales,
+                    x: {
+                        ...this._baseOptions().scales.x,
+                        ticks: {
+                            ...this._baseOptions().scales.x.ticks,
+                            maxRotation: 45,
+                        }
+                    },
+                    y: {
+                        ...this._baseOptions().scales.y,
+                        ticks: {
+                            ...this._baseOptions().scales.y.ticks,
+                            callback: v => '$' + v.toFixed(2)
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    dailyPnl(elId, dailyData = []) {
+        const el = document.getElementById(elId)
+        if (!el || !dailyData.length) return
+
+        const labels  = dailyData.map(d => d.date || '')
+        const values  = dailyData.map(d => parseFloat(d.profit_abs || 0))
+        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
+        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
+
+        return this._getOrCreate(elId, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data:            values,
+                    backgroundColor: colors,
+                    borderColor:     borders,
+                    borderWidth:     1,
+                    borderRadius:    3,
+                    borderSkipped:   false,
+                }]
+            },
+            options: {
+                ...this._baseOptions(160),
+                plugins: {
+                    ...this._baseOptions().plugins,
+                    tooltip: {
+                        ...this._baseOptions().plugins.tooltip,
+                        callbacks: {
+                            label: ctx => {
+                                const v = ctx.parsed.y
+                                return (v >= 0 ? ' +$' : ' -$') + Math.abs(v).toFixed(4)
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    ...this._baseOptions().scales,
+                    x: {
+                        ...this._baseOptions().scales.x,
+                        ticks: {
+                            ...this._baseOptions().scales.x.ticks,
+                            maxTicksLimit: 10,
+                            maxRotation:   30,
+                        }
+                    },
+                    y: {
+                        ...this._baseOptions().scales.y,
+                        ticks: {
+                            ...this._baseOptions().scales.y.ticks,
+                            callback: v => '$' + v.toFixed(2)
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    factorBar(elId, factors = []) {
+        const el = document.getElementById(elId)
+        if (!el || !factors.length) return
+
+        const sorted = [...factors]
+            .filter(f => f.edge != null)
+            .sort((a, b) => b.edge - a.edge)
+            .slice(0, 12)
+
+        const labels  = sorted.map(f => f.factor.replace(/_/g, ' '))
+        const values  = sorted.map(f => parseFloat(f.edge) || 0)
+        const colors  = values.map(v =>
+            v > 10  ? '#00d4aacc' :
+            v > 0   ? '#30d158cc' :
+            v > -10 ? '#ff9f0acc' : '#ff453acc'
+        )
+        const borders = values.map(v =>
+            v > 10  ? '#00d4aa' :
+            v > 0   ? '#30d158' :
+            v > -10 ? '#ff9f0a' : '#ff453a'
+        )
+
+        const th = this._theme()
+
+        return this._getOrCreate(elId, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{
+                    data:            values,
+                    backgroundColor: colors,
+                    borderColor:     borders,
+                    borderWidth:     1,
+                    borderRadius:    3,
+                    borderSkipped:   false,
+                }]
+            },
+            options: {
+                indexAxis:           'y',
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 400 },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: th.tooltip.bg,
+                        titleColor:      th.tooltip.title,
+                        bodyColor:       th.tooltip.body,
+                        borderColor:     th.tooltip.border,
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => {
+                                const v = ctx.parsed.x
+                                return (v >= 0 ? ' +' : ' ') + v.toFixed(1) + '% edge'
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            color:    th.text,
+                            font:     this._font,
+                            callback: v => v.toFixed(0) + '%'
+                        },
+                        grid: {
+                            color:     th.grid,
+                            lineWidth: 1,
+                        },
+                        border: { display: false }
+                    },
+                    y: {
+                        ticks: {
+                            color: th.text,
+                            font:  { ...this._font, size: 10 },
+                        },
+                        grid:   { display: false },
+                        border: { display: false }
+                    }
+                }
+            }
+        })
+    },
+
+    winRateDonut(elId, wins = 0, losses = 0) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const total = wins + losses
+        if (!total) return
+
+        const th = this._theme()
+
+        return this._getOrCreate(elId, {
+            type: 'doughnut',
+            data: {
+                labels:   ['Wins', 'Losses'],
+                datasets: [{
+                    data:             [wins, losses],
+                    backgroundColor:  ['#30d158cc', '#ff453acc'],
+                    borderColor:      ['#30d158',   '#ff453a'],
+                    borderWidth:      2,
+                    hoverBorderWidth: 3,
+                    hoverOffset:      4,
+                }]
+            },
+            options: {
+                responsive:          true,
+                maintainAspectRatio: false,
+                animation:           { duration: 400 },
+                cutout:              '72%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: th.tooltip.bg,
+                        titleColor:      th.tooltip.title,
+                        bodyColor:       th.tooltip.body,
+                        borderColor:     th.tooltip.border,
+                        borderWidth:     1,
+                        callbacks: {
+                            label: ctx => ` ${ctx.label}: ${ctx.parsed} (${((ctx.parsed / total) * 100).toFixed(1)}%)`
+                        }
+                    }
+                }
+            }
+        })
+    },
+
+    mlProgress(elId, pct = 0) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const p     = Math.min(100, parseFloat(pct) || 0)
+        const color = p >= 100 ? '#30d158' : '#00d4aa'
+
+        el.innerHTML = `
+            <div class="ml-progress">
+                <div class="ml-progress-header">
+                    <span class="ml-progress-label">Training Progress</span>
+                    <span class="ml-progress-value">${p.toFixed(0)}%</span>
+                </div>
+                <div class="ml-progress-track">
+                    <div class="ml-progress-fill ${p >= 100 ? 'complete' : ''}"
+                         style="width:${p}%"></div>
+                </div>
             </div>
-        </header>
-    `
+        `
+    },
+
+    serverStat(elId, label, value, pct, colorClass) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        el.innerHTML = `
+            <div class="server-stat">
+                <div class="server-stat-header">
+                    <span class="server-stat-label">${label}</span>
+                    <span class="server-stat-value ${colorClass}">${value}</span>
+                </div>
+                <div class="server-stat-track">
+                    <div class="server-stat-fill ${colorClass}"
+                         style="width:${Math.min(100, pct)}%"></div>
+                </div>
+            </div>
+        `
+    },
+
+    scoreRing(elId, score, grade, size = 64) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const radius      = (size / 2) - 5
+        const circumf     = 2 * Math.PI * radius
+        const pct         = Math.min(100, Math.max(0, parseFloat(score) || 0)) / 100
+        const filled      = circumf * pct
+        const empty       = circumf - filled
+        const strokeWidth = size <= 48 ? 3 : 4
+
+        const colorMap = {
+            'A+': '#ffd60a',
+            'A':  '#00d4aa',
+            'B':  '#ff9f0a',
+            'C':  'rgba(255,255,255,0.35)',
+            'F':  'rgba(255,255,255,0.18)',
+        }
+        const color = colorMap[grade] || 'rgba(255,255,255,0.18)'
+
+        const fontSize = size <= 48 ? 13 : size <= 64 ? 16 : 20
+
+        el.innerHTML = `
+            <div class="score-ring" style="width:${size}px;height:${size}px;">
+                <svg width="${size}" height="${size}" style="transform:rotate(-90deg);">
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.06)"
+                        stroke-width="${strokeWidth}"
+                    />
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="${color}"
+                        stroke-width="${strokeWidth}"
+                        stroke-linecap="round"
+                        stroke-dasharray="${filled} ${empty}"
+                        style="transition:stroke-dasharray 0.5s cubic-bezier(0.16,1,0.3,1);"
+                    />
+                </svg>
+                <div class="score-ring-label">
+                    <span class="score-ring-number" style="font-size:${fontSize}px;color:${color};">${Math.round(score)}</span>
+                </div>
+            </div>
+        `
+    },
+
+    confidenceGauge(elId, value, size = 56) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const radius      = (size / 2) - 5
+        const circumf     = 2 * Math.PI * radius
+        const pct         = Math.min(100, Math.max(0, parseFloat(value) || 0)) / 100
+        const filled      = circumf * pct
+        const empty       = circumf - filled
+        const strokeWidth = 3.5
+
+        const color = value >= 70 ? '#30d158' : value >= 40 ? '#00d4aa' : value >= 20 ? '#ff9f0a' : '#ff453a'
+        const cls   = value >= 70 ? 'high'    : value >= 40 ? 'medium'  : value >= 20 ? 'low'     : 'none'
+
+        el.innerHTML = `
+            <div class="confidence-gauge" style="width:${size}px;height:${size}px;">
+                <svg width="${size}" height="${size}" style="transform:rotate(-90deg);">
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.06)"
+                        stroke-width="${strokeWidth}"
+                        stroke-linecap="round"
+                    />
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="${color}"
+                        stroke-width="${strokeWidth}"
+                        stroke-linecap="round"
+                        stroke-dasharray="${filled} ${empty}"
+                        style="transition:stroke-dasharray 0.5s cubic-bezier(0.16,1,0.3,1);"
+                    />
+                </svg>
+                <div class="confidence-gauge-center">
+                    <span class="confidence-gauge-value" style="font-size:14px;color:${color};">${Math.round(value)}</span>
+                </div>
+            </div>
+        `
+    },
+
+    scanArc(elId, pct, mins, secs, scanning = false) {
+        const el = document.getElementById(elId)
+        if (!el) return
+
+        const size        = 36
+        const radius      = 13
+        const circumf     = 2 * Math.PI * radius
+        const filled      = circumf * Math.min(1, Math.max(0, pct))
+        const empty       = circumf - filled
+        const color       = scanning ? '#ff9f0a' : '#00d4aa'
+        const strokeWidth = 2.5
+
+        el.innerHTML = `
+            <div class="scan-arc-container" style="width:${size}px;height:${size}px;">
+                <svg width="${size}" height="${size}" class="scan-arc-svg">
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="rgba(255,255,255,0.06)"
+                        stroke-width="${strokeWidth}"
+                    />
+                    <circle
+                        cx="${size/2}" cy="${size/2}" r="${radius}"
+                        fill="none"
+                        stroke="${color}"
+                        stroke-width="${strokeWidth}"
+                        stroke-linecap="round"
+                        stroke-dasharray="${filled} ${empty}"
+                        style="transition:stroke-dasharray 1s linear;"
+                    />
+                </svg>
+                <div class="scan-arc-center">
+                    <span class="scan-arc-time" style="font-size:8px;color:${color};">${mins}:${secs}</span>
+                </div>
+            </div>
+        `
+    },
+
+    exists(elId) {
+        return !!this._instances[elId]
+    },
+
+    updateData(elId, newData) {
+        const chart = this._instances[elId]
+        if (!chart) return false
+        try {
+            if (Array.isArray(newData.labels)) chart.data.labels = newData.labels
+            if (Array.isArray(newData.datasets)) {
+                newData.datasets.forEach((ds, i) => {
+                    if (chart.data.datasets[i]) Object.assign(chart.data.datasets[i], ds)
+                })
+            }
+            chart.update('none')
+            return true
+        } catch(e) { return false }
+    },
 }
 
-function BottomNav({ page }) {
-    const items = [
-        { id: 'overview',  label: 'Overview', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>` },
-        { id: 'freqtrade', label: 'Trades',   icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>` },
-        { id: 'signals',   label: 'Signals',  icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>` },
-        { id: 'coins',     label: 'Coins',    icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>` },
-        { id: 'settings',  label: 'Settings', icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>` },
-    ]
-    return html`
-        <nav class="bottom-nav" role="navigation" aria-label="Mobile navigation">
-            ${items.map(item => html`
-                <button key=${item.id}
-                    class=${'bottom-nav-item ' + (page === item.id ? 'active' : '')}
-                    onClick=${() => navigate(item.id)}
-                    aria-label=${item.label}
-                    aria-current=${page === item.id ? 'page' : 'false'}>
-                    ${item.icon}
-                    <span aria-hidden="true">${item.label}</span>
-                </button>
-            `)}
-        </nav>
-    `
-}
-
-window.SE = {
-    GradeBadge, DirBadge, OutcomeBadge, ScoreBar,
-    Spinner, EmptyState, LoadingSkeleton,
-    HealthBar, TradeProgressBar, CoinDetailModal,
-    TotpModal, Toast, Ticker, Topbar, BottomNav,
-}
+window.Charts = Charts

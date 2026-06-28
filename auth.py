@@ -1,6 +1,9 @@
 import os
 import logging
 import time
+import json
+import secrets
+import hashlib
 import pyotp
 import bcrypt
 import qrcode
@@ -13,11 +16,57 @@ from database import get_session, AuditLog
 
 log = logging.getLogger(__name__)
 
-JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_H  = 24
+JWT_ALGORITHM  = "HS256"
+JWT_EXPIRY_H   = 24
+
+_failed_attempts: dict = {}
+_lockout_until:   dict = {}
+
+MAX_ATTEMPTS     = 5
+LOCKOUT_MINUTES  = 15
+ATTEMPT_WINDOW   = 300
 
 
-# ── Password ─────────────────────────────────────────────────────────────────
+def _get_attempt_key(ip: str) -> str:
+    return hashlib.sha256(ip.encode()).hexdigest()[:16]
+
+
+def _is_locked_out(ip: str) -> tuple[bool, int]:
+    key      = _get_attempt_key(ip)
+    until    = _lockout_until.get(key, 0)
+    now      = time.time()
+    if until > now:
+        remaining = int((until - now) / 60) + 1
+        return True, remaining
+    return False, 0
+
+
+def _record_failure(ip: str):
+    key  = _get_attempt_key(ip)
+    now  = time.time()
+    attempts = _failed_attempts.get(key, [])
+    attempts = [t for t in attempts if now - t < ATTEMPT_WINDOW]
+    attempts.append(now)
+    _failed_attempts[key] = attempts
+    if len(attempts) >= MAX_ATTEMPTS:
+        _lockout_until[key] = now + LOCKOUT_MINUTES * 60
+        log.warning(f"IP locked out after {MAX_ATTEMPTS} failed attempts: {ip[:8]}***")
+    return len(attempts)
+
+
+def _clear_attempts(ip: str):
+    key = _get_attempt_key(ip)
+    _failed_attempts.pop(key, None)
+    _lockout_until.pop(key, None)
+
+
+def _attempts_remaining(ip: str) -> int:
+    key      = _get_attempt_key(ip)
+    now      = time.time()
+    attempts = _failed_attempts.get(key, [])
+    attempts = [t for t in attempts if now - t < ATTEMPT_WINDOW]
+    return max(0, MAX_ATTEMPTS - len(attempts))
+
 
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
@@ -41,8 +90,6 @@ def password_is_set() -> bool:
     return bool(cfg.DASHBOARD_PASSWORD_HASH)
 
 
-# ── Username ──────────────────────────────────────────────────────────────────
-
 def verify_username(username: str) -> bool:
     return username.strip().lower() == cfg.DASHBOARD_USERNAME.strip().lower()
 
@@ -52,8 +99,6 @@ def set_username(username: str):
     cfg.DASHBOARD_USERNAME = username.strip()
     log.info(f"Dashboard username set: {username}")
 
-
-# ── TOTP ──────────────────────────────────────────────────────────────────────
 
 def get_totp() -> pyotp.TOTP:
     return pyotp.TOTP(cfg.TOTP_SECRET)
@@ -77,7 +122,7 @@ def regenerate_totp() -> str:
     secret = pyotp.random_base32()
     _ensure("TOTP_SECRET", secret)
     cfg.TOTP_SECRET = secret
-    log.info(f"TOTP secret regenerated: {secret}")
+    log.info(f"TOTP secret regenerated")
     return secret
 
 
@@ -126,14 +171,51 @@ def get_qr_png_bytes() -> bytes:
         return b""
 
 
-# ── JWT ───────────────────────────────────────────────────────────────────────
+def generate_recovery_codes(count: int = 8) -> list[str]:
+    codes = []
+    for _ in range(count):
+        code = secrets.token_hex(4).upper() + '-' + secrets.token_hex(4).upper()
+        codes.append(code)
+    return codes
 
-def create_jwt() -> str:
+
+def hash_recovery_codes(codes: list[str]) -> list[str]:
+    return [hashlib.sha256(c.encode()).hexdigest() for c in codes]
+
+
+def store_recovery_codes(codes: list[str]):
+    hashed = hash_recovery_codes(codes)
+    _ensure("RECOVERY_CODES", json.dumps(hashed))
+    cfg.RECOVERY_CODES = json.dumps(hashed)
+    log.info(f"Recovery codes stored: {len(codes)} codes")
+
+
+def verify_recovery_code(code: str) -> bool:
+    try:
+        stored_raw = getattr(cfg, 'RECOVERY_CODES', '') or os.getenv("RECOVERY_CODES", "")
+        if not stored_raw:
+            return False
+        stored = json.loads(stored_raw)
+        code_hash = hashlib.sha256(code.strip().upper().encode()).hexdigest()
+        if code_hash in stored:
+            stored.remove(code_hash)
+            _ensure("RECOVERY_CODES", json.dumps(stored))
+            cfg.RECOVERY_CODES = json.dumps(stored)
+            log.info("Recovery code used and invalidated")
+            return True
+        return False
+    except Exception as e:
+        log.error(f"Recovery code verify error: {e}")
+        return False
+
+
+def create_jwt(tier: str = "pro") -> str:
     payload = {
-        "sub": "dashboard",
-        "usr": cfg.DASHBOARD_USERNAME,
-        "iat": datetime.now(timezone.utc),
-        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_H)
+        "sub":  "dashboard",
+        "usr":  cfg.DASHBOARD_USERNAME,
+        "tier": tier,
+        "iat":  datetime.now(timezone.utc),
+        "exp":  datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_H)
     }
     return jwt.encode(payload, cfg.JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -146,44 +228,95 @@ def verify_jwt(token: str) -> bool:
         return False
 
 
-# ── Login ─────────────────────────────────────────────────────────────────────
+def decode_jwt(token: str) -> dict:
+    try:
+        return jwt.decode(token, cfg.JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return {}
+
 
 def validate_login(username: str, password: str, totp_code: str, ip: str = "") -> dict:
+    locked, minutes = _is_locked_out(ip)
+    if locked:
+        _audit(
+            action  = "dashboard_login",
+            source  = "web",
+            detail  = f"Blocked — IP locked out for {minutes}m",
+            ip      = ip,
+            success = False
+        )
+        return {
+            "success":   False,
+            "reason":    f"Too many failed attempts. Try again in {minutes} minute{'s' if minutes > 1 else ''}.",
+            "locked":    True,
+            "lockout_minutes": minutes
+        }
+
     success = False
     reason  = ""
 
     if not username:
         reason = "Username required"
     elif not verify_username(username):
-        reason = "Invalid username"
+        reason = "Invalid credentials"
     elif not password_is_set():
-        reason = "Password not configured — visit /auth/setup"
+        reason = "Account not configured — visit /auth/setup"
     elif not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
-        reason = "Invalid password"
+        reason = "Invalid credentials"
     elif not verify_totp(totp_code):
-        reason = "Invalid TOTP code"
+        reason = "Invalid authenticator code"
     else:
         success = True
+
+    if not success:
+        count     = _record_failure(ip)
+        remaining = _attempts_remaining(ip)
+        locked_now, lock_mins = _is_locked_out(ip)
+
+        _audit(
+            action  = "dashboard_login",
+            source  = "web",
+            detail  = reason,
+            ip      = ip,
+            success = False
+        )
+
+        result = {
+            "success":   False,
+            "reason":    reason,
+            "locked":    locked_now,
+        }
+
+        if locked_now:
+            result["reason"]          = f"Too many failed attempts. Locked for {lock_mins} minute{'s' if lock_mins > 1 else ''}."
+            result["lockout_minutes"] = lock_mins
+        else:
+            result["attempts_remaining"] = remaining
+
+        return result
+
+    _clear_attempts(ip)
 
     _audit(
         action  = "dashboard_login",
         source  = "web",
-        detail  = reason if not success else f"Login successful — user:{username}",
+        detail  = f"Login successful — user:{username}",
         ip      = ip,
-        success = success
+        success = True
     )
 
-    if success:
-        return {"success": True, "token": create_jwt(), "username": cfg.DASHBOARD_USERNAME}
-    return {"success": False, "reason": reason}
+    return {
+        "success":  True,
+        "token":    create_jwt(tier="pro"),
+        "username": cfg.DASHBOARD_USERNAME,
+        "tier":     "pro"
+    }
 
-
-# ── Reset password via TOTP ───────────────────────────────────────────────────
 
 def reset_password_with_totp(totp_code: str, new_password: str, ip: str = "") -> dict:
     if not verify_totp(totp_code):
         _audit("password_reset_failed", "web", "Invalid TOTP", ip=ip, success=False)
-        return {"success": False, "reason": "Invalid TOTP code"}
+        return {"success": False, "reason": "Invalid authenticator code"}
 
     if len(new_password) < 8:
         return {"success": False, "reason": "Password must be at least 8 characters"}
@@ -193,13 +326,22 @@ def reset_password_with_totp(totp_code: str, new_password: str, ip: str = "") ->
     return {"success": True}
 
 
-# ── API Key ───────────────────────────────────────────────────────────────────
+def reset_password_with_recovery(recovery_code: str, new_password: str, ip: str = "") -> dict:
+    if not verify_recovery_code(recovery_code):
+        _audit("password_reset_failed", "web", "Invalid recovery code", ip=ip, success=False)
+        return {"success": False, "reason": "Invalid recovery code"}
+
+    if len(new_password) < 8:
+        return {"success": False, "reason": "Password must be at least 8 characters"}
+
+    set_password(new_password)
+    _audit("password_reset", "web", "Password reset via recovery code", ip=ip, success=True)
+    return {"success": True}
+
 
 def verify_api_key(key: str) -> bool:
     return bool(cfg.DASHBOARD_API_KEY) and key == cfg.DASHBOARD_API_KEY
 
-
-# ── Auth check ────────────────────────────────────────────────────────────────
 
 def is_authenticated(request) -> bool:
     api_key = request.headers.get("X-API-Key", "")
@@ -211,7 +353,13 @@ def is_authenticated(request) -> bool:
     return False
 
 
-# ── Audit ─────────────────────────────────────────────────────────────────────
+def get_user_tier(request) -> str:
+    token = request.cookies.get("se_token", "")
+    if token:
+        payload = decode_jwt(token)
+        return payload.get("tier", "pro")
+    return "pro"
+
 
 def _audit(action: str, source: str, detail: str = "", ip: str = "", success: bool = True):
     try:
@@ -230,8 +378,6 @@ def _audit(action: str, source: str, detail: str = "", ip: str = "", success: bo
 def audit(action: str, source: str, detail: str = "", ip: str = "", success: bool = True):
     _audit(action, source, detail, ip, success)
 
-
-# ── Setup status ──────────────────────────────────────────────────────────────
 
 def setup_status() -> dict:
     return {

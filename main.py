@@ -335,7 +335,14 @@ async def cache_headers(request: Request, call_next):
 @app.get("/auth/setup")
 async def auth_setup(request: Request):
     from auth import setup_status, get_qr_svg, get_qr_png_bytes
+
     status = setup_status()
+
+    if status["setup_complete"]:
+        raise HTTPException(
+            status_code = 403,
+            detail      = "Setup already complete. Use /login.html to sign in."
+        )
 
     qr_svg           = ""
     qr_png_available = False
@@ -366,6 +373,7 @@ async def login_page(request: Request):
 
 
 @app.post("/auth/login")
+@limiter.limit("10/minute")
 async def auth_login(request: Request):
     try:
         body     = await request.json()
@@ -381,6 +389,7 @@ async def auth_login(request: Request):
             response = JSONResponse(content={
                 "success":  True,
                 "username": result.get("username", ""),
+                "tier":     result.get("tier", "pro"),
                 "mode":     "live" if not cfg.PAPER_TRADING else "paper"
             })
             response.set_cookie(
@@ -393,9 +402,16 @@ async def auth_login(request: Request):
             )
             return response
         else:
+            status_code = 423 if result.get("locked") else 401
             return JSONResponse(
-                status_code = 401,
-                content     = {"success": False, "reason": result["reason"]}
+                status_code = status_code,
+                content     = {
+                    "success":            False,
+                    "reason":             result["reason"],
+                    "locked":             result.get("locked", False),
+                    "lockout_minutes":    result.get("lockout_minutes", 0),
+                    "attempts_remaining": result.get("attempts_remaining", MAX_ATTEMPTS),
+                }
             )
     except Exception as e:
         log.error(f"Login error: {e}")
@@ -403,6 +419,7 @@ async def auth_login(request: Request):
 
 
 @app.post("/auth/request-totp")
+@limiter.limit("5/minute")
 async def request_totp_via_telegram(request: Request):
     try:
         if not cfg.TOTP_SECRET:
@@ -430,15 +447,22 @@ async def request_totp_via_telegram(request: Request):
 
 
 @app.post("/auth/reset-password")
+@limiter.limit("5/minute")
 async def auth_reset_password(request: Request):
     try:
-        body         = await request.json()
-        totp_code    = body.get("totp_code", "")
-        new_password = body.get("new_password", "")
-        ip           = request.client.host if request.client else ""
+        body          = await request.json()
+        totp_code     = body.get("totp_code", "")
+        recovery_code = body.get("recovery_code", "")
+        new_password  = body.get("new_password", "")
+        ip            = request.client.host if request.client else ""
 
-        from auth import reset_password_with_totp
-        result = reset_password_with_totp(totp_code, new_password, ip)
+        from auth import reset_password_with_totp, reset_password_with_recovery
+
+        if recovery_code:
+            result = reset_password_with_recovery(recovery_code, new_password, ip)
+        else:
+            result = reset_password_with_totp(totp_code, new_password, ip)
+
         return JSONResponse(content=result)
     except Exception as e:
         log.error(f"Reset password error: {e}")
@@ -469,7 +493,7 @@ async def auth_set_credentials(request: Request):
             if len(password) < 8:
                 return JSONResponse(
                     status_code = 400,
-                    content     = {"success": False, "reason": "Password too short"}
+                    content     = {"success": False, "reason": "Password too short — minimum 8 characters"}
                 )
             from auth import set_password
             set_password(password)
@@ -484,12 +508,52 @@ async def auth_set_credentials(request: Request):
 
 
 @app.post("/auth/regenerate-totp")
-async def auth_regenerate_totp():
+async def auth_regenerate_totp(request: Request):
     try:
-        from auth import regenerate_totp
+        body     = await request.json()
+        password = body.get("password", "")
+
+        if not password:
+            return JSONResponse(
+                status_code = 400,
+                content     = {"success": False, "reason": "Current password required to regenerate TOTP"}
+            )
+
+        from auth import verify_password, regenerate_totp
+        if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid password"}
+            )
+
         new_secret = regenerate_totp()
         log.info("TOTP secret regenerated")
         return JSONResponse(content={"success": True, "secret": new_secret})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/auth/generate-recovery-codes")
+async def auth_generate_recovery_codes(request: Request):
+    try:
+        body      = await request.json()
+        totp_code = body.get("totp_code", "")
+
+        from auth import verify_totp, generate_recovery_codes, store_recovery_codes
+        if not verify_totp(totp_code):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid authenticator code"}
+            )
+
+        codes = generate_recovery_codes(8)
+        store_recovery_codes(codes)
+
+        ip = request.client.host if request.client else ""
+        from auth import audit
+        audit("recovery_codes_generated", "web", "New recovery codes generated", ip=ip)
+
+        return JSONResponse(content={"success": True, "codes": codes})
     except Exception as e:
         raise HTTPException(500, str(e))
 

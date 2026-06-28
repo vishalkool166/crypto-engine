@@ -1,19 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Signal Engine v5</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
     <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/reset.css">
     <link rel="stylesheet" href="/css/layout.css">
-    <link rel="stylesheet" href="/css/components.css">
-    <style>
-        @keyframes ticker-scroll {
-            0%   { transform: translateX(0); }
-            100% { transform: translateX(-50%); }
-        }
-    </style>
+    <link rel="stylesheet" href="/css/typography.css">
+    <link rel="stylesheet" href="/css/components/buttons.css">
+    <link rel="stylesheet" href="/css/components/badges.css">
+    <link rel="stylesheet" href="/css/components/cards.css">
+    <link rel="stylesheet" href="/css/components/tables.css">
+    <link rel="stylesheet" href="/css/components/forms.css">
+    <link rel="stylesheet" href="/css/components/modals.css">
+    <link rel="stylesheet" href="/css/components/charts.css">
+    <link rel="stylesheet" href="/css/components/feedback.css">
+    <link rel="stylesheet" href="/css/components/progress.css">
+
     <script type="importmap">
     {
         "imports": {
@@ -23,6 +32,11 @@
     }
     </script>
     <script src="/js/chartjs.min.js"></script>
+</head>
+<body>
+    <a href="#main-content" class="skip-nav">Skip to main content</a>
+    <div id="root"></div>
+
     <script type="module">
         import { h, render, Fragment, Component } from 'preact'
         import { useState, useEffect, useRef, useCallback } from 'preact/hooks'
@@ -38,14 +52,11 @@
             '/js/api.js',
             '/js/store.js',
             '/js/components.js',
-            '/js/pages/overview.js',
-            '/js/pages/freqtrade.js',
-            '/js/pages/signals.js',
-            '/js/pages/coins.js',
-            '/js/pages/backtest.js',
-            '/js/pages/analysis.js',
-            '/js/pages/audit.js',
-            '/js/pages/settings.js',
+            '/js/pages/now.js',
+            '/js/pages/positions.js',
+            '/js/pages/performance.js',
+            '/js/pages/universe.js',
+            '/js/pages/system.js',
             '/js/app.js',
         ]
 
@@ -59,9 +70,5 @@
             })
         }
     </script>
-</head>
-<body>
-    <a href="#main-content" class="skip-nav">Skip to main content</a>
-    <div id="root"></div>
 </body>
 </html>

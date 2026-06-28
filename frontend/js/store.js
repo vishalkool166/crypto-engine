@@ -1,5 +1,3 @@
-var html = window.html
-
 const _listeners = {}
 
 function emit(event, data) {
@@ -16,17 +14,21 @@ function on(event, fn) {
 }
 
 const _store = {
-    page:          'overview',
-    wsState:       'connecting',
-    mode:          'paper',
-    nextScanEpoch: 0,
-    ticker:        [],
-    dashboardData: {},
-    ftTrades:      [],
-    ftProfit:      {},
-    ftBalance:     {},
-    ftBotState:    'unknown',
-    theme:         localStorage.getItem('theme') || 'light',
+    page:             'now',
+    wsState:          'connecting',
+    mode:             'paper',
+    tier:             'pro',
+    regime:           '',
+    confidence:       0,
+    nextScanEpoch:    0,
+    ticker:           [],
+    dashboardData:    {},
+    ftTrades:         [],
+    ftProfit:         {},
+    ftBalance:        {},
+    ftBotState:       'unknown',
+    theme:            localStorage.getItem('se_theme') || 'dark',
+    notifications:    [],
     totp: {
         show:     false,
         title:    '',
@@ -48,13 +50,30 @@ let _countTimer = null
 
 function _applyTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme)
-    localStorage.setItem('theme', theme)
+    localStorage.setItem('se_theme', theme)
     _store.theme = theme
     emit('theme', theme)
 }
 
 function toggleTheme() {
-    _applyTheme(_store.theme === 'light' ? 'dark' : 'light')
+    _applyTheme(_store.theme === 'dark' ? 'light' : 'dark')
+}
+
+function _extractRegime(data) {
+    if (!data) return ''
+    const results = data.signals?.radar || []
+    if (!results.length) return ''
+    const regimes = results.map(r => r.regime).filter(Boolean)
+    if (!regimes.length) return ''
+    const counts = {}
+    regimes.forEach(r => { counts[r] = (counts[r] || 0) + 1 })
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]
+}
+
+function _extractConfidence(data) {
+    if (!data) return 0
+    const summary = data.summary || {}
+    return Utils.confidenceScore(summary)
 }
 
 function _applyDashboard(data) {
@@ -64,20 +83,23 @@ function _applyDashboard(data) {
     if (summary.mode)            _store.mode          = summary.mode
     if (data.ticker?.length)     _store.ticker        = data.ticker
     if (summary.next_scan_epoch) _store.nextScanEpoch = summary.next_scan_epoch
-    emit('dashboard',    data)
-    emit('summary',      summary)
+    _store.regime     = _extractRegime(data)
+    _store.confidence = _extractConfidence(data)
+    emit('dashboard',  data)
+    emit('summary',    summary)
+    emit('regime',     _store.regime)
+    emit('confidence', _store.confidence)
     if (data.signals) emit('signals', data.signals)
     if (data.history) emit('history', data.history)
+    _checkForNewSignals(data)
 }
 
 function _applyTicker(data) {
     if (!data) return
-
     if (data.items?.length) {
         _store.ticker = data.items
         emit('ticker', data.items)
     }
-
     if (data.status && Array.isArray(data.status)) {
         _store.ftTrades = data.status
         emit('ft_update', {
@@ -87,7 +109,6 @@ function _applyTicker(data) {
             botState: _store.ftBotState,
         })
     }
-
     if (data.summary) {
         if (data.summary.next_scan_epoch) _store.nextScanEpoch = data.summary.next_scan_epoch
         if (data.summary.mode)            _store.mode          = data.summary.mode
@@ -97,11 +118,8 @@ function _applyTicker(data) {
 
 function _applyFtUpdate(data) {
     if (!data) return
-
-    if (Array.isArray(data.status)) _store.ftTrades = data.status
-
-    if (data.profit && !data.profit.detail)  _store.ftProfit  = data.profit
-
+    if (Array.isArray(data.status))           _store.ftTrades  = data.status
+    if (data.profit  && !data.profit.detail)  _store.ftProfit  = data.profit
     if (data.balance && !data.balance.detail) {
         const currencies = data.balance.currencies || []
         const usdt       = currencies.find(c => c.currency === 'USDT') || {}
@@ -110,15 +128,54 @@ function _applyFtUpdate(data) {
             free:  usdt.free           != null ? parseFloat(usdt.free)          : null,
         }
     }
-
     if (data.bot_state) _store.ftBotState = data.bot_state
-
     emit('ft_update', {
         trades:   _store.ftTrades,
         profit:   _store.ftProfit,
         balance:  _store.ftBalance,
         botState: _store.ftBotState,
     })
+}
+
+let _lastSignalIds = new Set()
+
+function _checkForNewSignals(data) {
+    const queue = data.signals?.queue || []
+    if (!queue.length) return
+    const currentIds = new Set(queue.map(s => s.coin + '_' + s.direction))
+    if (_lastSignalIds.size === 0) {
+        _lastSignalIds = currentIds
+        return
+    }
+    for (const id of currentIds) {
+        if (!_lastSignalIds.has(id)) {
+            const sig = queue.find(s => s.coin + '_' + s.direction === id)
+            if (sig) {
+                _addNotification({
+                    type:      'signal',
+                    title:     `${sig.coin}USDT ${sig.direction}`,
+                    message:   `Grade ${sig.grade} · Score ${sig.score}/100`,
+                    coin:      sig.coin,
+                    grade:     sig.grade,
+                    timestamp: Date.now(),
+                })
+                showToast(
+                    `${sig.coin}USDT ${sig.direction} — Grade ${sig.grade}`,
+                    'signal',
+                    6000
+                )
+            }
+        }
+    }
+    _lastSignalIds = currentIds
+}
+
+function _addNotification(notif) {
+    _store.notifications.unshift({ ...notif, id: Date.now() + Math.random() })
+    if (_store.notifications.length > 50) {
+        _store.notifications = _store.notifications.slice(0, 50)
+    }
+    emit('notifications', _store.notifications)
 }
 
 function _connect() {
@@ -192,7 +249,12 @@ async function init() {
 
 async function requireTotp(title, subtitle) {
     return new Promise((resolve) => {
-        _store.totp = { show: true, title: title || 'Confirm Action', subtitle: subtitle || 'Enter your TOTP code to continue', resolve }
+        _store.totp = {
+            show:     true,
+            title:    title    || 'Confirm Action',
+            subtitle: subtitle || 'Enter your 6-digit authenticator code to continue.',
+            resolve
+        }
         emit('totp', { ..._store.totp })
     })
 }
@@ -214,7 +276,7 @@ function closeTotp() {
 function showToast(message, type = 'success', duration = 3500) {
     if (_store.toast.timer) clearTimeout(_store.toast.timer)
     _store.toast = {
-        show:  true,
+        show:    true,
         message,
         type,
         timer: setTimeout(() => {
@@ -225,6 +287,12 @@ function showToast(message, type = 'success', duration = 3500) {
     emit('toast', { ..._store.toast })
 }
 
+function hideToast() {
+    if (_store.toast.timer) clearTimeout(_store.toast.timer)
+    _store.toast.show = false
+    emit('toast', { ..._store.toast })
+}
+
 function logout() {
     fetch('/auth/logout').finally(() => { window.location.href = '/login.html' })
 }
@@ -232,23 +300,10 @@ function logout() {
 function navigate(page) {
     _store.page = page
     emit('navigate', page)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function getState() { return _store }
-
-function useStore(selector) {
-    const { useState, useEffect } = preactHooks
-    const [val, setVal] = useState(() => selector(_store))
-    useEffect(() => {
-        const events = ['dashboard','ticker','ft_update','wsState','navigate','totp','toast','summary','summary-lite','countdown','theme']
-        const unsubs = events.map(e => on(e, () => {
-            const next = selector(_store)
-            setVal(prev => JSON.stringify(prev) !== JSON.stringify(next) ? next : prev)
-        }))
-        return () => unsubs.forEach(fn => fn())
-    }, [])
-    return val
-}
 
 function usePage() {
     const { useState, useEffect } = preactHooks
@@ -303,15 +358,11 @@ function useDashboard() {
 
 function useNextScan() {
     const { useState, useEffect } = preactHooks
-    const [label, setLabel] = useState('--')
+    const [arc, setArc] = useState({ mins: '--', secs: '--', pct: 0 })
     useEffect(() => on('countdown', epoch => {
-        if (!epoch) { setLabel('--'); return }
-        const diff = Math.max(0, epoch - Date.now())
-        const mins = Math.floor(diff / 60000)
-        const secs = Math.floor((diff % 60000) / 1000)
-        setLabel(`${mins}m ${secs}s`)
+        setArc(Utils.fmtCountdownArc(epoch))
     }), [])
-    return label
+    return arc
 }
 
 function useTotp() {
@@ -332,7 +383,7 @@ function useMode() {
     const { useState, useEffect } = preactHooks
     const [mode, setMode] = useState(_store.mode)
     useEffect(() => {
-        if (_store.mode && _store.mode !== 'paper') setMode(_store.mode)
+        if (_store.mode) setMode(_store.mode)
         const u1 = on('summary',      d => { if (d?.mode) setMode(d.mode) })
         const u2 = on('summary-lite', d => { if (d?.mode) setMode(d.mode) })
         return () => { u1(); u2() }
@@ -347,10 +398,47 @@ function useTheme() {
     return theme
 }
 
+function useRegime() {
+    const { useState, useEffect } = preactHooks
+    const [regime, setRegime] = useState(_store.regime)
+    useEffect(() => {
+        if (_store.regime) setRegime(_store.regime)
+        return on('regime', r => setRegime(r))
+    }, [])
+    return regime
+}
+
+function useConfidence() {
+    const { useState, useEffect } = preactHooks
+    const [conf, setConf] = useState(_store.confidence)
+    useEffect(() => {
+        if (_store.confidence) setConf(_store.confidence)
+        return on('confidence', c => setConf(c))
+    }, [])
+    return conf
+}
+
+function useNotifications() {
+    const { useState, useEffect } = preactHooks
+    const [notifs, setNotifs] = useState([..._store.notifications])
+    useEffect(() => on('notifications', n => setNotifs([...n])), [])
+    return notifs
+}
+
+function useFtTrades() {
+    const { useState, useEffect } = preactHooks
+    const [trades, setTrades] = useState([..._store.ftTrades])
+    useEffect(() => on('ft_update', d => setTrades([...(d.trades || [])])), [])
+    return trades
+}
+
 window.Store = {
-    init, navigate, getState, requireTotp, confirmTotp,
-    closeTotp, showToast, logout, toggleTheme,
+    init, navigate, getState, logout, toggleTheme,
+    requireTotp, confirmTotp, closeTotp,
+    showToast, hideToast,
     on, emit,
-    useStore, usePage, useWsState, useTicker, useFtUpdate,
-    useDashboard, useNextScan, useTotp, useToast, useMode, useTheme,
+    usePage, useWsState, useTicker, useFtUpdate,
+    useDashboard, useNextScan, useTotp, useToast,
+    useMode, useTheme, useRegime, useConfidence,
+    useNotifications, useFtTrades,
 }

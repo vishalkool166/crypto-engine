@@ -1,0 +1,512 @@
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 16px;
+    height: 36px;
+    border-radius: var(--r-md);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+    cursor: pointer;
+    border: 1px solid transparent;
+    white-space: nowrap;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+    transition:
+        background var(--dur-fast) var(--ease-out),
+        border-color var(--dur-fast) var(--ease-out),
+        color var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out),
+        opacity var(--dur-fast) var(--ease-out),
+        transform var(--dur-fast) var(--ease-out);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn:active:not(:disabled) {
+    transform: scale(0.97);
+}
+
+.btn:disabled {
+    opacity: 0.38;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.btn svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.btn-primary {
+    background: var(--grad-brand);
+    color: var(--bg);
+    border-color: transparent;
+    box-shadow: 0 2px 8px rgba(0, 212, 170, 0.25);
+}
+
+.btn-primary:hover:not(:disabled) {
+    box-shadow: 0 4px 16px rgba(0, 212, 170, 0.4);
+    filter: brightness(1.08);
+}
+
+.btn-primary:active:not(:disabled) {
+    box-shadow: 0 1px 4px rgba(0, 212, 170, 0.2);
+    filter: brightness(0.96);
+}
+
+.btn-secondary {
+    background: var(--surface-3);
+    color: var(--text-1);
+    border-color: var(--border-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: var(--surface-4);
+    border-color: var(--border-strong);
+}
+
+.btn-ghost {
+    background: transparent;
+    color: var(--text-2);
+    border-color: transparent;
+}
+
+.btn-ghost:hover:not(:disabled) {
+    background: var(--surface-3);
+    color: var(--text-1);
+}
+
+.btn-outline {
+    background: transparent;
+    color: var(--brand);
+    border-color: var(--border-brand);
+}
+
+.btn-outline:hover:not(:disabled) {
+    background: var(--brand-dim);
+    border-color: var(--brand);
+}
+
+.btn-danger {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: rgba(255, 69, 58, 0.2);
+    border-color: rgba(255, 69, 58, 0.4);
+    box-shadow: 0 0 16px rgba(255, 69, 58, 0.15);
+}
+
+.btn-danger-solid {
+    background: var(--grad-loss);
+    color: #ffffff;
+    border-color: transparent;
+    box-shadow: 0 2px 8px rgba(255, 69, 58, 0.25);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+    box-shadow: 0 4px 16px rgba(255, 69, 58, 0.4);
+    filter: brightness(1.08);
+}
+
+.btn-warning {
+    background: var(--warning-dim);
+    color: var(--warning);
+    border-color: rgba(255, 159, 10, 0.2);
+}
+
+.btn-warning:hover:not(:disabled) {
+    background: rgba(255, 159, 10, 0.2);
+    border-color: rgba(255, 159, 10, 0.4);
+}
+
+.btn-success {
+    background: var(--profit-dim);
+    color: var(--profit);
+    border-color: rgba(48, 209, 88, 0.2);
+}
+
+.btn-success:hover:not(:disabled) {
+    background: rgba(48, 209, 88, 0.2);
+    border-color: rgba(48, 209, 88, 0.4);
+}
+
+.btn-gold {
+    background: var(--gold-dim);
+    color: var(--gold);
+    border-color: rgba(255, 214, 10, 0.2);
+}
+
+.btn-gold:hover:not(:disabled) {
+    background: rgba(255, 214, 10, 0.2);
+    border-color: rgba(255, 214, 10, 0.4);
+}
+
+.btn-xs {
+    height: 26px;
+    padding: 0 10px;
+    font-size: var(--text-xs);
+    border-radius: var(--r-sm);
+    gap: 5px;
+}
+
+.btn-xs svg {
+    width: 12px;
+    height: 12px;
+}
+
+.btn-sm {
+    height: 32px;
+    padding: 0 12px;
+    font-size: var(--text-sm);
+    border-radius: var(--r-sm);
+    gap: 6px;
+}
+
+.btn-sm svg {
+    width: 13px;
+    height: 13px;
+}
+
+.btn-md {
+    height: 36px;
+    padding: 0 16px;
+}
+
+.btn-lg {
+    height: 44px;
+    padding: 0 24px;
+    font-size: var(--text-md);
+    border-radius: var(--r-lg);
+    gap: 8px;
+}
+
+.btn-lg svg {
+    width: 16px;
+    height: 16px;
+}
+
+.btn-xl {
+    height: 52px;
+    padding: 0 32px;
+    font-size: var(--text-lg);
+    border-radius: var(--r-lg);
+    gap: 10px;
+}
+
+.btn-xl svg {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: var(--r-md);
+}
+
+.btn-icon-sm {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border-radius: var(--r-sm);
+}
+
+.btn-icon-sm svg {
+    width: 13px;
+    height: 13px;
+}
+
+.btn-icon-lg {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: var(--r-lg);
+}
+
+.btn-icon-lg svg {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-full {
+    width: 100%;
+}
+
+.btn-loading {
+    pointer-events: none;
+}
+
+.btn-loading .btn-spinner {
+    display: flex;
+}
+
+.btn-spinner {
+    display: none;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-top-color: currentColor;
+    border-radius: var(--r-full);
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+}
+
+.btn-group {
+    display: inline-flex;
+    align-items: center;
+}
+
+.btn-group .btn {
+    border-radius: 0;
+}
+
+.btn-group .btn:first-child {
+    border-radius: var(--r-md) 0 0 var(--r-md);
+}
+
+.btn-group .btn:last-child {
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+
+.btn-group .btn:not(:last-child) {
+    border-right-width: 0;
+}
+
+.btn-group .btn:not(:first-child):not(:last-child) {
+    border-radius: 0;
+}
+
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-md);
+    color: var(--text-3);
+    cursor: pointer;
+    border: none;
+    background: none;
+    transition:
+        color var(--dur-fast) var(--ease-out),
+        background var(--dur-fast) var(--ease-out);
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.icon-btn:hover {
+    color: var(--text-1);
+    background: var(--surface-3);
+}
+
+.icon-btn:active {
+    transform: scale(0.94);
+}
+
+.icon-btn svg {
+    width: 15px;
+    height: 15px;
+}
+
+.icon-btn-sm {
+    width: 26px;
+    height: 26px;
+    border-radius: var(--r-sm);
+}
+
+.icon-btn-sm svg {
+    width: 13px;
+    height: 13px;
+}
+
+.icon-btn-lg {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--r-lg);
+}
+
+.icon-btn-lg svg {
+    width: 18px;
+    height: 18px;
+}
+
+.icon-btn-danger:hover {
+    color: var(--loss);
+    background: var(--loss-subtle);
+}
+
+.icon-btn-brand:hover {
+    color: var(--brand);
+    background: var(--brand-dim);
+}
+
+.tab-group {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    background: var(--surface-3);
+    border-radius: var(--r-lg);
+    border: 1px solid var(--border);
+}
+
+.tab-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border-radius: var(--r-md);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text-3);
+    cursor: pointer;
+    border: none;
+    background: none;
+    transition:
+        color var(--dur-fast) var(--ease-out),
+        background var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out);
+    white-space: nowrap;
+    user-select: none;
+    min-height: 34px;
+}
+
+.tab-btn:hover:not(.active) {
+    color: var(--text-2);
+    background: var(--surface-4);
+}
+
+.tab-btn.active {
+    background: var(--surface-1);
+    color: var(--text-1);
+    font-weight: var(--weight-semibold);
+    box-shadow: var(--shadow-sm);
+}
+
+.tab-btn svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+.tab-btn.active svg {
+    color: var(--brand);
+}
+
+.toggle-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    width: 44px;
+    height: 26px;
+    border-radius: var(--r-full);
+    background: var(--surface-4);
+    border: 1px solid var(--border-strong);
+    cursor: pointer;
+    transition:
+        background var(--dur-normal) var(--ease-out),
+        border-color var(--dur-normal) var(--ease-out);
+    flex-shrink: 0;
+}
+
+.toggle-btn.on {
+    background: var(--brand);
+    border-color: var(--brand);
+}
+
+.toggle-btn-thumb {
+    position: absolute;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: var(--r-full);
+    background: var(--text-3);
+    transition: transform var(--dur-normal) var(--ease-spring);
+    box-shadow: var(--shadow-sm);
+}
+
+.toggle-btn.on .toggle-btn-thumb {
+    transform: translateX(18px);
+    background: var(--bg);
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    border: 1px solid var(--border);
+    background: var(--surface-3);
+    color: var(--text-2);
+    white-space: nowrap;
+    cursor: default;
+    user-select: none;
+}
+
+.chip svg {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+}
+
+.chip-brand {
+    background: var(--brand-dim);
+    border-color: var(--border-brand);
+    color: var(--brand);
+}
+
+.chip-gold {
+    background: var(--gold-dim);
+    border-color: rgba(255, 214, 10, 0.2);
+    color: var(--gold);
+}
+
+.chip-profit {
+    background: var(--profit-dim);
+    border-color: rgba(48, 209, 88, 0.2);
+    color: var(--profit);
+}
+
+.chip-loss {
+    background: var(--loss-dim);
+    border-color: rgba(255, 69, 58, 0.2);
+    color: var(--loss);
+}
+
+.chip-warning {
+    background: var(--warning-dim);
+    border-color: rgba(255, 159, 10, 0.2);
+    color: var(--warning);
+}
+
+.chip-clickable {
+    cursor: pointer;
+    transition:
+        background var(--dur-fast) var(--ease-out),
+        border-color var(--dur-fast) var(--ease-out);
+}
+
+.chip-clickable:hover {
+    background: var(--surface-4);
+    border-color: var(--border-strong);
+}
+
+.chip-active {
+    background: var(--brand-dim);
+    border-color: var(--border-brand);
+    color: var(--brand);
+}

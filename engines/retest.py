@@ -115,31 +115,20 @@ def detect_retest(
         zone      = {"top": ema50 * 1.01, "bottom": ema50 * 0.99, "mid": ema50}
         zone_type = "EMA50 Zone"
 
-    def _empty_zone_result(status, label, desc, score, failed=False):
-        fallback_price = price
+    if not zone:
         return {
-            "status":       status,
-            "label":        label,
-            "desc":         desc,
-            "score":        score,
+            "status":       "none",
+            "label":        "No retest zone",
+            "desc":         "No valid OB, FVG or EMA zone found",
+            "score":        0,
             "confirmed":    False,
-            "failed":       failed,
+            "failed":       False,
             "zone_type":    "",
-            "zone": {
-                "top":    fallback_price * 1.005,
-                "bottom": fallback_price * 0.995,
-                "mid":    fallback_price
-            },
+            "zone":         None,
             "trade_dir":    trade_dir,
             "limit_entry":  None,
             "limit_method": "none"
         }
-
-    if not zone:
-        return _empty_zone_result(
-            "none", "No retest zone",
-            "No valid OB, FVG or EMA zone found", 0
-        )
 
     in_zone    = zone["bottom"] <= price <= zone["top"]
     above_zone = price > zone["top"]

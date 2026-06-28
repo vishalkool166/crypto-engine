@@ -27,27 +27,6 @@ def validate_candles(
     coin: str,
     tf:   str
 ) -> dict:
-    """
-    Validates and cleans a candle DataFrame before
-    passing it to any engine.
-
-    Returns:
-        {
-            "df":       cleaned DataFrame,
-            "valid":    bool — safe to use,
-            "clean":    bool — no issues found,
-            "issues":   list of issue descriptions,
-            "original": original row count,
-            "cleaned":  cleaned row count,
-            "removed":  rows removed
-        }
-
-    Usage:
-        result = validate_candles(df, "BTC", "1d")
-        if not result["valid"]:
-            return error
-        df = result["df"]
-    """
 
     issues = []
 
@@ -156,17 +135,20 @@ def validate_candles(
     expected_gap = TF_MINUTES.get(tf)
     if expected_gap and len(df) > 1:
         try:
-            time_diffs  = df.index.to_series().diff().dt.total_seconds() / 60
-            large_gaps  = time_diffs[time_diffs > expected_gap * 2].dropna()
-            if len(large_gaps) > 0:
-                issues.append(
-                    f"Possible missing candles: {len(large_gaps)} gaps "
-                    f"(>{expected_gap * 2}min)"
-                )
-                log.warning(
-                    f"Missing candles: {coin} {tf} — "
-                    f"{len(large_gaps)} gaps detected"
-                )
+            if not pd.api.types.is_datetime64_any_dtype(df.index):
+                log.debug(f"Gap detection skipped: {coin} {tf} — index is not datetime")
+            else:
+                time_diffs = df.index.to_series().diff().dt.total_seconds() / 60
+                large_gaps = time_diffs[time_diffs > expected_gap * 2].dropna()
+                if len(large_gaps) > 0:
+                    issues.append(
+                        f"Possible missing candles: {len(large_gaps)} gaps "
+                        f"(>{expected_gap * 2}min)"
+                    )
+                    log.warning(
+                        f"Missing candles: {coin} {tf} — "
+                        f"{len(large_gaps)} gaps detected"
+                    )
         except Exception as e:
             log.debug(f"Gap detection skipped: {coin} {tf} — {e}")
 
@@ -209,18 +191,7 @@ def validate_all_timeframes(
     klines: dict,
     coin:   str
 ) -> dict:
-    """
-    Validates all timeframes at once.
-    Used in analyze_coin() before any engine runs.
 
-    Returns:
-        {
-            "valid":   bool — all TFs passed,
-            "klines":  cleaned klines dict,
-            "reports": per-TF validation reports,
-            "errors":  list of blocking errors
-        }
-    """
     cleaned_klines = {}
     reports        = {}
     errors         = []

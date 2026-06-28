@@ -1,16 +1,20 @@
 const Utils = {
 
     fmtPrice(n) {
-        if (n == null || n === 0) return '--'
+        if (n == null || n === '' || n === false) return '--'
         n = parseFloat(n)
-        if (isNaN(n)) return '--'
-        if (n >= 10000)  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-        if (n >= 1000)   return '$' + n.toFixed(2)
-        if (n >= 100)    return '$' + n.toFixed(3)
-        if (n >= 1)      return '$' + n.toFixed(4)
-        if (n >= 0.1)    return '$' + n.toFixed(5)
-        if (n >= 0.01)   return '$' + n.toFixed(6)
-        if (n >= 0.001)  return '$' + n.toFixed(7)
+        if (isNaN(n) || !isFinite(n)) return '--'
+        if (n === 0) return '$0.00'
+        const abs = Math.abs(n)
+        if (abs >= 100000) return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        if (abs >= 10000)  return '$' + n.toFixed(2)
+        if (abs >= 1000)   return '$' + n.toFixed(2)
+        if (abs >= 100)    return '$' + n.toFixed(3)
+        if (abs >= 10)     return '$' + n.toFixed(4)
+        if (abs >= 1)      return '$' + n.toFixed(4)
+        if (abs >= 0.1)    return '$' + n.toFixed(5)
+        if (abs >= 0.01)   return '$' + n.toFixed(6)
+        if (abs >= 0.001)  return '$' + n.toFixed(7)
         return '$' + n.toFixed(8)
     },
 
@@ -20,27 +24,42 @@ const Utils = {
         if (isNaN(n)) return '--'
         const positive = pos != null ? pos : n >= 0
         const sign     = positive ? '+' : '-'
-        return sign + '$' + Math.abs(n).toFixed(2)
+        const abs      = Math.abs(n)
+        if (abs >= 1000) return sign + '$' + abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        if (abs >= 1)    return sign + '$' + abs.toFixed(2)
+        return sign + '$' + abs.toFixed(4)
     },
 
-    fmtPct(n) {
+    fmtPct(n, showSign = true) {
         if (n == null) return '--'
         n = parseFloat(n)
         if (isNaN(n)) return '--'
-        const sign = n >= 0 ? '+' : ''
+        const sign = showSign ? (n >= 0 ? '+' : '') : ''
         return sign + n.toFixed(2) + '%'
+    },
+
+    fmtNumber(n, decimals = 0) {
+        if (n == null) return '--'
+        n = parseFloat(n)
+        if (isNaN(n)) return '--'
+        return n.toLocaleString('en-US', {
+            minimumFractionDigits: decimals,
+            maximumFractionDigits: decimals
+        })
     },
 
     fmtDuration(openedAt) {
         if (!openedAt) return '--'
         try {
             const diff  = Date.now() - new Date(openedAt).getTime()
+            if (diff < 0) return '--'
             const mins  = Math.floor(diff / 60000)
             const hrs   = Math.floor(mins / 60)
             const days  = Math.floor(hrs / 24)
-            if (days > 0) return `${days}d ${hrs % 24}h`
-            if (hrs > 0)  return `${hrs}h ${mins % 60}m`
-            return `${mins}m`
+            if (days > 0)  return `${days}d ${hrs % 24}h`
+            if (hrs > 0)   return `${hrs}h ${mins % 60}m`
+            if (mins > 0)  return `${mins}m`
+            return 'Just now'
         } catch (e) { return '--' }
     },
 
@@ -58,16 +77,41 @@ const Utils = {
         } catch (e) { return '--' }
     },
 
+    fmtTimeShort(ts) {
+        if (!ts) return '--'
+        try {
+            return new Date(ts).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                hour:     '2-digit',
+                minute:   '2-digit',
+                hour12:   true
+            })
+        } catch (e) { return '--' }
+    },
+
+    fmtDate(ts) {
+        if (!ts) return '--'
+        try {
+            return new Date(ts).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day:      '2-digit',
+                month:    'short',
+                year:     'numeric'
+            })
+        } catch (e) { return '--' }
+    },
+
     fmtTimeAgo(ts) {
         if (!ts) return '--'
         try {
             const diff = Date.now() - new Date(ts).getTime()
+            if (diff < 0) return '--'
             const mins = Math.floor(diff / 60000)
             const hrs  = Math.floor(mins / 60)
             const days = Math.floor(hrs / 24)
-            if (days > 0) return `${days}d ago`
-            if (hrs > 0)  return `${hrs}h ago`
-            if (mins > 0) return `${mins}m ago`
+            if (days > 0)  return `${days}d ago`
+            if (hrs > 0)   return `${hrs}h ago`
+            if (mins > 0)  return `${mins}m ago`
             return 'Just now'
         } catch (e) { return '--' }
     },
@@ -82,61 +126,138 @@ const Utils = {
         return `${m}m`
     },
 
+    fmtCountdown(epochMs) {
+        if (!epochMs) return '--'
+        const diff = Math.max(0, epochMs - Date.now())
+        const mins = Math.floor(diff / 60000)
+        const secs = Math.floor((diff % 60000) / 1000)
+        return `${mins}m ${secs.toString().padStart(2, '0')}s`
+    },
+
+    fmtCountdownArc(epochMs) {
+        if (!epochMs) return { mins: '--', secs: '--', pct: 0 }
+        const total = 15 * 60 * 1000
+        const diff  = Math.max(0, epochMs - Date.now())
+        const mins  = Math.floor(diff / 60000)
+        const secs  = Math.floor((diff % 60000) / 1000)
+        const pct   = Math.min(1, diff / total)
+        return {
+            mins: mins.toString(),
+            secs: secs.toString().padStart(2, '0'),
+            pct
+        }
+    },
+
     pnlColor(pos) {
-        if (pos == null) return 'var(--text-muted)'
+        if (pos == null) return 'var(--text-3)'
         const positive = typeof pos === 'boolean' ? pos : parseFloat(pos) >= 0
-        return positive ? 'var(--green)' : 'var(--red)'
+        return positive ? 'var(--profit)' : 'var(--loss)'
+    },
+
+    pnlClass(pos) {
+        if (pos == null) return 'neutral'
+        const positive = typeof pos === 'boolean' ? pos : parseFloat(pos) >= 0
+        return positive ? 'positive' : 'negative'
     },
 
     changeColor(n) {
-        if (n == null) return 'var(--text-muted)'
+        if (n == null) return 'var(--text-3)'
         try {
-            const v = parseFloat(String(n).replace('%','').replace('+',''))
-            if (isNaN(v)) return 'var(--text-muted)'
-            return v >= 0 ? 'var(--green)' : 'var(--red)'
-        } catch (e) { return 'var(--text-muted)' }
+            const v = parseFloat(String(n).replace('%', '').replace('+', ''))
+            if (isNaN(v)) return 'var(--text-3)'
+            return v >= 0 ? 'var(--profit)' : 'var(--loss)'
+        } catch (e) { return 'var(--text-3)' }
+    },
+
+    changeClass(n) {
+        if (n == null) return 'neutral'
+        try {
+            const v = parseFloat(String(n).replace('%', '').replace('+', ''))
+            if (isNaN(v)) return 'neutral'
+            return v >= 0 ? 'positive' : 'negative'
+        } catch (e) { return 'neutral' }
     },
 
     gradeColor(grade) {
         const map = {
             'A+': 'var(--gold)',
-            'A':  'var(--blue)',
-            'B':  'var(--orange)',
-            'C':  'var(--text-secondary)',
-            'F':  'var(--text-muted)',
+            'A':  'var(--brand)',
+            'B':  'var(--warning)',
+            'C':  'var(--text-3)',
+            'F':  'var(--text-4)',
         }
-        return map[grade] || 'var(--text-muted)'
+        return map[grade] || 'var(--text-4)'
     },
 
     gradeBadgeClass(grade) {
         const map = {
-            'A+': 'badge-aplus',
-            'A':  'badge-a',
-            'B':  'badge-b',
-            'C':  'badge-c',
-            'F':  'badge-f',
+            'A+': 'badge badge-aplus',
+            'A':  'badge badge-a',
+            'B':  'badge badge-b',
+            'C':  'badge badge-c',
+            'F':  'badge badge-f',
         }
-        return 'badge ' + (map[grade] || 'badge-f')
+        return map[grade] || 'badge badge-f'
+    },
+
+    gradeCardClass(grade) {
+        const map = {
+            'A+': 'signal-card signal-card-aplus',
+            'A':  'signal-card signal-card-a',
+            'B':  'signal-card signal-card-b',
+            'C':  'signal-card signal-card-c',
+            'F':  'signal-card',
+        }
+        return map[grade] || 'signal-card'
+    },
+
+    gradeHeroClass(grade) {
+        const map = {
+            'A+': 'signal-hero-card signal-hero-card-aplus',
+            'A':  'signal-hero-card signal-hero-card-a',
+            'B':  'signal-hero-card signal-hero-card-b',
+        }
+        return map[grade] || 'signal-hero-card signal-hero-card-watching'
+    },
+
+    gradeTileClass(grade) {
+        const map = {
+            'A+': 'coin-tile coin-tile-aplus',
+            'A':  'coin-tile coin-tile-a',
+            'B':  'coin-tile coin-tile-b',
+        }
+        return map[grade] || 'coin-tile'
+    },
+
+    gradeScoreRingClass(grade) {
+        const map = {
+            'A+': 'score-ring-fill score-ring-fill-aplus',
+            'A':  'score-ring-fill score-ring-fill-a',
+            'B':  'score-ring-fill score-ring-fill-b',
+            'C':  'score-ring-fill score-ring-fill-c',
+            'F':  'score-ring-fill score-ring-fill-f',
+        }
+        return map[grade] || 'score-ring-fill score-ring-fill-f'
     },
 
     dirBadgeClass(dir) {
         const map = {
-            'LONG':     'badge-long',
-            'SHORT':    'badge-short',
-            'WATCH':    'badge-watch',
-            'NO TRADE': 'badge-f',
+            'LONG':     'badge badge-long',
+            'SHORT':    'badge badge-short',
+            'WATCH':    'badge badge-watch',
+            'NO TRADE': 'badge badge-notrade',
         }
-        return 'badge ' + (map[dir] || 'badge-f')
+        return map[dir] || 'badge badge-notrade'
     },
 
     outcomeBadgeClass(outcome) {
         const map = {
-            'win':     'badge-win',
-            'loss':    'badge-loss',
-            'pending': 'badge-pending',
-            'timeout': 'badge-f',
+            'win':     'badge badge-win',
+            'loss':    'badge badge-loss',
+            'pending': 'badge badge-pending',
+            'timeout': 'badge badge-timeout',
         }
-        return 'badge ' + (map[outcome] || 'badge-f')
+        return map[outcome] || 'badge badge-timeout'
     },
 
     healthClass(state) {
@@ -148,55 +269,163 @@ const Utils = {
         return map[state] || 'unknown'
     },
 
+    healthDotClass(state) {
+        const map = {
+            'HEALTHY':     'status-dot status-dot-md status-dot-healthy',
+            'WARNING':     'status-dot status-dot-md status-dot-warning',
+            'INVALIDATED': 'status-dot status-dot-md status-dot-invalidated',
+        }
+        return map[state] || 'status-dot status-dot-md status-dot-unknown'
+    },
+
+    healthRowClass(state) {
+        const map = {
+            'HEALTHY':     'health-row health-row-healthy',
+            'WARNING':     'health-row health-row-warning',
+            'INVALIDATED': 'health-row health-row-invalidated',
+        }
+        return map[state] || 'health-row health-row-unknown'
+    },
+
     scoreColor(score) {
         score = parseFloat(score) || 0
         if (score >= 85) return 'var(--gold)'
-        if (score >= 68) return 'var(--blue)'
-        if (score >= 52) return 'var(--orange)'
-        if (score >= 38) return 'var(--text-secondary)'
-        return 'var(--text-muted)'
+        if (score >= 68) return 'var(--brand)'
+        if (score >= 52) return 'var(--warning)'
+        if (score >= 38) return 'var(--text-3)'
+        return 'var(--text-4)'
+    },
+
+    scoreGrade(score) {
+        score = parseFloat(score) || 0
+        if (score >= 85) return 'aplus'
+        if (score >= 68) return 'a'
+        if (score >= 52) return 'b'
+        if (score >= 38) return 'c'
+        return 'f'
     },
 
     winRateColor(wr) {
         wr = parseFloat(wr) || 0
-        if (wr >= 55) return 'var(--green)'
-        if (wr >= 40) return 'var(--orange)'
-        return 'var(--red)'
+        if (wr >= 60) return 'var(--profit)'
+        if (wr >= 45) return 'var(--warning)'
+        return 'var(--loss)'
     },
 
     ramColor(pct) {
         pct = parseFloat(pct) || 0
-        if (pct >= 85) return 'var(--red)'
-        if (pct >= 70) return 'var(--orange)'
-        return 'var(--green)'
+        if (pct >= 85) return 'danger'
+        if (pct >= 70) return 'warn'
+        return 'ok'
     },
 
     cpuColor(pct) {
         pct = parseFloat(pct) || 0
-        if (pct >= 80) return 'var(--red)'
-        if (pct >= 60) return 'var(--orange)'
-        return 'var(--green)'
+        if (pct >= 80) return 'danger'
+        if (pct >= 60) return 'warn'
+        return 'ok'
     },
 
     diskColor(pct) {
         pct = parseFloat(pct) || 0
-        if (pct >= 90) return 'var(--red)'
-        if (pct >= 75) return 'var(--orange)'
-        return 'var(--blue)'
+        if (pct >= 90) return 'danger'
+        if (pct >= 75) return 'warn'
+        return 'ok'
+    },
+
+    drawdownClass(pct) {
+        pct = parseFloat(pct) || 0
+        if (pct >= 15) return 'danger'
+        if (pct >= 8)  return 'caution'
+        return 'safe'
     },
 
     edgeColor(edge) {
-        if (edge == null) return 'var(--text-muted)'
+        if (edge == null) return 'var(--text-4)'
         edge = parseFloat(edge)
-        if (edge > 10)  return 'var(--green)'
-        if (edge > 0)   return 'var(--blue)'
-        if (edge > -10) return 'var(--orange)'
-        return 'var(--red)'
+        if (edge > 10)  return 'var(--profit)'
+        if (edge > 0)   return 'var(--brand)'
+        if (edge > -10) return 'var(--warning)'
+        return 'var(--loss)'
+    },
+
+    regimeBadgeClass(regime) {
+        if (!regime) return 'regime-badge regime-unknown'
+        const r = regime.toLowerCase()
+        if (r.includes('trending') && r.includes('bull')) return 'regime-badge regime-trending-bull'
+        if (r.includes('trending') && r.includes('bear')) return 'regime-badge regime-trending-bear'
+        if (r.includes('ranging'))   return 'regime-badge regime-ranging'
+        if (r.includes('expansion')) return 'regime-badge regime-expansion'
+        if (r.includes('weak'))      return 'regime-badge regime-weak-trend'
+        if (r.includes('chop'))      return 'regime-badge regime-chop'
+        return 'regime-badge regime-unknown'
+    },
+
+    regimeTopbarClass(regime) {
+        if (!regime) return 'topbar-regime'
+        const r = regime.toLowerCase()
+        if (r.includes('trending') && r.includes('bull')) return 'topbar-regime trending-bull'
+        if (r.includes('trending') && r.includes('bear')) return 'topbar-regime trending-bear'
+        if (r.includes('ranging'))   return 'topbar-regime ranging'
+        if (r.includes('chop'))      return 'topbar-regime chop'
+        return 'topbar-regime'
+    },
+
+    sessionBadgeClass(session) {
+        if (!session) return 'session-badge'
+        const s = session.toLowerCase()
+        if (s.includes('overlap'))  return 'session-badge session-best'
+        if (s.includes('london') || s.includes('new york')) return 'session-badge session-good'
+        if (s.includes('asian') || s.includes('off'))       return 'session-badge session-caution'
+        return 'session-badge'
+    },
+
+    mlBadgeClass(prob) {
+        if (prob == null) return ''
+        prob = parseFloat(prob)
+        if (prob >= 0.70) return 'ml-badge ml-badge-high'
+        if (prob >= 0.55) return 'ml-badge ml-badge-medium'
+        return 'ml-badge ml-badge-low'
+    },
+
+    confidenceClass(label) {
+        if (!label) return 'confidence-pill'
+        const l = label.toLowerCase()
+        if (l.includes('very high')) return 'confidence-pill confidence-very-high'
+        if (l.includes('high'))      return 'confidence-pill confidence-high'
+        if (l.includes('moderate'))  return 'confidence-pill confidence-moderate'
+        return 'confidence-pill confidence-low'
+    },
+
+    scoreRingDasharray(score, radius) {
+        const circumference = 2 * Math.PI * radius
+        const pct           = Math.min(100, Math.max(0, parseFloat(score) || 0)) / 100
+        const filled        = circumference * pct
+        const empty         = circumference - filled
+        return `${filled} ${empty}`
+    },
+
+    confidenceScore(summary) {
+        if (!summary) return 0
+        let score = 50
+        const regime = (summary.regime || '').toLowerCase()
+        if (regime.includes('trending')) score += 20
+        else if (regime.includes('ranging')) score -= 10
+        else if (regime.includes('chop')) score -= 30
+        const wr = parseFloat(summary.win_rate) || 0
+        if (wr >= 60) score += 15
+        else if (wr >= 50) score += 5
+        else if (wr < 40) score -= 10
+        const tradeable = parseInt(summary.tradeable_count) || 0
+        if (tradeable >= 2) score += 10
+        else if (tradeable === 0) score -= 10
+        return Math.min(100, Math.max(0, Math.round(score)))
     },
 
     truncate(str, len = 40) {
         if (!str) return '--'
-        return str.length > len ? str.slice(0, len) + '...' : str
+        str = String(str)
+        return str.length > len ? str.slice(0, len) + '…' : str
     },
 
     isEmpty(val) {
@@ -204,6 +433,117 @@ const Utils = {
         if (Array.isArray(val)) return val.length === 0
         if (typeof val === 'object') return Object.keys(val).length === 0
         return false
+    },
+
+    clamp(val, min, max) {
+        return Math.min(max, Math.max(min, val))
+    },
+
+    lerp(a, b, t) {
+        return a + (b - a) * t
+    },
+
+    pct(value, total) {
+        if (!total || total === 0) return 0
+        return Math.min(100, Math.max(0, (value / total) * 100))
+    },
+
+    tradeProgressPct(trade) {
+        const entry   = parseFloat(trade.open_rate    || 0)
+        const current = parseFloat(trade.current_rate || 0)
+        const sl      = parseFloat(trade.sl_signal    || trade.stop_loss_abs || 0)
+        const tp      = parseFloat(trade.tp1          || 0)
+        const isShort = trade.is_short
+
+        if (!entry || !current || !sl || !tp) return { pct: 50, toward: 'neutral' }
+
+        const totalRange = Math.abs(tp - sl)
+        if (totalRange <= 0) return { pct: 50, toward: 'neutral' }
+
+        const entryPct = (Math.abs(entry - sl) / totalRange) * 100
+        const currPct  = (Math.abs(current - sl) / totalRange) * 100
+
+        const movingTowardTp = isShort ? current < entry : current > entry
+
+        return {
+            pct:     this.clamp(currPct, 0, 100),
+            entryPct: this.clamp(entryPct, 0, 100),
+            toward:  movingTowardTp ? 'profit' : 'loss'
+        }
+    },
+
+    segmentColors(index) {
+        const colors = [
+            '#00d4aa', '#ffd60a', '#30d158', '#ff9f0a',
+            '#bf5af2', '#ff453a', '#5ac8fa', '#ff6b6b',
+            '#34c759', '#007aff', '#ff9500', '#af52de',
+        ]
+        return colors[index % colors.length]
+    },
+
+    debounce(fn, delay) {
+        let timer
+        return (...args) => {
+            clearTimeout(timer)
+            timer = setTimeout(() => fn(...args), delay)
+        }
+    },
+
+    throttle(fn, limit) {
+        let last = 0
+        return (...args) => {
+            const now = Date.now()
+            if (now - last >= limit) {
+                last = now
+                fn(...args)
+            }
+        }
+    },
+
+    deepEqual(a, b) {
+        return JSON.stringify(a) === JSON.stringify(b)
+    },
+
+    groupBy(arr, key) {
+        return arr.reduce((acc, item) => {
+            const k = typeof key === 'function' ? key(item) : item[key]
+            if (!acc[k]) acc[k] = []
+            acc[k].push(item)
+            return acc
+        }, {})
+    },
+
+    sortBy(arr, key, dir = 'asc') {
+        return [...arr].sort((a, b) => {
+            const av = typeof key === 'function' ? key(a) : a[key]
+            const bv = typeof key === 'function' ? key(b) : b[key]
+            if (av < bv) return dir === 'asc' ? -1 : 1
+            if (av > bv) return dir === 'asc' ? 1 : -1
+            return 0
+        })
+    },
+
+    copyToClipboard(text) {
+        if (navigator.clipboard) {
+            return navigator.clipboard.writeText(text)
+        }
+        const el = document.createElement('textarea')
+        el.value = text
+        el.style.position = 'fixed'
+        el.style.opacity  = '0'
+        document.body.appendChild(el)
+        el.select()
+        document.execCommand('copy')
+        document.body.removeChild(el)
+        return Promise.resolve()
+    },
+
+    isMobile() {
+        return window.innerWidth <= 768
+    },
+
+    isTablet() {
+        return window.innerWidth > 768 && window.innerWidth <= 1024
     },
 }
 

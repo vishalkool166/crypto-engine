@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import json
+from datetime import datetime, timezone, timedelta
 from config import cfg
 from data.cache import cache
 from engines.validator import validate_all_timeframes
@@ -25,7 +26,8 @@ log = logging.getLogger(__name__)
 
 CACHE_TTL           = 1500
 ENTRY_PRICE_TOL     = 0.003
-MAX_ENTRY_DEVIATION = 0.01
+MAX_ENTRY_DEVIATION = 0.02
+MAX_SIGNAL_AGE_HOURS = 4
 
 _scan_running   = False
 _scan_semaphore = asyncio.Semaphore(3)
@@ -135,6 +137,23 @@ def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
         log.info(f"Signal written to Redis: {coin} {payload['grade']} {payload['direction']}")
     except Exception as e:
         log.error(f"Redis signal write error {coin}: {e}")
+
+
+def _is_signal_fresh(sig, current_price: float) -> tuple[bool, str]:
+    if sig.timestamp:
+        sig_ts = sig.timestamp
+        if sig_ts.tzinfo is None:
+            sig_ts = sig_ts.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - sig_ts).total_seconds() / 3600
+        if age_hours > MAX_SIGNAL_AGE_HOURS:
+            return False, f"signal {age_hours:.1f}h old (max {MAX_SIGNAL_AGE_HOURS}h)"
+
+    if current_price and sig.entry:
+        deviation = abs(current_price - sig.entry) / sig.entry
+        if deviation > MAX_ENTRY_DEVIATION:
+            return False, f"price moved {deviation*100:.2f}% from entry (max {MAX_ENTRY_DEVIATION*100:.1f}%)"
+
+    return True, ""
 
 
 def save_signal_to_db(signal, coin, regime, session, sweep,
@@ -346,6 +365,12 @@ async def _queue_cached_signals_for_entry(results: list):
             if not sig or not sig.entry or not sig.sl or not sig.tp1:
                 continue
 
+            current_price = r.get("market", {}).get("price", 0)
+            fresh, reason = _is_signal_fresh(sig, current_price)
+            if not fresh:
+                log.info(f"Skipping stale cached signal {coin} {dir_} — {reason}")
+                continue
+
             signal_dict = {
                 "grade":     sig.grade,
                 "direction": sig.direction,
@@ -386,7 +411,10 @@ async def _queue_cached_signals_for_entry(results: list):
                 "db_id":      sig.id,
                 "allocation": allocation,
             })
-            log.info(f"Queued cached signal: {coin} {dir_} Grade:{grade} stake:{allocation.get('stake'):.2f} lev:{allocation.get('leverage')}x")
+            log.info(
+                f"Queued cached signal: {coin} {dir_} Grade:{grade} "
+                f"stake:{allocation.get('stake'):.2f} lev:{allocation.get('leverage')}x"
+            )
 
     except Exception as e:
         log.error(f"_queue_cached_signals_for_entry error: {e}", exc_info=True)

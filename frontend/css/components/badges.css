@@ -1,0 +1,506 @@
+.badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-bold);
+    letter-spacing: var(--tracking-wide);
+    white-space: nowrap;
+    line-height: 1;
+    border: 1px solid transparent;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.badge svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+
+.badge-aplus {
+    background: var(--gold-dim);
+    color: var(--gold);
+    border-color: rgba(255, 214, 10, 0.2);
+    box-shadow: 0 0 12px rgba(255, 214, 10, 0.1);
+}
+
+.badge-a {
+    background: var(--brand-dim);
+    color: var(--brand);
+    border-color: var(--border-brand);
+}
+
+.badge-b {
+    background: var(--warning-dim);
+    color: var(--warning);
+    border-color: rgba(255, 159, 10, 0.2);
+}
+
+.badge-c {
+    background: var(--surface-4);
+    color: var(--text-3);
+    border-color: var(--border);
+}
+
+.badge-f {
+    background: var(--surface-3);
+    color: var(--text-4);
+    border-color: var(--border);
+}
+
+.badge-grade-lg {
+    padding: 5px 12px;
+    font-size: var(--text-sm);
+    border-radius: var(--r-md);
+    letter-spacing: var(--tracking-wider);
+}
+
+.badge-grade-xl {
+    padding: 8px 16px;
+    font-size: var(--text-md);
+    font-weight: var(--weight-heavy);
+    border-radius: var(--r-lg);
+    letter-spacing: var(--tracking-wider);
+}
+
+.badge-long {
+    background: var(--profit-dim);
+    color: var(--profit);
+    border-color: rgba(48, 209, 88, 0.2);
+    gap: 5px;
+}
+
+.badge-short {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+    gap: 5px;
+}
+
+.badge-watch {
+    background: var(--warning-dim);
+    color: var(--warning);
+    border-color: rgba(255, 159, 10, 0.2);
+}
+
+.badge-notrade {
+    background: var(--surface-3);
+    color: var(--text-4);
+    border-color: var(--border);
+}
+
+.badge-dir-arrow {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+
+.badge-win {
+    background: var(--profit-dim);
+    color: var(--profit);
+    border-color: rgba(48, 209, 88, 0.2);
+}
+
+.badge-loss {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+}
+
+.badge-pending {
+    background: var(--brand-dim);
+    color: var(--brand);
+    border-color: var(--border-brand);
+}
+
+.badge-timeout {
+    background: var(--surface-3);
+    color: var(--text-3);
+    border-color: var(--border);
+}
+
+.badge-online {
+    background: var(--profit-dim);
+    color: var(--profit);
+    border-color: rgba(48, 209, 88, 0.2);
+}
+
+.badge-offline {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+}
+
+.badge-paper {
+    background: var(--brand-dim);
+    color: var(--brand);
+    border-color: var(--border-brand);
+}
+
+.badge-live {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+}
+
+.badge-healthy {
+    background: var(--profit-dim);
+    color: var(--profit);
+    border-color: rgba(48, 209, 88, 0.2);
+}
+
+.badge-warning {
+    background: var(--warning-dim);
+    color: var(--warning);
+    border-color: rgba(255, 159, 10, 0.2);
+}
+
+.badge-invalidated {
+    background: var(--loss-dim);
+    color: var(--loss);
+    border-color: rgba(255, 69, 58, 0.2);
+}
+
+.status-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.status-dot-inner {
+    border-radius: var(--r-full);
+    flex-shrink: 0;
+}
+
+.status-dot-sm .status-dot-inner {
+    width: 6px;
+    height: 6px;
+}
+
+.status-dot-md .status-dot-inner {
+    width: 8px;
+    height: 8px;
+}
+
+.status-dot-lg .status-dot-inner {
+    width: 10px;
+    height: 10px;
+}
+
+.status-dot-healthy .status-dot-inner {
+    background: var(--profit);
+}
+
+.status-dot-warning .status-dot-inner {
+    background: var(--warning);
+}
+
+.status-dot-warning::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: var(--r-full);
+    border: 1.5px solid var(--warning);
+    opacity: 0.5;
+    animation: pulse-ring 2s ease-out infinite;
+}
+
+.status-dot-invalidated .status-dot-inner {
+    background: var(--loss);
+}
+
+.status-dot-invalidated::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: var(--r-full);
+    border: 1.5px solid var(--loss);
+    opacity: 0.4;
+}
+
+.status-dot-unknown .status-dot-inner {
+    background: var(--text-4);
+}
+
+.status-dot-connecting .status-dot-inner {
+    background: var(--warning);
+    animation: pulse-dot 1s ease-in-out infinite;
+}
+
+.health-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-radius: var(--r-md);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    border: 1px solid transparent;
+}
+
+.health-row-healthy {
+    background: var(--profit-subtle);
+    border-color: rgba(48, 209, 88, 0.15);
+    color: var(--profit);
+}
+
+.health-row-warning {
+    background: var(--warning-subtle);
+    border-color: rgba(255, 159, 10, 0.15);
+    color: var(--warning);
+}
+
+.health-row-invalidated {
+    background: var(--loss-subtle);
+    border-color: rgba(255, 69, 58, 0.15);
+    color: var(--loss);
+}
+
+.health-row-unknown {
+    background: var(--surface-3);
+    border-color: var(--border);
+    color: var(--text-3);
+}
+
+.health-row svg {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.health-row-message {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-regular);
+    opacity: 0.8;
+    margin-left: 4px;
+}
+
+.regime-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+
+.regime-badge svg {
+    width: 11px;
+    height: 11px;
+    flex-shrink: 0;
+}
+
+.regime-trending-bull {
+    background: var(--profit-subtle);
+    border-color: rgba(48, 209, 88, 0.2);
+    color: var(--profit);
+}
+
+.regime-trending-bear {
+    background: var(--loss-subtle);
+    border-color: rgba(255, 69, 58, 0.2);
+    color: var(--loss);
+}
+
+.regime-ranging {
+    background: var(--warning-subtle);
+    border-color: rgba(255, 159, 10, 0.2);
+    color: var(--warning);
+}
+
+.regime-expansion {
+    background: var(--purple-subtle);
+    border-color: rgba(191, 90, 242, 0.2);
+    color: var(--purple);
+}
+
+.regime-weak-trend {
+    background: var(--brand-subtle);
+    border-color: var(--border-brand);
+    color: var(--brand);
+}
+
+.regime-chop {
+    background: var(--surface-3);
+    border-color: var(--border);
+    color: var(--text-3);
+}
+
+.regime-unknown {
+    background: var(--surface-3);
+    border-color: var(--border);
+    color: var(--text-4);
+}
+
+.session-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    border: 1px solid var(--border);
+    background: var(--surface-3);
+    color: var(--text-3);
+    white-space: nowrap;
+}
+
+.session-badge svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+
+.session-best {
+    background: var(--gold-dim);
+    border-color: rgba(255, 214, 10, 0.2);
+    color: var(--gold);
+}
+
+.session-good {
+    background: var(--brand-dim);
+    border-color: var(--border-brand);
+    color: var(--brand);
+}
+
+.session-caution {
+    background: var(--warning-dim);
+    border-color: rgba(255, 159, 10, 0.2);
+    color: var(--warning);
+}
+
+.ml-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    font-family: var(--font-mono);
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.ml-badge svg {
+    width: 10px;
+    height: 10px;
+    flex-shrink: 0;
+}
+
+.ml-badge-high {
+    background: var(--profit-dim);
+    border-color: rgba(48, 209, 88, 0.2);
+    color: var(--profit);
+}
+
+.ml-badge-medium {
+    background: var(--warning-dim);
+    border-color: rgba(255, 159, 10, 0.2);
+    color: var(--warning);
+}
+
+.ml-badge-low {
+    background: var(--loss-dim);
+    border-color: rgba(255, 69, 58, 0.2);
+    color: var(--loss);
+}
+
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    background: var(--surface-4);
+    color: var(--text-3);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+    user-select: none;
+}
+
+.grade-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.grade-indicator-bar {
+    width: 3px;
+    border-radius: var(--r-full);
+    flex-shrink: 0;
+    transition: height var(--dur-normal) var(--ease-out);
+}
+
+.grade-indicator-bar-aplus {
+    background: var(--gold);
+    box-shadow: 0 0 8px rgba(255, 214, 10, 0.4);
+}
+
+.grade-indicator-bar-a {
+    background: var(--brand);
+    box-shadow: 0 0 8px rgba(0, 212, 170, 0.4);
+}
+
+.grade-indicator-bar-b {
+    background: var(--warning);
+}
+
+.grade-indicator-bar-c {
+    background: var(--text-4);
+}
+
+.grade-indicator-bar-f {
+    background: var(--surface-5);
+}
+
+.confidence-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: var(--r-full);
+    font-size: var(--text-xs);
+    font-weight: var(--weight-semibold);
+    border: 1px solid var(--border);
+    background: var(--surface-3);
+    color: var(--text-2);
+    white-space: nowrap;
+}
+
+.confidence-very-high {
+    background: var(--gold-dim);
+    border-color: rgba(255, 214, 10, 0.2);
+    color: var(--gold);
+}
+
+.confidence-high {
+    background: var(--brand-dim);
+    border-color: var(--border-brand);
+    color: var(--brand);
+}
+
+.confidence-moderate {
+    background: var(--warning-dim);
+    border-color: rgba(255, 159, 10, 0.2);
+    color: var(--warning);
+}
+
+.confidence-low {
+    background: var(--surface-3);
+    border-color: var(--border);
+    color: var(--text-3);
+}
