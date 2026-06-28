@@ -683,8 +683,11 @@
 @media (max-width: 768px) {
     .topbar {
         padding: 0 12px;
+        padding-top:   var(--safe-top);
         padding-left:  calc(12px + var(--safe-left));
         padding-right: calc(12px + var(--safe-right));
+        height: calc(var(--navbar-h) + var(--safe-top));
+        min-height: calc(var(--navbar-h) + var(--safe-top));
     }
 
     .topbar-nav          { display: none; }
@@ -696,9 +699,9 @@
 
     .page-content {
         padding: 16px 12px;
-        padding-left:  calc(12px + var(--safe-left));
-        padding-right: calc(12px + var(--safe-right));
-        padding-bottom: calc(calc(var(--tabbar-h) + var(--safe-bottom)) + 16px);
+        padding-left:   calc(12px + var(--safe-left));
+        padding-right:  calc(12px + var(--safe-right));
+        padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 32px);
     }
 
     .grid-2 { grid-template-columns: 1fr; }
@@ -737,7 +740,6 @@
         font-size: var(--text-caption2);
         font-weight: var(--weight-medium);
         letter-spacing: var(--tracking-caption2);
-        border-radius: var(--r-sm);
         transition: color var(--dur-fast) var(--ease-out);
         min-width: 52px;
         min-height: var(--tap-min);
@@ -768,25 +770,6 @@
         border-radius: 0 0 var(--r-full) var(--r-full);
     }
 
-    .bottom-nav-badge {
-        position: absolute;
-        top: 6px;
-        right: 8px;
-        min-width: 16px;
-        height: 16px;
-        padding: 0 4px;
-        border-radius: var(--r-full);
-        background: var(--loss);
-        color: #FFFFFF;
-        font-size: 9px;
-        font-weight: var(--weight-bold);
-        font-family: var(--font-mono);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        line-height: 1;
-    }
-
     .panel {
         width: 100%;
         top: auto;
@@ -799,5 +782,5 @@
 
 @media (max-width: 480px) {
     .grid-4 { grid-template-columns: 1fr; }
-    .page-content { padding: 12px; }
+    .page-content { padding: 12px; padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 28px); }
 }
