@@ -54,6 +54,22 @@
     <div id="root"></div>
 
     <script type="module">
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/health', { credentials: 'include' })
+                if (res.status === 401) {
+                    window.location.replace('/login.html')
+                    return false
+                }
+                return true
+            } catch(e) {
+                return true
+            }
+        }
+
+        const authed = await checkAuth()
+        if (!authed) throw new Error('unauthenticated')
+
         import { h, render, Fragment, Component } from 'preact'
         import { useState, useEffect, useRef, useCallback } from 'preact/hooks'
         import htm from '/js/htm.min.js'

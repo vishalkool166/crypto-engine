@@ -2,6 +2,7 @@ const CACHE = 'se-v5-2'
 
 const PRECACHE = [
     '/app.html',
+    '/login.html',
     '/css/tokens.css',
     '/css/reset.css',
     '/css/layout.css',
