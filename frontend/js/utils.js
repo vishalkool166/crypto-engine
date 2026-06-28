@@ -51,16 +51,16 @@ const Utils = {
     fmtDuration(openedAt) {
         if (!openedAt) return '--'
         try {
-            const diff  = Date.now() - new Date(openedAt).getTime()
+            const diff = Date.now() - new Date(openedAt).getTime()
             if (diff < 0) return '--'
-            const mins  = Math.floor(diff / 60000)
-            const hrs   = Math.floor(mins / 60)
-            const days  = Math.floor(hrs / 24)
-            if (days > 0)  return `${days}d ${hrs % 24}h`
-            if (hrs > 0)   return `${hrs}h ${mins % 60}m`
-            if (mins > 0)  return `${mins}m`
+            const mins = Math.floor(diff / 60000)
+            const hrs  = Math.floor(mins / 60)
+            const days = Math.floor(hrs / 24)
+            if (days > 0) return `${days}d ${hrs % 24}h`
+            if (hrs > 0)  return `${hrs}h ${mins % 60}m`
+            if (mins > 0) return `${mins}m`
             return 'Just now'
-        } catch (e) { return '--' }
+        } catch(e) { return '--' }
     },
 
     fmtTime(ts) {
@@ -74,7 +74,7 @@ const Utils = {
                 minute:   '2-digit',
                 hour12:   true
             }) + ' IST'
-        } catch (e) { return '--' }
+        } catch(e) { return '--' }
     },
 
     fmtTimeShort(ts) {
@@ -86,7 +86,7 @@ const Utils = {
                 minute:   '2-digit',
                 hour12:   true
             })
-        } catch (e) { return '--' }
+        } catch(e) { return '--' }
     },
 
     fmtDate(ts) {
@@ -98,7 +98,7 @@ const Utils = {
                 month:    'short',
                 year:     'numeric'
             })
-        } catch (e) { return '--' }
+        } catch(e) { return '--' }
     },
 
     fmtTimeAgo(ts) {
@@ -109,11 +109,11 @@ const Utils = {
             const mins = Math.floor(diff / 60000)
             const hrs  = Math.floor(mins / 60)
             const days = Math.floor(hrs / 24)
-            if (days > 0)  return `${days}d ago`
-            if (hrs > 0)   return `${hrs}h ago`
-            if (mins > 0)  return `${mins}m ago`
+            if (days > 0) return `${days}d ago`
+            if (hrs > 0)  return `${hrs}h ago`
+            if (mins > 0) return `${mins}m ago`
             return 'Just now'
-        } catch (e) { return '--' }
+        } catch(e) { return '--' }
     },
 
     fmtUptime(secs) {
@@ -149,7 +149,7 @@ const Utils = {
     },
 
     pnlColor(pos) {
-        if (pos == null) return 'var(--text-3)'
+        if (pos == null) return 'var(--label-3)'
         const positive = typeof pos === 'boolean' ? pos : parseFloat(pos) >= 0
         return positive ? 'var(--profit)' : 'var(--loss)'
     },
@@ -161,12 +161,12 @@ const Utils = {
     },
 
     changeColor(n) {
-        if (n == null) return 'var(--text-3)'
+        if (n == null) return 'var(--label-3)'
         try {
             const v = parseFloat(String(n).replace('%', '').replace('+', ''))
-            if (isNaN(v)) return 'var(--text-3)'
+            if (isNaN(v)) return 'var(--label-3)'
             return v >= 0 ? 'var(--profit)' : 'var(--loss)'
-        } catch (e) { return 'var(--text-3)' }
+        } catch(e) { return 'var(--label-3)' }
     },
 
     changeClass(n) {
@@ -175,18 +175,18 @@ const Utils = {
             const v = parseFloat(String(n).replace('%', '').replace('+', ''))
             if (isNaN(v)) return 'neutral'
             return v >= 0 ? 'positive' : 'negative'
-        } catch (e) { return 'neutral' }
+        } catch(e) { return 'neutral' }
     },
 
     gradeColor(grade) {
         const map = {
-            'A+': 'var(--gold)',
-            'A':  'var(--brand)',
-            'B':  'var(--warning)',
-            'C':  'var(--text-3)',
-            'F':  'var(--text-4)',
+            'A+': 'var(--grade-aplus)',
+            'A':  'var(--grade-a)',
+            'B':  'var(--grade-b)',
+            'C':  'var(--label-3)',
+            'F':  'var(--label-4)',
         }
-        return map[grade] || 'var(--text-4)'
+        return map[grade] || 'var(--label-4)'
     },
 
     gradeBadgeClass(grade) {
@@ -289,11 +289,11 @@ const Utils = {
 
     scoreColor(score) {
         score = parseFloat(score) || 0
-        if (score >= 85) return 'var(--gold)'
-        if (score >= 68) return 'var(--brand)'
-        if (score >= 52) return 'var(--warning)'
-        if (score >= 38) return 'var(--text-3)'
-        return 'var(--text-4)'
+        if (score >= 85) return 'var(--grade-aplus)'
+        if (score >= 68) return 'var(--grade-a)'
+        if (score >= 52) return 'var(--grade-b)'
+        if (score >= 38) return 'var(--label-3)'
+        return 'var(--label-4)'
     },
 
     scoreGrade(score) {
@@ -341,7 +341,7 @@ const Utils = {
     },
 
     edgeColor(edge) {
-        if (edge == null) return 'var(--text-4)'
+        if (edge == null) return 'var(--label-4)'
         edge = parseFloat(edge)
         if (edge > 10)  return 'var(--profit)'
         if (edge > 0)   return 'var(--brand)'
@@ -372,12 +372,38 @@ const Utils = {
     },
 
     sessionBadgeClass(session) {
-        if (!session) return 'session-badge'
+        if (!session) return 'session-badge session-off'
         const s = session.toLowerCase()
-        if (s.includes('overlap'))  return 'session-badge session-best'
-        if (s.includes('london') || s.includes('new york')) return 'session-badge session-good'
-        if (s.includes('asian') || s.includes('off'))       return 'session-badge session-caution'
-        return 'session-badge'
+        if (s.includes('london') && (s.includes('ny') || s.includes('new york') || s.includes('overlap'))) {
+            return 'session-badge session-london-ny'
+        }
+        if (s.includes('new york') || s.includes('ny')) return 'session-badge session-ny'
+        if (s.includes('london'))  return 'session-badge session-london'
+        if (s.includes('asian'))   return 'session-badge session-asian'
+        if (s.includes('off'))     return 'session-badge session-off'
+        return 'session-badge session-off'
+    },
+
+    sessionLabel(session) {
+        if (!session) return 'Off Hours'
+        const s = session.toLowerCase()
+        if (s.includes('london') && (s.includes('ny') || s.includes('new york') || s.includes('overlap'))) {
+            return 'London/NY'
+        }
+        if (s.includes('new york') || s.includes('ny')) return 'New York'
+        if (s.includes('london'))  return 'London'
+        if (s.includes('asian'))   return 'Asian'
+        if (s.includes('off'))     return 'Off Hours'
+        return session
+    },
+
+    sessionQuality(session) {
+        if (!session) return 'off'
+        const s = session.toLowerCase()
+        if (s.includes('overlap') || (s.includes('london') && s.includes('ny'))) return 'best'
+        if (s.includes('london') || s.includes('new york') || s.includes('ny'))  return 'good'
+        if (s.includes('asian')) return 'caution'
+        return 'off'
     },
 
     mlBadgeClass(prob) {
@@ -409,15 +435,15 @@ const Utils = {
         if (!summary) return 0
         let score = 50
         const regime = (summary.regime || '').toLowerCase()
-        if (regime.includes('trending')) score += 20
+        if (regime.includes('trending'))    score += 20
         else if (regime.includes('ranging')) score -= 10
-        else if (regime.includes('chop')) score -= 30
+        else if (regime.includes('chop'))    score -= 30
         const wr = parseFloat(summary.win_rate) || 0
-        if (wr >= 60) score += 15
+        if (wr >= 60)      score += 15
         else if (wr >= 50) score += 5
-        else if (wr < 40) score -= 10
+        else if (wr < 40)  score -= 10
         const tradeable = parseInt(summary.tradeable_count) || 0
-        if (tradeable >= 2) score += 10
+        if (tradeable >= 2)     score += 10
         else if (tradeable === 0) score -= 10
         return Math.min(100, Math.max(0, Math.round(score)))
     },
@@ -462,21 +488,20 @@ const Utils = {
 
         const entryPct = (Math.abs(entry - sl) / totalRange) * 100
         const currPct  = (Math.abs(current - sl) / totalRange) * 100
-
         const movingTowardTp = isShort ? current < entry : current > entry
 
         return {
-            pct:     this.clamp(currPct, 0, 100),
+            pct:      this.clamp(currPct, 0, 100),
             entryPct: this.clamp(entryPct, 0, 100),
-            toward:  movingTowardTp ? 'profit' : 'loss'
+            toward:   movingTowardTp ? 'profit' : 'loss'
         }
     },
 
     segmentColors(index) {
         const colors = [
-            '#00d4aa', '#ffd60a', '#30d158', '#ff9f0a',
-            '#bf5af2', '#ff453a', '#5ac8fa', '#ff6b6b',
-            '#34c759', '#007aff', '#ff9500', '#af52de',
+            '#007AFF', '#34C759', '#FFCC00', '#FF9500',
+            '#AF52DE', '#FF3B30', '#5AC8FA', '#FF6B6B',
+            '#30D158', '#32ADE6', '#FF9F0A', '#BF5AF2',
         ]
         return colors[index % colors.length]
     },
@@ -518,7 +543,7 @@ const Utils = {
             const av = typeof key === 'function' ? key(a) : a[key]
             const bv = typeof key === 'function' ? key(b) : b[key]
             if (av < bv) return dir === 'asc' ? -1 : 1
-            if (av > bv) return dir === 'asc' ? 1 : -1
+            if (av > bv) return dir === 'asc' ? 1  : -1
             return 0
         })
     },
@@ -538,13 +563,8 @@ const Utils = {
         return Promise.resolve()
     },
 
-    isMobile() {
-        return window.innerWidth <= 768
-    },
-
-    isTablet() {
-        return window.innerWidth > 768 && window.innerWidth <= 1024
-    },
+    isMobile()  { return window.innerWidth <= 768;  },
+    isTablet()  { return window.innerWidth > 768 && window.innerWidth <= 1024; },
 }
 
 window.Utils = Utils

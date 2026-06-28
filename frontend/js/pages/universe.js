@@ -19,7 +19,6 @@ function UniversePage() {
     const [search,       setSearch]         = useState('')
     const [selectedCoin, setSelectedCoin]   = useState(null)
     const [viewMode,     setViewMode]       = useState('grid')
-    const inputRef                          = useRef(null)
 
     const filtered = coins.filter(c => {
         if (filterStatus === 'enabled'  && !c.enabled) return false
@@ -83,10 +82,9 @@ function UniversePage() {
         setToggling(coin.coin)
         try {
             await API.toggleCoin(coin.coin, !coin.enabled)
-            const updated = coins.map(c =>
+            setCoins(coins.map(c =>
                 c.coin === coin.coin ? { ...c, enabled: !c.enabled } : c
-            )
-            setCoins(updated)
+            ))
             showToast(coin.coin + (!coin.enabled ? ' enabled' : ' disabled'), 'success')
         } catch(e) {
             showToast('Failed to toggle ' + coin.coin + ': ' + e.message, 'error')
@@ -98,7 +96,7 @@ function UniversePage() {
     async function deleteCoin(coinName) {
         const code = await Store.requireTotp(
             'Remove ' + coinName,
-            'This will permanently remove ' + coinName + ' from your universe. Enter TOTP to confirm.'
+            'This will permanently remove ' + coinName + ' from your universe.'
         )
         if (!code) return
         setDeleting(coinName)
@@ -110,8 +108,7 @@ function UniversePage() {
                 body:        JSON.stringify({ totp_code: code })
             })
             if (res.ok) {
-                const updated = coins.filter(c => c.coin !== coinName)
-                setCoins(updated)
+                setCoins(coins.filter(c => c.coin !== coinName))
                 showToast(coinName + ' removed', 'success')
             } else {
                 const err = await res.json().catch(() => ({}))
@@ -129,19 +126,15 @@ function UniversePage() {
             <div class="page-header flex justify-between items-center">
                 <div>
                     <div class="page-title">Universe</div>
-                    <div class="page-subtitle">
-                        ${enabledCount} enabled · ${coins.length} total
-                    </div>
+                    <div class="page-subtitle">${enabledCount} enabled · ${coins.length} total</div>
                 </div>
                 <div class="flex gap-8">
                     <div class="tab-group">
-                        <button class=${'tab-btn ' + (viewMode === 'grid' ? 'active' : '')}
-                            onClick=${() => setViewMode('grid')}>
+                        <button class=${'tab-btn ' + (viewMode === 'grid'  ? 'active' : '')} onClick=${() => setViewMode('grid')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                             Grid
                         </button>
-                        <button class=${'tab-btn ' + (viewMode === 'table' ? 'active' : '')}
-                            onClick=${() => setViewMode('table')}>
+                        <button class=${'tab-btn ' + (viewMode === 'table' ? 'active' : '')} onClick=${() => setViewMode('table')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
                             List
                         </button>
@@ -161,7 +154,6 @@ function UniversePage() {
                         <label class="form-label">Add Coin</label>
                         <div class="input-group">
                             <input
-                                ref=${inputRef}
                                 class="input"
                                 type="text"
                                 placeholder="BTC, ETH, SOL..."
@@ -196,9 +188,7 @@ function UniversePage() {
                                 : html`<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`
                             }
                         </svg>
-                        <div class="alert-content">
-                            <div class="alert-desc">${addMsg}</div>
-                        </div>
+                        <div class="alert-content"><div class="alert-desc">${addMsg}</div></div>
                     </div>
                 `}
             </div>
@@ -219,24 +209,22 @@ function UniversePage() {
                         `)}
                     </div>
                     <div class="search-input" style="width:160px;">
-                        <svg class="search-input-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <svg class="search-input-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         <input class="input input-sm" type="text"
                             placeholder="Search..."
                             value=${search}
                             onInput=${e => setSearch(e.target.value)}/>
                     </div>
                     <div class="filter-spacer"></div>
-                    <span class="filter-count">
-                        <strong>${filtered.length}</strong> coins
-                    </span>
+                    <span class="filter-count"><strong>${filtered.length}</strong> coins</span>
                 </div>
             </div>
 
             ${loading
                 ? html`
-                    <div class="grid-4">
+                    <div class="grid-4" style="gap:10px;">
                         ${Array.from({ length: 8 }).map((_, i) => html`
-                            <div key=${i} class="skeleton skeleton-card" style="height:120px;"></div>
+                            <div key=${i} class="skeleton skeleton-card" style="height:110px;border-radius:var(--r-2xl);"></div>
                         `)}
                     </div>
                 `
@@ -251,7 +239,7 @@ function UniversePage() {
                 `
                 : viewMode === 'grid'
                 ? html`
-                    <div class="grid-4" style="gap:12px;">
+                    <div class="grid-4" style="gap:10px;">
                         ${filtered.map(coin => html`
                             <${CoinTile}
                                 key=${coin.coin}
@@ -295,19 +283,19 @@ function UniversePage() {
                                             <td>
                                                 ${coin.grade && coin.grade !== '--'
                                                     ? html`<${GradeBadge} grade=${coin.grade}/>`
-                                                    : html`<span style="color:var(--text-4);">--</span>`
+                                                    : html`<span style="color:var(--label-4);">--</span>`
                                                 }
                                             </td>
                                             <td>
                                                 ${coin.score
                                                     ? html`<${ScoreBar} score=${coin.score} grade=${coin.grade}/>`
-                                                    : html`<span style="color:var(--text-4);">--</span>`
+                                                    : html`<span style="color:var(--label-4);">--</span>`
                                                 }
                                             </td>
                                             <td>
                                                 ${coin.direction && coin.direction !== '--'
                                                     ? html`<${DirBadge} dir=${coin.direction}/>`
-                                                    : html`<span style="color:var(--text-4);">--</span>`
+                                                    : html`<span style="color:var(--label-4);">--</span>`
                                                 }
                                             </td>
                                             <td class="td-price">${Utils.fmtPrice(coin.price)}</td>
@@ -317,12 +305,12 @@ function UniversePage() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style=${'font-family:var(--font-mono);font-size:var(--text-xs);color:' + (Math.abs(coin.funding || 0) > 0.05 ? 'var(--loss)' : Math.abs(coin.funding || 0) > 0.03 ? 'var(--warning)' : 'var(--text-3)') + ';'}>
+                                                <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + (Math.abs(coin.funding || 0) > 0.05 ? 'var(--loss)' : Math.abs(coin.funding || 0) > 0.03 ? 'var(--warning)' : 'var(--label-3)') + ';'}>
                                                     ${coin.funding != null ? coin.funding.toFixed(4) + '%' : '--'}
                                                 </span>
                                             </td>
                                             <td><span class="tag">${coin.source || 'manual'}</span></td>
-                                            <td style="color:var(--text-3);font-size:var(--text-xs);">
+                                            <td style="color:var(--label-3);font-size:var(--text-caption1);">
                                                 ${Utils.fmtTimeAgo(coin.added_at)}
                                             </td>
                                             <td onClick=${e => e.stopPropagation()}>
@@ -341,9 +329,7 @@ function UniversePage() {
                                                         disabled=${deleting === coin.coin}>
                                                         ${deleting === coin.coin
                                                             ? html`<${Spinner} size="xs"/>`
-                                                            : html`
-                                                                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                                                            `
+                                                            : html`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`
                                                         }
                                                     </button>
                                                 </div>
@@ -381,7 +367,7 @@ function CoinTile({ coin, onOpen, onToggle, onDelete, toggling, deleting }) {
             <div class="coin-tile-header">
                 <div>
                     <div class="coin-tile-name">${coin.coin}</div>
-                    <div style="font-size:10px;color:var(--text-4);margin-top:1px;">USDT</div>
+                    <div style="font-size:10px;color:var(--label-4);margin-top:1px;">USDT</div>
                 </div>
                 <div style="text-align:right;">
                     <div class="coin-tile-price">${Utils.fmtPrice(coin.price)}</div>
@@ -416,14 +402,7 @@ function CoinTile({ coin, onOpen, onToggle, onDelete, toggling, deleting }) {
                     title=${coin.enabled ? 'Disable' : 'Enable'}>
                     ${toggling
                         ? html`<${Spinner} size="xs"/>`
-                        : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                ${coin.enabled
-                                    ? html`<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>`
-                                    : html`<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/>`
-                                }
-                            </svg>
-                        `
+                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`
                     }
                 </button>
                 <button class="btn btn-ghost btn-icon-sm icon-btn-danger"
@@ -432,9 +411,7 @@ function CoinTile({ coin, onOpen, onToggle, onDelete, toggling, deleting }) {
                     title="Remove coin">
                     ${deleting
                         ? html`<${Spinner} size="xs"/>`
-                        : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                        `
+                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>`
                     }
                 </button>
             </div>
@@ -473,7 +450,7 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
             show=${true}
             onClose=${onClose}
             title=${coin.coin + 'USDT'}
-            subtitle=${'Coin Detail'}
+            subtitle="Coin Detail"
             footer=${html`
                 <div class="flex gap-8 w-full">
                     <button class=${'btn btn-full ' + (coin.enabled ? 'btn-warning' : 'btn-success')}
@@ -488,7 +465,7 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
             `}
         >
             <div class="panel-section">
-                <div class="flex items-center gap-10 flex-wrap">
+                <div class="flex items-center gap-8 flex-wrap">
                     <${GradeBadge} grade=${grade} size="lg"/>
                     <${DirBadge} dir=${direction}/>
                     <span class=${'badge ' + (coin.enabled ? 'badge-online' : 'badge-offline')}>
@@ -497,18 +474,16 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
                 </div>
 
                 ${score > 0 && html`
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px;background:var(--surface-3);border-radius:var(--r-lg);border:1px solid var(--border);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--fill-4);border-radius:var(--r-xl);">
                         <div>
-                            <div style="font-size:var(--text-xs);color:var(--text-3);text-transform:uppercase;letter-spacing:var(--tracking-widest);font-weight:var(--weight-semibold);margin-bottom:4px;">
-                                Confluence Score
-                            </div>
-                            <div style=${'font-family:var(--font-mono);font-size:var(--text-3xl);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';'}>
-                                ${score}<span style="font-size:var(--text-lg);color:var(--text-4);">/100</span>
+                            <div class="label-uppercase mb-4">Confluence Score</div>
+                            <div style=${'font-family:var(--font-mono);font-size:var(--text-largetitle);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';letter-spacing:var(--tracking-title1);'}>
+                                ${score}<span style="font-size:var(--text-title3);color:var(--label-4);">/100</span>
                             </div>
                         </div>
-                        <div style="display:flex;align-items:center;gap:12px;">
-                            ${regime  && html`<${RegimeBadge}  regime=${regime}/>`}
-                            ${session && html`<${SessionBadge} session=${session}/>`}
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${regime  && regime  !== '--' && html`<${RegimeBadge}  regime=${regime}/>`}
+                            ${session && session !== '--' && html`<${SessionBadge} session=${session}/>`}
                         </div>
                     </div>
                 `}
@@ -517,7 +492,7 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
             ${thesis && html`
                 <div class="panel-section">
                     <div class="panel-section-title">Thesis</div>
-                    <div style="font-size:var(--text-sm);color:var(--text-2);line-height:var(--leading-relaxed);font-style:italic;padding:14px 16px;background:var(--surface-3);border-radius:var(--r-lg);border-left:3px solid var(--brand);">
+                    <div style="font-size:var(--text-subhead);color:var(--label-2);line-height:var(--leading-relaxed);font-style:italic;padding:12px 14px;background:var(--fill-4);border-radius:var(--r-lg);border-left:3px solid var(--brand);">
                         "${thesis}"
                     </div>
                 </div>
@@ -528,31 +503,25 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
                     <div class="panel-section-title">Signal Levels</div>
                     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
                         ${[
-                            { label: 'Entry',       val: Utils.fmtPrice(sig.entry), color: 'var(--text-1)'  },
+                            { label: 'Entry',       val: Utils.fmtPrice(sig.entry), color: 'var(--label-1)' },
                             { label: 'Stop Loss',   val: Utils.fmtPrice(sig.sl),    color: 'var(--loss)'    },
                             { label: 'Take Profit', val: Utils.fmtPrice(sig.tp1),   color: 'var(--profit)'  },
                         ].map(l => html`
-                            <div key=${l.label} style="background:var(--surface-3);border-radius:var(--r-md);padding:12px;border:1px solid var(--border);">
-                                <div style="font-size:10px;color:var(--text-4);text-transform:uppercase;letter-spacing:var(--tracking-widest);font-weight:var(--weight-semibold);margin-bottom:5px;">
-                                    ${l.label}
-                                </div>
-                                <div style=${'font-family:var(--font-mono);font-size:var(--text-md);font-weight:var(--weight-heavy);color:' + l.color + ';'}>
+                            <div key=${l.label} style="background:var(--fill-4);border-radius:var(--r-md);padding:10px 12px;">
+                                <div class="label-uppercase mb-4">${l.label}</div>
+                                <div style=${'font-family:var(--font-mono);font-size:var(--text-callout);font-weight:var(--weight-heavy);color:' + l.color + ';'}>
                                     ${l.val}
                                 </div>
                             </div>
                         `)}
                     </div>
-                    <div class="flex justify-between" style="font-size:var(--text-xs);color:var(--text-3);padding:0 2px;">
+                    <div class="flex justify-between" style="font-size:10px;color:var(--label-3);padding:0 2px;">
                         <span style="font-family:var(--font-mono);">
                             SL ${sig.sl_pct ? sig.sl_pct.toFixed(2) + '%' : '--'}
                         </span>
-                        <span style="font-family:var(--font-mono);color:var(--text-2);">
-                            R:R 1:${actualRr}
-                        </span>
+                        <span style="font-family:var(--font-mono);color:var(--label-2);">R:R 1:${actualRr}</span>
                         ${mlProb != null && html`
-                            <span class=${Utils.mlBadgeClass(mlProb)}>
-                                ML ${(mlProb * 100).toFixed(0)}%
-                            </span>
+                            <span class=${Utils.mlBadgeClass(mlProb)}>ML ${(mlProb * 100).toFixed(0)}%</span>
                         `}
                     </div>
                 </div>

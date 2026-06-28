@@ -5,24 +5,23 @@ var { useDashboard, showToast } = Store
 var { GradeBadge, DirBadge, OutcomeBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, Panel, InfoRow } = SE
 
 function PerformancePage() {
-    const data                              = useDashboard()
-    const [signals,      setSignals]        = useState([])
-    const [sigLoading,   setSigLoading]     = useState(false)
-    const [selectedSig,  setSelectedSig]    = useState(null)
-    const [filters,      setFilters]        = useState({ grade: '', outcome: '', direction: '', coin: '', limit: '100' })
-    const [currentPage,  setCurrentPage]    = useState(1)
-    const [showSignals,  setShowSignals]    = useState(false)
-    const [equityRange,  setEquityRange]    = useState('all')
-    const chartDrawn                        = useRef(false)
-    const prevCurveKey                      = useRef(null)
-    const pageSize                          = 30
+    const data                           = useDashboard()
+    const [signals,     setSignals]      = useState([])
+    const [sigLoading,  setSigLoading]   = useState(false)
+    const [selectedSig, setSelectedSig]  = useState(null)
+    const [filters,     setFilters]      = useState({ grade: '', outcome: '', direction: '', coin: '', limit: '100' })
+    const [currentPage, setCurrentPage]  = useState(1)
+    const [showSignals, setShowSignals]  = useState(false)
+    const [equityRange, setEquityRange]  = useState('all')
+    const chartDrawn                     = useRef(false)
+    const prevCurveKey                   = useRef(null)
+    const pageSize                       = 30
 
     const perf    = data.performance || {}
     const summary = data.summary     || {}
 
-    const filtered    = signals
-    const totalPages  = Math.max(1, Math.ceil(filtered.length / pageSize))
-    const paginated   = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+    const totalPages = Math.max(1, Math.ceil(signals.length / pageSize))
+    const paginated  = signals.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
     useEffect(() => {
         return () => {
@@ -83,8 +82,7 @@ function PerformancePage() {
             if (f.outcome) q.set('outcome',  f.outcome)
             const res  = await fetch('/api/signals?' + q.toString(), { credentials: 'include' })
             if (res.status === 401) { window.location.href = '/login.html'; return }
-            const sigs = await res.json()
-            let result = sigs || []
+            let result = await res.json() || []
             if (f.direction) result = result.filter(s => s.direction === f.direction)
             setSignals(result)
             setCurrentPage(1)
@@ -125,21 +123,19 @@ function PerformancePage() {
             <div class="page-header">
                 <div>
                     <div class="page-title">Performance</div>
-                    <div class="page-subtitle">
-                        ${perf.closed || 0} closed trades · All time
-                    </div>
+                    <div class="page-subtitle">${perf.closed || 0} closed trades · All time</div>
                 </div>
             </div>
 
             <div class="card mb-24">
-                <div class="equity-chart-container" style="padding:24px 24px 16px;">
-                    <div class="equity-chart-header">
-                        <div class="equity-chart-stats">
-                            <div class="equity-chart-label">Total Equity</div>
-                            <div class="equity-chart-value">
+                <div style="padding:20px 20px 14px;">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;">
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <div class="label-uppercase">Total Equity</div>
+                            <div style="font-family:var(--font-mono);font-size:var(--text-title1);font-weight:var(--weight-heavy);color:var(--label-1);letter-spacing:var(--tracking-title1);">
                                 ${Utils.fmtPnl(perf.total_pnl, perf.total_pnl_pos)}
                             </div>
-                            <div class=${'equity-chart-return ' + (perf.total_pnl_pos ? 'positive' : 'negative')}>
+                            <div style=${'font-family:var(--font-mono);font-size:var(--text-footnote);font-weight:var(--weight-semibold);color:' + (perf.total_pnl_pos ? 'var(--profit)' : 'var(--loss)') + ';'}>
                                 ${totalReturn > 0 ? '+' : ''}${totalReturn}% all time
                             </div>
                         </div>
@@ -159,13 +155,13 @@ function PerformancePage() {
                     </div>
                     ${!equityCurveFiltered.length
                         ? html`
-                            <div class="chart-empty" style="height:280px;">
+                            <div class="chart-empty" style="height:240px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>
                                 <span class="chart-empty-text">No closed trades in this range</span>
                             </div>
                         `
                         : html`
-                            <div class="chart-wrap chart-h-280">
+                            <div class="chart-wrap chart-h-240">
                                 <canvas id="perf-equity-chart"></canvas>
                             </div>
                         `
@@ -180,31 +176,27 @@ function PerformancePage() {
                         val:   (totalReturn > 0 ? '+' : '') + totalReturn + '%',
                         sub:   Utils.fmtPnl(perf.total_pnl, perf.total_pnl_pos),
                         color: perf.total_pnl_pos ? 'var(--profit)' : 'var(--loss)',
-                        card:  perf.total_pnl_pos ? 'stat-card-profit' : 'stat-card-loss',
                     },
                     {
                         label: 'Win Rate',
                         val:   (perf.win_rate || 0) + '%',
                         sub:   (perf.wins || 0) + 'W · ' + (perf.losses || 0) + 'L',
                         color: Utils.winRateColor(perf.win_rate),
-                        card:  'stat-card-brand',
                     },
                     {
                         label: 'Max Drawdown',
                         val:   (perf.max_drawdown || 0) + '%',
                         sub:   'Peak: ' + Utils.fmtPnl(perf.peak_equity, true),
                         color: perf.max_drawdown > 15 ? 'var(--loss)' : perf.max_drawdown > 8 ? 'var(--warning)' : 'var(--profit)',
-                        card:  '',
                     },
                     {
                         label: 'Profit Factor',
                         val:   perf.profit_factor || '--',
-                        sub:   perf.closed + ' closed trades',
+                        sub:   (perf.closed || 0) + ' closed trades',
                         color: perf.profit_factor >= 1.5 ? 'var(--profit)' : perf.profit_factor >= 1 ? 'var(--warning)' : 'var(--loss)',
-                        card:  '',
                     },
                 ].map(item => html`
-                    <div key=${item.label} class=${'stat-card ' + item.card}>
+                    <div key=${item.label} class="stat-card">
                         <div class="stat-card-label">${item.label}</div>
                         <div class="stat-card-value" style=${'color:' + item.color + ';'}>
                             ${item.val}
@@ -217,32 +209,32 @@ function PerformancePage() {
             <div class="grid-2 mb-24">
                 <div class="card card-pad">
                     <div class="section-title mb-16">By Grade</div>
-                    <div style="position:relative;height:180px;margin-bottom:16px;">
+                    <div style="position:relative;height:160px;margin-bottom:16px;">
                         <canvas id="perf-grade-donut"></canvas>
                     </div>
                     ${[
-                        { grade: 'A+', data: perf.aplus, color: 'var(--gold)'    },
-                        { grade: 'A',  data: perf.a,     color: 'var(--brand)'   },
-                        { grade: 'B',  data: perf.b,     color: 'var(--warning)' },
+                        { grade: 'A+', data: perf.aplus, color: 'var(--grade-aplus)' },
+                        { grade: 'A',  data: perf.a,     color: 'var(--grade-a)'     },
+                        { grade: 'B',  data: perf.b,     color: 'var(--grade-b)'     },
                     ].filter(g => g.data).map(g => html`
-                        <div key=${g.grade} style="margin-bottom:14px;">
+                        <div key=${g.grade} style="margin-bottom:12px;">
                             <div class="flex justify-between items-center mb-6">
                                 <div class="flex items-center gap-8">
                                     <${GradeBadge} grade=${g.grade}/>
-                                    <span style="font-size:var(--text-xs);color:var(--text-3);">
+                                    <span style="font-size:var(--text-caption1);color:var(--label-3);">
                                         ${g.data.total || 0} trades
                                     </span>
                                 </div>
                                 <div class="flex items-center gap-10">
-                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-sm);font-weight:var(--weight-bold);color:' + Utils.winRateColor(g.data.win_rate) + ';'}>
+                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-footnote);font-weight:var(--weight-bold);color:' + Utils.winRateColor(g.data.win_rate) + ';'}>
                                         ${g.data.win_rate || 0}%
                                     </span>
-                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-xs);color:' + Utils.pnlColor((g.data.pnl || 0) >= 0) + ';'}>
+                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + Utils.pnlColor((g.data.pnl || 0) >= 0) + ';'}>
                                         ${Utils.fmtPnl(g.data.pnl, (g.data.pnl || 0) >= 0)}
                                     </span>
                                 </div>
                             </div>
-                            <div class="win-rate-track" style="height:4px;">
+                            <div class="win-rate-track">
                                 <div class="win-rate-fill" style=${'width:' + (g.data.win_rate || 0) + '%;background:' + g.color + ';'}></div>
                             </div>
                         </div>
@@ -270,7 +262,7 @@ function PerformancePage() {
 
             <div class="card">
                 <div class="filter-bar">
-                    <div class="section-title" style="font-size:var(--text-base);">Signal History</div>
+                    <div class="section-title" style="font-size:var(--text-subhead);">Signal History</div>
                     <div class="filter-spacer"></div>
                     <button class="btn btn-ghost btn-sm" onClick=${toggleSignals}>
                         ${showSignals ? 'Hide' : 'View All Signals'}
@@ -282,8 +274,8 @@ function PerformancePage() {
 
                 ${showSignals && html`
                     <div>
-                        <div class="filter-bar" style="border-top:1px solid var(--border);">
-                            <select class="select" style="width:110px;" value=${filters.grade}
+                        <div class="filter-bar" style="border-top:0.5px solid var(--separator);">
+                            <select class="select select-sm" style="width:110px;" value=${filters.grade}
                                 onChange=${e => handleFilterChange('grade', e.target.value)}>
                                 <option value="">All Grades</option>
                                 <option value="A+">A+</option>
@@ -292,25 +284,25 @@ function PerformancePage() {
                                 <option value="C">C</option>
                                 <option value="F">F</option>
                             </select>
-                            <select class="select" style="width:120px;" value=${filters.outcome}
+                            <select class="select select-sm" style="width:120px;" value=${filters.outcome}
                                 onChange=${e => handleFilterChange('outcome', e.target.value)}>
                                 <option value="">All Outcomes</option>
                                 <option value="win">Win</option>
                                 <option value="loss">Loss</option>
                                 <option value="pending">Pending</option>
                             </select>
-                            <select class="select" style="width:110px;" value=${filters.direction}
+                            <select class="select select-sm" style="width:110px;" value=${filters.direction}
                                 onChange=${e => handleFilterChange('direction', e.target.value)}>
                                 <option value="">All Dirs</option>
                                 <option value="LONG">Long</option>
                                 <option value="SHORT">Short</option>
                             </select>
-                            <input class="input" style="width:100px;" type="text"
+                            <input class="input input-sm" style="width:100px;" type="text"
                                 placeholder="Coin..."
                                 value=${filters.coin}
                                 onInput=${e => setFilters(f => ({ ...f, coin: e.target.value }))}
                                 onKeyDown=${e => e.key === 'Enter' && handleFilterChange('coin', e.target.value)}/>
-                            <select class="select" style="width:90px;" value=${filters.limit}
+                            <select class="select select-sm" style="width:80px;" value=${filters.limit}
                                 onChange=${e => handleFilterChange('limit', e.target.value)}>
                                 <option value="50">50</option>
                                 <option value="100">100</option>
@@ -323,9 +315,7 @@ function PerformancePage() {
                                 loadSignals(f)
                             }}>Clear</button>
                             <div class="filter-spacer"></div>
-                            <span class="filter-count">
-                                <strong>${signals.length}</strong> signals
-                            </span>
+                            <span class="filter-count"><strong>${signals.length}</strong> signals</span>
                         </div>
 
                         ${sigLoading
@@ -344,11 +334,9 @@ function PerformancePage() {
                                         <tbody>
                                             ${!paginated.length
                                                 ? html`
-                                                    <tr>
-                                                        <td colspan="12">
-                                                            <${EmptyState} size="sm" title="No signals match filters"/>
-                                                        </td>
-                                                    </tr>
+                                                    <tr><td colspan="12">
+                                                        <${EmptyState} size="sm" title="No signals match filters"/>
+                                                    </td></tr>
                                                 `
                                                 : paginated.map(s => html`
                                                     <tr key=${s.id} class="clickable"
@@ -360,7 +348,7 @@ function PerformancePage() {
                                                             </div>
                                                         </td>
                                                         <td>
-                                                            <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--text-1);">
+                                                            <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--label-1);">
                                                                 ${s.coin}
                                                             </span>
                                                         </td>
@@ -369,12 +357,12 @@ function PerformancePage() {
                                                         <td><${ScoreBar} score=${s.score} grade=${s.grade}/></td>
                                                         <td class="td-price">${Utils.fmtPrice(s.entry)}</td>
                                                         <td>
-                                                            <span style="font-family:var(--font-mono);font-size:var(--text-sm);color:var(--loss);">
+                                                            <span style="font-family:var(--font-mono);font-size:var(--text-footnote);color:var(--loss);">
                                                                 ${Utils.fmtPrice(s.sl)}
                                                             </span>
                                                         </td>
                                                         <td>
-                                                            <span style="font-family:var(--font-mono);font-size:var(--text-sm);color:var(--profit);">
+                                                            <span style="font-family:var(--font-mono);font-size:var(--text-footnote);color:var(--profit);">
                                                                 ${Utils.fmtPrice(s.tp1)}
                                                             </span>
                                                         </td>
@@ -409,7 +397,7 @@ function PerformancePage() {
                                             disabled=${currentPage <= 1}>
                                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
                                         </button>
-                                        <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-3);">
+                                        <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-caption1);color:var(--label-3);">
                                             ${currentPage} / ${totalPages}
                                         </span>
                                         <button class="pagination-btn"
@@ -430,8 +418,8 @@ function PerformancePage() {
                 `}
 
                 ${!showSignals && html`
-                    <div style="padding:20px;text-align:center;">
-                        <span style="font-size:var(--text-sm);color:var(--text-4);">
+                    <div style="padding:16px;text-align:center;">
+                        <span style="font-size:var(--text-subhead);color:var(--label-4);">
                             Click "View All Signals" to browse the full signal history
                         </span>
                     </div>
@@ -450,7 +438,6 @@ function PerformancePage() {
 
 function SignalHistoryPanel({ signal, onClose }) {
     const s = signal
-
     return html`
         <${Panel}
             show=${true}
@@ -459,7 +446,7 @@ function SignalHistoryPanel({ signal, onClose }) {
             subtitle=${'Signal #' + s.id}
         >
             <div class="panel-section">
-                <div class="flex items-center gap-10 flex-wrap">
+                <div class="flex items-center gap-8 flex-wrap">
                     <${GradeBadge} grade=${s.grade} size="lg"/>
                     <${DirBadge} dir=${s.direction}/>
                     <${OutcomeBadge} outcome=${s.outcome}/>
@@ -469,9 +456,9 @@ function SignalHistoryPanel({ signal, onClose }) {
             <div class="panel-section">
                 <div class="panel-section-title">Signal Levels</div>
                 ${[
-                    { label: 'Entry',       val: Utils.fmtPrice(s.entry),      color: 'var(--text-1)'  },
-                    { label: 'Stop Loss',   val: Utils.fmtPrice(s.sl),         color: 'var(--loss)'    },
-                    { label: 'Take Profit', val: Utils.fmtPrice(s.tp1),        color: 'var(--profit)'  },
+                    { label: 'Entry',       val: Utils.fmtPrice(s.entry),      color: 'var(--label-1)'  },
+                    { label: 'Stop Loss',   val: Utils.fmtPrice(s.sl),         color: 'var(--loss)'     },
+                    { label: 'Take Profit', val: Utils.fmtPrice(s.tp1),        color: 'var(--profit)'   },
                     { label: 'Exit Price',  val: Utils.fmtPrice(s.exit_price)  },
                     { label: 'PnL',         val: s.pnl != null ? Utils.fmtPnl(s.pnl, s.pnl_pos) : '--', color: Utils.pnlColor(s.pnl_pos) },
                     { label: 'Risk',        val: s.risk_amt ? '$' + parseFloat(s.risk_amt).toFixed(2) : '--' },

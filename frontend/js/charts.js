@@ -2,26 +2,24 @@ const Charts = {
     _instances: {},
 
     _dark: {
-        grid:    'rgba(255,255,255,0.04)',
-        border:  'rgba(255,255,255,0.06)',
-        text:    'rgba(255,255,255,0.35)',
+        grid:    'rgba(84, 84, 88, 0.35)',
+        text:    'rgba(235, 235, 245, 0.30)',
         tooltip: {
-            bg:     '#1c1c24',
-            title:  'rgba(255,255,255,0.35)',
-            body:   '#ffffff',
-            border: 'rgba(255,255,255,0.12)',
+            bg:     '#2C2C2E',
+            title:  'rgba(235, 235, 245, 0.30)',
+            body:   '#FFFFFF',
+            border: 'rgba(84, 84, 88, 0.65)',
         },
     },
 
     _light: {
-        grid:    'rgba(0,0,0,0.04)',
-        border:  'rgba(0,0,0,0.06)',
-        text:    'rgba(0,0,0,0.35)',
+        grid:    'rgba(60, 60, 67, 0.15)',
+        text:    'rgba(60, 60, 67, 0.30)',
         tooltip: {
-            bg:     '#ffffff',
-            title:  'rgba(0,0,0,0.35)',
+            bg:     '#FFFFFF',
+            title:  'rgba(60, 60, 67, 0.30)',
             body:   '#000000',
-            border: 'rgba(0,0,0,0.12)',
+            border: 'rgba(60, 60, 67, 0.29)',
         },
     },
 
@@ -31,16 +29,16 @@ const Charts = {
     },
 
     _font: {
-        family: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', sans-serif",
+        family: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', sans-serif",
         size:   11,
     },
 
-    _baseOptions(height = 200) {
+    _baseOptions() {
         const th = this._theme()
         return {
             responsive:          true,
             maintainAspectRatio: false,
-            animation:           { duration: 350, easing: 'easeOutQuart' },
+            animation:           { duration: 300, easing: 'easeOutQuart' },
             plugins: {
                 legend: { display: false },
                 tooltip: {
@@ -49,8 +47,8 @@ const Charts = {
                     bodyColor:       th.tooltip.body,
                     borderColor:     th.tooltip.border,
                     borderWidth:     1,
-                    padding:         12,
-                    cornerRadius:    8,
+                    padding:         10,
+                    cornerRadius:    10,
                     displayColors:   false,
                     titleFont:       { ...this._font, size: 11 },
                     bodyFont:        { ...this._font, size: 13, weight: '700' },
@@ -74,7 +72,7 @@ const Charts = {
                     },
                     grid: {
                         color:     th.grid,
-                        lineWidth: 1,
+                        lineWidth: 0.5,
                     },
                     border: { display: false }
                 }
@@ -124,7 +122,7 @@ const Charts = {
     _gradientLine(ctx, color, height = 200) {
         const gradient = ctx.createLinearGradient(0, 0, 0, height)
         gradient.addColorStop(0,   color + '28')
-        gradient.addColorStop(0.5, color + '0a')
+        gradient.addColorStop(0.6, color + '08')
         gradient.addColorStop(1,   color + '00')
         return gradient
     },
@@ -136,7 +134,7 @@ const Charts = {
         const labels = curve.map(c => c.date || '')
         const values = curve.map(c => parseFloat(c.equity || 0))
         const isUp   = values[values.length - 1] >= values[0]
-        const color  = isUp ? '#00d4aa' : '#ff453a'
+        const color  = isUp ? '#34C759' : '#FF3B30'
 
         const ctx      = el.getContext('2d')
         const height   = el.offsetHeight || 200
@@ -148,21 +146,21 @@ const Charts = {
             data: {
                 labels,
                 datasets: [{
-                    data:                 values,
-                    borderColor:          color,
-                    backgroundColor:      gradient,
-                    borderWidth:          2,
-                    pointRadius:          0,
-                    pointHoverRadius:     5,
+                    data:                      values,
+                    borderColor:               color,
+                    backgroundColor:           gradient,
+                    borderWidth:               1.5,
+                    pointRadius:               0,
+                    pointHoverRadius:          4,
                     pointHoverBackgroundColor: color,
                     pointHoverBorderColor:     th.tooltip.bg,
                     pointHoverBorderWidth:     2,
-                    fill:                 true,
-                    tension:              0.4,
+                    fill:                      true,
+                    tension:                   0.4,
                 }]
             },
             options: {
-                ...this._baseOptions(height),
+                ...this._baseOptions(),
                 interaction: { mode: 'index', intersect: false },
                 plugins: {
                     ...this._baseOptions().plugins,
@@ -197,7 +195,7 @@ const Charts = {
 
         const values = curve.map(c => parseFloat(c.equity || 0))
         const isUp   = values[values.length - 1] >= values[0]
-        const color  = isUp ? '#00d4aa' : '#ff453a'
+        const color  = isUp ? '#34C759' : '#FF3B30'
         const ctx    = el.getContext('2d')
         const height = el.offsetHeight || 64
         const grad   = this._gradientLine(ctx, color, height)
@@ -207,19 +205,19 @@ const Charts = {
             data: {
                 labels:   curve.map(c => c.date || ''),
                 datasets: [{
-                    data:             values,
-                    borderColor:      color,
-                    backgroundColor:  grad,
-                    borderWidth:      1.5,
-                    pointRadius:      0,
-                    fill:             true,
-                    tension:          0.4,
+                    data:            values,
+                    borderColor:     color,
+                    backgroundColor: grad,
+                    borderWidth:     1.5,
+                    pointRadius:     0,
+                    fill:            true,
+                    tension:         0.4,
                 }]
             },
             options: {
                 responsive:          true,
                 maintainAspectRatio: false,
-                animation:           { duration: 300 },
+                animation:           { duration: 200 },
                 plugins: { legend: { display: false }, tooltip: { enabled: false } },
                 scales: {
                     x: { display: false },
@@ -234,7 +232,7 @@ const Charts = {
         if (!el) return
 
         const grades  = ['A+', 'A', 'B']
-        const colors  = ['#ffd60a', '#00d4aa', '#ff9f0a']
+        const colors  = ['#FFCC00', '#007AFF', '#FF9500']
         const values  = grades.map(g => data[g]?.total || 0)
         const hasData = values.some(v => v > 0)
         if (!hasData) return
@@ -249,8 +247,8 @@ const Charts = {
                     data:             values,
                     backgroundColor:  colors.map(c => c + 'cc'),
                     borderColor:      colors,
-                    borderWidth:      2,
-                    hoverBorderWidth: 3,
+                    borderWidth:      0,
+                    hoverBorderWidth: 0,
                     hoverOffset:      4,
                 }]
             },
@@ -258,7 +256,7 @@ const Charts = {
                 responsive:          true,
                 maintainAspectRatio: false,
                 animation:           { duration: 400 },
-                cutout:              '70%',
+                cutout:              '72%',
                 plugins: {
                     legend: {
                         position: 'bottom',
@@ -271,11 +269,7 @@ const Charts = {
                         }
                     },
                     tooltip: {
-                        backgroundColor: th.tooltip.bg,
-                        titleColor:      th.tooltip.title,
-                        bodyColor:       th.tooltip.body,
-                        borderColor:     th.tooltip.border,
-                        borderWidth:     1,
+                        ...this._baseOptions().plugins.tooltip,
                         callbacks: {
                             label: ctx => ` ${ctx.label}: ${ctx.parsed} trades`
                         }
@@ -294,10 +288,10 @@ const Charts = {
         const scores = top.map(c => parseFloat(c.score) || 0)
         const colors = top.map(c => {
             const s = parseFloat(c.score) || 0
-            if (s >= 85) return '#ffd60a'
-            if (s >= 68) return '#00d4aa'
-            if (s >= 52) return '#ff9f0a'
-            return 'rgba(255,255,255,0.18)'
+            if (s >= 85) return '#FFCC00'
+            if (s >= 68) return '#007AFF'
+            if (s >= 52) return '#FF9500'
+            return 'rgba(235, 235, 245, 0.18)'
         })
 
         return this._getOrCreate(elId, {
@@ -308,13 +302,13 @@ const Charts = {
                     data:            scores,
                     backgroundColor: colors.map(c => c + 'cc'),
                     borderColor:     colors,
-                    borderWidth:     1,
-                    borderRadius:    4,
+                    borderWidth:     0,
+                    borderRadius:    6,
                     borderSkipped:   false,
                 }]
             },
             options: {
-                ...this._baseOptions(220),
+                ...this._baseOptions(),
                 plugins: {
                     ...this._baseOptions().plugins,
                     tooltip: {
@@ -347,8 +341,8 @@ const Charts = {
         const recent  = history.slice(-20)
         const labels  = recent.map(t => t.coin || '--')
         const values  = recent.map(t => parseFloat(t.pnl || 0))
-        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
-        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
+        const colors  = values.map(v => v >= 0 ? '#34C759cc' : '#FF3B30cc')
+        const borders = values.map(v => v >= 0 ? '#34C759'   : '#FF3B30')
 
         return this._getOrCreate(elId, {
             type: 'bar',
@@ -358,13 +352,13 @@ const Charts = {
                     data:            values,
                     backgroundColor: colors,
                     borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
+                    borderWidth:     0,
+                    borderRadius:    4,
                     borderSkipped:   false,
                 }]
             },
             options: {
-                ...this._baseOptions(160),
+                ...this._baseOptions(),
                 plugins: {
                     ...this._baseOptions().plugins,
                     tooltip: {
@@ -398,64 +392,6 @@ const Charts = {
         })
     },
 
-    dailyPnl(elId, dailyData = []) {
-        const el = document.getElementById(elId)
-        if (!el || !dailyData.length) return
-
-        const labels  = dailyData.map(d => d.date || '')
-        const values  = dailyData.map(d => parseFloat(d.profit_abs || 0))
-        const colors  = values.map(v => v >= 0 ? '#00d4aacc' : '#ff453acc')
-        const borders = values.map(v => v >= 0 ? '#00d4aa'   : '#ff453a')
-
-        return this._getOrCreate(elId, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [{
-                    data:            values,
-                    backgroundColor: colors,
-                    borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
-                    borderSkipped:   false,
-                }]
-            },
-            options: {
-                ...this._baseOptions(160),
-                plugins: {
-                    ...this._baseOptions().plugins,
-                    tooltip: {
-                        ...this._baseOptions().plugins.tooltip,
-                        callbacks: {
-                            label: ctx => {
-                                const v = ctx.parsed.y
-                                return (v >= 0 ? ' +$' : ' -$') + Math.abs(v).toFixed(4)
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    ...this._baseOptions().scales,
-                    x: {
-                        ...this._baseOptions().scales.x,
-                        ticks: {
-                            ...this._baseOptions().scales.x.ticks,
-                            maxTicksLimit: 10,
-                            maxRotation:   30,
-                        }
-                    },
-                    y: {
-                        ...this._baseOptions().scales.y,
-                        ticks: {
-                            ...this._baseOptions().scales.y.ticks,
-                            callback: v => '$' + v.toFixed(2)
-                        }
-                    }
-                }
-            }
-        })
-    },
-
     factorBar(elId, factors = []) {
         const el = document.getElementById(elId)
         if (!el || !factors.length) return
@@ -468,14 +404,14 @@ const Charts = {
         const labels  = sorted.map(f => f.factor.replace(/_/g, ' '))
         const values  = sorted.map(f => parseFloat(f.edge) || 0)
         const colors  = values.map(v =>
-            v > 10  ? '#00d4aacc' :
-            v > 0   ? '#30d158cc' :
-            v > -10 ? '#ff9f0acc' : '#ff453acc'
+            v > 10  ? '#34C759cc' :
+            v > 0   ? '#007AFFcc' :
+            v > -10 ? '#FF9500cc' : '#FF3B30cc'
         )
         const borders = values.map(v =>
-            v > 10  ? '#00d4aa' :
-            v > 0   ? '#30d158' :
-            v > -10 ? '#ff9f0a' : '#ff453a'
+            v > 10  ? '#34C759' :
+            v > 0   ? '#007AFF' :
+            v > -10 ? '#FF9500' : '#FF3B30'
         )
 
         const th = this._theme()
@@ -488,8 +424,8 @@ const Charts = {
                     data:            values,
                     backgroundColor: colors,
                     borderColor:     borders,
-                    borderWidth:     1,
-                    borderRadius:    3,
+                    borderWidth:     0,
+                    borderRadius:    4,
                     borderSkipped:   false,
                 }]
             },
@@ -506,6 +442,7 @@ const Charts = {
                         bodyColor:       th.tooltip.body,
                         borderColor:     th.tooltip.border,
                         borderWidth:     1,
+                        cornerRadius:    10,
                         callbacks: {
                             label: ctx => {
                                 const v = ctx.parsed.x
@@ -523,7 +460,7 @@ const Charts = {
                         },
                         grid: {
                             color:     th.grid,
-                            lineWidth: 1,
+                            lineWidth: 0.5,
                         },
                         border: { display: false }
                     },
@@ -555,10 +492,10 @@ const Charts = {
                 labels:   ['Wins', 'Losses'],
                 datasets: [{
                     data:             [wins, losses],
-                    backgroundColor:  ['#30d158cc', '#ff453acc'],
-                    borderColor:      ['#30d158',   '#ff453a'],
-                    borderWidth:      2,
-                    hoverBorderWidth: 3,
+                    backgroundColor:  ['#34C759cc', '#FF3B30cc'],
+                    borderColor:      ['#34C759',   '#FF3B30'],
+                    borderWidth:      0,
+                    hoverBorderWidth: 0,
                     hoverOffset:      4,
                 }]
             },
@@ -570,11 +507,7 @@ const Charts = {
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        backgroundColor: th.tooltip.bg,
-                        titleColor:      th.tooltip.title,
-                        bodyColor:       th.tooltip.body,
-                        borderColor:     th.tooltip.border,
-                        borderWidth:     1,
+                        ...this._baseOptions().plugins.tooltip,
                         callbacks: {
                             label: ctx => ` ${ctx.label}: ${ctx.parsed} (${((ctx.parsed / total) * 100).toFixed(1)}%)`
                         }
@@ -582,45 +515,6 @@ const Charts = {
                 }
             }
         })
-    },
-
-    mlProgress(elId, pct = 0) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        const p     = Math.min(100, parseFloat(pct) || 0)
-        const color = p >= 100 ? '#30d158' : '#00d4aa'
-
-        el.innerHTML = `
-            <div class="ml-progress">
-                <div class="ml-progress-header">
-                    <span class="ml-progress-label">Training Progress</span>
-                    <span class="ml-progress-value">${p.toFixed(0)}%</span>
-                </div>
-                <div class="ml-progress-track">
-                    <div class="ml-progress-fill ${p >= 100 ? 'complete' : ''}"
-                         style="width:${p}%"></div>
-                </div>
-            </div>
-        `
-    },
-
-    serverStat(elId, label, value, pct, colorClass) {
-        const el = document.getElementById(elId)
-        if (!el) return
-
-        el.innerHTML = `
-            <div class="server-stat">
-                <div class="server-stat-header">
-                    <span class="server-stat-label">${label}</span>
-                    <span class="server-stat-value ${colorClass}">${value}</span>
-                </div>
-                <div class="server-stat-track">
-                    <div class="server-stat-fill ${colorClass}"
-                         style="width:${Math.min(100, pct)}%"></div>
-                </div>
-            </div>
-        `
     },
 
     scoreRing(elId, score, grade, size = 64) {
@@ -635,14 +529,13 @@ const Charts = {
         const strokeWidth = size <= 48 ? 3 : 4
 
         const colorMap = {
-            'A+': '#ffd60a',
-            'A':  '#00d4aa',
-            'B':  '#ff9f0a',
-            'C':  'rgba(255,255,255,0.35)',
-            'F':  'rgba(255,255,255,0.18)',
+            'A+': '#FFCC00',
+            'A':  '#007AFF',
+            'B':  '#FF9500',
+            'C':  'rgba(235, 235, 245, 0.30)',
+            'F':  'rgba(235, 235, 245, 0.18)',
         }
-        const color = colorMap[grade] || 'rgba(255,255,255,0.18)'
-
+        const color    = colorMap[grade] || 'rgba(235, 235, 245, 0.18)'
         const fontSize = size <= 48 ? 13 : size <= 64 ? 16 : 20
 
         el.innerHTML = `
@@ -651,7 +544,7 @@ const Charts = {
                     <circle
                         cx="${size/2}" cy="${size/2}" r="${radius}"
                         fill="none"
-                        stroke="rgba(255,255,255,0.06)"
+                        stroke="rgba(118,118,128,0.24)"
                         stroke-width="${strokeWidth}"
                     />
                     <circle
@@ -682,8 +575,7 @@ const Charts = {
         const empty       = circumf - filled
         const strokeWidth = 3.5
 
-        const color = value >= 70 ? '#30d158' : value >= 40 ? '#00d4aa' : value >= 20 ? '#ff9f0a' : '#ff453a'
-        const cls   = value >= 70 ? 'high'    : value >= 40 ? 'medium'  : value >= 20 ? 'low'     : 'none'
+        const color = value >= 70 ? '#34C759' : value >= 40 ? '#007AFF' : value >= 20 ? '#FF9500' : '#FF3B30'
 
         el.innerHTML = `
             <div class="confidence-gauge" style="width:${size}px;height:${size}px;">
@@ -691,7 +583,7 @@ const Charts = {
                     <circle
                         cx="${size/2}" cy="${size/2}" r="${radius}"
                         fill="none"
-                        stroke="rgba(255,255,255,0.06)"
+                        stroke="rgba(118,118,128,0.24)"
                         stroke-width="${strokeWidth}"
                         stroke-linecap="round"
                     />
@@ -721,7 +613,7 @@ const Charts = {
         const circumf     = 2 * Math.PI * radius
         const filled      = circumf * Math.min(1, Math.max(0, pct))
         const empty       = circumf - filled
-        const color       = scanning ? '#ff9f0a' : '#00d4aa'
+        const color       = scanning ? '#FF9500' : '#007AFF'
         const strokeWidth = 2.5
 
         el.innerHTML = `
@@ -730,7 +622,7 @@ const Charts = {
                     <circle
                         cx="${size/2}" cy="${size/2}" r="${radius}"
                         fill="none"
-                        stroke="rgba(255,255,255,0.06)"
+                        stroke="rgba(118,118,128,0.24)"
                         stroke-width="${strokeWidth}"
                     />
                     <circle

@@ -15,21 +15,15 @@ function PositionsPage() {
     const [profit,        setProfit]           = useState({})
     const [balance,       setBalance]          = useState({})
     const [botState,      setBotState]         = useState('unknown')
-    const [daily,         setDaily]            = useState([])
     const [tradeHistory,  setTradeHistory]     = useState([])
     const [selectedTrade, setSelectedTrade]    = useState(null)
     const [actionLoading, setActionLoading]    = useState(null)
     const [error,         setError]            = useState('')
     const [histPage,      setHistPage]         = useState(1)
     const histPageSize = 20
-    const chartDrawn   = useRef(false)
 
     useEffect(() => {
         refresh()
-        return () => {
-            Charts.destroy('positions-daily-chart')
-            chartDrawn.current = false
-        }
     }, [])
 
     useEffect(() => {
@@ -51,17 +45,6 @@ function PositionsPage() {
         if (ftData.balance?.total      != null) setBalance(ftData.balance)
         if (ftData.botState && ftData.botState !== 'unknown') setBotState(ftData.botState)
     }, [ftData])
-
-    useEffect(() => {
-        if (!daily.length || chartDrawn.current) return
-        setTimeout(() => {
-            const el = document.getElementById('positions-daily-chart')
-            if (el && el.tagName === 'CANVAS') {
-                Charts.dailyPnl('positions-daily-chart', daily)
-                chartDrawn.current = true
-            }
-        }, 100)
-    }, [daily])
 
     async function refresh() {
         if (loading) return
@@ -89,14 +72,6 @@ function PositionsPage() {
                     total: data.balance.total != null ? parseFloat(data.balance.total) : null,
                     free:  usdt.free           != null ? parseFloat(usdt.free)          : null,
                 })
-            }
-            if (data.daily) {
-                const arr = Array.isArray(data.daily) ? data.daily
-                          : Array.isArray(data.daily.data) ? data.daily.data : []
-                setDaily(arr.map(x => ({
-                    date:       x.date || x.day || '',
-                    profit_abs: parseFloat(x.profit_abs || x.profit || 0)
-                })).filter(x => x.date))
             }
             loadHistory()
         } catch(e) {
@@ -154,9 +129,9 @@ function PositionsPage() {
         } finally { setActionLoading(null) }
     }
 
-    const totalPnl    = parseFloat(profit.profit_all_coin || 0)
-    const winRate     = parseFloat(profit.winrate || 0) * 100
-    const tradeCount  = profit.trade_count || 0
+    const totalPnl      = parseFloat(profit.profit_all_coin || 0)
+    const winRate       = parseFloat(profit.winrate || 0) * 100
+    const tradeCount    = profit.trade_count || 0
     const totalExposure = openTrades.reduce((s, t) => s + parseFloat(t.stake_amount || 0), 0)
 
     const histTotal = tradeHistory.length
@@ -205,16 +180,16 @@ function PositionsPage() {
             `}
 
             <div class="grid-4 mb-24">
-                <div class="stat-card ${botState === 'running' ? 'stat-card-brand' : ''}">
+                <div class="stat-card">
                     <div class="stat-card-label">Bot State</div>
-                    <div style="margin-top:8px;">
+                    <div style="margin-top:6px;">
                         <span class=${'badge ' + (botState === 'running' ? 'badge-online' : 'badge-offline')}>
                             ${botState.toUpperCase()}
                         </span>
                     </div>
                     <div class="stat-card-sub">${openTrades.length} open · $${totalExposure.toFixed(2)} deployed</div>
                 </div>
-                <div class="stat-card stat-card-brand">
+                <div class="stat-card">
                     <div class="stat-card-label">Balance</div>
                     <div class="stat-card-value" style="color:var(--brand);">
                         ${balance.total != null ? '$' + parseFloat(balance.total).toFixed(2) : '--'}
@@ -223,7 +198,7 @@ function PositionsPage() {
                         ${balance.free != null ? 'Free: $' + parseFloat(balance.free).toFixed(2) : '--'}
                     </div>
                 </div>
-                <div class=${'stat-card ' + (totalPnl >= 0 ? 'stat-card-profit' : 'stat-card-loss')}>
+                <div class="stat-card">
                     <div class="stat-card-label">Total PnL</div>
                     <div class=${'stat-card-value pnl-value ' + (totalPnl >= 0 ? 'positive' : 'negative')}>
                         ${Utils.fmtPnl(totalPnl, totalPnl >= 0)}
@@ -251,8 +226,8 @@ function PositionsPage() {
                         <span class="tag">${openTrades.length}</span>
                     </div>
 
-                    <div class="exposure-progress mb-16">
-                        <div class="exposure-track">
+                    <div class="mb-16">
+                        <div class="exposure-track mb-8">
                             ${openTrades.map((t, i) => {
                                 const stake = parseFloat(t.stake_amount || 0)
                                 const pct   = totalExposure > 0 ? (stake / totalExposure) * 100 : 0
@@ -303,17 +278,6 @@ function PositionsPage() {
 
             <div class="grid-2 mb-24">
                 <div class="card card-pad">
-                    <div class="section-title mb-16">Daily PnL</div>
-                    ${!daily.length
-                        ? html`<${EmptyState} size="sm" title="No daily data yet"/>`
-                        : html`
-                            <div class="chart-wrap chart-h-160">
-                                <canvas id="positions-daily-chart"></canvas>
-                            </div>
-                        `
-                    }
-                </div>
-                <div class="card card-pad">
                     <div class="section-title mb-16">Summary</div>
                     ${[
                         { label: 'Total PnL',     val: Utils.fmtPnl(totalPnl, totalPnl >= 0), color: Utils.pnlColor(totalPnl >= 0) },
@@ -328,11 +292,49 @@ function PositionsPage() {
                             mono=${true} color=${row.color}/>
                     `)}
                 </div>
+                <div class="card card-pad">
+                    <div class="section-title mb-16">Bot Controls</div>
+                    <div class="flex gap-8 mb-16">
+                        <button class="btn btn-success btn-full"
+                            onClick=${startBot}
+                            disabled=${!!actionLoading || botState === 'running'}>
+                            ${actionLoading === 'start' ? html`<${Spinner} size="xs"/>` : html`
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                            `}
+                            Start Bot
+                        </button>
+                        <button class="btn btn-danger btn-full"
+                            onClick=${stopBot}
+                            disabled=${!!actionLoading || botState === 'stopped'}>
+                            ${actionLoading === 'stop' ? html`<${Spinner} size="xs"/>` : html`
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/></svg>
+                            `}
+                            Stop Bot
+                        </button>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="section-title mb-12" style="font-size:var(--text-subhead);margin-top:16px;">
+                        Freqtrade Status
+                    </div>
+                    ${[
+                        { label: 'State',      val: html`<span class=${'badge ' + (botState === 'running' ? 'badge-online' : 'badge-offline')}>${botState.toUpperCase()}</span>` },
+                        { label: 'Open',       val: openTrades.length + ' positions' },
+                        { label: 'Exposure',   val: '$' + totalExposure.toFixed(2), color: 'var(--warning)' },
+                    ].map(row => html`
+                        <div key=${row.label} class="info-row">
+                            <span class="info-row-label">${row.label}</span>
+                            ${typeof row.val === 'object'
+                                ? row.val
+                                : html`<span class="info-row-value text-mono" style=${row.color ? 'color:' + row.color : ''}>${row.val}</span>`
+                            }
+                        </div>
+                    `)}
+                </div>
             </div>
 
             <div class="card">
                 <div class="filter-bar">
-                    <div class="section-title" style="font-size:var(--text-base);">Trade History</div>
+                    <div class="section-title" style="font-size:var(--text-subhead);">Trade History</div>
                     <div class="filter-spacer"></div>
                     <span class="filter-count">
                         <strong>${histTotal}</strong> closed trades
@@ -363,7 +365,7 @@ function PositionsPage() {
                                         <tr key=${t.trade_id}>
                                             <td class="td-id">${t.trade_id}</td>
                                             <td>
-                                                <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--text-1);">
+                                                <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--label-1);">
                                                     ${(t.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')}
                                                 </span>
                                             </td>
@@ -383,10 +385,10 @@ function PositionsPage() {
                                                     ${Utils.fmtPct((t.profit_ratio || 0) * 100)}
                                                 </span>
                                             </td>
-                                            <td style="color:var(--text-3);font-size:var(--text-xs);">
+                                            <td style="color:var(--label-3);font-size:var(--text-caption1);">
                                                 ${Utils.fmtDuration(t.open_date)}
                                             </td>
-                                            <td style="color:var(--text-4);font-size:var(--text-xs);">
+                                            <td style="color:var(--label-4);font-size:var(--text-caption1);">
                                                 ${t.exit_reason || '--'}
                                             </td>
                                         </tr>
@@ -409,7 +411,7 @@ function PositionsPage() {
                             disabled=${histPage <= 1}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
                         </button>
-                        <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-3);">
+                        <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-caption1);color:var(--label-3);">
                             ${histPage} / ${histPages}
                         </span>
                         <button class="pagination-btn" onClick=${() => setHistPage(p => p + 1)}
@@ -444,15 +446,8 @@ function PositionCard({ trade, onClick, onRefresh }) {
     const health  = trade.health
     const state   = health?.state || 'UNKNOWN'
 
-    const healthBorderColors = {
-        'HEALTHY':     'var(--profit)',
-        'WARNING':     'var(--warning)',
-        'INVALIDATED': 'var(--loss)',
-    }
-    const borderColor = healthBorderColors[state] || 'var(--border)'
-
     return html`
-        <div class="trade-card trade-card-${Utils.healthClass(state)} mb-12"
+        <div class=${'trade-card trade-card-' + Utils.healthClass(state) + ' mb-12'}
             onClick=${onClick}
             role="button" tabindex="0"
             onKeyDown=${e => e.key === 'Enter' && onClick()}>
@@ -499,7 +494,7 @@ function PositionCard({ trade, onClick, onRefresh }) {
                     </div>
                     <div class="trade-card-level">
                         <div class="trade-card-level-label">Tag</div>
-                        <div class="trade-card-level-value" style="font-size:10px;color:var(--text-4);">
+                        <div class="trade-card-level-value" style="font-size:10px;color:var(--label-4);">
                             ${trade.enter_tag || '--'}
                         </div>
                     </div>
@@ -575,15 +570,15 @@ function PositionDetailPanel({ trade, onClose, onRefresh }) {
                     <${HealthRow} health=${health}/>
                 </div>
 
-                <div style="padding:20px;background:var(--surface-3);border-radius:var(--r-lg);border:1px solid var(--border);text-align:center;">
-                    <div style="font-size:var(--text-xs);color:var(--text-3);text-transform:uppercase;letter-spacing:var(--tracking-widest);font-weight:var(--weight-semibold);margin-bottom:8px;">
+                <div style="padding:18px;background:var(--fill-4);border-radius:var(--r-xl);text-align:center;">
+                    <div style="font-size:var(--text-caption2);color:var(--label-3);text-transform:uppercase;letter-spacing:var(--tracking-widest);font-weight:var(--weight-semibold);margin-bottom:6px;">
                         Unrealized PnL
                     </div>
                     <div class=${'pnl-value ' + (pnlPos ? 'positive' : 'negative')}
-                        style="font-size:var(--text-4xl);">
+                        style="font-size:var(--text-largetitle);">
                         ${Utils.fmtPnl(pnl, pnlPos)}
                     </div>
-                    <div style=${'font-family:var(--font-mono);font-size:var(--text-md);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';margin-top:4px;'}>
+                    <div style=${'font-family:var(--font-mono);font-size:var(--text-subhead);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';margin-top:4px;'}>
                         ${Utils.fmtPct(pnlPct)}
                     </div>
                 </div>
@@ -614,51 +609,42 @@ function PositionDetailPanel({ trade, onClose, onRefresh }) {
                     <div class="panel-section-title">Health — ${state}</div>
 
                     ${health.failures?.length > 0 && html`
-                        <div style="margin-bottom:12px;">
-                            <div style="font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--loss);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:8px;">
+                        <div style="margin-bottom:10px;">
+                            <div style="font-size:var(--text-caption2);font-weight:var(--weight-semibold);color:var(--loss);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:6px;">
                                 Invalidation Reasons
                             </div>
                             ${health.failures.map((f, i) => html`
-                                <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--loss)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;">
-                                        <line x1="18" y1="6" x2="6" y2="18"/>
-                                        <line x1="6" y1="6" x2="18" y2="18"/>
-                                    </svg>
-                                    <span style="color:var(--text-2);">${f}</span>
+                                <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--loss)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    <span style="color:var(--label-2);">${f}</span>
                                 </div>
                             `)}
                         </div>
                     `}
 
                     ${health.warnings?.length > 0 && html`
-                        <div style="margin-bottom:12px;">
-                            <div style="font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--warning);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:8px;">
+                        <div style="margin-bottom:10px;">
+                            <div style="font-size:var(--text-caption2);font-weight:var(--weight-semibold);color:var(--warning);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:6px;">
                                 Warnings
                             </div>
                             ${health.warnings.map((w, i) => html`
-                                <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                                        <line x1="12" y1="9" x2="12" y2="13"/>
-                                        <line x1="12" y1="17" x2="12.01" y2="17"/>
-                                    </svg>
-                                    <span style="color:var(--text-2);">${w}</span>
-                                </div>
+                                <div key=${'w' + i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                                    <span style="color:var(--label-2);">${w}</span>
+                                                                </div>
                             `)}
                         </div>
                     `}
 
                     ${health.checks?.length > 0 && html`
                         <div>
-                            <div style="font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--profit);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:8px;">
+                            <div style="font-size:var(--text-caption2);font-weight:var(--weight-semibold);color:var(--profit);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:6px;">
                                 Passing Checks
                             </div>
                             ${health.checks.map((c, i) => html`
-                                <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:var(--text-sm);">
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--profit)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;">
-                                        <polyline points="20 6 9 17 4 12"/>
-                                    </svg>
-                                    <span style="color:var(--text-2);">${c}</span>
+                                <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--profit)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><polyline points="20 6 9 17 4 12"/></svg>
+                                    <span style="color:var(--label-2);">${c}</span>
                                 </div>
                             `)}
                         </div>
@@ -684,7 +670,7 @@ function PositionDetailPanel({ trade, onClose, onRefresh }) {
                     <div class="alert-content">
                         <div class="alert-title">Thesis Weakening</div>
                         <div class="alert-desc">
-                            Some conditions have changed. Monitor this position closely. No action required yet.
+                            Some conditions have changed. Monitor this position closely.
                         </div>
                     </div>
                 </div>

@@ -42,16 +42,14 @@ function SystemPage() {
 }
 
 function HealthTab() {
-    const [health,       setHealth]       = useState(null)
-    const [loading,      setLoading]      = useState(false)
-    const [modeLoading,  setModeLoading]  = useState(null)
-    const [modeMsg,      setModeMsg]      = useState('')
-    const [modeOk,       setModeOk]       = useState(false)
-    const [actionLoading,setActionLoading]= useState(null)
-    const [actionMsg,    setActionMsg]    = useState('')
-    const [actionOk,     setActionOk]     = useState(false)
-    const [purgeLoading, setPurgeLoading] = useState(false)
-    const [purgeResult,  setPurgeResult]  = useState(null)
+    const [health,        setHealth]        = useState(null)
+    const [loading,       setLoading]       = useState(false)
+    const [modeLoading,   setModeLoading]   = useState(null)
+    const [modeMsg,       setModeMsg]       = useState('')
+    const [modeOk,        setModeOk]        = useState(false)
+    const [actionLoading, setActionLoading] = useState(null)
+    const [actionMsg,     setActionMsg]     = useState('')
+    const [actionOk,      setActionOk]      = useState(false)
 
     useEffect(() => { load() }, [])
 
@@ -72,7 +70,7 @@ function HealthTab() {
         const code = await requireTotp(
             'Switch to ' + newMode.toUpperCase() + ' mode',
             newMode === 'live'
-                ? 'This enables REAL trading with real money. All trades will execute on Binance with real funds.'
+                ? 'This enables REAL trading with real money. All trades will execute on Binance.'
                 : 'Switch back to paper trading. No real money at risk.'
         )
         if (!code) return
@@ -135,31 +133,6 @@ function HealthTab() {
         }
     }
 
-    async function dockerPurge() {
-        setPurgeResult(null)
-        const code = await requireTotp(
-            'Docker System Purge',
-            'This will remove all unused Docker images, containers and volumes. This cannot be undone.'
-        )
-        if (!code) return
-        setPurgeLoading(true)
-        try {
-            const result = await API.dockerPurge(code)
-            setPurgeResult(result)
-            if (result.success) {
-                showToast(result.message || 'Docker purge complete', 'success')
-                await load()
-            } else {
-                showToast('Purge failed: ' + (result.reason || 'Unknown error'), 'error')
-            }
-        } catch(e) {
-            setPurgeResult({ success: false, reason: e.message })
-            showToast('Purge failed: ' + e.message, 'error')
-        } finally {
-            setPurgeLoading(false)
-        }
-    }
-
     const mode   = health?.trading_mode || 'paper'
     const system = health?.system       || null
     const ml     = health?.ml_status    || {}
@@ -170,7 +143,7 @@ function HealthTab() {
             <div class="grid-2 mb-16">
                 <div class="card card-pad">
                     <div class="section-title mb-16">Trading Mode</div>
-                    <div style=${'font-size:var(--text-3xl);font-weight:var(--weight-black);letter-spacing:var(--tracking-snug);color:' + (mode === 'live' ? 'var(--loss)' : 'var(--brand)') + ';margin-bottom:12px;'}>
+                    <div style=${'font-size:var(--text-largetitle);font-weight:var(--weight-black);letter-spacing:var(--tracking-largetitle);color:' + (mode === 'live' ? 'var(--loss)' : 'var(--brand)') + ';margin-bottom:12px;'}>
                         ${mode === 'live' ? 'LIVE' : 'PAPER'}
                     </div>
                     <div class=${'alert mb-16 ' + (mode === 'live' ? 'alert-error' : 'alert-info')}>
@@ -192,9 +165,7 @@ function HealthTab() {
                                     : html`<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`
                                 }
                             </svg>
-                            <div class="alert-content">
-                                <div class="alert-desc">${modeMsg}</div>
-                            </div>
+                            <div class="alert-content"><div class="alert-desc">${modeMsg}</div></div>
                         </div>
                     `}
                     <div class="flex gap-8">
@@ -214,7 +185,7 @@ function HealthTab() {
 
                     <div class="divider"></div>
 
-                    <div class="section-title mb-12" style="font-size:var(--text-base);">Quick Actions</div>
+                    <div class="section-title mb-12" style="font-size:var(--text-subhead);">Quick Actions</div>
                     <div class="flex gap-8 flex-wrap">
                         <button class="btn btn-secondary btn-sm"
                             onClick=${triggerScan}
@@ -232,8 +203,7 @@ function HealthTab() {
                             `}
                             Sync Outcomes
                         </button>
-                        <button class="btn btn-secondary btn-sm" onClick=${load}
-                            disabled=${loading}>
+                        <button class="btn btn-secondary btn-sm" onClick=${load} disabled=${loading}>
                             ${loading ? html`<${Spinner} size="xs"/>` : html`
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                             `}
@@ -241,16 +211,14 @@ function HealthTab() {
                         </button>
                     </div>
                     ${actionMsg && html`
-                        <div class=${'alert mt-12 ' + (actionOk ? 'alert-success' : 'alert-error')} style="font-size:var(--text-xs);">
+                        <div class=${'alert mt-12 ' + (actionOk ? 'alert-success' : 'alert-error')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 ${actionOk
                                     ? html`<polyline points="20 6 9 17 4 12"/>`
                                     : html`<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`
                                 }
                             </svg>
-                            <div class="alert-content">
-                                <div class="alert-desc">${actionMsg}</div>
-                            </div>
+                            <div class="alert-content"><div class="alert-desc">${actionMsg}</div></div>
                         </div>
                     `}
                 </div>
@@ -288,10 +256,10 @@ function HealthTab() {
             ${system && html`
                 <div class="card card-pad mb-16">
                     <div class="section-title mb-16">Server Performance</div>
-                    <div class="grid-3 mb-16" style="gap:12px;">
+                    <div class="grid-3 mb-16" style="gap:10px;">
                         ${[
                             { label: 'RAM',  pct: system.ram_pct,  val: system.ram_used_mb + 'MB / ' + system.ram_total_mb + 'MB',   cls: Utils.ramColor(system.ram_pct)  },
-                            { label: 'CPU',  pct: system.cpu_pct,  val: system.cpu_pct + '% · burstable',                             cls: Utils.cpuColor(system.cpu_pct)  },
+                            { label: 'CPU',  pct: system.cpu_pct,  val: system.cpu_pct + '%',                                         cls: Utils.cpuColor(system.cpu_pct)  },
                             { label: 'Disk', pct: system.disk_pct, val: system.disk_used_gb + 'GB / ' + system.disk_total_gb + 'GB', cls: Utils.diskColor(system.disk_pct) },
                         ].map(item => html`
                             <div key=${item.label} class="card card-pad-sm">
@@ -312,16 +280,14 @@ function HealthTab() {
                     <${InfoRow} label="Uptime" value=${Utils.fmtUptime(system.uptime_secs)} mono=${true} color="var(--profit)"/>
                     ${system.containers?.length > 0 && html`
                         <div class="mt-16">
-                            <div style="font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--text-3);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:10px;">
-                                Containers
-                            </div>
+                            <div class="label-uppercase mb-10">Containers</div>
                             ${system.containers.map(c => html`
-                                <div key=${c.name} style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-3);border-radius:var(--r-md);margin-bottom:6px;border:1px solid var(--border);flex-wrap:wrap;gap:8px;">
+                                <div key=${c.name} style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--fill-4);border-radius:var(--r-lg);margin-bottom:6px;flex-wrap:wrap;gap:8px;">
                                     <div class="flex items-center gap-8">
                                         <div class=${'topbar-ws-dot ' + (c.status === 'running' ? 'connected' : 'disconnected')}></div>
-                                        <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);font-size:var(--text-sm);">${c.name}</span>
+                                        <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);font-size:var(--text-footnote);">${c.name}</span>
                                     </div>
-                                    <div class="flex gap-16" style="font-size:var(--text-xs);color:var(--text-3);">
+                                    <div class="flex gap-16" style="font-size:var(--text-caption1);color:var(--label-3);">
                                         <span>RAM: <span style=${'font-family:var(--font-mono);color:' + (c.mem_pct > 80 ? 'var(--loss)' : c.mem_pct > 60 ? 'var(--warning)' : 'var(--profit)') + ';'}>${c.mem_mb}MB (${c.mem_pct}%)</span></span>
                                         <span>CPU: <span style=${'font-family:var(--font-mono);color:' + (c.cpu_pct > 80 ? 'var(--loss)' : c.cpu_pct > 60 ? 'var(--warning)' : 'var(--profit)') + ';'}>${c.cpu_pct}%</span></span>
                                         <span class=${'badge ' + (c.status === 'running' ? 'badge-online' : 'badge-offline')} style="font-size:9px;">${c.status}</span>
@@ -333,55 +299,8 @@ function HealthTab() {
                 </div>
             `}
 
-            <div class="card card-pad mb-16">
-                <div class="section-title mb-4" style="color:var(--loss);">Docker Maintenance</div>
-                <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:16px;">
-                    Runs <span class="code-inline">docker system prune -f --volumes</span> on the host. Removes unused images, containers and volumes.
-                </div>
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-                    <div class="flex gap-16" style="font-size:var(--text-sm);">
-                        ${system && html`
-                            <span>Used: <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:${Utils.diskColor(system.disk_pct) === 'danger' ? 'var(--loss)' : Utils.diskColor(system.disk_pct) === 'warn' ? 'var(--warning)' : 'var(--text-1)'};">${system.disk_used_gb}GB</span></span>
-                            <span>Free: <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--profit);">${(system.disk_total_gb - system.disk_used_gb).toFixed(1)}GB</span></span>
-                            <span>Usage: <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);">${system.disk_pct}%</span></span>
-                        `}
-                    </div>
-                    <button class="btn btn-danger" onClick=${dockerPurge} disabled=${purgeLoading}>
-                        ${purgeLoading ? html`<${Spinner} size="xs"/>` : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                        `}
-                        Purge Docker
-                    </button>
-                </div>
-                ${purgeResult && html`
-                    <div class=${'alert mt-12 ' + (purgeResult.success ? 'alert-success' : 'alert-error')}>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            ${purgeResult.success
-                                ? html`<polyline points="20 6 9 17 4 12"/>`
-                                : html`<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>`
-                            }
-                        </svg>
-                        <div class="alert-content">
-                            <div class="alert-desc">
-                                ${purgeResult.message || purgeResult.reason}
-                                ${purgeResult.freed_mb > 0 && html`
-                                    <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);margin-left:8px;">
-                                        Freed: ${purgeResult.freed_mb}MB
-                                    </span>
-                                `}
-                            </div>
-                        </div>
-                    </div>
-                    ${purgeResult.output && html`
-                        <div style="margin-top:10px;padding:12px;background:var(--surface-1);border-radius:var(--r-md);font-family:var(--font-mono);font-size:11px;color:var(--profit);max-height:180px;overflow-y:auto;white-space:pre-wrap;border:1px solid var(--border);">
-                            ${purgeResult.output}
-                        </div>
-                    `}
-                `}
-            </div>
-
             <div class="card card-pad">
-                <div class="section-title mb-16">ML Model</div>
+                <div class="section-title mb-4">ML Model</div>
                 ${loading
                     ? html`<${LoadingSkeleton} rows=${3}/>`
                     : html`
@@ -421,21 +340,17 @@ function HealthTab() {
                             </div>
                             <div>
                                 ${ml?.message && html`
-                                    <div class="alert alert-info mb-12" style="font-size:var(--text-xs);">
+                                    <div class="alert alert-info mb-12">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                                        <div class="alert-content">
-                                            <div class="alert-desc">${ml.message}</div>
-                                        </div>
+                                        <div class="alert-content"><div class="alert-desc">${ml.message}</div></div>
                                     </div>
                                 `}
                                 ${ml?.top_features?.length > 0 && html`
-                                    <div style="font-size:var(--text-xs);font-weight:var(--weight-semibold);color:var(--text-3);text-transform:uppercase;letter-spacing:var(--tracking-widest);margin-bottom:10px;">
-                                        Top Features
-                                    </div>
+                                    <div class="label-uppercase mb-10">Top Features</div>
                                     ${ml.top_features.slice(0, 5).map(f => html`
                                         <div key=${f.feature} style="margin-bottom:10px;">
-                                            <div class="flex justify-between mb-4" style="font-size:var(--text-xs);">
-                                                <span style="color:var(--text-2);">${f.feature.replace(/_/g, ' ')}</span>
+                                            <div class="flex justify-between mb-4" style="font-size:var(--text-caption1);">
+                                                <span style="color:var(--label-2);">${f.feature.replace(/_/g, ' ')}</span>
                                                 <span style="font-family:var(--font-mono);color:var(--brand);font-weight:var(--weight-bold);">${f.importance}</span>
                                             </div>
                                             <div class="progress progress-sm">
@@ -463,7 +378,6 @@ function BacktestTab() {
     const [running,      setRunning]      = useState(false)
     const [histLoading,  setHistLoading]  = useState(false)
     const [error,        setError]        = useState('')
-    const chartDrawn                      = useRef(false)
 
     useEffect(() => {
         loadCoins()
@@ -471,7 +385,6 @@ function BacktestTab() {
         return () => {
             Charts.destroy('bt-equity-chart')
             Charts.destroy('bt-grade-donut')
-            chartDrawn.current = false
         }
     }, [])
 
@@ -485,7 +398,6 @@ function BacktestTab() {
                         date:   t.date,
                         equity: result.trades.slice(0, i + 1).reduce((s, x) => s + (x.pnl || 0), 1000)
                     })))
-                    chartDrawn.current = true
                 }
             }
             if (result.by_grade) {
@@ -524,7 +436,6 @@ function BacktestTab() {
         setRunning(true)
         setError('')
         setResult(null)
-        chartDrawn.current = false
         Charts.destroy('bt-equity-chart')
         Charts.destroy('bt-grade-donut')
         try {
@@ -544,7 +455,7 @@ function BacktestTab() {
             <div class="card card-pad mb-16">
                 <div class="section-title mb-12">Run Backtest</div>
                 <div class="flex gap-8 flex-wrap items-center">
-                    <select class="select" style="width:160px;" value=${selectedCoin}
+                    <select class="select select-sm" style="width:160px;" value=${selectedCoin}
                         onChange=${e => setSelectedCoin(e.target.value)}>
                         <option value="">Select Coin</option>
                         ${coins.map(c => html`<option key=${c} value=${c}>${c}USDT</option>`)}
@@ -555,16 +466,14 @@ function BacktestTab() {
                         ${running ? html`<${Spinner} size="xs" color="white"/>` : html`
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                         `}
-                        ${running ? 'Running... (up to 2 min)' : 'Run Backtest'}
+                        ${running ? 'Running...' : 'Run Backtest'}
                     </button>
                 </div>
                 ${running && html`
                     <div class="alert alert-info mt-12">
                         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
                         <div class="alert-content">
-                            <div class="alert-desc">
-                                Running backtest for <strong>${selectedCoin}USDT</strong> — this may take up to 2 minutes...
-                            </div>
+                            <div class="alert-desc">Running backtest for <strong>${selectedCoin}USDT</strong> — up to 2 minutes...</div>
                         </div>
                     </div>
                 `}
@@ -580,12 +489,12 @@ function BacktestTab() {
                 <div>
                     <div class="grid-4 mb-16">
                         ${[
-                            { label: 'Win Rate',     val: result.win_rate + '%',                                    color: Utils.winRateColor(result.win_rate), card: '' },
-                            { label: 'Total PnL',    val: Utils.fmtPnl(result.total_pnl, result.total_pnl >= 0),   color: Utils.pnlColor(result.total_pnl >= 0), card: result.total_pnl >= 0 ? 'stat-card-profit' : 'stat-card-loss' },
-                            { label: 'Max Drawdown', val: result.max_drawdown + '%',                                color: 'var(--loss)', card: '' },
-                            { label: 'Trades',       val: result.total_trades,                                      color: 'var(--brand)', card: '' },
+                            { label: 'Win Rate',     val: result.win_rate + '%',                                  color: Utils.winRateColor(result.win_rate) },
+                            { label: 'Total PnL',    val: Utils.fmtPnl(result.total_pnl, result.total_pnl >= 0), color: Utils.pnlColor(result.total_pnl >= 0) },
+                            { label: 'Max Drawdown', val: result.max_drawdown + '%',                              color: 'var(--loss)' },
+                            { label: 'Trades',       val: result.total_trades,                                    color: 'var(--brand)' },
                         ].map(item => html`
-                            <div key=${item.label} class=${'stat-card ' + item.card}>
+                            <div key=${item.label} class="stat-card">
                                 <div class="stat-card-label">${item.label}</div>
                                 <div class="stat-card-value" style=${'color:' + item.color + ';'}>${item.val}</div>
                                 <div class="stat-card-sub">${result.period_start} → ${result.period_end}</div>
@@ -602,23 +511,21 @@ function BacktestTab() {
                         </div>
                         <div class="card card-pad">
                             <div class="section-title mb-12">By Grade</div>
-                            <div style="position:relative;height:160px;margin-bottom:12px;">
+                            <div style="position:relative;height:140px;margin-bottom:12px;">
                                 <canvas id="bt-grade-donut"></canvas>
                             </div>
                             ${Object.entries(result.by_grade || {}).map(([grade, data]) => html`
-                                <div key=${grade} style="margin-bottom:12px;">
-                                    <div class="flex justify-between items-center mb-6">
+                                <div key=${grade} style="margin-bottom:10px;">
+                                    <div class="flex justify-between items-center mb-5">
                                         <div class="flex items-center gap-8">
                                             <${GradeBadge} grade=${grade}/>
-                                            <span style="font-size:var(--text-xs);color:var(--text-3);">
-                                                ${data.trades || 0} trades
-                                            </span>
+                                            <span style="font-size:var(--text-caption1);color:var(--label-3);">${data.trades || 0} trades</span>
                                         </div>
                                         <div class="flex items-center gap-10">
-                                            <span style=${'font-family:var(--font-mono);font-size:var(--text-sm);font-weight:var(--weight-bold);color:' + Utils.winRateColor(data.win_rate) + ';'}>
+                                            <span style=${'font-family:var(--font-mono);font-size:var(--text-footnote);font-weight:var(--weight-bold);color:' + Utils.winRateColor(data.win_rate) + ';'}>
                                                 ${data.win_rate || 0}%
                                             </span>
-                                            <span style=${'font-family:var(--font-mono);font-size:var(--text-xs);color:' + Utils.pnlColor((data.pnl || 0) >= 0) + ';'}>
+                                            <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + Utils.pnlColor((data.pnl || 0) >= 0) + ';'}>
                                                 ${Utils.fmtPnl(data.pnl, (data.pnl || 0) >= 0)}
                                             </span>
                                         </div>
@@ -634,11 +541,9 @@ function BacktestTab() {
                             ${[
                                 { label: 'Profit Factor', val: result.profit_factor || '--' },
                                 { label: 'Expectancy',    val: Utils.fmtPnl(result.expectancy, (result.expectancy || 0) >= 0), color: Utils.pnlColor((result.expectancy || 0) >= 0) },
-                                { label: 'Best Trade',    val: Utils.fmtPnl(result.best_trade, true),  color: 'var(--profit)' },
-                                { label: 'Worst Trade',   val: Utils.fmtPnl(result.worst_trade, false), color: 'var(--loss)'  },
+                                { label: 'Best Trade',    val: Utils.fmtPnl(result.best_trade,  true),  color: 'var(--profit)' },
+                                { label: 'Worst Trade',   val: Utils.fmtPnl(result.worst_trade, false), color: 'var(--loss)'   },
                                 { label: 'TP1 Hit Rate',  val: result.phase_breakdown?.tp1_hit_rate != null ? result.phase_breakdown.tp1_hit_rate + '%' : '--' },
-                                { label: 'Max Consec W',  val: result.max_consec_wins   || '--', color: 'var(--profit)' },
-                                { label: 'Max Consec L',  val: result.max_consec_losses || '--', color: 'var(--loss)'   },
                             ].map(row => html`
                                 <${InfoRow} key=${row.label} label=${row.label} value=${row.val}
                                     mono=${true} color=${row.color}/>
@@ -651,10 +556,9 @@ function BacktestTab() {
             ${!result && history.length > 0 && html`
                 <div class="card">
                     <div class="filter-bar">
-                        <div class="section-title" style="font-size:var(--text-base);">Backtest History</div>
+                        <div class="section-title" style="font-size:var(--text-subhead);">Backtest History</div>
                         <div class="filter-spacer"></div>
-                        <button class="btn btn-ghost btn-sm" onClick=${loadHistory}
-                            disabled=${histLoading}>
+                        <button class="btn btn-ghost btn-sm" onClick=${loadHistory} disabled=${histLoading}>
                             ${histLoading ? html`<${Spinner} size="xs"/>` : 'Refresh'}
                         </button>
                     </div>
@@ -671,19 +575,11 @@ function BacktestTab() {
                                 ${history.map(h => html`
                                     <tr key=${h.id}>
                                         <td>
-                                            <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);">
-                                                ${h.coin}
-                                            </span>
+                                            <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);">${h.coin}</span>
                                         </td>
-                                        <td style="color:var(--text-3);font-size:var(--text-xs);">
-                                            ${Utils.fmtTimeAgo(h.run_at)}
-                                        </td>
-                                        <td style="color:var(--text-3);font-size:var(--text-xs);">
-                                            ${h.period_start} → ${h.period_end}
-                                        </td>
-                                        <td>
-                                            <span style="font-family:var(--font-mono);">${h.total_trades}</span>
-                                        </td>
+                                        <td style="color:var(--label-3);font-size:var(--text-caption1);">${Utils.fmtTimeAgo(h.run_at)}</td>
+                                        <td style="color:var(--label-3);font-size:var(--text-caption1);">${h.period_start} → ${h.period_end}</td>
+                                        <td><span style="font-family:var(--font-mono);">${h.total_trades}</span></td>
                                         <td>
                                             <span style=${'font-family:var(--font-mono);color:' + Utils.winRateColor(h.win_rate) + ';'}>
                                                 ${h.win_rate}%
@@ -694,14 +590,8 @@ function BacktestTab() {
                                                 ${Utils.fmtPnl(h.total_pnl, (h.total_pnl || 0) >= 0)}
                                             </span>
                                         </td>
-                                        <td>
-                                            <span style="font-family:var(--font-mono);color:var(--loss);">
-                                                ${h.max_drawdown}%
-                                            </span>
-                                        </td>
-                                        <td style="color:var(--text-4);font-size:var(--text-xs);">
-                                            ${Utils.truncate(h.notes, 50)}
-                                        </td>
+                                        <td><span style="font-family:var(--font-mono);color:var(--loss);">${h.max_drawdown}%</span></td>
+                                        <td style="color:var(--label-4);font-size:var(--text-caption1);">${Utils.truncate(h.notes, 50)}</td>
                                     </tr>
                                 `)}
                             </tbody>
@@ -715,7 +605,6 @@ function BacktestTab() {
 
 function AnalysisTab() {
     const [factors, setFactors] = useState(null)
-    const [ml,      setMl]      = useState({})
     const [loading, setLoading] = useState(false)
 
     useEffect(() => {
@@ -738,7 +627,6 @@ function AnalysisTab() {
         try {
             const [f, health] = await Promise.all([API.factorAnalysis(), API.health()])
             setFactors(f || null)
-            setMl(health?.ml_status || {})
         } catch(e) {
             showToast('Failed to load analysis: ' + e.message, 'error')
         } finally {
@@ -763,7 +651,7 @@ function AnalysisTab() {
                 : factors?.table?.length
                 ? html`
                     <div class="card card-pad mb-16">
-                        <div style="font-size:var(--text-sm);color:var(--text-3);margin-bottom:16px;line-height:var(--leading-relaxed);">
+                        <div style="font-size:var(--text-subhead);color:var(--label-3);margin-bottom:14px;line-height:var(--leading-relaxed);">
                             Edge = win rate when factor present minus win rate when absent.
                             Higher edge = more predictive of winning trades.
                         </div>
@@ -773,7 +661,7 @@ function AnalysisTab() {
                                 <div class="alert-desc">${factors.reliability}</div>
                             </div>
                         </div>
-                        <div class="chart-wrap" style="height:320px;margin-bottom:24px;">
+                        <div class="chart-wrap" style="height:300px;margin-bottom:20px;">
                             <canvas id="factor-bar-chart"></canvas>
                         </div>
                         <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
@@ -788,17 +676,17 @@ function AnalysisTab() {
                                     ${factors.table.map(f => html`
                                         <tr key=${f.factor}>
                                             <td>
-                                                <span style="font-family:var(--font-mono);font-size:var(--text-xs);font-weight:var(--weight-bold);">
+                                                <span style="font-family:var(--font-mono);font-size:var(--text-caption1);font-weight:var(--weight-bold);">
                                                     ${f.factor.replace(/_/g, ' ')}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style=${'font-family:var(--font-mono);color:' + (f.win_rate_present != null ? Utils.winRateColor(f.win_rate_present) : 'var(--text-4)') + ';'}>
+                                                <span style=${'font-family:var(--font-mono);color:' + (f.win_rate_present != null ? Utils.winRateColor(f.win_rate_present) : 'var(--label-4)') + ';'}>
                                                     ${f.win_rate_present != null ? f.win_rate_present + '%' : '--'}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style="font-family:var(--font-mono);color:var(--text-3);">
+                                                <span style="font-family:var(--font-mono);color:var(--label-3);">
                                                     ${f.win_rate_absent != null ? f.win_rate_absent + '%' : '--'}
                                                 </span>
                                             </td>
@@ -808,12 +696,12 @@ function AnalysisTab() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-3);">
+                                                <span style="font-family:var(--font-mono);font-size:var(--text-caption1);color:var(--label-3);">
                                                     ${f.present_total || 0}
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style=${'font-size:var(--text-xs);color:' + Utils.edgeColor(f.edge) + ';'}>
+                                                <span style=${'font-size:var(--text-caption1);color:' + Utils.edgeColor(f.edge) + ';'}>
                                                     ${f.observation || '--'}
                                                 </span>
                                             </td>
@@ -893,21 +781,21 @@ function AuditTab() {
     }
 
     function actionColor(action) {
-        if (!action) return 'var(--text-4)'
+        if (!action) return 'var(--label-4)'
         if (action.includes('login'))  return 'var(--brand)'
         if (action.includes('toggle')) return 'var(--warning)'
         if (action.includes('delete') || action.includes('purge')) return 'var(--loss)'
         if (action.includes('add'))    return 'var(--profit)'
         if (action.includes('reset'))  return 'var(--warning)'
         if (action.includes('mode'))   return 'var(--purple)'
-        return 'var(--text-3)'
+        return 'var(--label-3)'
     }
 
     return html`
         <div>
             <div class="card">
                 <div class="filter-bar">
-                    <select class="select" style="width:150px;" value=${filterAction}
+                    <select class="select select-sm" style="width:150px;" value=${filterAction}
                         onChange=${e => { setFilterAction(e.target.value); applyFilter(logs, e.target.value, filterResult, search) }}>
                         <option value="">All Actions</option>
                         <option value="dashboard_login">Login</option>
@@ -918,20 +806,20 @@ function AuditTab() {
                         <option value="password_reset">Password Reset</option>
                         <option value="docker_purge">Docker Purge</option>
                     </select>
-                    <select class="select" style="width:110px;" value=${filterResult}
+                    <select class="select select-sm" style="width:110px;" value=${filterResult}
                         onChange=${e => { setFilterResult(e.target.value); applyFilter(logs, filterAction, e.target.value, search) }}>
                         <option value="">All Results</option>
                         <option value="true">Success</option>
                         <option value="false">Failed</option>
                     </select>
                     <div class="search-input" style="width:150px;">
-                        <svg class="search-input-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                        <svg class="search-input-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                         <input class="input input-sm" type="text"
                             placeholder="Search..."
                             value=${search}
                             onInput=${e => { setSearch(e.target.value); applyFilter(logs, filterAction, filterResult, e.target.value) }}/>
                     </div>
-                    <select class="select" style="width:90px;" value=${limit}
+                    <select class="select select-sm" style="width:80px;" value=${limit}
                         onChange=${e => { setLimit(e.target.value); load() }}>
                         <option value="50">50</option>
                         <option value="100">100</option>
@@ -945,9 +833,7 @@ function AuditTab() {
                         applyFilter(logs, '', '', '')
                     }}>Clear</button>
                     <div class="filter-spacer"></div>
-                    <span class="filter-count">
-                        <strong>${filtered.length}</strong> entries
-                    </span>
+                    <span class="filter-count"><strong>${filtered.length}</strong> entries</span>
                 </div>
 
                 ${loading
@@ -964,11 +850,9 @@ function AuditTab() {
                                 <tbody>
                                     ${!paginated.length
                                         ? html`
-                                            <tr>
-                                                <td colspan="7">
-                                                    <${EmptyState} size="sm" title="No audit entries found"/>
-                                                </td>
-                                            </tr>
+                                            <tr><td colspan="7">
+                                                <${EmptyState} size="sm" title="No audit entries found"/>
+                                            </td></tr>
                                         `
                                         : paginated.map(log => html`
                                             <tr key=${log.id}>
@@ -980,16 +864,16 @@ function AuditTab() {
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-xs);font-weight:var(--weight-bold);color:' + actionColor(log.action) + ';'}>
+                                                    <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);font-weight:var(--weight-bold);color:' + actionColor(log.action) + ';'}>
                                                         ${log.action}
                                                     </span>
                                                 </td>
                                                 <td><span class="tag">${log.source || '--'}</span></td>
-                                                <td style="color:var(--text-3);font-size:var(--text-xs);max-width:200px;">
+                                                <td style="color:var(--label-3);font-size:var(--text-caption1);max-width:200px;">
                                                     ${Utils.truncate(log.detail, 60)}
                                                 </td>
                                                 <td>
-                                                    <span style="font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-4);">
+                                                    <span style="font-family:var(--font-mono);font-size:var(--text-caption1);color:var(--label-4);">
                                                         ${log.ip || '--'}
                                                     </span>
                                                 </td>
@@ -1014,7 +898,7 @@ function AuditTab() {
                                     disabled=${currentPage <= 1}>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
                                 </button>
-                                <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-3);">
+                                <span style="padding:4px 8px;font-family:var(--font-mono);font-size:var(--text-caption1);color:var(--label-3);">
                                     ${currentPage} / ${totalPages}
                                 </span>
                                 <button class="pagination-btn"

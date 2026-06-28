@@ -46,23 +46,49 @@ FACTOR_PASS_THRESHOLDS = {
 def run_factor_analysis() -> dict:
     db = SessionLocal()
     try:
-        trades = db.query(Trade).filter(
+        signal_trades = db.query(SignalModel).filter(
+            SignalModel.outcome.in_(["win", "loss"])
+        ).all()
+
+        trade_records = db.query(Trade).filter(
             Trade.is_active == False,
             Trade.outcome.in_(["win", "loss"])
         ).all()
 
-        if not trades:
+        trade_signal_ids = {t.signal_id for t in trade_records if t.signal_id}
+
+        seen_ids  = set()
+        all_items = []
+
+        for sig in signal_trades:
+            if sig.id not in seen_ids:
+                seen_ids.add(sig.id)
+                all_items.append(("signal", sig, sig))
+
+        for trade in trade_records:
+            if trade.signal_id and trade.signal_id in seen_ids:
+                continue
+            sig = None
+            if trade.signal_id:
+                sig = db.query(SignalModel).filter(
+                    SignalModel.id == trade.signal_id
+                ).first()
+            all_items.append(("trade", trade, sig))
+            if sig:
+                seen_ids.add(sig.id)
+
+        if not all_items:
             return {
                 "error":        "No closed trades yet",
                 "total":        0,
-                "min_required": 200
+                "min_required": 20
             }
 
-        total  = len(trades)
-        wins   = [t for t in trades if t.outcome == "win"]
-        losses = [t for t in trades if t.outcome == "loss"]
+        total  = len(all_items)
+        wins   = [x for x in all_items if x[1].outcome == "win"]
+        losses = [x for x in all_items if x[1].outcome == "loss"]
 
-        log.info(f"Factor analysis: {total} trades — {len(wins)}W {len(losses)}L")
+        log.info(f"Factor analysis: {total} items — {len(wins)}W {len(losses)}L")
 
         factor_stats = {
             key: {
@@ -74,44 +100,31 @@ def run_factor_analysis() -> dict:
             for key in FACTOR_KEYS
         }
 
-        grade_stats  = {}
+        grade_stats   = {}
         has_real_data = False
 
-        for trade in trades:
-            sig = None
-            if trade.signal_id:
-                sig = db.query(SignalModel).filter(
-                    SignalModel.id == trade.signal_id
-                ).first()
-
-            grade = trade.grade or "?"
+        for source, record, sig in all_items:
+            grade = record.grade or "?"
             if grade not in grade_stats:
                 grade_stats[grade] = {"wins": 0, "losses": 0}
 
-            if trade.outcome == "win":
+            if record.outcome == "win":
                 grade_stats[grade]["wins"] += 1
             else:
                 grade_stats[grade]["losses"] += 1
 
-            if not sig:
-                continue
-
-            factor_presence = _get_factor_presence(sig)
+            factor_presence = _get_factor_presence(sig, record)
             if factor_presence.get("_source") == "actual":
                 has_real_data = True
 
             for key in FACTOR_KEYS:
                 present = factor_presence.get(key, False)
-                if trade.outcome == "win":
-                    if present:
-                        factor_stats[key]["win_present"]  += 1
-                    else:
-                        factor_stats[key]["win_absent"]   += 1
+                if record.outcome == "win":
+                    if present: factor_stats[key]["win_present"]  += 1
+                    else:       factor_stats[key]["win_absent"]   += 1
                 else:
-                    if present:
-                        factor_stats[key]["loss_present"] += 1
-                    else:
-                        factor_stats[key]["loss_absent"]  += 1
+                    if present: factor_stats[key]["loss_present"] += 1
+                    else:       factor_stats[key]["loss_absent"]  += 1
 
         table = []
         for key in FACTOR_KEYS:
@@ -148,18 +161,18 @@ def run_factor_analysis() -> dict:
         reliability = _reliability_note(total)
 
         return {
-            "total":         total,
-            "wins":          len(wins),
-            "losses":        len(losses),
-            "overall_wr":    overall_wr,
-            "min_required":  200,
-            "reliable":      total >= 200,
-            "reliability":   reliability,
-            "data_source":   "actual" if has_real_data else "proxy",
-            "table":         table,
-            "grade_stats":   _build_grade_stats(grade_stats),
-            "top_factors":   [r for r in table if r["edge"] and r["edge"] > 10][:5],
-            "weak_factors":  [r for r in table if r["edge"] is not None and r["edge"] < 5][:5]
+            "total":       total,
+            "wins":        len(wins),
+            "losses":      len(losses),
+            "overall_wr":  overall_wr,
+            "min_required": 20,
+            "reliable":    total >= 20,
+            "reliability": reliability,
+            "data_source": "actual" if has_real_data else "proxy",
+            "table":       table,
+            "grade_stats": _build_grade_stats(grade_stats),
+            "top_factors": [r for r in table if r["edge"] and r["edge"] > 10][:5],
+            "weak_factors":[r for r in table if r["edge"] is not None and r["edge"] < 5][:5]
         }
 
     except Exception as e:
@@ -170,8 +183,8 @@ def run_factor_analysis() -> dict:
         db.close()
 
 
-def _get_factor_presence(sig) -> dict:
-    if sig.factor_scores:
+def _get_factor_presence(sig, record) -> dict:
+    if sig and sig.factor_scores:
         try:
             scores = json.loads(sig.factor_scores)
             result = {"_source": "actual"}
@@ -183,10 +196,20 @@ def _get_factor_presence(sig) -> dict:
         except Exception:
             pass
 
-    score     = sig.score or 0
-    sweep_ok  = (sig.sweep_score  or 0) >= 6
-    retest_ok = (sig.retest_score or 0) >= 6
-    disp_ok   = (sig.disp_score   or 0) >= 6
+    score = 0
+    if sig:
+        score = sig.score or 0
+    elif hasattr(record, 'score_at_entry'):
+        score = record.score_at_entry or 0
+
+    sweep_ok  = False
+    retest_ok = False
+    disp_ok   = False
+
+    if sig:
+        sweep_ok  = (sig.sweep_score  or 0) >= 6
+        retest_ok = (sig.retest_score or 0) >= 6
+        disp_ok   = (sig.disp_score   or 0) >= 6
 
     return {
         "_source":             "proxy",
@@ -209,19 +232,15 @@ def _get_factor_presence(sig) -> dict:
     }
 
 
-def _observation(edge: float, present_total: int, total: int) -> str:
-    if present_total < 10:
+def _observation(edge, present_total, total) -> str:
+    if present_total < 5:
         return "Insufficient data"
     if edge is None:
         return "No edge data"
-    if edge > 20:
-        return "Strong positive edge"
-    if edge > 10:
-        return "Positive edge"
-    if edge > 0:
-        return "Weak positive edge"
-    if edge > -10:
-        return "Neutral — monitor"
+    if edge > 20:  return "Strong positive edge"
+    if edge > 10:  return "Positive edge"
+    if edge > 0:   return "Weak positive edge"
+    if edge > -10: return "Neutral — monitor"
     return "Negative edge — review weight"
 
 
@@ -229,10 +248,10 @@ def _reliability_note(total: int) -> str:
     if total >= 200:
         return "Reliable — sufficient sample size"
     if total >= 100:
-        return f"Developing — {200 - total} more trades needed for full reliability"
-    if total >= 50:
-        return f"Early data — {200 - total} more trades needed — treat as directional only"
-    return f"Too early — {200 - total} more trades needed — do not draw conclusions"
+        return f"Developing — {200 - total} more trades for full reliability"
+    if total >= 20:
+        return f"Early data — {200 - total} more trades needed — directional only"
+    return f"Too early — {20 - total} more trades needed"
 
 
 def _build_grade_stats(grade_stats: dict) -> list:
