@@ -1,42 +1,51 @@
 :root {
-    --blue:    #007AFF;
-    --green:   #34C759;
-    --indigo:  #5856D6;
-    --orange:  #FF9500;
-    --pink:    #FF2D55;
-    --purple:  #AF52DE;
-    --red:     #FF3B30;
-    --teal:    #5AC8FA;
-    --yellow:  #FFCC00;
-    --cyan:    #32ADE6;
-    --mint:    #00C7BE;
+    --brand-identity:  #00C7BE;
+    --brand:           #007AFF;
+    --brand-dim:       rgba(0, 122, 255, 0.12);
+    --brand-border:    rgba(0, 122, 255, 0.22);
 
-    --profit:         #34C759;
-    --profit-fill:    rgba(52, 199, 89, 0.15);
-    --profit-border:  rgba(52, 199, 89, 0.25);
-    --loss:           #FF3B30;
-    --loss-fill:      rgba(255, 59, 48, 0.15);
-    --loss-border:    rgba(255, 59, 48, 0.25);
-    --warning:        #FF9500;
-    --warning-fill:   rgba(255, 149, 0, 0.15);
-    --warning-border: rgba(255, 149, 0, 0.25);
+    --identity-dim:    rgba(0, 199, 190, 0.12);
+    --identity-border: rgba(0, 199, 190, 0.22);
 
-    --grade-aplus:       #FFCC00;
-    --grade-aplus-fill:  rgba(255, 204, 0, 0.15);
-    --grade-a:           #007AFF;
-    --grade-a-fill:      rgba(0, 122, 255, 0.15);
-    --grade-b:           #FF9500;
-    --grade-b-fill:      rgba(255, 149, 0, 0.15);
-    --grade-c:           rgba(235, 235, 245, 0.30);
-    --grade-c-fill:      rgba(235, 235, 245, 0.08);
-    --grade-f:           rgba(235, 235, 245, 0.18);
-    --grade-f-fill:      rgba(235, 235, 245, 0.05);
+    --profit:          #30D158;
+    --profit-dim:      rgba(48, 209, 88, 0.12);
+    --profit-border:   rgba(48, 209, 88, 0.20);
 
-    --session-london-ny: #FFCC00;
-    --session-ny:        #007AFF;
-    --session-london:    #34C759;
-    --session-asian:     #FF9500;
-    --session-off:       rgba(235, 235, 245, 0.30);
+    --loss:            #FF453A;
+    --loss-dim:        rgba(255, 69, 58, 0.12);
+    --loss-border:     rgba(255, 69, 58, 0.20);
+
+    --warning:         #FF9F0A;
+    --warning-dim:     rgba(255, 159, 10, 0.12);
+    --warning-border:  rgba(255, 159, 10, 0.20);
+
+    --gold:            #FFD60A;
+    --gold-dim:        rgba(255, 214, 10, 0.12);
+    --gold-border:     rgba(255, 214, 10, 0.22);
+
+    --purple:          #BF5AF2;
+    --purple-dim:      rgba(191, 90, 242, 0.12);
+
+    --grade-aplus:        #FFD60A;
+    --grade-aplus-dim:    rgba(255, 214, 10, 0.10);
+    --grade-aplus-border: rgba(255, 214, 10, 0.20);
+    --grade-aplus-glow:   rgba(255, 214, 10, 0.06);
+
+    --grade-a:            #007AFF;
+    --grade-a-dim:        rgba(0, 122, 255, 0.10);
+    --grade-a-border:     rgba(0, 122, 255, 0.20);
+    --grade-a-glow:       rgba(0, 122, 255, 0.06);
+
+    --grade-b:            #FF9F0A;
+    --grade-b-dim:        rgba(255, 159, 10, 0.10);
+    --grade-b-border:     rgba(255, 159, 10, 0.18);
+    --grade-b-glow:       rgba(255, 159, 10, 0.04);
+
+    --grade-c:            rgba(235, 235, 245, 0.28);
+    --grade-c-dim:        rgba(235, 235, 245, 0.06);
+
+    --grade-f:            rgba(235, 235, 245, 0.16);
+    --grade-f-dim:        rgba(235, 235, 245, 0.04);
 
     --font-sans: -apple-system, BlinkMacSystemFont,
                  'SF Pro Display', 'SF Pro Text',
@@ -54,15 +63,17 @@
     --text-title2:     22px;
     --text-title1:     28px;
     --text-largetitle: 34px;
+    --text-display:    48px;
+    --text-hero:       64px;
 
-    --text-xs:   11px;
-    --text-sm:   13px;
-    --text-base: 15px;
-    --text-md:   17px;
-    --text-lg:   20px;
-    --text-xl:   22px;
-    --text-2xl:  28px;
-    --text-3xl:  34px;
+    --text-xs:   var(--text-caption2);
+    --text-sm:   var(--text-footnote);
+    --text-base: var(--text-subhead);
+    --text-md:   var(--text-body);
+    --text-lg:   var(--text-title3);
+    --text-xl:   var(--text-title2);
+    --text-2xl:  var(--text-title1);
+    --text-3xl:  var(--text-largetitle);
 
     --weight-regular:  400;
     --weight-medium:   500;
@@ -72,16 +83,17 @@
     --weight-black:    900;
 
     --tracking-largetitle: -0.45px;
-    --tracking-title1:      0.36px;
-    --tracking-title2:      0.35px;
-    --tracking-title3:      0.38px;
-    --tracking-headline:   -0.43px;
-    --tracking-body:       -0.43px;
-    --tracking-callout:    -0.31px;
-    --tracking-subhead:    -0.23px;
-    --tracking-footnote:   -0.08px;
-    --tracking-caption1:    0px;
-    --tracking-caption2:    0.06px;
+    --tracking-title1:     -0.374px;
+    --tracking-title2:     -0.374px;
+    --tracking-title3:     -0.28px;
+    --tracking-headline:   -0.022em;
+    --tracking-body:       -0.374px;
+    --tracking-callout:    -0.018em;
+    --tracking-subhead:    -0.015em;
+    --tracking-footnote:   -0.005em;
+    --tracking-caption1:   -0.224px;
+    --tracking-caption2:   -0.12px;
+    --tracking-mono:       -0.02em;
     --tracking-wide:        0.04em;
     --tracking-widest:      0.08em;
     --tracking-snug:       -0.02em;
@@ -92,45 +104,51 @@
     --leading-normal:  1.5;
     --leading-relaxed: 1.7;
 
-    --r-xs:    6px;
-    --r-sm:    10px;
-    --r-md:    13px;
+    --sp-1:   4px;
+    --sp-2:   8px;
+    --sp-3:   12px;
+    --sp-4:   16px;
+    --sp-5:   20px;
+    --sp-6:   24px;
+    --sp-8:   32px;
+    --sp-10:  40px;
+    --sp-11:  44px;
+    --sp-12:  48px;
+    --sp-16:  64px;
+
+    --r-xs:    4px;
+    --r-sm:    8px;
+    --r-md:    12px;
     --r-lg:    16px;
     --r-xl:    20px;
-    --r-2xl:   22px;
-    --r-3xl:   28px;
-    --r-sheet: 36px;
+    --r-2xl:   24px;
+    --r-3xl:   32px;
+    --r-sheet: 40px;
     --r-full:  9999px;
 
-    --sp-1:  4px;
-    --sp-2:  8px;
-    --sp-3:  12px;
-    --sp-4:  16px;
-    --sp-5:  20px;
-    --sp-6:  24px;
-    --sp-8:  32px;
-    --sp-10: 40px;
-    --sp-11: 44px;
-    --sp-12: 48px;
+    --ease-spring:      cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-spring-soft: cubic-bezier(0.25, 1.25, 0.50, 1);
+    --ease-out:         cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-out-soft:    cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    --ease-in-out:      cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-in:          cubic-bezier(0.4, 0, 1, 1);
+
+    --dur-instant: 80ms;
+    --dur-fast:    160ms;
+    --dur-normal:  280ms;
+    --dur-slow:    420ms;
+    --dur-xslow:   600ms;
 
     --tap-min:      44px;
     --tap-standard: 50px;
     --navbar-h:     44px;
     --tabbar-h:     49px;
-    --panel-w:      520px;
+    --panel-w:      540px;
 
     --safe-top:    env(safe-area-inset-top,    0px);
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left:   env(safe-area-inset-left,   0px);
     --safe-right:  env(safe-area-inset-right,  0px);
-
-    --ease-spring:  cubic-bezier(0.34, 1.56, 0.64, 1);
-    --ease-out:     cubic-bezier(0.16, 1, 0.3, 1);
-    --ease-in-out:  cubic-bezier(0.4, 0, 0.2, 1);
-    --dur-instant:  100ms;
-    --dur-fast:     200ms;
-    --dur-normal:   300ms;
-    --dur-slow:     500ms;
 
     --z-base:    0;
     --z-raised:  10;
@@ -139,50 +157,89 @@
     --z-modal:   300;
     --z-toast:   400;
     --z-tooltip: 500;
+
+    --session-london-ny: #FFD60A;
+    --session-ny:        #007AFF;
+    --session-london:    #30D158;
+    --session-asian:     #FF9F0A;
+    --session-off:       rgba(235, 235, 245, 0.28);
 }
 
 [data-theme="dark"] {
-    --bg:           #000000;
-    --bg-2:         #1C1C1E;
-    --bg-3:         #2C2C2E;
-    --bg-4:         #3A3A3C;
-    --bg-5:         #48484A;
+    --bg:   #000000;
+    --bg-2: #0A0A0F;
+    --bg-3: #1C1C1E;
+    --bg-4: #2C2C2E;
+    --bg-5: #3A3A3C;
+    --bg-6: #48484A;
 
-    --fill-1:       rgba(120, 120, 128, 0.36);
-    --fill-2:       rgba(120, 120, 128, 0.32);
-    --fill-3:       rgba(118, 118, 128, 0.24);
-    --fill-4:       rgba(118, 118, 128, 0.18);
+    --fill-1: rgba(120, 120, 128, 0.36);
+    --fill-2: rgba(120, 120, 128, 0.28);
+    --fill-3: rgba(118, 118, 128, 0.20);
+    --fill-4: rgba(118, 118, 128, 0.14);
+    --fill-5: rgba(118, 118, 128, 0.08);
 
-    --label-1:      rgba(255, 255, 255, 1.00);
-    --label-2:      rgba(235, 235, 245, 0.60);
-    --label-3:      rgba(235, 235, 245, 0.30);
-    --label-4:      rgba(235, 235, 245, 0.18);
+    --label-1: rgba(255, 255, 255, 1.00);
+    --label-2: rgba(235, 235, 245, 0.60);
+    --label-3: rgba(235, 235, 245, 0.30);
+    --label-4: rgba(235, 235, 245, 0.18);
+    --label-5: rgba(235, 235, 245, 0.10);
 
-    --separator:        rgba(84, 84, 88, 0.65);
+    --separator:        rgba(84, 84, 88, 0.55);
+    --separator-strong: rgba(84, 84, 88, 0.80);
     --separator-opaque: #38383A;
 
-    --material-thin:    rgba(28, 28, 30, 0.60);
-    --material-regular: rgba(28, 28, 30, 0.72);
-    --material-thick:   rgba(28, 28, 30, 0.85);
-    --material-chrome:  rgba(28, 28, 30, 0.95);
+    --material-thin:    rgba(10, 10, 15, 0.55);
+    --material-regular: rgba(10, 10, 15, 0.72);
+    --material-thick:   rgba(10, 10, 15, 0.88);
+    --material-chrome:  rgba(10, 10, 15, 0.96);
 
-    --blur-thin:    blur(20px) saturate(180%);
-    --blur-regular: blur(40px) saturate(180%);
-    --blur-thick:   blur(60px) saturate(200%);
+    --blur-thin:    blur(16px) saturate(160%);
+    --blur-regular: blur(32px) saturate(180%);
+    --blur-thick:   blur(48px) saturate(200%);
+    --blur-ultra:   blur(64px) saturate(220%);
 
-    --shadow-sm: 0 1px 3px  rgba(0,0,0,0.50), 0 1px 2px  rgba(0,0,0,0.40);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.50), 0 2px 4px  rgba(0,0,0,0.40);
-    --shadow-lg: 0 10px 40px rgba(0,0,0,0.60), 0 4px 8px rgba(0,0,0,0.40);
-    --shadow-xl: 0 20px 60px rgba(0,0,0,0.70), 0 8px 16px rgba(0,0,0,0.50);
+    --shadow-xs:  0 1px 2px rgba(0,0,0,0.40);
+    --shadow-sm:  0 2px 8px rgba(0,0,0,0.45),
+                  0 1px 2px rgba(0,0,0,0.35);
+    --shadow-md:  0 4px 16px rgba(0,0,0,0.50),
+                  0 2px 4px rgba(0,0,0,0.35),
+                  0 0 0 0.5px rgba(255,255,255,0.04);
+    --shadow-lg:  0 8px 32px rgba(0,0,0,0.55),
+                  0 4px 8px rgba(0,0,0,0.35),
+                  0 0 0 0.5px rgba(255,255,255,0.05);
+    --shadow-xl:  0 16px 56px rgba(0,0,0,0.65),
+                  0 8px 16px rgba(0,0,0,0.40),
+                  0 0 0 0.5px rgba(255,255,255,0.06);
+    --shadow-2xl: 0 32px 80px rgba(0,0,0,0.75),
+                  0 16px 32px rgba(0,0,0,0.45),
+                  0 0 0 0.5px rgba(255,255,255,0.06);
 
-    --grad-page: radial-gradient(ellipse at 20% 0%,   rgba(0, 122, 255, 0.04) 0%, transparent 50%),
-                 radial-gradient(ellipse at 80% 100%, rgba(52, 199, 89, 0.03) 0%, transparent 50%),
-                 #000000;
+    --inset-highlight: 0 1px 0 0 rgba(255,255,255,0.06) inset;
+    --inset-shadow:    0 -1px 0 0 rgba(0,0,0,0.25) inset;
 
-    --text-1: rgba(255, 255, 255, 1.00);
-    --text-2: rgba(235, 235, 245, 0.60);
-    --text-3: rgba(235, 235, 245, 0.30);
-    --text-4: rgba(235, 235, 245, 0.18);
+    --grad-page:
+        radial-gradient(ellipse 100% 50% at 15% -5%,
+            rgba(0, 199, 190, 0.06) 0%, transparent 55%),
+        radial-gradient(ellipse 80% 40% at 85% 110%,
+            rgba(0, 122, 255, 0.05) 0%, transparent 55%),
+        radial-gradient(ellipse 50% 30% at 50% 50%,
+            rgba(0, 122, 255, 0.02) 0%, transparent 70%),
+        #000000;
+
+    --grad-page-aplus:
+        radial-gradient(ellipse 80% 45% at 50% -5%,
+            rgba(255, 214, 10, 0.07) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 30% at 15% 110%,
+            rgba(0, 199, 190, 0.04) 0%, transparent 60%),
+        #000000;
+
+    --grad-page-live:
+        radial-gradient(ellipse 80% 45% at 20% -5%,
+            rgba(48, 209, 88, 0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 30% at 80% 110%,
+            rgba(0, 122, 255, 0.04) 0%, transparent 60%),
+        #000000;
 
     --surface-1: #000000;
     --surface-2: #1C1C1E;
@@ -190,68 +247,105 @@
     --surface-4: #3A3A3C;
     --surface-5: #48484A;
 
-    --border:        rgba(84, 84, 88, 0.65);
-    --border-strong: rgba(84, 84, 88, 0.90);
+    --border:        rgba(84, 84, 88, 0.55);
+    --border-strong: rgba(84, 84, 88, 0.80);
 
-    --brand:         #007AFF;
-    --brand-dim:     rgba(0, 122, 255, 0.15);
-    --border-brand:  rgba(0, 122, 255, 0.30);
+    --text-1: rgba(255, 255, 255, 1.00);
+    --text-2: rgba(235, 235, 245, 0.60);
+    --text-3: rgba(235, 235, 245, 0.30);
+    --text-4: rgba(235, 235, 245, 0.18);
 
-    --profit-dim:    rgba(52, 199, 89, 0.15);
-    --profit-subtle: rgba(52, 199, 89, 0.08);
-    --loss-dim:      rgba(255, 59, 48, 0.15);
-    --loss-subtle:   rgba(255, 59, 48, 0.08);
-    --warning-dim:   rgba(255, 149, 0, 0.15);
-    --warning-subtle:rgba(255, 149, 0, 0.08);
+    --profit-fill:    rgba(48, 209, 88, 0.12);
+    --loss-fill:      rgba(255, 69, 58, 0.12);
+    --warning-fill:   rgba(255, 159, 10, 0.12);
+    --brand-fill:     rgba(0, 122, 255, 0.12);
+    --gold-fill:      rgba(255, 214, 10, 0.10);
+    --purple-fill:    rgba(191, 90, 242, 0.12);
 
-    --gold:          #FFCC00;
-    --gold-dim:      rgba(255, 204, 0, 0.15);
-    --gold-subtle:   rgba(255, 204, 0, 0.08);
-    --border-gold:   rgba(255, 204, 0, 0.30);
+    --profit-subtle:  rgba(48, 209, 88, 0.06);
+    --loss-subtle:    rgba(255, 69, 58, 0.06);
+    --warning-subtle: rgba(255, 159, 10, 0.06);
+    --brand-subtle:   rgba(0, 122, 255, 0.06);
+    --gold-subtle:    rgba(255, 214, 10, 0.05);
+
+    --brand-dim:     rgba(0, 122, 255, 0.12);
+    --border-brand:  rgba(0, 122, 255, 0.22);
+    --loss-dim:      rgba(255, 69, 58, 0.12);
+    --warning-dim:   rgba(255, 159, 10, 0.12);
+    --profit-dim:    rgba(48, 209, 88, 0.12);
+    --gold-subtle:   rgba(255, 214, 10, 0.05);
+    --border-gold:   rgba(255, 214, 10, 0.22);
 }
 
 [data-theme="light"] {
-    --bg:           #F2F2F7;
-    --bg-2:         #FFFFFF;
-    --bg-3:         #F2F2F7;
-    --bg-4:         #E5E5EA;
-    --bg-5:         #D1D1D6;
+    --bg:   #F2F2F7;
+    --bg-2: #FFFFFF;
+    --bg-3: #F2F2F7;
+    --bg-4: #E5E5EA;
+    --bg-5: #D1D1D6;
+    --bg-6: #C7C7CC;
 
-    --fill-1:       rgba(120, 120, 128, 0.20);
-    --fill-2:       rgba(120, 120, 128, 0.16);
-    --fill-3:       rgba(118, 118, 128, 0.12);
-    --fill-4:       rgba(116, 116, 128, 0.08);
+    --fill-1: rgba(120, 120, 128, 0.20);
+    --fill-2: rgba(120, 120, 128, 0.16);
+    --fill-3: rgba(118, 118, 128, 0.12);
+    --fill-4: rgba(116, 116, 128, 0.08);
+    --fill-5: rgba(116, 116, 128, 0.04);
 
-    --label-1:      rgba(0, 0, 0, 1.00);
-    --label-2:      rgba(60, 60, 67, 0.60);
-    --label-3:      rgba(60, 60, 67, 0.30);
-    --label-4:      rgba(60, 60, 67, 0.18);
+    --label-1: rgba(0, 0, 0, 1.00);
+    --label-2: rgba(60, 60, 67, 0.60);
+    --label-3: rgba(60, 60, 67, 0.30);
+    --label-4: rgba(60, 60, 67, 0.18);
+    --label-5: rgba(60, 60, 67, 0.10);
 
-    --separator:        rgba(60, 60, 67, 0.29);
+    --separator:        rgba(60, 60, 67, 0.25);
+    --separator-strong: rgba(60, 60, 67, 0.40);
     --separator-opaque: #C6C6C8;
 
-    --material-thin:    rgba(242, 242, 247, 0.60);
+    --material-thin:    rgba(242, 242, 247, 0.55);
     --material-regular: rgba(242, 242, 247, 0.72);
-    --material-thick:   rgba(242, 242, 247, 0.85);
-    --material-chrome:  rgba(242, 242, 247, 0.95);
+    --material-thick:   rgba(242, 242, 247, 0.88);
+    --material-chrome:  rgba(242, 242, 247, 0.96);
 
-    --blur-thin:    blur(20px) saturate(180%);
-    --blur-regular: blur(40px) saturate(180%);
-    --blur-thick:   blur(60px) saturate(200%);
+    --blur-thin:    blur(16px) saturate(160%);
+    --blur-regular: blur(32px) saturate(180%);
+    --blur-thick:   blur(48px) saturate(200%);
+    --blur-ultra:   blur(64px) saturate(220%);
 
-    --shadow-sm: 0 1px 3px  rgba(0,0,0,0.12), 0 1px 2px  rgba(0,0,0,0.08);
-    --shadow-md: 0 4px 16px rgba(0,0,0,0.12), 0 2px 4px  rgba(0,0,0,0.08);
-    --shadow-lg: 0 10px 40px rgba(0,0,0,0.15), 0 4px 8px rgba(0,0,0,0.10);
-    --shadow-xl: 0 20px 60px rgba(0,0,0,0.18), 0 8px 16px rgba(0,0,0,0.12);
+    --shadow-xs:  0 1px 2px rgba(0,0,0,0.08);
+    --shadow-sm:  0 2px 8px rgba(0,0,0,0.10),
+                  0 1px 2px rgba(0,0,0,0.06);
+    --shadow-md:  0 4px 16px rgba(0,0,0,0.10),
+                  0 2px 4px rgba(0,0,0,0.06),
+                  0 0 0 0.5px rgba(0,0,0,0.04);
+    --shadow-lg:  0 8px 32px rgba(0,0,0,0.12),
+                  0 4px 8px rgba(0,0,0,0.06),
+                  0 0 0 0.5px rgba(0,0,0,0.04);
+    --shadow-xl:  0 16px 56px rgba(0,0,0,0.14),
+                  0 8px 16px rgba(0,0,0,0.08),
+                  0 0 0 0.5px rgba(0,0,0,0.04);
+    --shadow-2xl: 0 32px 80px rgba(0,0,0,0.16),
+                  0 16px 32px rgba(0,0,0,0.10),
+                  0 0 0 0.5px rgba(0,0,0,0.04);
 
-    --grad-page: radial-gradient(ellipse at 20% 0%,   rgba(0, 122, 255, 0.05) 0%, transparent 50%),
-                 radial-gradient(ellipse at 80% 100%, rgba(52, 199, 89, 0.04) 0%, transparent 50%),
-                 #F2F2F7;
+    --inset-highlight: 0 1px 0 0 rgba(255,255,255,0.80) inset;
+    --inset-shadow:    0 -1px 0 0 rgba(0,0,0,0.06) inset;
 
-    --text-1: rgba(0, 0, 0, 1.00);
-    --text-2: rgba(60, 60, 67, 0.60);
-    --text-3: rgba(60, 60, 67, 0.30);
-    --text-4: rgba(60, 60, 67, 0.18);
+    --grad-page:
+        radial-gradient(ellipse 100% 50% at 15% -5%,
+            rgba(0, 199, 190, 0.05) 0%, transparent 55%),
+        radial-gradient(ellipse 80% 40% at 85% 110%,
+            rgba(0, 122, 255, 0.04) 0%, transparent 55%),
+        #F2F2F7;
+
+    --grad-page-aplus:
+        radial-gradient(ellipse 80% 45% at 50% -5%,
+            rgba(255, 214, 10, 0.06) 0%, transparent 60%),
+        #F2F2F7;
+
+    --grad-page-live:
+        radial-gradient(ellipse 80% 45% at 20% -5%,
+            rgba(48, 209, 88, 0.05) 0%, transparent 60%),
+        #F2F2F7;
 
     --surface-1: #F2F2F7;
     --surface-2: #FFFFFF;
@@ -259,88 +353,120 @@
     --surface-4: #E5E5EA;
     --surface-5: #D1D1D6;
 
-    --border:        rgba(60, 60, 67, 0.29);
-    --border-strong: rgba(60, 60, 67, 0.45);
+    --border:        rgba(60, 60, 67, 0.25);
+    --border-strong: rgba(60, 60, 67, 0.40);
 
-    --brand:         #007AFF;
-    --brand-dim:     rgba(0, 122, 255, 0.12);
-    --border-brand:  rgba(0, 122, 255, 0.25);
+    --text-1: rgba(0, 0, 0, 1.00);
+    --text-2: rgba(60, 60, 67, 0.60);
+    --text-3: rgba(60, 60, 67, 0.30);
+    --text-4: rgba(60, 60, 67, 0.18);
 
-    --profit-dim:    rgba(52, 199, 89, 0.12);
-    --profit-subtle: rgba(52, 199, 89, 0.06);
-    --loss-dim:      rgba(255, 59, 48, 0.12);
-    --loss-subtle:   rgba(255, 59, 48, 0.06);
-    --warning-dim:   rgba(255, 149, 0, 0.12);
-    --warning-subtle:rgba(255, 149, 0, 0.06);
+    --profit-fill:    rgba(48, 209, 88, 0.10);
+    --loss-fill:      rgba(255, 69, 58, 0.10);
+    --warning-fill:   rgba(255, 159, 10, 0.10);
+    --brand-fill:     rgba(0, 122, 255, 0.10);
+    --gold-fill:      rgba(255, 214, 10, 0.08);
+    --purple-fill:    rgba(191, 90, 242, 0.10);
 
-    --gold:          #FFCC00;
-    --gold-dim:      rgba(255, 204, 0, 0.12);
-    --gold-subtle:   rgba(255, 204, 0, 0.06);
-    --border-gold:   rgba(255, 204, 0, 0.25);
+    --profit-subtle:  rgba(48, 209, 88, 0.05);
+    --loss-subtle:    rgba(255, 69, 58, 0.05);
+    --warning-subtle: rgba(255, 159, 10, 0.05);
+    --brand-subtle:   rgba(0, 122, 255, 0.05);
+    --gold-subtle:    rgba(255, 214, 10, 0.04);
+
+    --brand-dim:     rgba(0, 122, 255, 0.10);
+    --border-brand:  rgba(0, 122, 255, 0.20);
+    --loss-dim:      rgba(255, 69, 58, 0.10);
+    --warning-dim:   rgba(255, 159, 10, 0.10);
+    --profit-dim:    rgba(48, 209, 88, 0.10);
+    --border-gold:   rgba(255, 214, 10, 0.20);
 }
 
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-        --bg:           #000000;
-        --bg-2:         #1C1C1E;
-        --bg-3:         #2C2C2E;
-        --bg-4:         #3A3A3C;
-        --bg-5:         #48484A;
-        --fill-1:       rgba(120, 120, 128, 0.36);
-        --fill-2:       rgba(120, 120, 128, 0.32);
-        --fill-3:       rgba(118, 118, 128, 0.24);
-        --fill-4:       rgba(118, 118, 128, 0.18);
-        --label-1:      rgba(255, 255, 255, 1.00);
-        --label-2:      rgba(235, 235, 245, 0.60);
-        --label-3:      rgba(235, 235, 245, 0.30);
-        --label-4:      rgba(235, 235, 245, 0.18);
-        --separator:        rgba(84, 84, 88, 0.65);
+        --bg:   #000000;
+        --bg-2: #0A0A0F;
+        --bg-3: #1C1C1E;
+        --bg-4: #2C2C2E;
+        --bg-5: #3A3A3C;
+        --bg-6: #48484A;
+        --fill-1: rgba(120, 120, 128, 0.36);
+        --fill-2: rgba(120, 120, 128, 0.28);
+        --fill-3: rgba(118, 118, 128, 0.20);
+        --fill-4: rgba(118, 118, 128, 0.14);
+        --fill-5: rgba(118, 118, 128, 0.08);
+        --label-1: rgba(255, 255, 255, 1.00);
+        --label-2: rgba(235, 235, 245, 0.60);
+        --label-3: rgba(235, 235, 245, 0.30);
+        --label-4: rgba(235, 235, 245, 0.18);
+        --label-5: rgba(235, 235, 245, 0.10);
+        --separator:        rgba(84, 84, 88, 0.55);
+        --separator-strong: rgba(84, 84, 88, 0.80);
         --separator-opaque: #38383A;
-        --material-thin:    rgba(28, 28, 30, 0.60);
-        --material-regular: rgba(28, 28, 30, 0.72);
-        --material-thick:   rgba(28, 28, 30, 0.85);
-        --material-chrome:  rgba(28, 28, 30, 0.95);
-        --blur-thin:    blur(20px) saturate(180%);
-        --blur-regular: blur(40px) saturate(180%);
-        --blur-thick:   blur(60px) saturate(200%);
-        --shadow-sm: 0 1px 3px  rgba(0,0,0,0.50), 0 1px 2px  rgba(0,0,0,0.40);
-        --shadow-md: 0 4px 16px rgba(0,0,0,0.50), 0 2px 4px  rgba(0,0,0,0.40);
-        --shadow-lg: 0 10px 40px rgba(0,0,0,0.60), 0 4px 8px rgba(0,0,0,0.40);
-        --shadow-xl: 0 20px 60px rgba(0,0,0,0.70), 0 8px 16px rgba(0,0,0,0.50);
-        --grad-page: radial-gradient(ellipse at 20% 0%,   rgba(0, 122, 255, 0.04) 0%, transparent 50%),
-                     radial-gradient(ellipse at 80% 100%, rgba(52, 199, 89, 0.03) 0%, transparent 50%),
-                     #000000;
-        --text-1: rgba(255, 255, 255, 1.00);
-        --text-2: rgba(235, 235, 245, 0.60);
-        --text-3: rgba(235, 235, 245, 0.30);
-        --text-4: rgba(235, 235, 245, 0.18);
+        --material-thin:    rgba(10, 10, 15, 0.55);
+        --material-regular: rgba(10, 10, 15, 0.72);
+        --material-thick:   rgba(10, 10, 15, 0.88);
+        --material-chrome:  rgba(10, 10, 15, 0.96);
+        --blur-thin:    blur(16px) saturate(160%);
+        --blur-regular: blur(32px) saturate(180%);
+        --blur-thick:   blur(48px) saturate(200%);
+        --blur-ultra:   blur(64px) saturate(220%);
+        --shadow-xs:  0 1px 2px rgba(0,0,0,0.40);
+        --shadow-sm:  0 2px 8px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.35);
+        --shadow-md:  0 4px 16px rgba(0,0,0,0.50), 0 2px 4px rgba(0,0,0,0.35), 0 0 0 0.5px rgba(255,255,255,0.04);
+        --shadow-lg:  0 8px 32px rgba(0,0,0,0.55), 0 4px 8px rgba(0,0,0,0.35), 0 0 0 0.5px rgba(255,255,255,0.05);
+        --shadow-xl:  0 16px 56px rgba(0,0,0,0.65), 0 8px 16px rgba(0,0,0,0.40), 0 0 0 0.5px rgba(255,255,255,0.06);
+        --shadow-2xl: 0 32px 80px rgba(0,0,0,0.75), 0 16px 32px rgba(0,0,0,0.45), 0 0 0 0.5px rgba(255,255,255,0.06);
+        --inset-highlight: 0 1px 0 0 rgba(255,255,255,0.06) inset;
+        --inset-shadow:    0 -1px 0 0 rgba(0,0,0,0.25) inset;
+        --grad-page:
+            radial-gradient(ellipse 100% 50% at 15% -5%, rgba(0, 199, 190, 0.06) 0%, transparent 55%),
+            radial-gradient(ellipse 80% 40% at 85% 110%, rgba(0, 122, 255, 0.05) 0%, transparent 55%),
+            radial-gradient(ellipse 50% 30% at 50% 50%, rgba(0, 122, 255, 0.02) 0%, transparent 70%),
+            #000000;
+        --grad-page-aplus:
+            radial-gradient(ellipse 80% 45% at 50% -5%, rgba(255, 214, 10, 0.07) 0%, transparent 60%),
+            radial-gradient(ellipse 60% 30% at 15% 110%, rgba(0, 199, 190, 0.04) 0%, transparent 60%),
+            #000000;
+        --grad-page-live:
+            radial-gradient(ellipse 80% 45% at 20% -5%, rgba(48, 209, 88, 0.06) 0%, transparent 60%),
+            radial-gradient(ellipse 60% 30% at 80% 110%, rgba(0, 122, 255, 0.04) 0%, transparent 60%),
+            #000000;
         --surface-1: #000000;
         --surface-2: #1C1C1E;
         --surface-3: #2C2C2E;
         --surface-4: #3A3A3C;
         --surface-5: #48484A;
-        --border:        rgba(84, 84, 88, 0.65);
-        --border-strong: rgba(84, 84, 88, 0.90);
-        --brand:         #007AFF;
-        --brand-dim:     rgba(0, 122, 255, 0.15);
-        --border-brand:  rgba(0, 122, 255, 0.30);
-        --profit-dim:    rgba(52, 199, 89, 0.15);
-        --profit-subtle: rgba(52, 199, 89, 0.08);
-        --loss-dim:      rgba(255, 59, 48, 0.15);
-        --loss-subtle:   rgba(255, 59, 48, 0.08);
-        --warning-dim:   rgba(255, 149, 0, 0.15);
-        --warning-subtle:rgba(255, 149, 0, 0.08);
-        --gold:          #FFCC00;
-        --gold-dim:      rgba(255, 204, 0, 0.15);
-        --gold-subtle:   rgba(255, 204, 0, 0.08);
-        --border-gold:   rgba(255, 204, 0, 0.30);
+        --border:        rgba(84, 84, 88, 0.55);
+        --border-strong: rgba(84, 84, 88, 0.80);
+        --text-1: rgba(255, 255, 255, 1.00);
+        --text-2: rgba(235, 235, 245, 0.60);
+        --text-3: rgba(235, 235, 245, 0.30);
+        --text-4: rgba(235, 235, 245, 0.18);
+        --profit-fill:    rgba(48, 209, 88, 0.12);
+        --loss-fill:      rgba(255, 69, 58, 0.12);
+        --warning-fill:   rgba(255, 159, 10, 0.12);
+        --brand-fill:     rgba(0, 122, 255, 0.12);
+        --gold-fill:      rgba(255, 214, 10, 0.10);
+        --purple-fill:    rgba(191, 90, 242, 0.12);
+        --profit-subtle:  rgba(48, 209, 88, 0.06);
+        --loss-subtle:    rgba(255, 69, 58, 0.06);
+        --warning-subtle: rgba(255, 159, 10, 0.06);
+        --brand-subtle:   rgba(0, 122, 255, 0.06);
+        --gold-subtle:    rgba(255, 214, 10, 0.05);
+        --brand-dim:     rgba(0, 122, 255, 0.12);
+        --border-brand:  rgba(0, 122, 255, 0.22);
+        --loss-dim:      rgba(255, 69, 58, 0.12);
+        --warning-dim:   rgba(255, 159, 10, 0.12);
+        --profit-dim:    rgba(48, 209, 88, 0.12);
+        --border-gold:   rgba(255, 214, 10, 0.22);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
-        animation-duration:       0.01ms !important;
-        animation-iteration-count: 1     !important;
-        transition-duration:      0.01ms !important;
+        animation-duration:        0.01ms !important;
+        animation-iteration-count: 1      !important;
+        transition-duration:       0.01ms !important;
     }
 }
