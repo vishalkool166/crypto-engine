@@ -3,22 +3,36 @@
     "short_name": "Signal Engine",
     "description": "Automated crypto futures trading intelligence",
     "start_url": "/app.html",
+    "scope": "/",
     "display": "standalone",
     "orientation": "portrait",
     "background_color": "#000000",
-    "theme_color": "#000000",
+    "theme_color": "#00C7BE",
+    "categories": ["finance", "utilities"],
     "icons": [
         {
             "src": "/icons/icon-192.png",
             "sizes": "192x192",
             "type": "image/png",
-            "purpose": "any maskable"
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
         },
         {
             "src": "/icons/icon-512.png",
             "sizes": "512x512",
             "type": "image/png",
-            "purpose": "any maskable"
+            "purpose": "any"
+        },
+        {
+            "src": "/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
         }
     ]
 }

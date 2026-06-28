@@ -1,4 +1,4 @@
-const CACHE = 'se-v5-1'
+const CACHE = 'se-v5-2'
 
 const PRECACHE = [
     '/app.html',
@@ -31,6 +31,9 @@ const PRECACHE = [
     '/js/pages/system.js',
     '/js/app.js',
     '/favicon.svg',
+    '/icons/icon-192.png',
+    '/icons/icon-512.png',
+    '/manifest.json',
 ]
 
 self.addEventListener('install', e => {
@@ -55,9 +58,9 @@ self.addEventListener('fetch', e => {
     const url = new URL(e.request.url)
 
     if (e.request.method !== 'GET') return
-    if (url.pathname.startsWith('/api/')) return
-    if (url.pathname.startsWith('/ws/')) return
-    if (url.pathname.startsWith('/auth/')) return
+    if (url.pathname.startsWith('/api/'))     return
+    if (url.pathname.startsWith('/ws/'))      return
+    if (url.pathname.startsWith('/auth/'))    return
     if (url.pathname.startsWith('/webhook/')) return
 
     e.respondWith(
