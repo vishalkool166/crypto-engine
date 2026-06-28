@@ -78,20 +78,29 @@ function _extractConfidence(data) {
 function _applyDashboard(data) {
     if (!data) return
     const summary = data.summary || {}
-    _store.dashboardData = data
+
+    _store.dashboardData = {
+        ..._store.dashboardData,
+        ...data,
+        performance: 'performance' in data ? data.performance : (_store.dashboardData.performance || {}),
+        signals:     'signals'     in data ? data.signals     : (_store.dashboardData.signals     || {}),
+        history:     'history'     in data ? data.history     : (_store.dashboardData.history     || []),
+        universe:    'universe'    in data ? data.universe    : (_store.dashboardData.universe    || []),
+        ticker:      'ticker'      in data ? data.ticker      : (_store.dashboardData.ticker      || []),
+    }
+
     if (summary.mode)            _store.mode          = summary.mode
     if (summary.next_scan_epoch) _store.nextScanEpoch = summary.next_scan_epoch
-    _store.regime     = _extractRegime(data)
-    _store.confidence = _extractConfidence(data)
+    _store.regime     = _extractRegime(_store.dashboardData)
+    _store.confidence = _extractConfidence(_store.dashboardData)
 
-    emit('dashboard',  data)
+    emit('dashboard',  _store.dashboardData)
     emit('summary',    summary)
     emit('regime',     _store.regime)
     emit('confidence', _store.confidence)
-    if (data.signals) emit('signals', data.signals)
-    if (data.history) emit('history', data.history)
-
-    _checkForNewSignals(data)
+    if (data.signals) emit('signals', _store.dashboardData.signals)
+    if (data.history) emit('history', _store.dashboardData.history)
+    _checkForNewSignals(_store.dashboardData)
     _emitTopbarState()
 }
 
