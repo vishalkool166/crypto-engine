@@ -5,9 +5,10 @@
     "start_url": "/app.html",
     "scope": "/",
     "display": "standalone",
+    "display_override": ["window-controls-overlay", "standalone"],
     "orientation": "portrait",
     "background_color": "#000000",
-    "theme_color": "#00C7BE",
+    "theme_color": "#000000",
     "categories": ["finance", "utilities"],
     "icons": [
         {
