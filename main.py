@@ -496,7 +496,9 @@ async def auth_callback_google(request: Request):
         final_token    = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
 
         is_new   = user.get("is_new", False)
-        redirect = "/app.html"
+
+        NEW_FRONTEND_URL = os.getenv("NEW_FRONTEND_URL", "")
+        redirect = f"{NEW_FRONTEND_URL}/dashboard/now" if NEW_FRONTEND_URL else "/app.html"
 
         response = RedirectResponse(url=redirect)
         response.set_cookie(
