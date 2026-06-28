@@ -21,7 +21,6 @@ const _store = {
     regime:           '',
     confidence:       0,
     nextScanEpoch:    0,
-    ticker:           [],
     dashboardData:    {},
     ftTrades:         [],
     ftProfit:         {},
@@ -81,39 +80,19 @@ function _applyDashboard(data) {
     const summary = data.summary || {}
     _store.dashboardData = data
     if (summary.mode)            _store.mode          = summary.mode
-    if (data.ticker?.length)     _store.ticker        = data.ticker
     if (summary.next_scan_epoch) _store.nextScanEpoch = summary.next_scan_epoch
     _store.regime     = _extractRegime(data)
     _store.confidence = _extractConfidence(data)
+
     emit('dashboard',  data)
     emit('summary',    summary)
     emit('regime',     _store.regime)
     emit('confidence', _store.confidence)
     if (data.signals) emit('signals', data.signals)
     if (data.history) emit('history', data.history)
-    _checkForNewSignals(data)
-}
 
-function _applyTicker(data) {
-    if (!data) return
-    if (data.items?.length) {
-        _store.ticker = data.items
-        emit('ticker', data.items)
-    }
-    if (data.status && Array.isArray(data.status)) {
-        _store.ftTrades = data.status
-        emit('ft_update', {
-            trades:   _store.ftTrades,
-            profit:   _store.ftProfit,
-            balance:  _store.ftBalance,
-            botState: _store.ftBotState,
-        })
-    }
-    if (data.summary) {
-        if (data.summary.next_scan_epoch) _store.nextScanEpoch = data.summary.next_scan_epoch
-        if (data.summary.mode)            _store.mode          = data.summary.mode
-        emit('summary-lite', data.summary)
-    }
+    _checkForNewSignals(data)
+    _emitTopbarState()
 }
 
 function _applyFtUpdate(data) {
@@ -135,6 +114,102 @@ function _applyFtUpdate(data) {
         balance:  _store.ftBalance,
         botState: _store.ftBotState,
     })
+    _emitTopbarState()
+}
+
+function _deriveTopbarState() {
+    const trades  = _store.ftTrades || []
+    const signals = _store.dashboardData?.signals?.queue || []
+    const mode    = _store.mode || 'paper'
+
+    if (trades.length > 0) {
+        const invalidated = trades.find(t => t.health?.state === 'INVALIDATED')
+        if (invalidated) {
+            const pair  = (invalidated.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+            const pnl   = parseFloat(invalidated.profit_abs || 0)
+            const pnlPos = pnl >= 0
+            return {
+                type:      'invalidated',
+                primary:   '⚠ ' + pair + ' · ' + Utils.fmtPnl(pnl, pnlPos),
+                secondary: 'Thesis invalidated — review position',
+                color:     'state-invalidated',
+                trade:     invalidated,
+            }
+        }
+
+        const warning = trades.find(t => t.health?.state === 'WARNING')
+        if (warning) {
+            const pair  = (warning.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+            const pnl   = parseFloat(warning.profit_abs || 0)
+            const pnlPos = pnl >= 0
+            return {
+                type:      'warning',
+                primary:   '◉ ' + pair + ' · ' + Utils.fmtPnl(pnl, pnlPos),
+                secondary: 'Thesis weakening — monitor closely',
+                color:     'state-warning',
+                trade:     warning,
+            }
+        }
+
+        const best    = trades.reduce((a, b) =>
+            Math.abs(parseFloat(b.profit_abs || 0)) > Math.abs(parseFloat(a.profit_abs || 0)) ? b : a
+        )
+        const pair    = (best.pair || '').replace('/USDT:USDT', 'USDT').replace('/USDT', 'USDT')
+        const pnl     = parseFloat(best.profit_abs || 0)
+        const pnlPos  = pnl >= 0
+        const dir     = best.is_short ? 'SHORT' : 'LONG'
+        const dur     = Utils.fmtDuration(best.open_date)
+        const lev     = best.leverage ? best.leverage + 'x' : ''
+        return {
+            type:      pnlPos ? 'trade' : 'trade-loss',
+            primary:   pair + ' ' + dir + ' · ' + Utils.fmtPnl(pnl, pnlPos),
+            secondary: dur + ' open' + (lev ? ' · ' + lev : '') + (trades.length > 1 ? ' · ' + trades.length + ' positions' : ''),
+            color:     pnlPos ? 'state-trade' : 'state-trade-loss',
+            trade:     best,
+        }
+    }
+
+    if (signals.length > 0) {
+        const top   = signals[0]
+        const grade = top.grade || 'F'
+        const coin  = (top.coin || '--') + 'USDT'
+        const dir   = top.direction || '--'
+        const score = top.score || 0
+
+        if (grade === 'A+') {
+            return {
+                type:      'signal-aplus',
+                primary:   coin + ' A+ ' + dir,
+                secondary: 'Score ' + score + '/100 · tap to view',
+                color:     'state-signal-aplus',
+                signal:    top,
+            }
+        }
+
+        if (grade === 'A') {
+            return {
+                type:      'signal-a',
+                primary:   coin + ' A ' + dir,
+                secondary: 'Score ' + score + '/100 · tap to view',
+                color:     'state-signal-a',
+                signal:    top,
+            }
+        }
+    }
+
+    const arc = Utils.fmtCountdownArc(_store.nextScanEpoch)
+    return {
+        type:      'watching',
+        primary:   'Watching ' + (_store.dashboardData?.summary?.coins_count || '--') + ' coins',
+        secondary: 'Next scan ' + arc.mins + ':' + arc.secs,
+        color:     'state-watching',
+        signal:    null,
+        trade:     null,
+    }
+}
+
+function _emitTopbarState() {
+    emit('topbar-state', _deriveTopbarState())
 }
 
 let _lastSignalIds = new Set()
@@ -164,6 +239,9 @@ function _checkForNewSignals(data) {
                     'signal',
                     6000
                 )
+                if (navigator.vibrate && sig.grade === 'A+') {
+                    navigator.vibrate([10, 50, 10])
+                }
             }
         }
     }
@@ -212,6 +290,26 @@ function _connect() {
     }
 }
 
+function _applyTicker(data) {
+    if (!data) return
+    if (data.status && Array.isArray(data.status)) {
+        _store.ftTrades = data.status
+        emit('ft_update', {
+            trades:   _store.ftTrades,
+            profit:   _store.ftProfit,
+            balance:  _store.ftBalance,
+            botState: _store.ftBotState,
+        })
+        _emitTopbarState()
+    }
+    if (data.summary) {
+        if (data.summary.next_scan_epoch) _store.nextScanEpoch = data.summary.next_scan_epoch
+        if (data.summary.mode)            _store.mode          = data.summary.mode
+        emit('summary-lite', data.summary)
+        _emitTopbarState()
+    }
+}
+
 function _scheduleReconnect() {
     if (_wsTimer) return
     _wsTimer = setTimeout(() => {
@@ -227,6 +325,7 @@ function _startCountdown() {
     if (_countTimer) clearInterval(_countTimer)
     _countTimer = setInterval(() => {
         emit('countdown', _store.nextScanEpoch)
+        _emitTopbarState()
     }, 1000)
 }
 
@@ -317,16 +416,6 @@ function useWsState() {
     const [state, setState] = useState(_store.wsState)
     useEffect(() => on('wsState', s => setState(s)), [])
     return state
-}
-
-function useTicker() {
-    const { useState, useEffect } = preactHooks
-    const [ticker, setTicker] = useState(() => [..._store.ticker])
-    useEffect(() => {
-        if (_store.ticker.length) setTicker([..._store.ticker])
-        return on('ticker', t => setTicker([...t]))
-    }, [])
-    return ticker
 }
 
 function useFtUpdate() {
@@ -432,13 +521,22 @@ function useFtTrades() {
     return trades
 }
 
+function useTopbarState() {
+    const { useState, useEffect } = preactHooks
+    const [state, setState] = useState(() => _deriveTopbarState())
+    useEffect(() => {
+        return on('topbar-state', s => setState({ ...s }))
+    }, [])
+    return state
+}
+
 window.Store = {
     init, navigate, getState, logout, toggleTheme,
     requireTotp, confirmTotp, closeTotp,
     showToast, hideToast,
     on, emit,
-    usePage, useWsState, useTicker, useFtUpdate,
+    usePage, useWsState, useFtUpdate,
     useDashboard, useNextScan, useTotp, useToast,
     useMode, useTheme, useRegime, useConfidence,
-    useNotifications, useFtTrades,
+    useNotifications, useFtTrades, useTopbarState,
 }

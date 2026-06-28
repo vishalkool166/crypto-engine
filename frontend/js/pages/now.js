@@ -1,7 +1,7 @@
 var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
-var { useDashboard, useFtUpdate, showToast } = Store
+var { useDashboard, useFtUpdate, showToast, on } = Store
 var {
     GradeBadge, DirBadge, HealthDot, HealthRow,
     ScoreBar, ScoreRing, TradeProgressBar,
@@ -9,7 +9,56 @@ var {
     Panel, ConfluenceBar, InfoRow, RegimeBadge, SessionBadge
 } = SE
 
-function NowPage() {
+function ThesisBlock({ thesis }) {
+    if (!thesis) return null
+
+    const lines = thesis
+        .split(/(?=[✔⚠✗])/)
+        .map(s => s.trim())
+        .filter(Boolean)
+
+    if (lines.length <= 1) {
+        return html`
+            <div style="font-size:var(--text-subhead);color:var(--label-2);line-height:var(--leading-relaxed);font-style:italic;padding:12px 14px;background:var(--fill-4);border-radius:var(--r-lg);letter-spacing:var(--tracking-subhead);">
+                ${thesis}
+            </div>
+        `
+    }
+
+    return html`
+        <div style="display:flex;flex-direction:column;gap:5px;">
+            ${lines.map((line, i) => {
+                const isPass = line.startsWith('✔')
+                const isWarn = line.startsWith('⚠')
+                const isFail = line.startsWith('✗')
+                const color  = isPass ? 'var(--profit)'
+                             : isWarn ? 'var(--warning)'
+                             : isFail ? 'var(--loss)'
+                             : 'var(--label-2)'
+                const bg     = isPass ? 'var(--profit-subtle)'
+                             : isWarn ? 'var(--warning-subtle)'
+                             : isFail ? 'var(--loss-subtle)'
+                             : 'var(--fill-4)'
+                const border = isPass ? '0.5px solid var(--profit-border)'
+                             : isWarn ? '0.5px solid var(--warning-border)'
+                             : isFail ? '0.5px solid var(--loss-border)'
+                             : '0.5px solid var(--separator)'
+                return html`
+                    <div key=${i} style=${'display:flex;align-items:flex-start;gap:8px;padding:8px 12px;background:' + bg + ';border:' + border + ';border-radius:var(--r-md);'}>
+                        <span style=${'font-size:var(--text-footnote);flex-shrink:0;margin-top:1px;color:' + color + ';'}>
+                            ${line[0]}
+                        </span>
+                        <span style="font-size:var(--text-footnote);color:var(--label-2);line-height:var(--leading-snug);letter-spacing:var(--tracking-footnote);">
+                            ${line.slice(1).trim()}
+                        </span>
+                    </div>
+                `
+            })}
+        </div>
+    `
+}
+
+function NowPage({ externalSignal, onSignalConsumed }) {
     const data                                = useDashboard()
     const ftData                              = useFtUpdate()
     const [scanning,      setScanning]        = useState(false)
@@ -29,6 +78,20 @@ function NowPage() {
     useEffect(() => {
         if (ftData.trades?.length) setActiveTrades(ftData.trades)
     }, [ftData.trades])
+
+    useEffect(() => {
+        if (externalSignal) {
+            setSelectedSignal(externalSignal)
+            if (onSignalConsumed) onSignalConsumed()
+        }
+    }, [externalSignal])
+
+    useEffect(() => {
+        const unsub = on('topbar:open-signal', signal => {
+            setSelectedSignal(signal)
+        })
+        return unsub
+    }, [])
 
     async function fetchTrades() {
         try {
@@ -186,8 +249,8 @@ function HeroSignal({ signal, onOpen }) {
                 ${entry && sl && tp1 && html`
                     <div>
                         <div style="position:relative;height:5px;background:var(--fill-3);border-radius:var(--r-full);overflow:hidden;">
-                            <div style=${'position:absolute;left:0;top:0;height:100%;width:' + (100 - rrPct) + '%;background:var(--loss-fill);border-radius:var(--r-full) 0 0 var(--r-full);'}></div>
-                            <div style=${'position:absolute;right:0;top:0;height:100%;width:' + rrPct + '%;background:var(--profit-fill);border-radius:0 var(--r-full) var(--r-full) 0;'}></div>
+                            <div style=${'position:absolute;left:0;top:0;height:100%;width:' + (100 - rrPct) + '%;background:var(--loss-dim);border-radius:var(--r-full) 0 0 var(--r-full);'}></div>
+                            <div style=${'position:absolute;right:0;top:0;height:100%;width:' + rrPct + '%;background:var(--profit-dim);border-radius:0 var(--r-full) var(--r-full) 0;'}></div>
                         </div>
                         <div class="flex justify-between mt-4" style="font-size:10px;">
                             <span style="color:var(--loss);font-family:var(--font-mono);">SL ${slDist.toFixed(1)}%</span>
@@ -199,8 +262,8 @@ function HeroSignal({ signal, onOpen }) {
 
                 <div class="signal-hero-footer">
                     <div class="signal-hero-factors">
-                        ${regime  && html`<${RegimeBadge}  regime=${regime}/>`}
-                        ${session && html`<${SessionBadge} session=${session}/>`}
+                        ${regime  && regime  !== '--' && html`<${RegimeBadge}  regime=${regime}/>`}
+                        ${session && session !== '--' && html`<${SessionBadge} session=${session}/>`}
                         ${mlProb != null && html`
                             <span class=${Utils.mlBadgeClass(mlProb)}>
                                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
@@ -225,10 +288,10 @@ function WatchingCard() {
                 <div style="width:44px;height:44px;border-radius:var(--r-xl);background:var(--fill-3);display:flex;align-items:center;justify-content:center;color:var(--label-4);margin:0 auto;">
                     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                 </div>
-                <div style="font-size:var(--text-title3);font-weight:var(--weight-semibold);color:var(--label-2);margin-top:12px;">
+                <div style="font-size:var(--text-title3);font-weight:var(--weight-semibold);color:var(--label-2);margin-top:12px;letter-spacing:var(--tracking-title3);">
                     No Tradeable Signals
                 </div>
-                <div style="font-size:var(--text-subhead);color:var(--label-3);line-height:var(--leading-relaxed);max-width:260px;margin-top:6px;">
+                <div style="font-size:var(--text-subhead);color:var(--label-3);line-height:var(--leading-relaxed);max-width:260px;margin-top:6px;letter-spacing:var(--tracking-subhead);">
                     Scanning every 15 minutes. Setups are building.
                 </div>
             </div>
@@ -256,31 +319,31 @@ function SignalRow({ signal, onClick }) {
 
     return html`
         <div
-            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg-2);border-radius:var(--r-2xl);cursor:pointer;transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-spring);position:relative;overflow:hidden;"
+            style="display:flex;align-items:center;gap:12px;padding:12px 14px;background:rgba(28,28,30,0.60);border:0.5px solid rgba(255,255,255,0.06);border-radius:var(--r-2xl);cursor:pointer;transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-spring);position:relative;overflow:hidden;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);"
             onClick=${onClick}
             role="button" tabindex="0"
             onKeyDown=${e => e.key === 'Enter' && onClick()}
             onMouseEnter=${e => { e.currentTarget.style.opacity = '0.92'; e.currentTarget.style.transform = 'translateY(-1px)' }}
             onMouseLeave=${e => { e.currentTarget.style.opacity = '1';    e.currentTarget.style.transform = 'translateY(0)'    }}
         >
-            <div style=${'position:absolute;top:0;left:0;right:0;height:3px;background:' + accent + ';border-radius:var(--r-2xl) var(--r-2xl) 0 0;'}></div>
+            <div style=${'position:absolute;top:0;left:0;right:0;height:2px;background:' + accent + ';border-radius:var(--r-2xl) var(--r-2xl) 0 0;opacity:0.8;'}></div>
             <div style="flex:1;min-width:0;margin-top:4px;">
                 <div class="flex items-center gap-8 mb-4">
-                    <span style="font-family:var(--font-mono);font-size:var(--text-title3);font-weight:var(--weight-heavy);color:var(--label-1);">
+                    <span style="font-family:var(--font-mono);font-size:var(--text-title3);font-weight:var(--weight-heavy);color:var(--label-1);letter-spacing:-0.025em;">
                         ${coin}USDT
                     </span>
                     <${DirBadge} dir=${direction}/>
                     <${GradeBadge} grade=${grade}/>
-                    ${session && html`<${SessionBadge} session=${session}/>`}
+                    ${session && session !== '--' && html`<${SessionBadge} session=${session}/>`}
                 </div>
                 ${thesis && html`
-                    <div style="font-size:var(--text-caption1);color:var(--label-3);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                    <div style="font-size:var(--text-caption1);color:var(--label-3);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:var(--tracking-caption1);">
                         "${thesis}"
                     </div>
                 `}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex-shrink:0;">
-                <span style=${'font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-heavy);color:' + Utils.scoreColor(score) + ';'}>
+                <span style=${'font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-heavy);color:' + Utils.scoreColor(score) + ';letter-spacing:var(--tracking-mono);'}>
                     ${score}/100
                 </span>
                 <span style="font-family:var(--font-mono);font-size:10px;color:var(--label-4);">
@@ -306,7 +369,7 @@ function LivePositions({ trades, onOpen }) {
             ${!trades.length
                 ? html`
                     <div style="padding:20px 0;text-align:center;">
-                        <div style="font-size:var(--text-subhead);color:var(--label-4);">No open positions</div>
+                        <div style="font-size:var(--text-subhead);color:var(--label-4);letter-spacing:var(--tracking-subhead);">No open positions</div>
                     </div>
                 `
                 : trades.map(trade => html`
@@ -339,9 +402,9 @@ function LiveTradeRow({ trade, onClick }) {
 
     return html`
         <div
-            style="display:flex;flex-direction:column;gap:8px;padding:12px 0;border-bottom:0.5px solid var(--separator);cursor:pointer;transition:background var(--dur-fast) var(--ease-out);border-radius:var(--r-md);padding-left:8px;padding-right:8px;"
+            style="display:flex;flex-direction:column;gap:8px;padding:12px 8px;border-bottom:0.5px solid var(--separator);cursor:pointer;transition:background var(--dur-fast) var(--ease-out);border-radius:var(--r-md);"
             onClick=${onClick}
-            onMouseEnter=${e => e.currentTarget.style.background = 'var(--fill-4)'}
+            onMouseEnter=${e => e.currentTarget.style.background = 'var(--fill-5)'}
             onMouseLeave=${e => e.currentTarget.style.background = ''}
             role="button" tabindex="0"
             onKeyDown=${e => e.key === 'Enter' && onClick()}
@@ -351,12 +414,12 @@ function LiveTradeRow({ trade, onClick }) {
                     <div style=${'width:3px;height:32px;border-radius:var(--r-full);background:' + accent + ';flex-shrink:0;'}></div>
                     <div>
                         <div class="flex items-center gap-6">
-                            <span style="font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-heavy);color:var(--label-1);">
+                            <span style="font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-heavy);color:var(--label-1);letter-spacing:-0.02em;">
                                 ${pair}
                             </span>
                             <${DirBadge} dir=${dir}/>
                         </div>
-                        <div style="font-size:var(--text-caption2);color:var(--label-4);margin-top:2px;">
+                        <div style="font-size:var(--text-caption2);color:var(--label-4);margin-top:2px;letter-spacing:var(--tracking-caption2);">
                             ${Utils.fmtDuration(trade.open_date)} open
                         </div>
                     </div>
@@ -366,7 +429,7 @@ function LiveTradeRow({ trade, onClick }) {
                         style="font-size:var(--text-title3);">
                         ${Utils.fmtPnl(pnl, pnlPos)}
                     </div>
-                    <div style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';'}>
+                    <div style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';font-variant-numeric:tabular-nums;'}>
                         ${Utils.fmtPct(pnlPct)}
                     </div>
                 </div>
@@ -384,9 +447,9 @@ function MarketPulse({ summary, radar }) {
             <div class="section-title mb-12">Market Pulse</div>
             ${[
                 { label: 'Win Rate',   val: (summary.win_rate || 0) + '%',   color: Utils.winRateColor(summary.win_rate) },
-                { label: 'Today PnL', val: Utils.fmtPnl(summary.today_pnl, summary.today_pnl_pos), color: Utils.pnlColor(summary.today_pnl_pos) },
-                { label: 'Scanning',  val: (summary.coins_count || 0) + ' coins' },
-                { label: 'Tradeable', val: (summary.tradeable_count || 0) + ' now', color: summary.tradeable_count > 0 ? 'var(--profit)' : 'var(--label-3)' },
+                { label: 'Today PnL',  val: Utils.fmtPnl(summary.today_pnl, summary.today_pnl_pos), color: Utils.pnlColor(summary.today_pnl_pos) },
+                { label: 'Scanning',   val: (summary.coins_count || 0) + ' coins' },
+                { label: 'Tradeable',  val: (summary.tradeable_count || 0) + ' now', color: summary.tradeable_count > 0 ? 'var(--profit)' : 'var(--label-3)' },
             ].map(row => html`
                 <${InfoRow} key=${row.label} label=${row.label} value=${row.val}
                     mono=${true} color=${row.color}/>
@@ -398,14 +461,14 @@ function MarketPulse({ summary, radar }) {
                     <div key=${coin.coin} class="flex justify-between items-center"
                         style="padding:6px 0;border-bottom:0.5px solid var(--separator);">
                         <div class="flex items-center gap-8">
-                            <span style="font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-bold);color:var(--label-1);">
+                            <span style="font-family:var(--font-mono);font-size:var(--text-subhead);font-weight:var(--weight-bold);color:var(--label-1);letter-spacing:-0.02em;">
                                 ${coin.coin}
                             </span>
                             <${GradeBadge} grade=${coin.grade}/>
                         </div>
                         <div class="flex items-center gap-8">
                             <${ScoreBar} score=${coin.score} grade=${coin.grade}/>
-                            <span style=${'font-family:var(--font-mono);font-size:10px;color:' + Utils.changeColor(coin.change) + ';'}>
+                            <span style=${'font-family:var(--font-mono);font-size:10px;color:' + Utils.changeColor(coin.change) + ';font-variant-numeric:tabular-nums;'}>
                                 ${Utils.fmtPct(coin.change)}
                             </span>
                         </div>
@@ -434,7 +497,7 @@ function ActivityFeed({ history }) {
                             ${' '}Grade ${s.grade}
                             ${s.pnl != null && html`
                                 ${' '}—${' '}
-                                <span style=${'color:' + Utils.pnlColor(s.pnl_pos) + ';font-family:var(--font-mono);font-weight:var(--weight-bold);'}>
+                                <span style=${'color:' + Utils.pnlColor(s.pnl_pos) + ';font-family:var(--font-mono);font-weight:var(--weight-bold);font-variant-numeric:tabular-nums;'}>
                                     ${Utils.fmtPnl(s.pnl, s.pnl_pos)}
                                 </span>
                             `}
@@ -492,14 +555,14 @@ function SignalDetailPanel({ signal, onClose }) {
                 <div class="flex items-center gap-8 flex-wrap">
                     <${GradeBadge} grade=${grade} size="lg"/>
                     <${DirBadge} dir=${direction}/>
-                    ${regime  && html`<${RegimeBadge}  regime=${regime}/>`}
-                    ${session && html`<${SessionBadge} session=${session}/>`}
+                    ${regime  && regime  !== '--' && html`<${RegimeBadge}  regime=${regime}/>`}
+                    ${session && session !== '--' && html`<${SessionBadge} session=${session}/>`}
                 </div>
 
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;background:var(--fill-4);border-radius:var(--r-xl);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px;background:var(--fill-4);border-radius:var(--r-xl);border:0.5px solid var(--separator);">
                     <div>
                         <div class="label-uppercase mb-4">Confluence Score</div>
-                        <div style=${'font-family:var(--font-mono);font-size:var(--text-largetitle);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';letter-spacing:var(--tracking-title1);'}>
+                        <div style=${'font-family:var(--font-mono);font-size:var(--text-largetitle);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';letter-spacing:-0.03em;font-variant-numeric:tabular-nums;'}>
                             ${score}<span style="font-size:var(--text-title3);color:var(--label-4);">/100</span>
                         </div>
                     </div>
@@ -510,9 +573,7 @@ function SignalDetailPanel({ signal, onClose }) {
             ${thesis && html`
                 <div class="panel-section">
                     <div class="panel-section-title">Thesis</div>
-                    <div style="font-size:var(--text-subhead);color:var(--label-2);line-height:var(--leading-relaxed);font-style:italic;padding:12px 14px;background:var(--fill-4);border-radius:var(--r-lg);border-left:3px solid var(--brand);">
-                        "${thesis}"
-                    </div>
+                    <${ThesisBlock} thesis=${thesis}/>
                 </div>
             `}
 
@@ -525,9 +586,9 @@ function SignalDetailPanel({ signal, onClose }) {
                             { label: 'Stop Loss',   val: Utils.fmtPrice(sl),    color: 'var(--loss)'     },
                             { label: 'Take Profit', val: Utils.fmtPrice(tp1),   color: 'var(--profit)'   },
                         ].map(l => html`
-                            <div key=${l.label} style="background:var(--fill-4);border-radius:var(--r-md);padding:10px 12px;">
+                            <div key=${l.label} style="background:var(--fill-4);border:0.5px solid var(--separator);border-radius:var(--r-md);padding:10px 12px;">
                                 <div class="label-uppercase mb-4">${l.label}</div>
-                                <div style=${'font-family:var(--font-mono);font-size:var(--text-callout);font-weight:var(--weight-heavy);color:' + l.color + ';'}>
+                                <div style=${'font-family:var(--font-mono);font-size:var(--text-callout);font-weight:var(--weight-heavy);color:' + l.color + ';letter-spacing:var(--tracking-mono);font-variant-numeric:tabular-nums;'}>
                                     ${l.val}
                                 </div>
                             </div>
@@ -603,7 +664,7 @@ function TradeDetailPanel({ trade, onClose, onRefresh }) {
         if (!code) return
         setForceSelling(true)
         try {
-            const res  = await fetch('/api/ft/forcesell', {
+        const res  = await fetch('/api/ft/forcesell', {
                 method:      'POST',
                 credentials: 'include',
                 headers:     { 'Content-Type': 'application/json' },
@@ -634,9 +695,10 @@ function TradeDetailPanel({ trade, onClose, onRefresh }) {
                 <button class="btn btn-danger-solid btn-full"
                     onClick=${handleForceSell}
                     disabled=${forceSelling}>
-                    ${forceSelling ? html`<${Spinner} size="xs" color="white"/>` : html`
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    `}
+                    ${forceSelling
+                        ? html`<${Spinner} size="xs" color="white"/>`
+                        : html`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+                    }
                     ${forceSelling ? 'Closing...' : 'Force Sell — Requires TOTP'}
                 </button>
             `}
@@ -647,13 +709,13 @@ function TradeDetailPanel({ trade, onClose, onRefresh }) {
                     <${HealthRow} health=${health}/>
                 </div>
 
-                <div style="padding:18px;background:var(--fill-4);border-radius:var(--r-xl);text-align:center;">
+                <div style="padding:18px;background:var(--fill-4);border:0.5px solid var(--separator);border-radius:var(--r-xl);text-align:center;">
                     <div class="label-uppercase mb-6">Unrealized PnL</div>
                     <div class=${'pnl-value ' + (pnlPos ? 'positive' : 'negative')}
                         style="font-size:var(--text-largetitle);">
                         ${Utils.fmtPnl(pnl, pnlPos)}
                     </div>
-                    <div style=${'font-family:var(--font-mono);font-size:var(--text-subhead);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';margin-top:4px;'}>
+                    <div style=${'font-family:var(--font-mono);font-size:var(--text-subhead);color:' + (pnlPos ? 'var(--profit)' : 'var(--loss)') + ';margin-top:4px;font-variant-numeric:tabular-nums;'}>
                         ${Utils.fmtPct(pnlPct)}
                     </div>
                 </div>
@@ -665,11 +727,11 @@ function TradeDetailPanel({ trade, onClose, onRefresh }) {
                 <div class="panel-section-title">Levels</div>
                 ${[
                     { label: 'Entry',        val: Utils.fmtPrice(trade.open_rate)   },
-                    { label: 'Current',      val: Utils.fmtPrice(trade.current_rate), color: pnlPos ? 'var(--profit)' : 'var(--loss)'                    },
+                    { label: 'Current',      val: Utils.fmtPrice(trade.current_rate), color: pnlPos ? 'var(--profit)' : 'var(--loss)' },
                     { label: 'Stop Loss',    val: Utils.fmtPrice(trade.sl_signal || trade.stop_loss_abs), color: 'var(--loss)'   },
-                    { label: 'Take Profit',  val: Utils.fmtPrice(trade.tp1),        color: 'var(--profit)' },
+                    { label: 'Take Profit',  val: Utils.fmtPrice(trade.tp1),          color: 'var(--profit)' },
                     { label: 'Stake',        val: '$' + parseFloat(trade.stake_amount || 0).toFixed(2) },
-                    { label: 'Leverage',     val: (trade.leverage || '--') + 'x',   color: 'var(--brand)'  },
+                    { label: 'Leverage',     val: (trade.leverage || '--') + 'x',     color: 'var(--brand)'  },
                     { label: 'Tag',          val: trade.enter_tag || '--' },
                 ].map(row => html`
                     <${InfoRow} key=${row.label} label=${row.label} value=${row.val}
@@ -683,19 +745,19 @@ function TradeDetailPanel({ trade, onClose, onRefresh }) {
                     ${health.checks?.map((c, i) => html`
                         <div key=${i} style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--profit)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><polyline points="20 6 9 17 4 12"/></svg>
-                            <span style="color:var(--label-2);">${c}</span>
+                            <span style="color:var(--label-2);letter-spacing:var(--tracking-subhead);">${c}</span>
                         </div>
                     `)}
                     ${health.warnings?.map((w, i) => html`
                         <div key=${'w' + i} style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                            <span style="color:var(--label-2);">${w}</span>
+                            <span style="color:var(--label-2);letter-spacing:var(--tracking-subhead);">${w}</span>
                         </div>
                     `)}
                     ${health.failures?.map((f, i) => html`
                         <div key=${'f' + i} style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--separator);font-size:var(--text-subhead);">
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--loss)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            <span style="color:var(--label-2);">${f}</span>
+                            <span style="color:var(--label-2);letter-spacing:var(--tracking-subhead);">${f}</span>
                         </div>
                     `)}
                 </div>

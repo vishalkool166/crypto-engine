@@ -2,7 +2,60 @@ var { h, Fragment } = preact
 var { useState, useEffect, useRef } = preactHooks
 var html = window.html
 var { useDashboard, showToast } = Store
-var { GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState, LoadingSkeleton, Panel, InfoRow, ConfluenceBar, RegimeBadge, SessionBadge } = SE
+var {
+    GradeBadge, DirBadge, ScoreBar, Spinner, EmptyState,
+    LoadingSkeleton, Panel, InfoRow, ConfluenceBar,
+    RegimeBadge, SessionBadge
+} = SE
+
+function ThesisBlock({ thesis }) {
+    if (!thesis) return null
+
+    const lines = thesis
+        .split(/(?=[✔⚠✗])/)
+        .map(s => s.trim())
+        .filter(Boolean)
+
+    if (lines.length <= 1) {
+        return html`
+            <div style="font-size:var(--text-subhead);color:var(--label-2);line-height:var(--leading-relaxed);font-style:italic;padding:12px 14px;background:var(--fill-4);border-radius:var(--r-lg);letter-spacing:var(--tracking-subhead);">
+                ${thesis}
+            </div>
+        `
+    }
+
+    return html`
+        <div style="display:flex;flex-direction:column;gap:5px;">
+            ${lines.map((line, i) => {
+                const isPass = line.startsWith('✔')
+                const isWarn = line.startsWith('⚠')
+                const isFail = line.startsWith('✗')
+                const color  = isPass ? 'var(--profit)'
+                             : isWarn ? 'var(--warning)'
+                             : isFail ? 'var(--loss)'
+                             : 'var(--label-2)'
+                const bg     = isPass ? 'var(--profit-subtle)'
+                             : isWarn ? 'var(--warning-subtle)'
+                             : isFail ? 'var(--loss-subtle)'
+                             : 'var(--fill-4)'
+                const border = isPass ? '0.5px solid var(--profit-border)'
+                             : isWarn ? '0.5px solid var(--warning-border)'
+                             : isFail ? '0.5px solid var(--loss-border)'
+                             : '0.5px solid var(--separator)'
+                return html`
+                    <div key=${i} style=${'display:flex;align-items:flex-start;gap:8px;padding:8px 12px;background:' + bg + ';border:' + border + ';border-radius:var(--r-md);'}>
+                        <span style=${'font-size:var(--text-footnote);flex-shrink:0;margin-top:1px;color:' + color + ';'}>
+                            ${line[0]}
+                        </span>
+                        <span style="font-size:var(--text-footnote);color:var(--label-2);line-height:var(--leading-snug);letter-spacing:var(--tracking-footnote);">
+                            ${line.slice(1).trim()}
+                        </span>
+                    </div>
+                `
+            })}
+        </div>
+    `
+}
 
 function UniversePage() {
     const data                              = useDashboard()
@@ -130,19 +183,22 @@ function UniversePage() {
                 </div>
                 <div class="flex gap-8">
                     <div class="tab-group">
-                        <button class=${'tab-btn ' + (viewMode === 'grid'  ? 'active' : '')} onClick=${() => setViewMode('grid')}>
+                        <button class=${'tab-btn ' + (viewMode === 'grid'  ? 'active' : '')}
+                            onClick=${() => setViewMode('grid')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                             Grid
                         </button>
-                        <button class=${'tab-btn ' + (viewMode === 'table' ? 'active' : '')} onClick=${() => setViewMode('table')}>
+                        <button class=${'tab-btn ' + (viewMode === 'table' ? 'active' : '')}
+                            onClick=${() => setViewMode('table')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
                             List
                         </button>
                     </div>
                     <button class="btn btn-secondary btn-sm" onClick=${load} disabled=${loading}>
-                        ${loading ? html`<${Spinner} size="xs"/>` : html`
-                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-                        `}
+                        ${loading
+                            ? html`<${Spinner} size="xs"/>`
+                            : html`<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>`
+                        }
                         Refresh
                     </button>
                 </div>
@@ -166,9 +222,10 @@ function UniversePage() {
                             <button class="btn btn-primary"
                                 onClick=${addCoin}
                                 disabled=${adding || !newCoin || newCoin.length < 2}>
-                                ${adding ? html`<${Spinner} size="xs" color="white"/>` : html`
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                                `}
+                                ${adding
+                                    ? html`<${Spinner} size="xs" color="white"/>`
+                                    : html`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`
+                                }
                                 Add
                             </button>
                         </div>
@@ -244,9 +301,9 @@ function UniversePage() {
                             <${CoinTile}
                                 key=${coin.coin}
                                 coin=${coin}
-                                onOpen=${() => setSelectedCoin(coin)}
-                                onToggle=${() => toggleCoin(coin)}
-                                onDelete=${() => deleteCoin(coin.coin)}
+                                onOpen=${()    => setSelectedCoin(coin)}
+                                onToggle=${()  => toggleCoin(coin)}
+                                onDelete=${()  => deleteCoin(coin.coin)}
                                 toggling=${toggling === coin.coin}
                                 deleting=${deleting === coin.coin}
                             />
@@ -305,7 +362,7 @@ function UniversePage() {
                                                 </span>
                                             </td>
                                             <td>
-                                                <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + (Math.abs(coin.funding || 0) > 0.05 ? 'var(--loss)' : Math.abs(coin.funding || 0) > 0.03 ? 'var(--warning)' : 'var(--label-3)') + ';'}>
+                                                <span style=${'font-family:var(--font-mono);font-size:var(--text-caption1);color:' + (Math.abs(coin.funding || 0) > 0.05 ? 'var(--loss)' : Math.abs(coin.funding || 0) > 0.03 ? 'var(--warning)' : 'var(--label-3)') + ';font-variant-numeric:tabular-nums;'}>
                                                     ${coin.funding != null ? coin.funding.toFixed(4) + '%' : '--'}
                                                 </span>
                                             </td>
@@ -346,9 +403,9 @@ function UniversePage() {
             ${selectedCoin && html`
                 <${CoinDetailPanel}
                     coin=${selectedCoin}
-                    onClose=${() => setSelectedCoin(null)}
-                    onToggle=${() => { toggleCoin(selectedCoin); setSelectedCoin(null) }}
-                    onDelete=${() => { deleteCoin(selectedCoin.coin); setSelectedCoin(null) }}
+                    onClose=${()   => setSelectedCoin(null)}
+                    onToggle=${()  => { toggleCoin(selectedCoin); setSelectedCoin(null) }}
+                    onDelete=${()  => { deleteCoin(selectedCoin.coin); setSelectedCoin(null) }}
                 />
             `}
         </div>
@@ -367,7 +424,7 @@ function CoinTile({ coin, onOpen, onToggle, onDelete, toggling, deleting }) {
             <div class="coin-tile-header">
                 <div>
                     <div class="coin-tile-name">${coin.coin}</div>
-                    <div style="font-size:10px;color:var(--label-4);margin-top:1px;">USDT</div>
+                    <div style="font-size:10px;color:var(--label-4);margin-top:1px;letter-spacing:var(--tracking-wide);">USDT</div>
                 </div>
                 <div style="text-align:right;">
                     <div class="coin-tile-price">${Utils.fmtPrice(coin.price)}</div>
@@ -386,7 +443,8 @@ function CoinTile({ coin, onOpen, onToggle, onDelete, toggling, deleting }) {
                     ? html`<${DirBadge} dir=${coin.direction}/>`
                     : null
                 }
-                <span class=${'badge ' + (coin.enabled ? 'badge-online' : 'badge-offline')} style="font-size:9px;">
+                <span class=${'badge ' + (coin.enabled ? 'badge-online' : 'badge-offline')}
+                    style="font-size:9px;">
                     ${coin.enabled ? 'ON' : 'OFF'}
                 </span>
             </div>
@@ -474,10 +532,10 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
                 </div>
 
                 ${score > 0 && html`
-                    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--fill-4);border-radius:var(--r-xl);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px;background:var(--fill-4);border:0.5px solid var(--separator);border-radius:var(--r-xl);">
                         <div>
                             <div class="label-uppercase mb-4">Confluence Score</div>
-                            <div style=${'font-family:var(--font-mono);font-size:var(--text-largetitle);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';letter-spacing:var(--tracking-title1);'}>
+                            <div style=${'font-family:var(--font-mono);font-size:var(--text-largetitle);font-weight:var(--weight-black);color:' + Utils.scoreColor(score) + ';letter-spacing:-0.03em;font-variant-numeric:tabular-nums;'}>
                                 ${score}<span style="font-size:var(--text-title3);color:var(--label-4);">/100</span>
                             </div>
                         </div>
@@ -492,9 +550,7 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
             ${thesis && html`
                 <div class="panel-section">
                     <div class="panel-section-title">Thesis</div>
-                    <div style="font-size:var(--text-subhead);color:var(--label-2);line-height:var(--leading-relaxed);font-style:italic;padding:12px 14px;background:var(--fill-4);border-radius:var(--r-lg);border-left:3px solid var(--brand);">
-                        "${thesis}"
-                    </div>
+                    <${ThesisBlock} thesis=${thesis}/>
                 </div>
             `}
 
@@ -507,9 +563,9 @@ function CoinDetailPanel({ coin, onClose, onToggle, onDelete }) {
                             { label: 'Stop Loss',   val: Utils.fmtPrice(sig.sl),    color: 'var(--loss)'    },
                             { label: 'Take Profit', val: Utils.fmtPrice(sig.tp1),   color: 'var(--profit)'  },
                         ].map(l => html`
-                            <div key=${l.label} style="background:var(--fill-4);border-radius:var(--r-md);padding:10px 12px;">
+                            <div key=${l.label} style="background:var(--fill-4);border:0.5px solid var(--separator);border-radius:var(--r-md);padding:10px 12px;">
                                 <div class="label-uppercase mb-4">${l.label}</div>
-                                <div style=${'font-family:var(--font-mono);font-size:var(--text-callout);font-weight:var(--weight-heavy);color:' + l.color + ';'}>
+                                <div style=${'font-family:var(--font-mono);font-size:var(--text-callout);font-weight:var(--weight-heavy);color:' + l.color + ';letter-spacing:var(--tracking-mono);font-variant-numeric:tabular-nums;'}>
                                     ${l.val}
                                 </div>
                             </div>

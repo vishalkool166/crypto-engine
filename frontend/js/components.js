@@ -3,9 +3,9 @@ var { useState, useEffect, useRef, useCallback } = preactHooks
 var html = window.html
 var {
     confirmTotp, closeTotp, useTotp, useToast, useWsState,
-    useMode, useNextScan, useTicker, usePage, logout,
+    useMode, useNextScan, usePage, logout,
     navigate, requireTotp, toggleTheme, useTheme,
-    useRegime, useConfidence, hideToast
+    useRegime, useConfidence, hideToast, useTopbarState
 } = Store
 
 function GradeBadge({ grade, size }) {
@@ -46,12 +46,12 @@ function OutcomeBadge({ outcome }) {
 }
 
 function RegimeBadge({ regime }) {
-    if (!regime) return null
+    if (!regime || regime === '--') return null
     return html`<span class=${Utils.regimeBadgeClass(regime)}>${regime}</span>`
 }
 
 function SessionBadge({ session }) {
-    if (!session) return null
+    if (!session || session === '--') return null
     return html`<span class=${Utils.sessionBadgeClass(session)}>${Utils.sessionLabel(session)}</span>`
 }
 
@@ -121,9 +121,7 @@ function EmptyState({ icon, title, desc, action, size = 'md' }) {
                 `}
             </div>
             ${title && html`<div class="empty-state-title">${title}</div>`}
-            ${desc  && html`
-                <div class="empty-state-desc">${desc}</div>
-            `}
+            ${desc  && html`<div class="empty-state-desc">${desc}</div>`}
             ${action && html`<div class="empty-state-action">${action}</div>`}
         </div>
     `
@@ -511,36 +509,54 @@ function Toast() {
     `
 }
 
-function Ticker() {
-    const ticker = useTicker()
-    if (!ticker.length) return null
-    const items = [...ticker, ...ticker]
+function MobileTopbarCenter({ topbarState, onTap }) {
+    const prevType  = useRef(null)
+    const [visible, setVisible] = useState(true)
+
+    useEffect(() => {
+        if (prevType.current && prevType.current !== topbarState.type) {
+            setVisible(false)
+            setTimeout(() => {
+                setVisible(true)
+                prevType.current = topbarState.type
+            }, 160)
+        } else {
+            prevType.current = topbarState.type
+        }
+    }, [topbarState.type])
+
+    const canTap = topbarState.type !== 'watching'
+
     return html`
-        <div class="ticker-bar" role="marquee" aria-label="Live price ticker" aria-live="off">
-            <div class="ticker-track">
-                ${items.map((item, i) => html`
-                    <div key=${item.coin + '_' + i} class="ticker-item"
-                        aria-hidden=${i >= ticker.length ? 'true' : 'false'}>
-                        <span class="ticker-coin">${item.coin}</span>
-                        <span class="ticker-price">${Utils.fmtPrice(item.price)}</span>
-                        <span class=${'ticker-change ' + Utils.changeClass(item.change)}>
-                            ${Utils.fmtPct(item.change)}
-                        </span>
-                    </div>
-                `)}
+        <div
+            class=${'mobile-topbar-center ' + topbarState.color}
+            onClick=${canTap ? onTap : undefined}
+            role=${canTap ? 'button' : undefined}
+            aria-label=${canTap ? topbarState.primary : undefined}
+            style=${'opacity:' + (visible ? '1' : '0') + ';transition:opacity 160ms var(--ease-out);'}
+        >
+            <div class="mobile-topbar-primary"
+                style="animation:topbar-state-in 200ms var(--ease-out);">
+                ${topbarState.primary}
+            </div>
+            <div class="mobile-topbar-secondary"
+                style="animation:topbar-state-in 200ms var(--ease-out) 40ms both;">
+                ${topbarState.secondary}
             </div>
         </div>
     `
 }
 
-function Topbar({ page }) {
-    const wsState = useWsState()
-    const mode    = useMode()
-    const regime  = useRegime()
-    const conf    = useConfidence()
-    const theme   = useTheme()
-    const arc     = useNextScan()
-    const mobile  = Utils.isMobile()
+function Topbar({ page, onTopbarTap }) {
+    const wsState     = useWsState()
+    const mode        = useMode()
+    const regime      = useRegime()
+    const conf        = useConfidence()
+    const theme       = useTheme()
+    const arc         = useNextScan()
+    const topbarState = useTopbarState()
+    const [scanning,  setScanning] = useState(false)
+    const mobile      = Utils.isMobile()
 
     const navItems = [
         { id: 'now',         label: 'Now'         },
@@ -554,83 +570,72 @@ function Topbar({ page }) {
                   : wsState === 'connecting' ? 'Connecting'
                   : 'Offline'
 
-    const regimeColor = regime?.toLowerCase().includes('bull') ? 'var(--profit)'
-                      : regime?.toLowerCase().includes('bear') ? 'var(--loss)'
-                      : regime?.toLowerCase().includes('ranging') ? 'var(--warning)'
-                      : 'var(--label-2)'
+    async function handleScanTap() {
+        if (scanning) return
+        setScanning(true)
+        try {
+            await fetch('/api/scan', { credentials: 'include' })
+            Store.showToast('Scan triggered', 'success')
+        } catch(e) {
+            Store.showToast('Scan failed', 'error')
+        } finally {
+            setTimeout(() => setScanning(false), 3000)
+        }
+    }
 
-    const regimeShort = regime
-        ? regime.split(' ').slice(0, 2).join(' ')
-        : '--'
+    function handleCenterTap() {
+        if (onTopbarTap) onTopbarTap(topbarState)
+    }
 
     if (mobile) return html`
         <header class="topbar" role="banner">
-            <div class="topbar-row-1">
-                <a class="topbar-brand" href="#"
-                    onClick=${e => { e.preventDefault(); navigate('now') }}
-                    aria-label="Signal Engine v5">
-                    <svg class="topbar-brand-icon"
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 32 32" fill="none" aria-hidden="true">
-                        <rect width="32" height="32" rx="8" fill="#0a0a0f"/>
-                        <polygon points="18,3 8,18 15,18 14,29 24,14 17,14"
-                            fill="#00C7BE" stroke="#00C7BE" stroke-width="0.5"
-                            stroke-linejoin="round"/>
-                    </svg>
-                    <div class="topbar-brand-name">Signal Engine</div>
-                </a>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <div class=${'topbar-mode ' + mode}
-                        role="status"
-                        aria-label=${'Trading mode: ' + mode}>
-                        <div class="topbar-mode-dot" aria-hidden="true"></div>
-                        <span>${mode.toUpperCase()}</span>
-                    </div>
-                    <div class="topbar-ws"
-                        role="status"
-                        aria-label=${'Connection: ' + wsLabel}>
-                        <div class=${'topbar-ws-dot ' + wsState} aria-hidden="true"></div>
-                    </div>
-                    <button class="topbar-theme-btn"
-                        onClick=${toggleTheme}
-                        aria-label=${theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-                        ${theme === 'dark'
-                            ? html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
-                            : html`<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
-                        }
-                    </button>
-                </div>
+            <div class=${'topbar-mode ' + mode}
+                role="status"
+                aria-label=${'Trading mode: ' + mode}
+                style="flex-shrink:0;"
+                onClick=${() => navigate('system')}>
+                <div class="topbar-mode-dot" aria-hidden="true"></div>
+                <span>${mode.toUpperCase()}</span>
             </div>
-            <div class="topbar-row-2">
-                <div class="topbar-metric">
-                    <span class="topbar-metric-label">Scan</span>
-                    <span class="topbar-metric-value"
-                        style="color:var(--brand-identity);">
-                        ${arc.mins}:${arc.secs}
-                    </span>
-                </div>
-                <div class="topbar-metric">
-                    <span class="topbar-metric-label">Regime</span>
-                    <span class="topbar-metric-value"
-                        style=${'color:' + regimeColor + ';'}>
-                        ${regimeShort}
-                    </span>
-                </div>
-                <div class="topbar-metric">
-                    <span class="topbar-metric-label">Conf</span>
-                    <span class="topbar-metric-value"
-                        style="color:var(--brand-identity);">
-                        ${conf}
-                    </span>
-                </div>
-                <div class="topbar-metric">
-                    <span class="topbar-metric-label">Signal</span>
-                    <span class="topbar-metric-value"
-                        style=${'color:' + (wsState === 'connected' ? 'var(--profit)' : 'var(--loss)') + ';'}>
-                        ${wsState === 'connected' ? 'Live' : 'Off'}
-                    </span>
-                </div>
-            </div>
+
+            <${MobileTopbarCenter}
+                topbarState=${topbarState}
+                onTap=${handleCenterTap}
+            />
+
+            <button
+                class="mobile-topbar-scan-btn"
+                onClick=${handleScanTap}
+                disabled=${scanning}
+                aria-label="Scan now"
+                style="flex-shrink:0;">
+                ${scanning
+                    ? html`<${Spinner} size="xs" color="identity"/>`
+                    : html`
+                        <svg viewBox="0 0 28 28" style="transform:rotate(-90deg);width:28px;height:28px;">
+                            <circle cx="14" cy="14" r="11"
+                                fill="none"
+                                stroke="rgba(255,255,255,0.08)"
+                                stroke-width="2.5"/>
+                            <circle cx="14" cy="14" r="11"
+                                fill="none"
+                                stroke="var(--brand-identity)"
+                                stroke-width="2.5"
+                                stroke-linecap="round"
+                                stroke-dasharray=${(() => {
+                                    const c = 2 * Math.PI * 11
+                                    const f = c * (arc.pct || 0)
+                                    return f + ' ' + (c - f)
+                                })()}
+                                style="transition:stroke-dasharray 1s linear;"
+                            />
+                        </svg>
+                        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:7px;font-family:var(--font-mono);font-weight:var(--weight-bold);color:var(--label-3);">
+                            ${arc.mins}m
+                        </div>
+                    `
+                }
+            </button>
         </header>
     `
 
@@ -664,7 +669,7 @@ function Topbar({ page }) {
             </nav>
 
             <div class="topbar-right">
-                ${regime && html`
+                ${regime && regime !== '--' && html`
                     <div class=${Utils.regimeTopbarClass(regime)}
                         aria-label=${'Market regime: ' + regime}>
                         <span>${regime}</span>
@@ -748,29 +753,29 @@ function Topbar({ page }) {
 function BottomNav({ page }) {
     const items = [
         {
-            id: 'now',
+            id:    'now',
             label: 'Now',
-            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`
+            icon:  html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`
         },
         {
-            id: 'positions',
+            id:    'positions',
             label: 'Positions',
-            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`
+            icon:  html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`
         },
         {
-            id: 'performance',
+            id:    'performance',
             label: 'Perf',
-            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
+            icon:  html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
         },
         {
-            id: 'universe',
+            id:    'universe',
             label: 'Universe',
-            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
+            icon:  html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
         },
         {
-            id: 'system',
+            id:    'system',
             label: 'System',
-            icon: html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`
+            icon:  html`<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>`
         },
     ]
 
@@ -796,5 +801,6 @@ window.SE = {
     Spinner, EmptyState, LoadingSkeleton, Alert,
     TradeProgressBar, ConfluenceBar, InfoRow,
     Panel, Modal, TotpModal, Toast,
-    Ticker, Topbar, BottomNav,
+    Topbar, BottomNav,
+    MobileTopbarCenter,
 }
