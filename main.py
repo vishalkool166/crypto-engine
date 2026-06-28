@@ -324,6 +324,13 @@ app = FastAPI(
     lifespan    = lifespan
 )
 
+from starlette.middleware.sessions import SessionMiddleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key = cfg.JWT_SECRET,
+    max_age    = 3600,
+)
+
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
