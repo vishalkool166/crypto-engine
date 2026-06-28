@@ -62,30 +62,30 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 6px 11px;
-    border-radius: var(--r-sm);
+    padding: 0 10px;
+    height: var(--navbar-h);
     font-size: var(--text-footnote);
-    font-weight: var(--weight-medium);
+    font-weight: var(--weight-regular);
     color: var(--label-3);
     cursor: pointer;
-    transition: color var(--dur-fast) var(--ease-out),
-                background var(--dur-fast) var(--ease-out);
+    transition: color var(--dur-fast) var(--ease-out);
     white-space: nowrap;
     user-select: none;
-    min-height: var(--tap-min);
-    -webkit-tap-highlight-color: transparent;
+    border-radius: 0;
+    background: none;
     letter-spacing: var(--tracking-footnote);
+    -webkit-tap-highlight-color: transparent;
 }
 
 .topbar-nav-item:hover {
-    color: var(--label-1);
-    background: var(--fill-3);
+    color: var(--label-2);
+    background: none;
 }
 
 .topbar-nav-item.active {
-    color: var(--brand-identity);
-    background: var(--identity-dim);
+    color: var(--label-1);
     font-weight: var(--weight-semibold);
+    background: none;
 }
 
 .topbar-nav-item svg {

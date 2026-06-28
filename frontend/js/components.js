@@ -51,8 +51,19 @@ function RegimeBadge({ regime }) {
 }
 
 function SessionBadge({ session }) {
-    if (!session || session === '--') return null
-    return html`<span class=${Utils.sessionBadgeClass(session)}>${Utils.sessionLabel(session)}</span>`
+    if (!session || session === '--') {
+        const current = Utils.currentSession()
+        return html`
+            <span class=${Utils.sessionBadgeClassFromTime()}>
+                ${current.label}
+            </span>
+        `
+    }
+    return html`
+        <span class=${Utils.sessionBadgeClass(session)}>
+            ${Utils.sessionLabel(session)}
+        </span>
+    `
 }
 
 function HealthDot({ state, size = 'md' }) {

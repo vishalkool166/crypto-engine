@@ -441,15 +441,22 @@ function LiveTradeRow({ trade, onClick }) {
 
 function MarketPulse({ summary, radar }) {
     const topCoins = radar.slice(0, 5)
+    const session  = Utils.currentSession()
+
+    const sessionColor = session.quality === 'best'    ? 'var(--session-london-ny)'
+                       : session.quality === 'good'    ? 'var(--session-ny)'
+                       : session.quality === 'caution' ? 'var(--session-asian)'
+                       : 'var(--label-4)'
 
     return html`
         <div class="card card-pad">
             <div class="section-title mb-12">Market Pulse</div>
             ${[
-                { label: 'Win Rate',   val: (summary.win_rate || 0) + '%',   color: Utils.winRateColor(summary.win_rate) },
-                { label: 'Today PnL',  val: Utils.fmtPnl(summary.today_pnl, summary.today_pnl_pos), color: Utils.pnlColor(summary.today_pnl_pos) },
-                { label: 'Scanning',   val: (summary.coins_count || 0) + ' coins' },
-                { label: 'Tradeable',  val: (summary.tradeable_count || 0) + ' now', color: summary.tradeable_count > 0 ? 'var(--profit)' : 'var(--label-3)' },
+                { label: 'Session',   val: session.label,                                                         color: sessionColor },
+                { label: 'Win Rate',  val: (summary.win_rate || 0) + '%',                                         color: Utils.winRateColor(summary.win_rate) },
+                { label: 'Today PnL', val: Utils.fmtPnl(summary.today_pnl, summary.today_pnl_pos),               color: Utils.pnlColor(summary.today_pnl_pos) },
+                { label: 'Scanning',  val: (summary.coins_count || 0) + ' coins' },
+                { label: 'Tradeable', val: (summary.tradeable_count || 0) + ' now',                               color: summary.tradeable_count > 0 ? 'var(--profit)' : 'var(--label-3)' },
             ].map(row => html`
                 <${InfoRow} key=${row.label} label=${row.label} value=${row.val}
                     mono=${true} color=${row.color}/>

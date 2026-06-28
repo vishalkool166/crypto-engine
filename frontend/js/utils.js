@@ -565,6 +565,28 @@ const Utils = {
 
     isMobile()  { return window.innerWidth <= 768;  },
     isTablet()  { return window.innerWidth > 768 && window.innerWidth <= 1024; },
+
+    currentSession() {
+    const hour = new Date().getUTCHours()
+
+        if (hour >= 0  && hour < 8)  return { name: 'Asian',     quality: 'caution', label: 'Asian'     }
+        if (hour >= 8  && hour < 12) return { name: 'London',    quality: 'good',    label: 'London'    }
+        if (hour >= 12 && hour < 16) return { name: 'London/NY', quality: 'best',    label: 'London/NY' }
+        if (hour >= 16 && hour < 21) return { name: 'New York',  quality: 'good',    label: 'New York'  }
+    return                               { name: 'Off Hours', quality: 'off',     label: 'Off Hours' }
+    },
+
+    sessionBadgeClassFromTime() {
+    const map = {
+        'London/NY': 'session-badge session-london-ny',
+        'London':    'session-badge session-london',
+        'New York':  'session-badge session-ny',
+        'Asian':     'session-badge session-asian',
+        'Off Hours': 'session-badge session-off',
+        }
+        return map[this.currentSession().name] || 'session-badge session-off'
+    },
+
 }
 
 window.Utils = Utils

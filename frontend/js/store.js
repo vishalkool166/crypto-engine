@@ -197,11 +197,12 @@ function _deriveTopbarState() {
         }
     }
 
-    const arc = Utils.fmtCountdownArc(_store.nextScanEpoch)
+    const arc     = Utils.fmtCountdownArc(_store.nextScanEpoch)
+    const session = Utils.currentSession()
     return {
         type:      'watching',
         primary:   'Watching ' + (_store.dashboardData?.summary?.coins_count || '--') + ' coins',
-        secondary: 'Next scan ' + arc.mins + ':' + arc.secs,
+        secondary: session.label + ' · Next scan ' + arc.mins + ':' + arc.secs,
         color:     'state-watching',
         signal:    null,
         trade:     null,

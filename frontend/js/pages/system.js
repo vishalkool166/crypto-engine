@@ -42,6 +42,7 @@ function SystemPage() {
 }
 
 function HealthTab() {
+    const theme                             = Store.useTheme()
     const [health,        setHealth]        = useState(null)
     const [loading,       setLoading]       = useState(false)
     const [modeLoading,   setModeLoading]   = useState(null)
@@ -133,6 +134,12 @@ function HealthTab() {
         }
     }
 
+    function handleSignOut() {
+        fetch('/auth/logout').finally(() => {
+            window.location.href = '/login.html'
+        })
+    }
+
     const mode   = health?.trading_mode || 'paper'
     const system = health?.system       || null
     const ml     = health?.ml_status    || {}
@@ -143,7 +150,7 @@ function HealthTab() {
             <div class="grid-2 mb-16">
                 <div class="card card-pad">
                     <div class="section-title mb-16">Trading Mode</div>
-                    <div style=${'font-size:var(--text-largetitle);font-weight:var(--weight-black);letter-spacing:var(--tracking-largetitle);color:' + (mode === 'live' ? 'var(--loss)' : 'var(--brand)') + ';margin-bottom:12px;'}>
+                    <div style=${'font-size:var(--text-largetitle);font-weight:var(--weight-black);letter-spacing:var(--tracking-largetitle);color:' + (mode === 'live' ? 'var(--loss)' : 'var(--brand-identity)') + ';margin-bottom:12px;'}>
                         ${mode === 'live' ? 'LIVE' : 'PAPER'}
                     </div>
                     <div class=${'alert mb-16 ' + (mode === 'live' ? 'alert-error' : 'alert-info')}>
@@ -185,7 +192,9 @@ function HealthTab() {
 
                     <div class="divider"></div>
 
-                    <div class="section-title mb-12" style="font-size:var(--text-subhead);">Quick Actions</div>
+                    <div class="section-title mb-12" style="font-size:var(--text-subhead);">
+                        Quick Actions
+                    </div>
                     <div class="flex gap-8 flex-wrap">
                         <button class="btn btn-secondary btn-sm"
                             onClick=${triggerScan}
@@ -203,13 +212,16 @@ function HealthTab() {
                             `}
                             Sync Outcomes
                         </button>
-                        <button class="btn btn-secondary btn-sm" onClick=${load} disabled=${loading}>
+                        <button class="btn btn-secondary btn-sm"
+                            onClick=${load}
+                            disabled=${loading}>
                             ${loading ? html`<${Spinner} size="xs"/>` : html`
                                 <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
                             `}
                             Refresh
                         </button>
                     </div>
+
                     ${actionMsg && html`
                         <div class=${'alert mt-12 ' + (actionOk ? 'alert-success' : 'alert-error')}>
                             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -221,6 +233,27 @@ function HealthTab() {
                             <div class="alert-content"><div class="alert-desc">${actionMsg}</div></div>
                         </div>
                     `}
+
+                    <div class="divider"></div>
+
+                    <div class="section-title mb-12" style="font-size:var(--text-subhead);">
+                        Preferences & Account
+                    </div>
+                    <div class="flex gap-8 flex-wrap">
+                        <button class="btn btn-secondary btn-sm"
+                            onClick=${Store.toggleTheme}>
+                            ${theme === 'dark'
+                                ? html`<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+                                : html`<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
+                            }
+                            ${theme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+                        </button>
+                        <button class="btn btn-danger btn-sm"
+                            onClick=${handleSignOut}>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                            Sign Out
+                        </button>
+                    </div>
                 </div>
 
                 <div class="card card-pad">
@@ -238,6 +271,7 @@ function HealthTab() {
                                 { label: 'ML Progress',     val: (ml?.closed_trades || 0) + ' / ' + (ml?.required || 100) },
                                 { label: 'Pending Signals', val: sync?.pending_signals || 0 },
                                 { label: 'Win Rate',        val: (sync?.win_rate || 0) + '%', color: Utils.winRateColor(sync?.win_rate || 0) },
+                                { label: 'Session',         val: Utils.currentSession().label, color: Utils.currentSession().quality === 'best' ? 'var(--session-london-ny)' : Utils.currentSession().quality === 'good' ? 'var(--session-ny)' : Utils.currentSession().quality === 'caution' ? 'var(--session-asian)' : 'var(--label-4)' },
                                 { label: 'Last Check',      val: Utils.fmtTimeAgo(health?.timestamp) },
                             ].map(row => html`
                                 <div key=${row.label} class="info-row">
@@ -282,7 +316,7 @@ function HealthTab() {
                         <div class="mt-16">
                             <div class="label-uppercase mb-10">Containers</div>
                             ${system.containers.map(c => html`
-                                <div key=${c.name} style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--fill-4);border-radius:var(--r-lg);margin-bottom:6px;flex-wrap:wrap;gap:8px;">
+                                <div key=${c.name} style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--fill-4);border:0.5px solid var(--separator);border-radius:var(--r-lg);margin-bottom:6px;flex-wrap:wrap;gap:8px;">
                                     <div class="flex items-center gap-8">
                                         <div class=${'topbar-ws-dot ' + (c.status === 'running' ? 'connected' : 'disconnected')}></div>
                                         <span style="font-family:var(--font-mono);font-weight:var(--weight-bold);font-size:var(--text-footnote);">${c.name}</span>
@@ -351,10 +385,10 @@ function HealthTab() {
                                         <div key=${f.feature} style="margin-bottom:10px;">
                                             <div class="flex justify-between mb-4" style="font-size:var(--text-caption1);">
                                                 <span style="color:var(--label-2);">${f.feature.replace(/_/g, ' ')}</span>
-                                                <span style="font-family:var(--font-mono);color:var(--brand);font-weight:var(--weight-bold);">${f.importance}</span>
+                                                <span style="font-family:var(--font-mono);color:var(--brand-identity);font-weight:var(--weight-bold);">${f.importance}</span>
                                             </div>
                                             <div class="progress progress-sm">
-                                                <div class="progress-fill progress-fill-brand"
+                                                <div class="progress-fill progress-fill-identity"
                                                     style=${'width:' + Math.min(100, (f.importance / (ml.top_features[0]?.importance || 1)) * 100) + '%'}>
                                                 </div>
                                             </div>
@@ -492,7 +526,7 @@ function BacktestTab() {
                             { label: 'Win Rate',     val: result.win_rate + '%',                                  color: Utils.winRateColor(result.win_rate) },
                             { label: 'Total PnL',    val: Utils.fmtPnl(result.total_pnl, result.total_pnl >= 0), color: Utils.pnlColor(result.total_pnl >= 0) },
                             { label: 'Max Drawdown', val: result.max_drawdown + '%',                              color: 'var(--loss)' },
-                            { label: 'Trades',       val: result.total_trades,                                    color: 'var(--brand)' },
+                            { label: 'Trades',       val: result.total_trades,                                    color: 'var(--brand-identity)' },
                         ].map(item => html`
                             <div key=${item.label} class="stat-card">
                                 <div class="stat-card-label">${item.label}</div>
@@ -549,7 +583,6 @@ function BacktestTab() {
                                     mono=${true} color=${row.color}/>
                             `)}
                         </div>
-                    </div>
                 </div>
             `}
 
@@ -625,7 +658,7 @@ function AnalysisTab() {
     async function load() {
         setLoading(true)
         try {
-            const [f, health] = await Promise.all([API.factorAnalysis(), API.health()])
+            const [f] = await Promise.all([API.factorAnalysis(), API.health()])
             setFactors(f || null)
         } catch(e) {
             showToast('Failed to load analysis: ' + e.message, 'error')
@@ -651,7 +684,7 @@ function AnalysisTab() {
                 : factors?.table?.length
                 ? html`
                     <div class="card card-pad mb-16">
-                        <div style="font-size:var(--text-subhead);color:var(--label-3);margin-bottom:14px;line-height:var(--leading-relaxed);">
+                        <div style="font-size:var(--text-subhead);color:var(--label-3);margin-bottom:14px;line-height:var(--leading-relaxed);letter-spacing:var(--tracking-subhead);">
                             Edge = win rate when factor present minus win rate when absent.
                             Higher edge = more predictive of winning trades.
                         </div>
