@@ -11,13 +11,15 @@ import qrcode.image.svg
 from io import BytesIO
 from jose import jwt, JWTError
 from datetime import datetime, timezone, timedelta
-from config import cfg, _ensure
-from database import get_session, AuditLog
+from config import cfg, _ensure, TIER_FREE, TIER_ADMIN, tier_meets_minimum
+from database import get_session, AuditLog, User, ApiKey
 
 log = logging.getLogger(__name__)
 
 JWT_ALGORITHM  = "HS256"
 JWT_EXPIRY_H   = 24
+
+OAUTH_ALGORITHM = "HS256"
 
 _failed_attempts: dict = {}
 _lockout_until:   dict = {}
@@ -32,9 +34,9 @@ def _get_attempt_key(ip: str) -> str:
 
 
 def _is_locked_out(ip: str) -> tuple[bool, int]:
-    key      = _get_attempt_key(ip)
-    until    = _lockout_until.get(key, 0)
-    now      = time.time()
+    key   = _get_attempt_key(ip)
+    until = _lockout_until.get(key, 0)
+    now   = time.time()
     if until > now:
         remaining = int((until - now) / 60) + 1
         return True, remaining
@@ -42,8 +44,8 @@ def _is_locked_out(ip: str) -> tuple[bool, int]:
 
 
 def _record_failure(ip: str):
-    key  = _get_attempt_key(ip)
-    now  = time.time()
+    key      = _get_attempt_key(ip)
+    now      = time.time()
     attempts = _failed_attempts.get(key, [])
     attempts = [t for t in attempts if now - t < ATTEMPT_WINDOW]
     attempts.append(now)
@@ -122,7 +124,7 @@ def regenerate_totp() -> str:
     secret = pyotp.random_base32()
     _ensure("TOTP_SECRET", secret)
     cfg.TOTP_SECRET = secret
-    log.info(f"TOTP secret regenerated")
+    log.info("TOTP secret regenerated")
     return secret
 
 
@@ -195,7 +197,7 @@ def verify_recovery_code(code: str) -> bool:
         stored_raw = getattr(cfg, 'RECOVERY_CODES', '') or os.getenv("RECOVERY_CODES", "")
         if not stored_raw:
             return False
-        stored = json.loads(stored_raw)
+        stored    = json.loads(stored_raw)
         code_hash = hashlib.sha256(code.strip().upper().encode()).hexdigest()
         if code_hash in stored:
             stored.remove(code_hash)
@@ -246,9 +248,9 @@ def validate_login(username: str, password: str, totp_code: str, ip: str = "") -
             success = False
         )
         return {
-            "success":   False,
-            "reason":    f"Too many failed attempts. Try again in {minutes} minute{'s' if minutes > 1 else ''}.",
-            "locked":    True,
+            "success":         False,
+            "reason":          f"Too many failed attempts. Try again in {minutes} minute{'s' if minutes > 1 else ''}.",
+            "locked":          True,
             "lockout_minutes": minutes
         }
 
@@ -282,9 +284,9 @@ def validate_login(username: str, password: str, totp_code: str, ip: str = "") -
         )
 
         result = {
-            "success":   False,
-            "reason":    reason,
-            "locked":    locked_now,
+            "success": False,
+            "reason":  reason,
+            "locked":  locked_now,
         }
 
         if locked_now:
@@ -317,10 +319,8 @@ def reset_password_with_totp(totp_code: str, new_password: str, ip: str = "") ->
     if not verify_totp(totp_code):
         _audit("password_reset_failed", "web", "Invalid TOTP", ip=ip, success=False)
         return {"success": False, "reason": "Invalid authenticator code"}
-
     if len(new_password) < 8:
         return {"success": False, "reason": "Password must be at least 8 characters"}
-
     set_password(new_password)
     _audit("password_reset", "web", "Password reset via TOTP", ip=ip, success=True)
     return {"success": True}
@@ -330,10 +330,8 @@ def reset_password_with_recovery(recovery_code: str, new_password: str, ip: str 
     if not verify_recovery_code(recovery_code):
         _audit("password_reset_failed", "web", "Invalid recovery code", ip=ip, success=False)
         return {"success": False, "reason": "Invalid recovery code"}
-
     if len(new_password) < 8:
         return {"success": False, "reason": "Password must be at least 8 characters"}
-
     set_password(new_password)
     _audit("password_reset", "web", "Password reset via recovery code", ip=ip, success=True)
     return {"success": True}
@@ -350,10 +348,16 @@ def is_authenticated(request) -> bool:
     token = request.cookies.get("se_token", "")
     if token and verify_jwt(token):
         return True
+    user = get_oauth_user_from_request(request)
+    if user:
+        return True
     return False
 
 
 def get_user_tier(request) -> str:
+    user = get_oauth_user_from_request(request)
+    if user:
+        return user.get("tier", TIER_FREE)
     token = request.cookies.get("se_token", "")
     if token:
         payload = decode_jwt(token)
@@ -391,3 +395,114 @@ def setup_status() -> dict:
         "api_key":            cfg.DASHBOARD_API_KEY,
         "username":           cfg.DASHBOARD_USERNAME
     }
+
+
+def create_oauth_jwt(user_id: int, email: str, tier: str, is_admin: bool) -> str:
+    payload = {
+        "sub":      str(user_id),
+        "email":    email,
+        "tier":     tier,
+        "is_admin": is_admin,
+        "type":     "oauth",
+        "iat":      datetime.now(timezone.utc),
+        "exp":      datetime.now(timezone.utc) + timedelta(hours=cfg.OAUTH_JWT_EXPIRY),
+    }
+    return jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm=OAUTH_ALGORITHM)
+
+
+def decode_oauth_jwt(token: str) -> dict:
+    try:
+        return jwt.decode(token, cfg.OAUTH_JWT_SECRET, algorithms=[OAUTH_ALGORITHM])
+    except JWTError:
+        return {}
+
+
+def get_oauth_user_from_request(request) -> dict | None:
+    token = request.cookies.get(cfg.SESSION_COOKIE_NAME, "")
+    if not token:
+        token = request.headers.get("X-User-Token", "")
+    if not token:
+        return None
+    payload = decode_oauth_jwt(token)
+    if not payload:
+        return None
+    return payload
+
+
+def verify_oauth_api_key(key: str) -> dict | None:
+    if not key or not key.startswith("se_"):
+        return None
+    try:
+        key_hash = hashlib.sha256(key.encode()).hexdigest()
+        with get_session() as db:
+            api_key = db.query(ApiKey).filter(
+                ApiKey.key_hash == key_hash,
+                ApiKey.is_active == True
+            ).first()
+            if not api_key:
+                return None
+            if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+                return None
+            api_key.last_used = datetime.now(timezone.utc)
+            user = db.query(User).filter(User.id == api_key.user_id).first()
+            if not user or not user.is_active:
+                return None
+            return {
+                "sub":      str(user.id),
+                "email":    user.email,
+                "tier":     user.tier,
+                "is_admin": user.is_admin,
+                "type":     "api_key",
+            }
+    except Exception as e:
+        log.error(f"API key verify error: {e}")
+        return None
+
+
+def get_current_user_any(request) -> dict | None:
+    api_key_header = request.headers.get("X-API-Key", "")
+    if api_key_header:
+        if verify_api_key(api_key_header):
+            return {
+                "sub":      "0",
+                "email":    cfg.DASHBOARD_USERNAME,
+                "tier":     TIER_ADMIN,
+                "is_admin": True,
+                "type":     "master_key",
+            }
+        oauth_user = verify_oauth_api_key(api_key_header)
+        if oauth_user:
+            return oauth_user
+
+    oauth_user = get_oauth_user_from_request(request)
+    if oauth_user:
+        return oauth_user
+
+    token = request.cookies.get("se_token", "")
+    if token and verify_jwt(token):
+        payload = decode_jwt(token)
+        return {
+            "sub":      "0",
+            "email":    cfg.DASHBOARD_USERNAME,
+            "tier":     TIER_ADMIN,
+            "is_admin": True,
+            "type":     "legacy",
+        }
+
+    return None
+
+
+def is_admin_user(user: dict) -> bool:
+    if not user:
+        return False
+    if user.get("is_admin"):
+        return True
+    email = user.get("email", "")
+    return cfg.is_admin_email(email)
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    raw    = "se_" + secrets.token_hex(32)
+    hashed = hashlib.sha256(raw.encode()).hexdigest()
+    prefix = raw[:12]
+    return raw, hashed, prefix

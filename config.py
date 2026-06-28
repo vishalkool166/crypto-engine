@@ -17,6 +17,130 @@ def _ensure(key: str, value: str):
     set_key(ENV_FILE, key, value)
 
 
+TIER_FREE  = "free"
+TIER_PRO   = "pro"
+TIER_ELITE = "elite"
+TIER_ADMIN = "admin"
+
+TIER_HIERARCHY = {
+    TIER_FREE:  0,
+    TIER_PRO:   1,
+    TIER_ELITE: 2,
+    TIER_ADMIN: 3,
+}
+
+TIER_FEATURES = {
+    TIER_FREE: {
+        "signal_delay_minutes": 30,
+        "signals_per_day":      3,
+        "show_levels":          False,
+        "show_factors":         False,
+        "show_thesis":          False,
+        "show_ml":              False,
+        "show_positions":       False,
+        "show_performance":     False,
+        "show_full_history":    False,
+        "show_universe":        True,
+        "show_system":          False,
+        "api_key_access":       False,
+        "backtest_access":      False,
+        "coins_limit":          5,
+    },
+    TIER_PRO: {
+        "signal_delay_minutes": 0,
+        "signals_per_day":      999,
+        "show_levels":          True,
+        "show_factors":         False,
+        "show_thesis":          False,
+        "show_ml":              False,
+        "show_positions":       True,
+        "show_performance":     True,
+        "show_full_history":    True,
+        "show_universe":        True,
+        "show_system":          False,
+        "api_key_access":       False,
+        "backtest_access":      False,
+        "coins_limit":          999,
+    },
+    TIER_ELITE: {
+        "signal_delay_minutes": 0,
+        "signals_per_day":      999,
+        "show_levels":          True,
+        "show_factors":         True,
+        "show_thesis":          True,
+        "show_ml":              True,
+        "show_positions":       True,
+        "show_performance":     True,
+        "show_full_history":    True,
+        "show_universe":        True,
+        "show_system":          False,
+        "api_key_access":       True,
+        "backtest_access":      True,
+        "coins_limit":          999,
+    },
+    TIER_ADMIN: {
+        "signal_delay_minutes": 0,
+        "signals_per_day":      999,
+        "show_levels":          True,
+        "show_factors":         True,
+        "show_thesis":          True,
+        "show_ml":              True,
+        "show_positions":       True,
+        "show_performance":     True,
+        "show_full_history":    True,
+        "show_universe":        True,
+        "show_system":          True,
+        "api_key_access":       True,
+        "backtest_access":      True,
+        "coins_limit":          999,
+    },
+}
+
+TIER_PRICING = {
+    TIER_FREE: {
+        "name":          "Basic",
+        "price_monthly": 0,
+        "price_annual":  0,
+        "description":   "Delayed signals to get started",
+        "cta":           "Start Free",
+        "popular":       False,
+    },
+    TIER_PRO: {
+        "name":          "Pro",
+        "price_monthly": 29,
+        "price_annual":  23,
+        "description":   "Live signals with full entry levels",
+        "cta":           "Start Pro",
+        "popular":       True,
+    },
+    TIER_ELITE: {
+        "name":          "Elite",
+        "price_monthly": 79,
+        "price_annual":  63,
+        "description":   "Everything plus deep factor analysis",
+        "cta":           "Start Elite",
+        "popular":       False,
+    },
+}
+
+
+def get_tier_features(tier: str) -> dict:
+    return TIER_FEATURES.get(tier, TIER_FEATURES[TIER_FREE])
+
+
+def tier_has_feature(tier: str, feature: str) -> bool:
+    features = get_tier_features(tier)
+    return bool(features.get(feature, False))
+
+
+def tier_rank(tier: str) -> int:
+    return TIER_HIERARCHY.get(tier, 0)
+
+
+def tier_meets_minimum(user_tier: str, required_tier: str) -> bool:
+    return tier_rank(user_tier) >= tier_rank(required_tier)
+
+
 class Config:
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_SECRET  = os.getenv("BINANCE_SECRET")
@@ -105,6 +229,35 @@ class Config:
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
 
+    RISK_PCT_PER_TRADE = 0.02
+
+    GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+    GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
+    GITHUB_CLIENT_ID     = os.getenv("GITHUB_CLIENT_ID", "")
+    GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+    ADMIN_EMAILS: list = [
+        e.strip()
+        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        if e.strip()
+    ]
+
+    OAUTH_JWT_SECRET  = os.getenv("OAUTH_JWT_SECRET", "")
+    OAUTH_JWT_EXPIRY  = int(os.getenv("OAUTH_JWT_EXPIRY_HOURS", "168"))
+
+    SESSION_COOKIE_NAME     = "se_user_token"
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SECURE   = True
+    SESSION_COOKIE_SAMESITE = "lax"
+    SESSION_COOKIE_MAX_AGE  = 60 * 60 * 24 * 7
+
+    DEFAULT_TIER = TIER_FREE
+
+    CAPITAL = float(os.getenv("CAPITAL", "1000"))
+
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
         if self.PAPER_TRADING:
@@ -119,7 +272,9 @@ class Config:
         try:
             from database import SessionLocal, CoinConfig
             with SessionLocal() as db:
-                rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+                rows = db.query(CoinConfig).filter(
+                    CoinConfig.enabled == True
+                ).all()
                 if rows:
                     _coins_cache      = [r.coin for r in rows]
                     _coins_cache_time = time.time()
@@ -134,6 +289,11 @@ class Config:
         global _coins_cache, _coins_cache_time
         _coins_cache      = []
         _coins_cache_time = 0.0
+
+    def is_admin_email(self, email: str) -> bool:
+        return email.strip().lower() in [
+            e.lower() for e in self.ADMIN_EMAILS
+        ]
 
 
 def _bootstrap_secrets():
@@ -169,13 +329,22 @@ def _bootstrap_secrets():
         cfg.JWT_SECRET = js
         changed = True
 
+    if not os.getenv("OAUTH_JWT_SECRET"):
+        ojs = secrets.token_hex(32)
+        _ensure("OAUTH_JWT_SECRET", ojs)
+        cfg.OAUTH_JWT_SECRET = ojs
+        changed = True
+
     if not os.getenv("DASHBOARD_USERNAME"):
         _ensure("DASHBOARD_USERNAME", "admin")
         cfg.DASHBOARD_USERNAME = "admin"
         changed = True
 
     if changed:
-        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete setup")
+        log.info(
+            "[FIRST RUN] Secrets written to .env — "
+            "visit /auth/setup to complete setup"
+        )
 
 
 cfg = Config()

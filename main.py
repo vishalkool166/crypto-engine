@@ -7,13 +7,14 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPExcept
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, RedirectResponse
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from api.routes       import router, build_dashboard_payload
 from api.freqtrade    import router as ft_router, start_ft_ws, stop_ft_ws, on_ft_event
+from saas.admin       import router as admin_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
 from alerts.telegram  import send, register_webhook, handle_webhook
@@ -22,8 +23,8 @@ from events           import on_event, emit
 import runtime_state  as rs
 
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s"
+    level  = logging.INFO,
+    format = "%(asctime)s — %(name)s — %(levelname)s — %(message)s"
 )
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
@@ -32,19 +33,39 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 log       = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="frontend")
 
-_dashboard_clients:   set          = set()
-_last_payload_hash:   str          = ""
-_dashboard_push_task: asyncio.Task = None
-_cpu_warmup_task:     asyncio.Task = None
+_dashboard_clients:   dict          = {}
+_last_payload_hash:   str           = ""
+_dashboard_push_task: asyncio.Task  = None
+_cpu_warmup_task:     asyncio.Task  = None
 
 limiter = Limiter(key_func=get_remote_address)
 
 
-async def _build_ticker_payload() -> dict:
+def _get_client_tier(websocket: WebSocket) -> str:
+    try:
+        from auth import get_current_user_any
+        from saas.middleware import get_current_user
+
+        class FakeRequest:
+            def __init__(self, ws):
+                self.cookies = dict(ws.cookies)
+                self.headers = dict(ws.headers)
+
+        fake    = FakeRequest(websocket)
+        user    = get_current_user(fake)
+        if user:
+            return user.get("tier", "free")
+    except Exception:
+        pass
+    return "free"
+
+
+async def _build_ticker_payload(tier: str = "admin") -> dict:
     from api.dashboard import get_ticker_bar, get_summary
     from api.freqtrade import _ft_get_safe
+    from saas.signals  import get_summary_for_tier
 
-    summary = get_summary()
+    summary = get_summary_for_tier(tier)
     status  = await _ft_get_safe("/status") or []
 
     return {
@@ -54,32 +75,32 @@ async def _build_ticker_payload() -> dict:
         "summary": {
             "next_scan_epoch": summary.get("next_scan_epoch", 0),
             "mode":            summary.get("mode",        "paper"),
-            "today_pnl":       summary.get("today_pnl",   0),
+            "today_pnl":       summary.get("today_pnl",   None),
             "today_pnl_pos":   summary.get("today_pnl_pos", True),
-            "today_trades":    summary.get("today_trades", 0),
+            "today_trades":    summary.get("today_trades", None),
             "coins_count":     summary.get("coins_count",  0),
         }
     }
 
 
-async def _build_ws_payload() -> dict:
-    from api.dashboard import get_summary, get_signals_data, get_ticker_bar
-    return {
-        "type":    "dashboard",
-        "summary": get_summary(),
-        "signals": get_signals_data(),
-        "ticker":  get_ticker_bar(),
-    }
+async def _build_ws_payload(tier: str = "admin") -> dict:
+    from saas.signals import get_dashboard_for_tier
+    return get_dashboard_for_tier(tier)
 
 
-async def _push_to_clients(payload_str: str):
+async def _push_to_clients(payload_str: str, tier_filter: str = None):
     dead = set()
-    for ws in _dashboard_clients:
+    for ws_id, ws_info in _dashboard_clients.items():
+        ws         = ws_info["ws"]
+        client_tier = ws_info.get("tier", "free")
+        if tier_filter and client_tier != tier_filter:
+            continue
         try:
             await ws.send_text(payload_str)
         except Exception:
-            dead.add(ws)
-    _dashboard_clients.difference_update(dead)
+            dead.add(ws_id)
+    for ws_id in dead:
+        _dashboard_clients.pop(ws_id, None)
 
 
 async def push_event(event_type: str, data: dict = None):
@@ -87,19 +108,41 @@ async def push_event(event_type: str, data: dict = None):
     if not _dashboard_clients:
         return
     try:
-        if event_type == "ping":
-            payload      = await _build_ticker_payload()
-            payload_str  = json.dumps(payload)
-            payload_hash = hashlib.md5(payload_str.encode()).hexdigest()
-            if payload_hash == _last_payload_hash:
-                return
-            _last_payload_hash = payload_hash
-            await _push_to_clients(payload_str)
-            return
+        tiers_present = set(
+            info.get("tier", "free")
+            for info in _dashboard_clients.values()
+        )
 
-        payload     = await _build_ws_payload()
-        payload_str = json.dumps(payload)
-        await _push_to_clients(payload_str)
+        for tier in tiers_present:
+            tier_clients = {
+                k: v for k, v in _dashboard_clients.items()
+                if v.get("tier") == tier
+            }
+            if not tier_clients:
+                continue
+
+            if event_type == "ping":
+                payload      = await _build_ticker_payload(tier)
+                payload_str  = json.dumps(payload)
+                payload_hash = hashlib.md5(
+                    (tier + payload_str).encode()
+                ).hexdigest()
+                if payload_hash == _last_payload_hash:
+                    continue
+                _last_payload_hash = payload_hash
+            else:
+                payload     = await _build_ws_payload(tier)
+                payload_str = json.dumps(payload)
+
+            dead = set()
+            for ws_id, ws_info in tier_clients.items():
+                ws = ws_info["ws"]
+                try:
+                    await ws.send_text(payload_str)
+                except Exception:
+                    dead.add(ws_id)
+            for ws_id in dead:
+                _dashboard_clients.pop(ws_id, None)
 
     except Exception as e:
         log.error(f"push_event error: {e}")
@@ -128,7 +171,6 @@ async def _push_ft_update(event_type: str, data: dict = None):
         if status and isinstance(status, list):
             tp1_map = {}
             sl_map  = {}
-
             try:
                 with SessionLocal() as db:
                     for trade in status:
@@ -136,37 +178,31 @@ async def _push_ft_update(event_type: str, data: dict = None):
                         coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
                         is_short  = trade.get("is_short", False)
                         direction = "SHORT" if is_short else "LONG"
-
-                        signal = db.query(SignalModel).filter(
+                        signal    = db.query(SignalModel).filter(
                             SignalModel.coin      == coin,
                             SignalModel.direction == direction,
                             SignalModel.outcome   == "pending"
                         ).order_by(SignalModel.timestamp.desc()).first()
-
                         if not signal:
                             signal = db.query(SignalModel).filter(
                                 SignalModel.coin      == coin,
                                 SignalModel.direction == direction
                             ).order_by(SignalModel.timestamp.desc()).first()
-
                         if signal:
                             if signal.tp1: tp1_map[coin] = float(signal.tp1)
                             if signal.sl:  sl_map[coin]  = float(signal.sl)
-
             except Exception as e:
                 log.warning(f"ft push tp1/sl error: {e}")
 
             for trade in status:
                 pair = trade.get("pair", "")
                 coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-
                 health = None
                 try:
                     from trade.health_monitor import get_health_from_redis
                     health = get_health_from_redis(coin)
                 except Exception:
                     pass
-
                 trade_copy              = dict(trade)
                 trade_copy["health"]    = health
                 trade_copy["tp1"]       = tp1_map.get(coin, None)
@@ -189,15 +225,7 @@ async def _push_ft_update(event_type: str, data: dict = None):
 
 
 async def _on_ft_event(event_type: str, data: dict):
-    log.info(f"FT event received: {event_type}")
-
-    push_types = {
-        "entry_fill",
-        "exit_fill",
-        "trade",
-        "status",
-    }
-
+    push_types = {"entry_fill", "exit_fill", "trade", "status"}
     if event_type in push_types:
         await _push_ft_update(event_type, data)
 
@@ -299,7 +327,14 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-allowed_origins = [cfg.DOMAIN, "http://localhost:8000", "http://127.0.0.1:8000"]
+allowed_origins = [
+    cfg.DOMAIN,
+    cfg.FRONTEND_URL,
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
 allowed_origins = [o for o in allowed_origins if o]
 
 app.add_middleware(
@@ -314,7 +349,7 @@ app.add_middleware(
 @app.middleware("http")
 async def cache_headers(request: Request, call_next):
     response = await call_next(request)
-    path = request.url.path
+    path     = request.url.path
 
     if any(path.endswith(f) for f in [
         'preact.min.js',
@@ -330,6 +365,393 @@ async def cache_headers(request: Request, call_next):
         response.headers["Expires"]       = "0"
 
     return response
+
+
+@app.get("/auth/google")
+async def auth_google(request: Request):
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        from starlette.config import Config as StarletteConfig
+
+        config = StarletteConfig(environ={
+            "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
+            "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
+        })
+
+        oauth = OAuth(config)
+        oauth.register(
+            name                 = "google",
+            server_metadata_url  = "https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs        = {"scope": "openid email profile"},
+        )
+
+        redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/google"
+        return await oauth.google.authorize_redirect(request, redirect_uri)
+
+    except Exception as e:
+        log.error(f"Google auth error: {e}")
+        raise HTTPException(500, "OAuth configuration error")
+
+
+@app.get("/auth/github")
+async def auth_github(request: Request):
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        from starlette.config import Config as StarletteConfig
+
+        config = StarletteConfig(environ={
+            "GITHUB_CLIENT_ID":     cfg.GITHUB_CLIENT_ID,
+            "GITHUB_CLIENT_SECRET": cfg.GITHUB_CLIENT_SECRET,
+        })
+
+        oauth = OAuth(config)
+        oauth.register(
+            name          = "github",
+            access_token_url  = "https://github.com/login/oauth/access_token",
+            authorize_url     = "https://github.com/login/oauth/authorize",
+            api_base_url      = "https://api.github.com/",
+            client_kwargs     = {"scope": "user:email"},
+        )
+
+        redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/github"
+        return await oauth.github.authorize_redirect(request, redirect_uri)
+
+    except Exception as e:
+        log.error(f"GitHub auth error: {e}")
+        raise HTTPException(500, "OAuth configuration error")
+
+
+@app.get("/auth/callback/google")
+async def auth_callback_google(request: Request):
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        from starlette.config import Config as StarletteConfig
+        from saas.users import create_or_get_user
+        from auth import create_oauth_jwt
+
+        config = StarletteConfig(environ={
+            "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
+            "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
+        })
+
+        oauth = OAuth(config)
+        oauth.register(
+            name                = "google",
+            server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs       = {"scope": "openid email profile"},
+        )
+
+        token    = await oauth.google.authorize_access_token(request)
+        userinfo = token.get("userinfo") or await oauth.google.userinfo(token=token)
+
+        email       = userinfo.get("email", "")
+        name        = userinfo.get("name", "")
+        avatar      = userinfo.get("picture", "")
+        provider_id = userinfo.get("sub", "")
+
+        if not email:
+            raise HTTPException(400, "No email from Google")
+
+        user = create_or_get_user(
+            email       = email,
+            name        = name,
+            avatar      = avatar,
+            provider    = "google",
+            provider_id = provider_id,
+        )
+
+        jwt_token = create_oauth_jwt(
+            user_id  = user["id"],
+            email    = user["email"],
+            tier     = user["tier"],
+            is_admin = user["is_admin"],
+        )
+
+        is_new    = user.get("is_new", False)
+        redirect  = "/onboarding" if is_new else "/app.html"
+
+        response = RedirectResponse(url=redirect)
+        response.set_cookie(
+            key      = cfg.SESSION_COOKIE_NAME,
+            value    = jwt_token,
+            httponly = cfg.SESSION_COOKIE_HTTPONLY,
+            secure   = cfg.SESSION_COOKIE_SECURE,
+            samesite = cfg.SESSION_COOKIE_SAMESITE,
+            max_age  = cfg.SESSION_COOKIE_MAX_AGE,
+        )
+
+        from auth import audit
+        audit(
+            action  = "oauth_login",
+            source  = "google",
+            detail  = f"user:{email} tier:{user['tier']} new:{is_new}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Google callback error: {e}")
+        return RedirectResponse(url="/login.html?error=oauth_failed")
+
+
+@app.get("/auth/callback/github")
+async def auth_callback_github(request: Request):
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        from starlette.config import Config as StarletteConfig
+        from saas.users import create_or_get_user
+        from auth import create_oauth_jwt
+
+        config = StarletteConfig(environ={
+            "GITHUB_CLIENT_ID":     cfg.GITHUB_CLIENT_ID,
+            "GITHUB_CLIENT_SECRET": cfg.GITHUB_CLIENT_SECRET,
+        })
+
+        oauth = OAuth(config)
+        oauth.register(
+            name             = "github",
+            access_token_url = "https://github.com/login/oauth/access_token",
+            authorize_url    = "https://github.com/login/oauth/authorize",
+            api_base_url     = "https://api.github.com/",
+            client_kwargs    = {"scope": "user:email"},
+        )
+
+        token    = await oauth.github.authorize_access_token(request)
+        resp     = await oauth.github.get("user", token=token)
+        userinfo = resp.json()
+
+        email = userinfo.get("email", "")
+        if not email:
+            emails_resp = await oauth.github.get("user/emails", token=token)
+            emails      = emails_resp.json()
+            primary     = next(
+                (e for e in emails if e.get("primary") and e.get("verified")),
+                None
+            )
+            if primary:
+                email = primary.get("email", "")
+
+        if not email:
+            raise HTTPException(400, "No email from GitHub")
+
+        name        = userinfo.get("name") or userinfo.get("login", "")
+        avatar      = userinfo.get("avatar_url", "")
+        provider_id = str(userinfo.get("id", ""))
+
+        user = create_or_get_user(
+            email       = email,
+            name        = name,
+            avatar      = avatar,
+            provider    = "github",
+            provider_id = provider_id,
+        )
+
+        jwt_token = create_oauth_jwt(
+            user_id  = user["id"],
+            email    = user["email"],
+            tier     = user["tier"],
+            is_admin = user["is_admin"],
+        )
+
+        is_new   = user.get("is_new", False)
+        redirect = "/onboarding" if is_new else "/app.html"
+
+        response = RedirectResponse(url=redirect)
+        response.set_cookie(
+            key      = cfg.SESSION_COOKIE_NAME,
+            value    = jwt_token,
+            httponly = cfg.SESSION_COOKIE_HTTPONLY,
+            secure   = cfg.SESSION_COOKIE_SECURE,
+            samesite = cfg.SESSION_COOKIE_SAMESITE,
+            max_age  = cfg.SESSION_COOKIE_MAX_AGE,
+        )
+
+        from auth import audit
+        audit(
+            action  = "oauth_login",
+            source  = "github",
+            detail  = f"user:{email} tier:{user['tier']} new:{is_new}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"GitHub callback error: {e}")
+        return RedirectResponse(url="/login.html?error=oauth_failed")
+
+
+@app.get("/auth/session")
+async def auth_session(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        user = get_current_user(request)
+        if not user:
+            return JSONResponse(
+                status_code = 401,
+                content     = {"authenticated": False}
+            )
+        return JSONResponse(content={
+            "authenticated": True,
+            "user": {
+                "id":       user.get("sub"),
+                "email":    user.get("email"),
+                "tier":     user.get("tier"),
+                "is_admin": user.get("is_admin", False),
+            }
+        })
+    except Exception as e:
+        log.error(f"Session check error: {e}")
+        return JSONResponse(
+            status_code = 401,
+            content     = {"authenticated": False}
+        )
+
+
+@app.get("/auth/logout")
+async def auth_logout():
+    response = RedirectResponse(url="/")
+    response.delete_cookie(cfg.SESSION_COOKIE_NAME)
+    response.delete_cookie("se_token")
+    return response
+
+
+@app.post("/auth/onboarding/complete")
+async def complete_onboarding(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.users import mark_user_onboarded
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id = int(user.get("sub", 0))
+        if user_id:
+            mark_user_onboarded(user_id)
+
+        return JSONResponse(content={"success": True})
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Onboarding complete error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/pricing")
+async def get_pricing():
+    try:
+        from saas.tiers import get_pricing_data
+        return JSONResponse(content=get_pricing_data())
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/me")
+async def get_me(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.users import get_user_by_id, list_api_keys
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id   = int(user.get("sub", 0))
+        user_data = get_user_by_id(user_id) if user_id else None
+
+        if not user_data:
+            return JSONResponse(content={
+                "id":       user.get("sub"),
+                "email":    user.get("email"),
+                "tier":     user.get("tier"),
+                "is_admin": user.get("is_admin", False),
+            })
+
+        from config import get_tier_features
+        features = get_tier_features(user_data["tier"])
+
+        api_keys = []
+        if features.get("api_key_access"):
+            api_keys = list_api_keys(user_id)
+
+        return JSONResponse(content={
+            **user_data,
+            "features": features,
+            "api_keys": api_keys,
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"get_me error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/me/api-keys")
+async def create_api_key(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.users import create_api_key_for_user
+        from config import tier_has_feature
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        tier = user.get("tier", "free")
+        if not tier_has_feature(tier, "api_key_access"):
+            raise HTTPException(
+                403,
+                {"code": "upgrade_required", "required_tier": "elite"}
+            )
+
+        body    = await request.json()
+        name    = body.get("name", "Default")
+        user_id = int(user.get("sub", 0))
+        result  = create_api_key_for_user(user_id, name)
+
+        if not result.get("success"):
+            raise HTTPException(400, result.get("reason", "Failed"))
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"create_api_key error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/api/me/api-keys/{key_id}")
+async def delete_api_key(request: Request, key_id: int):
+    try:
+        from saas.middleware import get_current_user
+        from saas.users import revoke_api_key
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id = int(user.get("sub", 0))
+        result  = revoke_api_key(key_id, user_id)
+
+        if not result.get("success"):
+            raise HTTPException(400, result.get("reason", "Failed"))
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.get("/auth/setup")
@@ -410,7 +832,7 @@ async def auth_login(request: Request):
                     "reason":             result["reason"],
                     "locked":             result.get("locked", False),
                     "lockout_minutes":    result.get("lockout_minutes", 0),
-                    "attempts_remaining": result.get("attempts_remaining", MAX_ATTEMPTS),
+                    "attempts_remaining": result.get("attempts_remaining", 5),
                 }
             )
     except Exception as e:
@@ -469,13 +891,6 @@ async def auth_reset_password(request: Request):
         raise HTTPException(500, "Reset failed")
 
 
-@app.get("/auth/logout")
-async def auth_logout():
-    response = JSONResponse(content={"success": True})
-    response.delete_cookie("se_token")
-    return response
-
-
 @app.post("/auth/set-credentials")
 async def auth_set_credentials(request: Request):
     try:
@@ -527,7 +942,6 @@ async def auth_regenerate_totp(request: Request):
             )
 
         new_secret = regenerate_totp()
-        log.info("TOTP secret regenerated")
         return JSONResponse(content={"success": True, "secret": new_secret})
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -573,10 +987,14 @@ async def auth_qr_png():
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
-    _dashboard_clients.add(websocket)
+
+    tier    = _get_client_tier(websocket)
+    ws_id   = id(websocket)
+    _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier}
 
     try:
-        initial = await build_dashboard_payload()
+        from saas.signals import get_dashboard_for_tier
+        initial = get_dashboard_for_tier(tier)
         await websocket.send_text(json.dumps(initial))
     except Exception as e:
         log.error(f"Dashboard WS initial push error: {e}")
@@ -585,9 +1003,9 @@ async def dashboard_websocket(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        _dashboard_clients.discard(websocket)
+        _dashboard_clients.pop(ws_id, None)
     except Exception:
-        _dashboard_clients.discard(websocket)
+        _dashboard_clients.pop(ws_id, None)
 
 
 @app.post("/webhook/telegram")
@@ -596,8 +1014,9 @@ async def telegram_webhook(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-app.include_router(router,    prefix="/api")
-app.include_router(ft_router, prefix="/api")
+app.include_router(router,       prefix="/api")
+app.include_router(ft_router,    prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 app.mount(
     "/",

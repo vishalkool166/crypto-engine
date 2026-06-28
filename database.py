@@ -22,6 +22,7 @@ engine = create_engine(
 def set_wal_mode(dbapi_connection, connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
@@ -212,6 +213,81 @@ class ContentPost(Base):
     engagement_json = Column(Text, nullable=True)
     created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     edited_text     = Column(Text, nullable=True)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id              = Column(Integer, primary_key=True)
+    email           = Column(String, unique=True, nullable=False, index=True)
+    name            = Column(String, nullable=True)
+    avatar          = Column(String, nullable=True)
+    provider        = Column(String, default="google")
+    provider_id     = Column(String, nullable=True)
+    tier            = Column(String, default="free")
+    is_admin        = Column(Boolean, default=False)
+    is_active       = Column(Boolean, default=True)
+    onboarded       = Column(Boolean, default=False)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen       = Column(DateTime, nullable=True)
+    last_login      = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_id", name="uq_provider_user"),
+    )
+
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id                   = Column(Integer, primary_key=True)
+    user_id              = Column(Integer, nullable=False, index=True)
+    tier                 = Column(String, default="free")
+    status               = Column(String, default="active")
+    stripe_customer_id   = Column(String, nullable=True)
+    stripe_sub_id        = Column(String, nullable=True)
+    stripe_price_id      = Column(String, nullable=True)
+    current_period_start = Column(DateTime, nullable=True)
+    current_period_end   = Column(DateTime, nullable=True)
+    cancel_at_period_end = Column(Boolean, default=False)
+    trial_ends_at        = Column(DateTime, nullable=True)
+    created_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    notes                = Column(Text, nullable=True)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id         = Column(Integer, primary_key=True)
+    user_id    = Column(Integer, nullable=False, index=True)
+    key_hash   = Column(String, unique=True, nullable=False)
+    key_prefix = Column(String, nullable=False)
+    name       = Column(String, default="Default")
+    tier       = Column(String, default="elite")
+    is_active  = Column(Boolean, default=True)
+    last_used  = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at = Column(DateTime, nullable=True)
+
+
+class SignalDelivery(Base):
+    __tablename__ = "signal_deliveries"
+
+    id                  = Column(Integer, primary_key=True)
+    signal_id           = Column(Integer, nullable=False, index=True)
+    user_id             = Column(Integer, nullable=False, index=True)
+    tier_at_delivery    = Column(String, nullable=False)
+    delivered_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    was_delayed         = Column(Boolean, default=False)
+    delay_minutes       = Column(Integer, default=0)
+    levels_shown        = Column(Boolean, default=False)
+    factors_shown       = Column(Boolean, default=False)
+
+    __table_args__ = (
+        UniqueConstraint("signal_id", "user_id", name="uq_signal_delivery"),
+    )
+
 
 
 def init_db():
