@@ -497,8 +497,9 @@ async def auth_callback_google(request: Request):
 
         is_new   = user.get("is_new", False)
 
-        NEW_FRONTEND_URL = os.getenv("NEW_FRONTEND_URL", "")
-        redirect = f"{NEW_FRONTEND_URL}/dashboard/now" if NEW_FRONTEND_URL else "/app.html"
+        import os as _os
+        new_frontend = _os.getenv("NEW_FRONTEND_URL", "")
+        redirect = f"{new_frontend}/dashboard/now" if new_frontend else "/app.html"
 
         response = RedirectResponse(url=redirect)
         response.set_cookie(
