@@ -218,19 +218,19 @@ class ContentPost(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id              = Column(Integer, primary_key=True)
-    email           = Column(String, unique=True, nullable=False, index=True)
-    name            = Column(String, nullable=True)
-    avatar          = Column(String, nullable=True)
-    provider        = Column(String, default="google")
-    provider_id     = Column(String, nullable=True)
-    tier            = Column(String, default="free")
-    is_admin        = Column(Boolean, default=False)
-    is_active       = Column(Boolean, default=True)
-    onboarded       = Column(Boolean, default=False)
-    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    last_seen       = Column(DateTime, nullable=True)
-    last_login      = Column(DateTime, nullable=True)
+    id          = Column(Integer, primary_key=True)
+    email       = Column(String, unique=True, nullable=False, index=True)
+    name        = Column(String, nullable=True)
+    avatar      = Column(String, nullable=True)
+    provider    = Column(String, default="google")
+    provider_id = Column(String, nullable=True)
+    tier        = Column(String, default="free")
+    is_admin    = Column(Boolean, default=False)
+    is_active   = Column(Boolean, default=True)
+    onboarded   = Column(Boolean, default=False)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_seen   = Column(DateTime, nullable=True)
+    last_login  = Column(DateTime, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("provider", "provider_id", name="uq_provider_user"),
@@ -274,20 +274,35 @@ class ApiKey(Base):
 class SignalDelivery(Base):
     __tablename__ = "signal_deliveries"
 
-    id                  = Column(Integer, primary_key=True)
-    signal_id           = Column(Integer, nullable=False, index=True)
-    user_id             = Column(Integer, nullable=False, index=True)
-    tier_at_delivery    = Column(String, nullable=False)
-    delivered_at        = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    was_delayed         = Column(Boolean, default=False)
-    delay_minutes       = Column(Integer, default=0)
-    levels_shown        = Column(Boolean, default=False)
-    factors_shown       = Column(Boolean, default=False)
+    id               = Column(Integer, primary_key=True)
+    signal_id        = Column(Integer, nullable=False, index=True)
+    user_id          = Column(Integer, nullable=False, index=True)
+    tier_at_delivery = Column(String, nullable=False)
+    delivered_at     = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    was_delayed      = Column(Boolean, default=False)
+    delay_minutes    = Column(Integer, default=0)
+    levels_shown     = Column(Boolean, default=False)
+    factors_shown    = Column(Boolean, default=False)
 
     __table_args__ = (
         UniqueConstraint("signal_id", "user_id", name="uq_signal_delivery"),
     )
 
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id          = Column(Integer, primary_key=True)
+    user_id     = Column(Integer, nullable=False, index=True)
+    session_id  = Column(String, unique=True, nullable=False, index=True)
+    device      = Column(String, nullable=True)
+    browser     = Column(String, nullable=True)
+    ip          = Column(String, nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    last_active = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at  = Column(DateTime, nullable=True)
+    is_active   = Column(Boolean, default=True)
+    revoked_at  = Column(DateTime, nullable=True)
 
 
 def init_db():

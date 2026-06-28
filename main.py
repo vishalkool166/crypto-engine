@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.sessions import SessionMiddleware
 from api.routes       import router, build_dashboard_payload
 from api.freqtrade    import router as ft_router, start_ft_ws, stop_ft_ws, on_ft_event
 from saas.admin       import router as admin_router
@@ -33,17 +34,16 @@ logging.getLogger("websockets").setLevel(logging.WARNING)
 log       = logging.getLogger(__name__)
 templates = Jinja2Templates(directory="frontend")
 
-_dashboard_clients:   dict          = {}
-_last_payload_hash:   str           = ""
-_dashboard_push_task: asyncio.Task  = None
-_cpu_warmup_task:     asyncio.Task  = None
+_dashboard_clients:   dict         = {}
+_last_payload_hash:   str          = ""
+_dashboard_push_task: asyncio.Task = None
+_cpu_warmup_task:     asyncio.Task = None
 
 limiter = Limiter(key_func=get_remote_address)
 
 
 def _get_client_tier(websocket: WebSocket) -> str:
     try:
-        from auth import get_current_user_any
         from saas.middleware import get_current_user
 
         class FakeRequest:
@@ -51,8 +51,8 @@ def _get_client_tier(websocket: WebSocket) -> str:
                 self.cookies = dict(ws.cookies)
                 self.headers = dict(ws.headers)
 
-        fake    = FakeRequest(websocket)
-        user    = get_current_user(fake)
+        fake = FakeRequest(websocket)
+        user = get_current_user(fake)
         if user:
             return user.get("tier", "free")
     except Exception:
@@ -61,7 +61,6 @@ def _get_client_tier(websocket: WebSocket) -> str:
 
 
 async def _build_ticker_payload(tier: str = "admin") -> dict:
-    from api.dashboard import get_ticker_bar, get_summary
     from api.freqtrade import _ft_get_safe
     from saas.signals  import get_summary_for_tier
 
@@ -70,15 +69,15 @@ async def _build_ticker_payload(tier: str = "admin") -> dict:
 
     return {
         "type":    "ticker",
-        "items":   get_ticker_bar(),
+        "items":   [],
         "status":  status,
         "summary": {
             "next_scan_epoch": summary.get("next_scan_epoch", 0),
-            "mode":            summary.get("mode",        "paper"),
-            "today_pnl":       summary.get("today_pnl",   None),
+            "mode":            summary.get("mode",          "paper"),
+            "today_pnl":       summary.get("today_pnl",     None),
             "today_pnl_pos":   summary.get("today_pnl_pos", True),
-            "today_trades":    summary.get("today_trades", None),
-            "coins_count":     summary.get("coins_count",  0),
+            "today_trades":    summary.get("today_trades",  None),
+            "coins_count":     summary.get("coins_count",   0),
         }
     }
 
@@ -88,13 +87,10 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
     return get_dashboard_for_tier(tier)
 
 
-async def _push_to_clients(payload_str: str, tier_filter: str = None):
+async def _push_to_clients(payload_str: str):
     dead = set()
     for ws_id, ws_info in _dashboard_clients.items():
-        ws         = ws_info["ws"]
-        client_tier = ws_info.get("tier", "free")
-        if tier_filter and client_tier != tier_filter:
-            continue
+        ws = ws_info["ws"]
         try:
             await ws.send_text(payload_str)
         except Exception:
@@ -195,8 +191,8 @@ async def _push_ft_update(event_type: str, data: dict = None):
                 log.warning(f"ft push tp1/sl error: {e}")
 
             for trade in status:
-                pair = trade.get("pair", "")
-                coin = pair.replace("/USDT:USDT", "").replace("/USDT", "")
+                pair   = trade.get("pair", "")
+                coin   = pair.replace("/USDT:USDT", "").replace("/USDT", "")
                 health = None
                 try:
                     from trade.health_monitor import get_health_from_redis
@@ -244,6 +240,18 @@ async def _cpu_warmup_loop():
         await asyncio.sleep(30)
 
 
+async def _session_cleanup_loop():
+    from saas.sessions import cleanup_expired_sessions
+    while True:
+        await asyncio.sleep(3600)
+        try:
+            count = cleanup_expired_sessions()
+            if count:
+                log.info(f"Session cleanup: {count} expired sessions removed")
+        except Exception as e:
+            log.error(f"Session cleanup error: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_push_task, _cpu_warmup_task
@@ -266,6 +274,7 @@ async def lifespan(app: FastAPI):
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
     _cpu_warmup_task     = asyncio.create_task(_cpu_warmup_loop())
+    _session_cleanup     = asyncio.create_task(_session_cleanup_loop())
 
     start_scheduler()
     await register_webhook()
@@ -308,6 +317,12 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    _session_cleanup.cancel()
+    try:
+        await _session_cleanup
+    except asyncio.CancelledError:
+        pass
+
     await stop_ft_ws()
     stop_scheduler()
 
@@ -324,7 +339,6 @@ app = FastAPI(
     lifespan    = lifespan
 )
 
-from starlette.middleware.sessions import SessionMiddleware
 app.add_middleware(
     SessionMiddleware,
     secret_key = cfg.JWT_SECRET,
@@ -387,9 +401,9 @@ async def auth_google(request: Request):
 
         oauth = OAuth(config)
         oauth.register(
-            name                 = "google",
-            server_metadata_url  = "https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs        = {"scope": "openid email profile"},
+            name                = "google",
+            server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration",
+            client_kwargs       = {"scope": "openid email profile"},
         )
 
         redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/google"
@@ -400,41 +414,14 @@ async def auth_google(request: Request):
         raise HTTPException(500, "OAuth configuration error")
 
 
-@app.get("/auth/github")
-async def auth_github(request: Request):
-    try:
-        from authlib.integrations.starlette_client import OAuth
-        from starlette.config import Config as StarletteConfig
-
-        config = StarletteConfig(environ={
-            "GITHUB_CLIENT_ID":     cfg.GITHUB_CLIENT_ID,
-            "GITHUB_CLIENT_SECRET": cfg.GITHUB_CLIENT_SECRET,
-        })
-
-        oauth = OAuth(config)
-        oauth.register(
-            name          = "github",
-            access_token_url  = "https://github.com/login/oauth/access_token",
-            authorize_url     = "https://github.com/login/oauth/authorize",
-            api_base_url      = "https://api.github.com/",
-            client_kwargs     = {"scope": "user:email"},
-        )
-
-        redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/github"
-        return await oauth.github.authorize_redirect(request, redirect_uri)
-
-    except Exception as e:
-        log.error(f"GitHub auth error: {e}")
-        raise HTTPException(500, "OAuth configuration error")
-
-
 @app.get("/auth/callback/google")
 async def auth_callback_google(request: Request):
     try:
         from authlib.integrations.starlette_client import OAuth
         from starlette.config import Config as StarletteConfig
-        from saas.users import create_or_get_user
-        from auth import create_oauth_jwt
+        from saas.users    import create_or_get_user
+        from saas.sessions import create_session
+        from auth          import create_oauth_jwt
 
         config = StarletteConfig(environ={
             "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
@@ -467,20 +454,54 @@ async def auth_callback_google(request: Request):
             provider_id = provider_id,
         )
 
+        ip         = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+
+        session_id = create_session(
+            user_id    = user["id"],
+            tier       = user["tier"],
+            ip         = ip,
+            user_agent = user_agent,
+        )
+
         jwt_token = create_oauth_jwt(
+            user_id    = user["id"],
+            email      = user["email"],
+            tier       = user["tier"],
+            is_admin   = user["is_admin"],
+        )
+
+        import json as _json
+        token_with_session = create_oauth_jwt(
             user_id  = user["id"],
             email    = user["email"],
             tier     = user["tier"],
             is_admin = user["is_admin"],
         )
 
-        is_new    = user.get("is_new", False)
-        redirect  = "/onboarding" if is_new else "/app.html"
+        from jose import jwt as _jwt
+        payload = {
+            "sub":        str(user["id"]),
+            "email":      user["email"],
+            "tier":       user["tier"],
+            "is_admin":   user["is_admin"],
+            "session_id": session_id,
+            "type":       "oauth",
+        }
+        from datetime import timedelta
+        from jose import jwt as jose_jwt
+        import datetime as _dt
+        payload["iat"] = _dt.datetime.now(_dt.timezone.utc)
+        payload["exp"] = _dt.datetime.now(_dt.timezone.utc) + timedelta(hours=cfg.OAUTH_JWT_EXPIRY)
+        final_token    = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
+
+        is_new   = user.get("is_new", False)
+        redirect = "/app.html"
 
         response = RedirectResponse(url=redirect)
         response.set_cookie(
             key      = cfg.SESSION_COOKIE_NAME,
-            value    = jwt_token,
+            value    = final_token,
             httponly = cfg.SESSION_COOKIE_HTTPONLY,
             secure   = cfg.SESSION_COOKIE_SECURE,
             samesite = cfg.SESSION_COOKIE_SAMESITE,
@@ -492,7 +513,7 @@ async def auth_callback_google(request: Request):
             action  = "oauth_login",
             source  = "google",
             detail  = f"user:{email} tier:{user['tier']} new:{is_new}",
-            ip      = request.client.host if request.client else "",
+            ip      = ip,
             success = True,
         )
 
@@ -502,96 +523,6 @@ async def auth_callback_google(request: Request):
         raise
     except Exception as e:
         log.error(f"Google callback error: {e}")
-        return RedirectResponse(url="/login.html?error=oauth_failed")
-
-
-@app.get("/auth/callback/github")
-async def auth_callback_github(request: Request):
-    try:
-        from authlib.integrations.starlette_client import OAuth
-        from starlette.config import Config as StarletteConfig
-        from saas.users import create_or_get_user
-        from auth import create_oauth_jwt
-
-        config = StarletteConfig(environ={
-            "GITHUB_CLIENT_ID":     cfg.GITHUB_CLIENT_ID,
-            "GITHUB_CLIENT_SECRET": cfg.GITHUB_CLIENT_SECRET,
-        })
-
-        oauth = OAuth(config)
-        oauth.register(
-            name             = "github",
-            access_token_url = "https://github.com/login/oauth/access_token",
-            authorize_url    = "https://github.com/login/oauth/authorize",
-            api_base_url     = "https://api.github.com/",
-            client_kwargs    = {"scope": "user:email"},
-        )
-
-        token    = await oauth.github.authorize_access_token(request)
-        resp     = await oauth.github.get("user", token=token)
-        userinfo = resp.json()
-
-        email = userinfo.get("email", "")
-        if not email:
-            emails_resp = await oauth.github.get("user/emails", token=token)
-            emails      = emails_resp.json()
-            primary     = next(
-                (e for e in emails if e.get("primary") and e.get("verified")),
-                None
-            )
-            if primary:
-                email = primary.get("email", "")
-
-        if not email:
-            raise HTTPException(400, "No email from GitHub")
-
-        name        = userinfo.get("name") or userinfo.get("login", "")
-        avatar      = userinfo.get("avatar_url", "")
-        provider_id = str(userinfo.get("id", ""))
-
-        user = create_or_get_user(
-            email       = email,
-            name        = name,
-            avatar      = avatar,
-            provider    = "github",
-            provider_id = provider_id,
-        )
-
-        jwt_token = create_oauth_jwt(
-            user_id  = user["id"],
-            email    = user["email"],
-            tier     = user["tier"],
-            is_admin = user["is_admin"],
-        )
-
-        is_new   = user.get("is_new", False)
-        redirect = "/onboarding" if is_new else "/app.html"
-
-        response = RedirectResponse(url=redirect)
-        response.set_cookie(
-            key      = cfg.SESSION_COOKIE_NAME,
-            value    = jwt_token,
-            httponly = cfg.SESSION_COOKIE_HTTPONLY,
-            secure   = cfg.SESSION_COOKIE_SECURE,
-            samesite = cfg.SESSION_COOKIE_SAMESITE,
-            max_age  = cfg.SESSION_COOKIE_MAX_AGE,
-        )
-
-        from auth import audit
-        audit(
-            action  = "oauth_login",
-            source  = "github",
-            detail  = f"user:{email} tier:{user['tier']} new:{is_new}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(f"GitHub callback error: {e}")
         return RedirectResponse(url="/login.html?error=oauth_failed")
 
 
@@ -623,18 +554,96 @@ async def auth_session(request: Request):
 
 
 @app.get("/auth/logout")
-async def auth_logout():
+async def auth_logout(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.sessions  import revoke_session
+
+        user = get_current_user(request)
+        if user and user.get("session_id"):
+            revoke_session(user["session_id"])
+    except Exception:
+        pass
+
     response = RedirectResponse(url="/")
     response.delete_cookie(cfg.SESSION_COOKIE_NAME)
     response.delete_cookie("se_token")
     return response
 
 
+@app.get("/api/me/sessions")
+async def get_my_sessions(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.sessions  import get_user_sessions
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id  = int(user.get("sub", 0))
+        sessions = get_user_sessions(user_id)
+
+        return JSONResponse(content={"sessions": sessions})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"get_my_sessions error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/me/sessions/{session_id}/revoke")
+async def revoke_my_session(request: Request, session_id: str):
+    try:
+        from saas.middleware import get_current_user
+        from saas.sessions  import revoke_session
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id = int(user.get("sub", 0))
+        result  = revoke_session(session_id, user_id)
+
+        if not result.get("success"):
+            raise HTTPException(400, result.get("reason", "Failed"))
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/me/sessions/revoke-all")
+async def revoke_all_my_sessions(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from saas.sessions  import revoke_all_sessions
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+
+        user_id    = int(user.get("sub", 0))
+        current_sid = user.get("session_id")
+        result     = revoke_all_sessions(user_id, except_session=current_sid)
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.post("/auth/onboarding/complete")
 async def complete_onboarding(request: Request):
     try:
         from saas.middleware import get_current_user
-        from saas.users import mark_user_onboarded
+        from saas.users     import mark_user_onboarded
 
         user = get_current_user(request)
         if not user:
@@ -665,7 +674,8 @@ async def get_pricing():
 async def get_me(request: Request):
     try:
         from saas.middleware import get_current_user
-        from saas.users import get_user_by_id, list_api_keys
+        from saas.users     import get_user_by_id, list_api_keys
+        from saas.sessions  import get_user_sessions
 
         user = get_current_user(request)
         if not user:
@@ -689,10 +699,13 @@ async def get_me(request: Request):
         if features.get("api_key_access"):
             api_keys = list_api_keys(user_id)
 
+        sessions = get_user_sessions(user_id)
+
         return JSONResponse(content={
             **user_data,
             "features": features,
             "api_keys": api_keys,
+            "sessions": sessions,
         })
 
     except HTTPException:
@@ -706,8 +719,8 @@ async def get_me(request: Request):
 async def create_api_key(request: Request):
     try:
         from saas.middleware import get_current_user
-        from saas.users import create_api_key_for_user
-        from config import tier_has_feature
+        from saas.users     import create_api_key_for_user
+        from config         import tier_has_feature
 
         user = get_current_user(request)
         if not user:
@@ -741,7 +754,7 @@ async def create_api_key(request: Request):
 async def delete_api_key(request: Request, key_id: int):
     try:
         from saas.middleware import get_current_user
-        from saas.users import revoke_api_key
+        from saas.users     import revoke_api_key
 
         user = get_current_user(request)
         if not user:
@@ -995,8 +1008,8 @@ async def auth_qr_png():
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
 
-    tier    = _get_client_tier(websocket)
-    ws_id   = id(websocket)
+    tier  = _get_client_tier(websocket)
+    ws_id = id(websocket)
     _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier}
 
     try:

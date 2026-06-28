@@ -1,11 +1,30 @@
+import logging
 from fastapi import HTTPException, Request
 from functools import wraps
 from config import cfg, tier_meets_minimum, TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN
 from auth import get_current_user_any, is_admin_user
 
+log = logging.getLogger(__name__)
+
 
 def get_current_user(request: Request) -> dict | None:
-    return get_current_user_any(request)
+    user = get_current_user_any(request)
+    if not user:
+        return None
+
+    session_id = user.get("session_id")
+    if session_id:
+        try:
+            from saas.sessions import validate_session
+            session_data = validate_session(session_id)
+            if not session_data:
+                return None
+            user["tier"]     = session_data["tier"]
+            user["is_admin"] = session_data["is_admin"]
+        except Exception as e:
+            log.warning(f"Session validation error: {e}")
+
+    return user
 
 
 def require_auth(request: Request) -> dict:

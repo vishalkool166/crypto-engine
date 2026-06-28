@@ -11,6 +11,13 @@ from saas.users import (
     reactivate_user,
     get_user_by_id,
 )
+from saas.sessions import (
+    get_all_sessions_admin,
+    admin_revoke_session,
+    admin_revoke_all_user_sessions,
+    get_user_sessions,
+    cleanup_expired_sessions,
+)
 from database import get_session, User, Subscription, AuditLog, Signal as SignalModel
 from config import TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN
 
@@ -35,18 +42,18 @@ async def admin_overview(request: Request):
         user_stats = get_user_stats()
 
         with get_session() as db:
-            total_signals  = db.query(SignalModel).count()
-            pending        = db.query(SignalModel).filter(
+            total_signals = db.query(SignalModel).count()
+            pending       = db.query(SignalModel).filter(
                 SignalModel.outcome == "pending"
             ).count()
-            wins           = db.query(SignalModel).filter(
+            wins          = db.query(SignalModel).filter(
                 SignalModel.outcome == "win"
             ).count()
-            losses         = db.query(SignalModel).filter(
+            losses        = db.query(SignalModel).filter(
                 SignalModel.outcome == "loss"
             ).count()
-            closed         = wins + losses
-            win_rate       = round(wins / closed * 100, 1) if closed > 0 else 0
+            closed        = wins + losses
+            win_rate      = round(wins / closed * 100, 1) if closed > 0 else 0
 
             from sqlalchemy import func
             total_pnl = db.query(
@@ -84,11 +91,11 @@ async def admin_overview(request: Request):
         return JSONResponse(content={
             "users":        user_stats,
             "signals": {
-                "total":    total_signals,
-                "pending":  pending,
-                "wins":     wins,
-                "losses":   losses,
-                "win_rate": win_rate,
+                "total":     total_signals,
+                "pending":   pending,
+                "wins":      wins,
+                "losses":    losses,
+                "win_rate":  win_rate,
                 "total_pnl": round(float(total_pnl), 2),
             },
             "recent_users": recent_users_list,
@@ -137,21 +144,18 @@ async def admin_get_user(request: Request, user_id: int):
             sub_data = None
             if sub:
                 sub_data = {
-                    "tier":                sub.tier,
-                    "status":              sub.status,
-                    "current_period_end":  sub.current_period_end.isoformat() if sub.current_period_end else None,
+                    "tier":                 sub.tier,
+                    "status":               sub.status,
+                    "current_period_end":   sub.current_period_end.isoformat() if sub.current_period_end else None,
                     "cancel_at_period_end": sub.cancel_at_period_end,
                 }
 
-            audit_logs = db.query(AuditLog).filter(
-                AuditLog.ip == user.get("email", "")
-            ).order_by(
-                AuditLog.timestamp.desc()
-            ).limit(20).all()
+        sessions = get_user_sessions(user_id)
 
         return JSONResponse(content={
             "user":         user,
             "subscription": sub_data,
+            "sessions":     sessions,
         })
 
     except HTTPException:
@@ -163,7 +167,7 @@ async def admin_get_user(request: Request, user_id: int):
 
 @router.post("/admin/users/{user_id}/tier")
 async def admin_update_tier(request: Request, user_id: int):
-    _auth(request)
+    admin = _auth(request)
     try:
         body     = await request.json()
         new_tier = body.get("tier", "").lower()
@@ -181,7 +185,6 @@ async def admin_update_tier(request: Request, user_id: int):
             raise HTTPException(400, result.get("reason", "Update failed"))
 
         from auth import audit
-        admin_user = _auth(request)
         audit(
             action  = "admin_tier_update",
             source  = "admin",
@@ -203,6 +206,8 @@ async def admin_update_tier(request: Request, user_id: int):
 async def admin_deactivate_user(request: Request, user_id: int):
     _auth(request)
     try:
+        admin_revoke_all_user_sessions(user_id)
+
         result = deactivate_user(user_id)
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Failed"))
@@ -251,6 +256,86 @@ async def admin_reactivate_user(request: Request, user_id: int):
         raise HTTPException(500, str(e))
 
 
+@router.get("/admin/sessions")
+async def admin_get_sessions(
+    request: Request,
+    user_id: int = None,
+    limit:   int = 100,
+):
+    _auth(request)
+    try:
+        sessions = get_all_sessions_admin(
+            user_id = user_id,
+            limit   = limit,
+        )
+        return JSONResponse(content={"sessions": sessions})
+    except Exception as e:
+        log.error(f"admin_get_sessions error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/sessions/{session_id}/revoke")
+async def admin_revoke_session_endpoint(request: Request, session_id: str):
+    _auth(request)
+    try:
+        result = admin_revoke_session(session_id)
+        if not result.get("success"):
+            raise HTTPException(400, result.get("reason", "Failed"))
+
+        from auth import audit
+        audit(
+            action  = "admin_revoke_session",
+            source  = "admin",
+            detail  = f"session:{session_id[:16]}...",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"admin_revoke_session error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/users/{user_id}/sessions/revoke-all")
+async def admin_revoke_all_sessions(request: Request, user_id: int):
+    _auth(request)
+    try:
+        result = admin_revoke_all_user_sessions(user_id)
+
+        from auth import audit
+        audit(
+            action  = "admin_revoke_all_sessions",
+            source  = "admin",
+            detail  = f"user:{user_id} revoked:{result.get('revoked', 0)}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        log.error(f"admin_revoke_all_sessions error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/sessions/cleanup")
+async def admin_cleanup_sessions(request: Request):
+    _auth(request)
+    try:
+        count = cleanup_expired_sessions()
+        return JSONResponse(content={
+            "success": True,
+            "cleaned": count,
+        })
+    except Exception as e:
+        log.error(f"admin_cleanup_sessions error: {e}")
+        raise HTTPException(500, str(e))
+
+
 @router.get("/admin/stats")
 async def admin_stats(request: Request):
     _auth(request)
@@ -286,15 +371,21 @@ async def admin_stats(request: Request):
                 elite_count * TIER_PRICING[TIER_ELITE]["price_monthly"]
             )
 
+            from database import UserSession
+            active_sessions = db.query(UserSession).filter(
+                UserSession.is_active == True
+            ).count()
+
         return JSONResponse(content={
-            "users":          user_stats,
-            "signups_week":   signups_week,
-            "signups_month":  signups_month,
-            "active_subs":    active_subs,
-            "mrr_estimate":   mrr,
-            "pro_count":      pro_count,
-            "elite_count":    elite_count,
-            "timestamp":      now.isoformat(),
+            "users":           user_stats,
+            "signups_week":    signups_week,
+            "signups_month":   signups_month,
+            "active_subs":     active_subs,
+            "mrr_estimate":    mrr,
+            "pro_count":       pro_count,
+            "elite_count":     elite_count,
+            "active_sessions": active_sessions,
+            "timestamp":       now.isoformat(),
         })
 
     except Exception as e:
