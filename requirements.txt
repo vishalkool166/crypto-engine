@@ -28,3 +28,4 @@ docker
 psutil
 authlib==1.3.0
 python-multipart==0.0.9
+itsdangerous>=2.0.0
