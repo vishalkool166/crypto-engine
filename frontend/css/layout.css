@@ -871,3 +871,37 @@
         padding-bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 28px);
     }
 }
+
+@media (display-mode: standalone) {
+    body {
+        background-color: #000000;
+        background: var(--grad-page);
+        background-attachment: fixed;
+    }
+
+    .topbar {
+        background: rgba(10, 10, 15, 0.96);
+        backdrop-filter: var(--blur-ultra);
+        -webkit-backdrop-filter: var(--blur-ultra);
+    }
+
+    .bottom-nav {
+        background: rgba(10, 10, 15, 0.96);
+        backdrop-filter: var(--blur-ultra);
+        -webkit-backdrop-filter: var(--blur-ultra);
+    }
+}
+
+@media (display-mode: standalone) and (prefers-color-scheme: light) {
+    body {
+        background-color: #F2F2F7;
+    }
+
+    .topbar {
+        background: rgba(242, 242, 247, 0.96);
+    }
+
+    .bottom-nav {
+        background: rgba(242, 242, 247, 0.96);
+    }
+}
