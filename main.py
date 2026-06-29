@@ -533,12 +533,26 @@ async def auth_callback_google(request: Request):
 async def auth_session(request: Request):
     try:
         from saas.middleware import get_current_user
+        from saas.users import get_user_by_id
         user = get_current_user(request)
         if not user:
             return JSONResponse(
                 status_code = 401,
                 content     = {"authenticated": False}
             )
+        user_id = int(user.get("sub", 0))
+        if user_id:
+            fresh = get_user_by_id(user_id)
+            if fresh:
+                return JSONResponse(content={
+                    "authenticated": True,
+                    "user": {
+                        "id":       str(fresh["id"]),
+                        "email":    fresh["email"],
+                        "tier":     fresh["tier"],
+                        "is_admin": fresh["is_admin"],
+                    }
+                })
         return JSONResponse(content={
             "authenticated": True,
             "user": {
@@ -554,7 +568,6 @@ async def auth_session(request: Request):
             status_code = 401,
             content     = {"authenticated": False}
         )
-
 
 @app.get("/auth/logout")
 async def auth_logout(request: Request):
