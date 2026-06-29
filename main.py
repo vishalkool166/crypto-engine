@@ -497,9 +497,7 @@ async def auth_callback_google(request: Request):
 
         is_new   = user.get("is_new", False)
 
-        import os as _os
-        new_frontend = _os.getenv("NEW_FRONTEND_URL", "")
-        redirect = f"{new_frontend}/dashboard/now" if new_frontend else "/app.html"
+        redirect = "/"
 
         response = RedirectResponse(url=redirect)
         response.set_cookie(
@@ -526,7 +524,7 @@ async def auth_callback_google(request: Request):
         raise
     except Exception as e:
         log.error(f"Google callback error: {e}")
-        return RedirectResponse(url="/login.html?error=oauth_failed")
+        return RedirectResponse(url="/login?error=oauth_failed")
 
 
 @app.get("/auth/session")
@@ -786,7 +784,7 @@ async def auth_setup(request: Request):
     if status["setup_complete"]:
         raise HTTPException(
             status_code = 403,
-            detail      = "Setup already complete. Use /login.html to sign in."
+            detail      = "Setup already complete."
         )
 
     qr_svg           = ""
