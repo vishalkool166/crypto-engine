@@ -1041,6 +1041,17 @@ app.include_router(router,       prefix="/api")
 app.include_router(ft_router,    prefix="/api")
 app.include_router(admin_router, prefix="/api")
 
+from fastapi.responses import FileResponse
+import os as _os
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    static_dir = "frontend"
+    file_path = _os.path.join(static_dir, full_path)
+    if _os.path.exists(file_path) and _os.path.isfile(file_path):
+        return FileResponse(file_path)
+    return FileResponse(_os.path.join(static_dir, "index.html"))
+
 app.mount(
     "/",
     StaticFiles(directory="frontend", html=True),
