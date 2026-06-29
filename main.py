@@ -497,7 +497,7 @@ async def auth_callback_google(request: Request):
 
         is_new   = user.get("is_new", False)
 
-        redirect = "/"
+        redirect = f"{cfg.DOMAIN}/"
 
         response = RedirectResponse(url=redirect)
         response.set_cookie(
