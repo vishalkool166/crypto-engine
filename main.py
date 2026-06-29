@@ -343,6 +343,8 @@ app.add_middleware(
     SessionMiddleware,
     secret_key = cfg.JWT_SECRET,
     max_age    = 3600,
+    https_only = True,
+    same_site  = "none",
 )
 
 app.state.limiter = limiter
