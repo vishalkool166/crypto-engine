@@ -37,19 +37,6 @@ async def job_ml_check():
         log.error(f"ML check job error: {e}")
 
 
-async def job_sync_outcomes():
-    try:
-        from trade.sync import sync_freqtrade_outcomes
-        result = await sync_freqtrade_outcomes()
-        if result.get("synced", 0) > 0:
-            log.info(
-                f"Outcome sync: {result['synced']} synced "
-                f"{result['unmatched']} unmatched"
-            )
-    except Exception as e:
-        log.error(f"Outcome sync job error: {e}")
-
-
 async def job_health_check():
     try:
         from trade.health_monitor import run_health_checks
@@ -93,9 +80,9 @@ def get_next_scan_epoch() -> int:
             return int(next_dt.timestamp() * 1000)
 
     next_hour = now.replace(
-        hour    = (now.hour + 1) % 24,
-        minute  = 0,
-        second  = 0,
+        hour        = (now.hour + 1) % 24,
+        minute      = 0,
+        second      = 0,
         microsecond = 0
     )
     return int(next_hour.timestamp() * 1000)
@@ -104,36 +91,36 @@ def get_next_scan_epoch() -> int:
 def start_scheduler():
     scheduler.add_job(
         job_scan,
-        trigger        = CronTrigger(minute="0,15,30,45", timezone="UTC"),
-        id             = "scan",
+        trigger          = CronTrigger(minute="0,15,30,45", timezone="UTC"),
+        id               = "scan",
         replace_existing = True
     )
 
     scheduler.add_job(
         job_monitor,
-        trigger        = IntervalTrigger(seconds=30),
-        id             = "monitor",
+        trigger          = IntervalTrigger(seconds=30),
+        id               = "monitor",
         replace_existing = True
     )
 
     scheduler.add_job(
         job_ml_check,
-        trigger        = IntervalTrigger(hours=1),
-        id             = "ml_check",
+        trigger          = IntervalTrigger(hours=1),
+        id               = "ml_check",
         replace_existing = True
     )
 
     scheduler.add_job(
         job_health_check,
-        trigger        = IntervalTrigger(minutes=1),
-        id             = "health_check",
+        trigger          = IntervalTrigger(minutes=1),
+        id               = "health_check",
         replace_existing = True
     )
 
     scheduler.add_job(
         job_purge_content,
-        trigger        = CronTrigger(hour=3, minute=0, timezone="UTC"),
-        id             = "purge_content",
+        trigger          = CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id               = "purge_content",
         replace_existing = True
     )
 

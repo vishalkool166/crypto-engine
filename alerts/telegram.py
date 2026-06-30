@@ -147,17 +147,15 @@ async def register_commands():
         {"command": "queue",     "description": "Top 3 signals right now"},
         {"command": "scan",      "description": "Trigger manual scan"},
         {"command": "health",    "description": "All open trades health"},
-        {"command": "ftstatus",  "description": "Freqtrade open trades"},
-        {"command": "ftbalance", "description": "Freqtrade balance"},
-        {"command": "ftprofit",  "description": "Freqtrade profit summary"},
-        {"command": "ftstart",   "description": "Start Freqtrade bot"},
-        {"command": "ftstop",    "description": "Stop Freqtrade bot"},
-        {"command": "sync",      "description": "Sync Freqtrade outcomes"},
+        {"command": "trades",    "description": "Open trades"},
+        {"command": "balance",   "description": "Account balance"},
+        {"command": "profit",    "description": "Profit summary"},
+        {"command": "close",     "description": "Close a trade — /close COIN"},
         {"command": "btc",       "description": "BTC analysis"},
         {"command": "coin",      "description": "Any coin analysis — /coin ETH"},
         {"command": "funding",   "description": "Funding rates"},
         {"command": "fear",      "description": "Fear and greed index"},
-        {"command": "pending",   "description": "Posts waiting — reply #N to see full text"},
+        {"command": "pending",   "description": "Posts waiting"},
         {"command": "brief",     "description": "Generate market brief post"},
         {"command": "discard",   "description": "Delete a post — /discard 5"},
         {"command": "pnl",       "description": "All time PnL"},
@@ -166,7 +164,7 @@ async def register_commands():
         {"command": "grade",     "description": "Grade accuracy"},
         {"command": "history",   "description": "Last 5 signals"},
         {"command": "backtest",  "description": "Backtest a coin — /backtest BTC"},
-        {"command": "backfill", "description": "Backfill historical candle data"},
+        {"command": "backfill",  "description": "Backfill historical candle data"},
         {"command": "ml",        "description": "ML model status"},
         {"command": "mode",      "description": "Current bot config"},
         {"command": "help",      "description": "Full command list"},
@@ -193,7 +191,6 @@ async def handle_webhook(request: Request):
 
     try:
         data = await request.json()
-
         msg     = data.get("message", {})
         text    = msg.get("text", "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -206,18 +203,18 @@ async def handle_webhook(request: Request):
     except Exception as e:
         log.error(f"Webhook handler error: {e}")
 
+
 async def _cmd_backfill(coin: str = None):
     if coin:
         await send(f"⏳ *Backfill started for {coin}...*")
     else:
         await send("⏳ *Backfill started for all coins...*\nTakes 3-5 minutes.")
     try:
-        import asyncio
         from backfill import run_backfill
-        coins = [coin] if coin else None
-        asyncio.create_task(run_backfill(coins=coins))
+        asyncio.create_task(run_backfill(coins=[coin] if coin else None))
     except Exception as e:
         await send(f"❌ Backfill failed: `{str(e)}`")
+
 
 async def _handle_command(text: str, chat_id: str = ""):
     t = text.lower().strip()
@@ -249,7 +246,7 @@ async def _handle_command(text: str, chat_id: str = ""):
         else:
             await send(f"⚠️ Usage: `/backtest BTC`")
         return
-    
+
     if t.startswith("/backfill"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else None
@@ -268,6 +265,15 @@ async def _handle_command(text: str, chat_id: str = ""):
             await send("⚠️ Usage: `/discard 5`")
         return
 
+    if t.startswith("/close"):
+        parts = t.split()
+        coin  = parts[1].upper() if len(parts) > 1 else ""
+        if not coin:
+            await send("⚠️ Usage: `/close BTC`")
+            return
+        await send(f"⚠️ Use dashboard Force Sell button to close `{coin}` — TOTP required.")
+        return
+
     if t.startswith("#") and len(t) > 1:
         try:
             post_id = int(t.replace("#", "").strip())
@@ -277,29 +283,26 @@ async def _handle_command(text: str, chat_id: str = ""):
         return
 
     handlers = {
-        "/status":    _cmd_status,
-        "/pnl":       _cmd_pnl,
-        "/queue":     _cmd_queue,
-        "/daily":     _cmd_daily,
-        "/scan":      _cmd_scan,
-        "/help":      _cmd_help,
-        "/btc":       _cmd_btc,
-        "/funding":   _cmd_funding,
-        "/fear":      _cmd_fear,
-        "/history":   _cmd_history,
-        "/stats":     _cmd_stats,
-        "/grade":     _cmd_grade,
-        "/mode":      _cmd_mode,
-        "/brief":     _cmd_brief,
-        "/ml":        _cmd_ml,
-        "/sync":      _cmd_sync,
-        "/ftstatus":  _cmd_ft_status,
-        "/ftbalance": _cmd_ft_balance,
-        "/ftprofit":  _cmd_ft_profit,
-        "/ftstart":   _cmd_ft_start,
-        "/ftstop":    _cmd_ft_stop,
-        "/pending":   _cmd_pending,
-        "/health":    _cmd_health,
+        "/status":  _cmd_status,
+        "/pnl":     _cmd_pnl,
+        "/queue":   _cmd_queue,
+        "/daily":   _cmd_daily,
+        "/scan":    _cmd_scan,
+        "/help":    _cmd_help,
+        "/btc":     _cmd_btc,
+        "/funding": _cmd_funding,
+        "/fear":    _cmd_fear,
+        "/history": _cmd_history,
+        "/stats":   _cmd_stats,
+        "/grade":   _cmd_grade,
+        "/mode":    _cmd_mode,
+        "/brief":   _cmd_brief,
+        "/ml":      _cmd_ml,
+        "/trades":  _cmd_trades,
+        "/balance": _cmd_balance,
+        "/profit":  _cmd_profit,
+        "/health":  _cmd_health,
+        "/pending": _cmd_pending,
     }
 
     if t.startswith("/"):
@@ -322,8 +325,15 @@ async def _handle_command(text: str, chat_id: str = ""):
 async def _cmd_status():
     from alerts.scanner import get_db_stats
     from scheduler import get_next_scan_time
+    from trade.monitor import get_open_positions_enriched
+
     stats     = get_db_stats()
     next_scan = get_next_scan_time()
+
+    try:
+        open_trades = await get_open_positions_enriched()
+    except Exception:
+        open_trades = []
 
     cached_results = _all_cached_signals()
     tradeable = [
@@ -341,6 +351,7 @@ async def _cmd_status():
         f"Mode: `{mode}`\n"
         f"Coins: `{len(cfg.COINS)} being scanned`\n"
         f"Grades: `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
+        f"Open trades: `{len(open_trades)}`\n"
         f"Signals in cache: `{len(cached_results)}`\n"
         f"Tradeable now: `{len(tradeable)}`\n\n"
         f"All-time signals: `{stats.get('total', 0)}`\n"
@@ -349,6 +360,122 @@ async def _cmd_status():
         f"Next scan: `{next_scan}`\n"
         f"Type /scan to scan now."
     )
+
+
+async def _cmd_trades():
+    try:
+        from trade.monitor import get_open_positions_enriched
+        trades = await get_open_positions_enriched()
+
+        if not trades:
+            await send(f"📊 *Open Trades*\n_{_now_ist()}_\n\nNo open trades.")
+            return
+
+        lines = [f"📊 *Open Trades — {len(trades)}*\n_{_now_ist()}_\n"]
+
+        for t in trades:
+            coin      = t.get("coin", "--")
+            direction = t.get("direction", "--")
+            pnl       = float(t.get("profit_abs", 0))
+            pnl_pct   = float(t.get("profit_ratio", 0)) * 100
+            pnl_str   = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"
+            duration  = t.get("duration", "--")
+            health    = t.get("health", {})
+            h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
+            h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
+
+            lines.append(
+                f"{side} `{coin}`\n"
+                f"Entry: `{t.get('entry_price')}` · Current: `{t.get('current_price')}`\n"
+                f"PnL: `{pnl_str}` ({pnl_pct:.2f}%) · Open: `{duration}`\n"
+                f"Health: {h_emoji} `{h_state}`\n"
+            )
+
+        await send("\n".join(lines))
+
+    except Exception as e:
+        log.error(f"_cmd_trades error: {e}")
+        await send("❌ Could not fetch trades.")
+
+
+async def _cmd_balance():
+    try:
+        from trade.exchange import get_balance
+        balance = await get_balance()
+        mode    = "DEMO" if cfg.PAPER_TRADING else "LIVE"
+        await send(
+            f"💰 *Balance — {mode}*\n"
+            f"_{_now_ist()}_\n\n"
+            f"Total:  `${balance['total']:.2f} USDT`\n"
+            f"Free:   `${balance['free']:.2f} USDT`\n"
+            f"Used:   `${balance['used']:.2f} USDT`\n"
+        )
+    except Exception as e:
+        log.error(f"_cmd_balance error: {e}")
+        await send("❌ Could not fetch balance.")
+
+
+async def _cmd_profit():
+    try:
+        from trade.monitor import get_profit_summary
+        data       = get_profit_summary()
+        profit     = float(data.get("profit_all_coin", 0))
+        profit_str = f"+${profit:.4f}" if profit >= 0 else f"-${abs(profit):.4f}"
+        win_rate   = float(data.get("winrate", 0)) * 100
+        trades     = data.get("trade_count", 0)
+
+        await send(
+            f"💰 *Profit Summary*\n"
+            f"_{_now_ist()}_\n\n"
+            f"Total PnL:    `{profit_str}`\n"
+            f"Win Rate:     `{win_rate:.1f}%`\n"
+            f"Total Trades: `{trades}`\n"
+            f"Wins:         `{data.get('wins', 0)}`\n"
+            f"Losses:       `{data.get('losses', 0)}`\n"
+        )
+    except Exception as e:
+        log.error(f"_cmd_profit error: {e}")
+        await send("❌ Could not fetch profit.")
+
+
+async def _cmd_health():
+    try:
+        from trade.monitor import get_open_positions_enriched
+        trades = await get_open_positions_enriched()
+
+        if not trades:
+            await send(f"💚 *Trade Health*\n_{_now_ist()}_\n\nNo open trades.")
+            return
+
+        lines = [f"💚 *Trade Health — {len(trades)} Open*\n_{_now_ist()}_\n"]
+
+        for t in trades:
+            coin      = t.get("coin", "--")
+            direction = t.get("direction", "--")
+            pnl       = float(t.get("profit_abs", 0))
+            pnl_str   = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            side      = "📈" if direction == "LONG" else "📉"
+            health    = t.get("health", {})
+            h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
+            h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
+            failures  = health.get("failures", []) if health else []
+            warnings  = health.get("warnings", []) if health else []
+
+            lines.append(f"{side} `{coin}` — {h_emoji} `{h_state}` · `{pnl_str}`")
+
+            if failures:
+                lines.append(f"  ✘ _{failures[0]}_")
+            elif warnings:
+                lines.append(f"  ⚠ _{warnings[0]}_")
+
+            lines.append("")
+
+        await send("\n".join(lines))
+
+    except Exception as e:
+        log.error(f"_cmd_health error: {e}")
+        await send("❌ Could not fetch health.")
 
 
 async def _cmd_btc():
@@ -534,8 +661,8 @@ async def _cmd_stats():
 
     bg = stats.get("by_grade", {})
     ap = bg.get("A+", {})
-    a  = bg.get("A", {})
-    b  = bg.get("B", {})
+    a  = bg.get("A",  {})
+    b  = bg.get("B",  {})
 
     await send(
         f"📊 *All Time Stats*\n"
@@ -578,7 +705,6 @@ async def _cmd_mode():
         f"Grades:      `{grades}`\n"
         f"B grade:     `{'paper only' if cfg.PAPER_TRADING else 'disabled in live'}`\n"
         f"Scan:        `every :00/:15/:30/:45 UTC`\n"
-        f"Execution:   `Freqtrade`\n"
         f"ML:          `{'✅ Active' if cfg.ML_ENABLED else '⏳ Collecting data'}`\n"
         f"Content:     `{'✅ Enabled' if cfg.CONTENT_ENABLED else '❌ Disabled'}`\n"
     )
@@ -681,233 +807,6 @@ async def _cmd_ml():
     )
 
 
-async def _cmd_sync():
-    await send("🔄 *Syncing Freqtrade outcomes...*")
-    try:
-        from trade.sync import sync_freqtrade_outcomes
-        result    = await sync_freqtrade_outcomes()
-        synced    = result.get("synced", 0)
-        unmatched = result.get("unmatched", 0)
-        total     = result.get("total", 0)
-        error     = result.get("error", "")
-
-        if error:
-            await send(f"❌ Sync failed: `{error}`")
-            return
-
-        await send(
-            f"✅ *Sync Complete*\n\n"
-            f"Freqtrade closed trades: `{total}`\n"
-            f"Synced to Signal table:  `{synced}`\n"
-            f"Unmatched:               `{unmatched}`\n\n"
-            f"Type /stats to see updated win rate."
-        )
-    except Exception as e:
-        await send(f"❌ Sync error: `{str(e)}`")
-
-
-async def _ft_api_get(path: str) -> dict | None:
-    try:
-        from api.freqtrade import _get_ft_token
-        token = await _get_ft_token()
-        if not token:
-            return None
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{cfg.FREQTRADE_URL}/api/v1{path}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            return r.json()
-    except Exception as e:
-        log.error(f"FT API error {path}: {e}")
-        return None
-
-
-async def _ft_api_post(path: str, body: dict = None) -> dict | None:
-    try:
-        from api.freqtrade import _get_ft_token
-        token = await _get_ft_token()
-        if not token:
-            return None
-        async with httpx.AsyncClient() as client:
-            r = await client.post(
-                f"{cfg.FREQTRADE_URL}/api/v1{path}",
-                headers={"Authorization": f"Bearer {token}"},
-                json=body or {},
-                timeout=10
-            )
-            return r.json()
-    except Exception as e:
-        log.error(f"FT API post error {path}: {e}")
-        return None
-
-
-async def _cmd_ft_status():
-    data = await _ft_api_get("/status")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-
-    if not data or not isinstance(data, list):
-        await send(f"📊 *Freqtrade Status*\n_{_now_ist()}_\n\nNo open trades.")
-        return
-
-    lines = [f"📊 *Freqtrade — {len(data)} Open Trade(s)*\n_{_now_ist()}_\n"]
-
-    for t in data:
-        pair    = t.get("pair", "--")
-        coin    = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-        pnl     = float(t.get("profit_abs", 0))
-        pnl_pct = float(t.get("profit_ratio", 0)) * 100
-        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
-        side    = "📈 LONG" if not t.get("is_short") else "📉 SHORT"
-
-        open_date = t.get("open_date", "")
-        duration  = "--"
-        try:
-            if open_date:
-                s = open_date.strip()
-                s = s.replace(' ', 'T') + '+00:00' if 'T' not in s else s
-                s = s.replace('Z', '+00:00')
-                open_dt  = datetime.fromisoformat(s)
-                diff     = datetime.now(timezone.utc) - open_dt
-                mins     = int(diff.total_seconds() / 60)
-                hrs      = mins // 60
-                rem_mins = mins % 60
-                duration = f"{hrs}h {rem_mins}m" if hrs > 0 else f"{mins}m"
-        except Exception:
-            pass
-
-        try:
-            from trade.health_monitor import get_health_from_redis
-            health       = get_health_from_redis(coin)
-            health_state = health.get("state", "UNKNOWN") if health else "Checking..."
-            health_emoji = {
-                "HEALTHY":     "✅",
-                "WARNING":     "⚠️",
-                "INVALIDATED": "🚨"
-            }.get(health_state, "⏳")
-        except Exception:
-            health_state = "Checking..."
-            health_emoji = "⏳"
-
-        lines.append(
-            f"{side} `{pair}`\n"
-            f"Entry: `{t.get('open_rate')}` · Current: `{t.get('current_rate')}`\n"
-            f"PnL: `{pnl_str}` ({pnl_pct:.2f}%) · Open: `{duration}`\n"
-            f"Health: {health_emoji} `{health_state}`\n"
-        )
-
-    await send("\n".join(lines))
-
-
-async def _cmd_ft_balance():
-    data = await _ft_api_get("/balance")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-
-    currencies = data.get("currencies", [])
-    usdt = next((c for c in currencies if c.get("currency") == "USDT"), {})
-
-    await send(
-        f"💰 *Freqtrade Balance*\n"
-        f"_{_now_ist()}_\n\n"
-        f"Total:  `${float(data.get('total', 0)):.2f} USDT`\n"
-        f"Free:   `${float(usdt.get('free', 0)):.2f} USDT`\n"
-        f"Used:   `${float(usdt.get('used', 0)):.2f} USDT`\n"
-    )
-
-
-async def _cmd_ft_profit():
-    data = await _ft_api_get("/profit")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-
-    profit     = float(data.get("profit_all_coin", 0))
-    profit_str = f"+${profit:.4f}" if profit >= 0 else f"-${abs(profit):.4f}"
-    win_rate   = float(data.get("winrate", 0)) * 100
-    trades     = data.get("trade_count", 0)
-    best       = float(data.get("best_pair_profit_ratio", 0)) * 100
-    worst      = float(data.get("worst_pair_profit_ratio", 0)) * 100
-
-    await send(
-        f"💰 *Freqtrade Profit*\n"
-        f"_{_now_ist()}_\n\n"
-        f"Total PnL:    `{profit_str}`\n"
-        f"Win Rate:     `{win_rate:.1f}%`\n"
-        f"Total Trades: `{trades}`\n\n"
-        f"Best:  `+{best:.2f}%`\n"
-        f"Worst: `{worst:.2f}%`\n"
-    )
-
-
-async def _cmd_ft_start():
-    data = await _ft_api_post("/start")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-    await send(f"▶️ *Freqtrade Started*\n\nStatus: `{data.get('status', 'unknown')}`")
-
-
-async def _cmd_ft_stop():
-    data = await _ft_api_post("/stop")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-    await send(f"⏹ *Freqtrade Stopped*\n\nStatus: `{data.get('status', 'unknown')}`")
-
-
-async def _cmd_health():
-    data = await _ft_api_get("/status")
-    if data is None:
-        await send("❌ Freqtrade unavailable")
-        return
-
-    if not data or not isinstance(data, list):
-        await send(f"💚 *Trade Health*\n_{_now_ist()}_\n\nNo open trades.")
-        return
-
-    lines = [f"💚 *Trade Health — {len(data)} Open*\n_{_now_ist()}_\n"]
-
-    for t in data:
-        pair  = t.get("pair", "--")
-        coin  = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-        pnl   = float(t.get("profit_abs", 0))
-        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
-        side  = "📈" if not t.get("is_short") else "📉"
-
-        try:
-            from trade.health_monitor import get_health_from_redis
-            health       = get_health_from_redis(coin)
-            health_state = health.get("state", "UNKNOWN") if health else "Checking..."
-            health_emoji = {
-                "HEALTHY":     "✅",
-                "WARNING":     "⚠️",
-                "INVALIDATED": "🚨"
-            }.get(health_state, "⏳")
-            failures = health.get("failures", []) if health else []
-            warnings = health.get("warnings", []) if health else []
-        except Exception:
-            health_state = "Checking..."
-            health_emoji = "⏳"
-            failures     = []
-            warnings     = []
-
-        lines.append(f"{side} `{coin}` — {health_emoji} `{health_state}` · `{pnl_str}`")
-
-        if failures:
-            lines.append(f"  ✘ _{failures[0]}_")
-        elif warnings:
-            lines.append(f"  ⚠ _{warnings[0]}_")
-
-        lines.append("")
-
-    await send("\n".join(lines))
-
-
 async def _cmd_pending():
     from content.approval_flow import get_pending_posts
     posts = await get_pending_posts()
@@ -942,7 +841,7 @@ async def _cmd_show_post(post_id: int):
     from content.approval_flow import get_post_text
     text = await get_post_text(post_id)
 
-    if not text:
+    if not text: 
         await send(f"⚠️ Post #{post_id} not found.")
         return
 
@@ -1011,6 +910,8 @@ async def _cmd_backtest(coin: str):
 async def _cmd_scan():
     await send("🔍 *Manual Scan Started*\n\nScanning all coins...\nThis takes 1-2 minutes.")
     try:
+        from data.cache import cache
+        cache.clear_all()
         from alerts.scanner import scan_all_coins
         await scan_all_coins()
     except Exception as e:
@@ -1055,7 +956,6 @@ async def _cmd_queue():
             f"{emoji} *{coin}USDT* — Grade `{grade}` ({score}/100)\n"
             f"{dir_emoji} {direction} · {ml_line}R:R `1:{actual_rr}`\n"
             f"Entry: `{sig.get('entry', '--')}` · SL: `{sig.get('sl', '--')}` · TP: `{sig.get('tp1', '--')}` ({tp_mult}x)\n"
-            f"_Signal forwarded to Freqtrade_\n"
         )
 
     await send("\n".join(lines))
@@ -1069,13 +969,11 @@ async def _cmd_help():
         "/queue   — top 3 signals right now\n"
         "/scan    — trigger manual scan\n"
         "/health  — all open trades health\n\n"
-        "*FREQTRADE*\n"
-        "/ftstatus   — open trades\n"
-        "/ftbalance  — balance\n"
-        "/ftprofit   — profit summary\n"
-        "/ftstart    — start bot\n"
-        "/ftstop     — stop bot\n"
-        "/sync       — sync outcomes\n\n"
+        "*TRADING*\n"
+        "/trades   — open trades\n"
+        "/balance  — account balance\n"
+        "/profit   — profit summary\n"
+        "/close COIN — close a trade\n\n"
         "*MARKET*\n"
         "/btc         — BTC analysis\n"
         "/coin ETH    — any coin analysis\n"
@@ -1162,7 +1060,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str):
         f"Size:    `${pos_size:.2f}`\n\n"
         f"{grade_note}"
         f"{chr(10) + '*Why:* ' + thesis + chr(10) if thesis else ''}"
-        f"_Signal forwarded to Freqtrade for execution._"
+        f"_Signal forwarded to execution engine._"
     )
 
 

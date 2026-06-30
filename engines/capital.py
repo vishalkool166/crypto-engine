@@ -16,21 +16,9 @@ ML_MIN_TRADES      = 100
 
 async def _get_balance() -> float:
     try:
-        if cfg.PAPER_TRADING:
-            from api.freqtrade import _ft_get_safe
-            data = await _ft_get_safe("/balance")
-            if not data:
-                return 0.0
-            currencies = data.get("currencies", [])
-            usdt = next((c for c in currencies if c.get("currency") == "USDT"), {})
-            free = float(usdt.get("free", 0))
-            return free if free > 0 else float(data.get("total", 0))
-        else:
-            from data.fetcher import exchange
-            balance = await exchange.fetch_balance()
-            usdt    = balance.get("USDT", {})
-            free    = float(usdt.get("free", 0))
-            return free if free > 0 else 0.0
+        from trade.exchange import get_balance
+        balance = await get_balance()
+        return float(balance.get("free", 0))
     except Exception as e:
         log.error(f"_get_balance error: {e}")
         return 0.0
@@ -38,10 +26,10 @@ async def _get_balance() -> float:
 
 async def _get_open_trades() -> list:
     try:
-        from api.freqtrade import _ft_get_safe
-        data = await _ft_get_safe("/status")
-        return data if isinstance(data, list) else []
-    except Exception:
+        from trade.monitor import _get_open_trades_from_db
+        return _get_open_trades_from_db()
+    except Exception as e:
+        log.error(f"_get_open_trades error: {e}")
         return []
 
 
@@ -281,11 +269,7 @@ async def compute_allocation(
         return _skip(f"Insufficient balance: ${balance:.2f}")
 
     open_trades = await _get_open_trades()
-    open_coins  = set()
-    for t in open_trades:
-        pair = t.get("pair", "")
-        c    = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-        open_coins.add(c)
+    open_coins  = set(t.get("coin", "") for t in open_trades)
 
     if coin in open_coins:
         return _skip(f"{coin} already has an open trade")
@@ -368,6 +352,7 @@ async def compute_allocation(
     log.info(
         f"Allocation: {coin} {direction} "
         f"{'PAPER' if is_paper else 'LIVE'} "
+        f"balance:${balance:.2f} "
         f"dd:{drawdown*100:.1f}% "
         f"risk:{risk_pct*100:.2f}% "
         f"stake:${stake:.2f} "
@@ -407,13 +392,16 @@ async def get_live_balance() -> float:
 async def get_portfolio_state() -> dict:
     trades     = await _get_open_trades()
     open_count = len(trades)
-    exposure   = sum(float(t.get("stake_amount", 0)) for t in trades)
-    daily_pnl  = sum(float(t.get("profit_abs", 0)) for t in trades)
+
+    long_count  = sum(1 for t in trades if t.get("direction") == "LONG")
+    short_count = sum(1 for t in trades if t.get("direction") == "SHORT")
+    exposure    = sum(float(t.get("position_size") or 0) for t in trades)
+    daily_pnl   = sum(float(t.get("profit_abs") or 0) for t in trades)
 
     return {
         "open_trades":    open_count,
-        "long_count":     sum(1 for t in trades if not t.get("is_short")),
-        "short_count":    sum(1 for t in trades if t.get("is_short")),
+        "long_count":     long_count,
+        "short_count":    short_count,
         "total_exposure": exposure,
         "daily_pnl":      daily_pnl,
     }

@@ -26,6 +26,7 @@ from api.dashboard import (
     invalidate_all
 )
 
+
 def make_serializable(obj):
     import math
     if obj is None:
@@ -42,11 +43,11 @@ def make_serializable(obj):
         return obj
     return str(obj)
 
+
 import runtime_state as rs
 import httpx
 import psutil
 import time
-import subprocess
 import os
 
 log     = logging.getLogger(__name__)
@@ -295,6 +296,8 @@ async def analyze(request: Request, coin: str):
 async def scan(request: Request):
     _auth(request)
     try:
+        from data.cache import cache
+        cache.clear_all()
         results = await scan_all_coins()
         invalidate_all()
         return JSONResponse(content={
@@ -606,6 +609,7 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
 
 _health_cache: dict = {"data": None, "at": 0.0}
 
+
 @router.get("/health")
 async def health(request: Request):
     if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
@@ -687,38 +691,32 @@ async def mode_toggle(request: Request):
                 content     = {"success": False, "reason": "Invalid TOTP code"}
             )
 
-        try:
-            from api.freqtrade import _ft_get
-            status = await _ft_get("/status")
-            if status and isinstance(status, list) and len(status) > 0:
-                return JSONResponse(
-                    status_code = 400,
-                    content     = {
-                        "success": False,
-                        "reason":  f"Cannot switch — {len(status)} open trade(s). Close all first."
-                    }
-                )
-        except Exception as e:
-            log.warning(f"Could not check open trades: {e}")
+        from trade.monitor import get_open_positions_enriched
+        open_trades = await get_open_positions_enriched()
+        if open_trades:
+            return JSONResponse(
+                status_code = 400,
+                content     = {
+                    "success": False,
+                    "reason":  f"Cannot switch — {len(open_trades)} open trade(s). Close all first."
+                }
+            )
 
         if new_mode == "live":
             if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
                 return JSONResponse(
                     status_code = 400,
-                    content     = {"success": False, "reason": "Binance API keys not configured"}
+                    content     = {"success": False, "reason": "Binance live API keys not configured"}
                 )
 
         from config import _ensure
+        from trade.exchange import close_exchange
+
         _ensure("TRADING_MODE", new_mode)
         cfg.TRADING_MODE  = new_mode
         cfg.PAPER_TRADING = new_mode != "live"
 
-        _update_freqtrade_config(new_mode)
-
-        try:
-            await _restart_freqtrade()
-        except Exception as e:
-            log.warning(f"Freqtrade restart failed: {e}")
+        await close_exchange()
 
         ip = request.client.host if request.client else ""
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=ip)
@@ -729,7 +727,7 @@ async def mode_toggle(request: Request):
             "success": True,
             "mode":    new_mode,
             "grades":  cfg.MIN_GRADE_TO_TRADE,
-            "message": f"Switched to {new_mode} mode. Freqtrade restarting."
+            "message": f"Switched to {new_mode} mode"
         })
 
     except HTTPException:
@@ -737,39 +735,6 @@ async def mode_toggle(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-
-
-def _update_freqtrade_config(mode: str):
-    import json
-    config_path = "freqtrade/user_data/config.json"
-    try:
-        with open(config_path, "r") as f:
-            ft_config = json.load(f)
-
-        if mode == "live":
-            ft_config["dry_run"] = False
-            ft_config.pop("dry_run_wallet", None)
-        else:
-            ft_config["dry_run"]        = True
-            ft_config["dry_run_wallet"] = 1000
-
-        with open(config_path, "w") as f:
-            json.dump(ft_config, f, indent=2)
-
-    except Exception as e:
-        log.error(f"Failed to update Freqtrade config: {e}")
-        raise
-
-
-async def _restart_freqtrade():
-    try:
-        import docker
-        client    = docker.from_env()
-        container = client.containers.get("freqtrade")
-        container.restart()
-    except Exception as e:
-        log.error(f"Freqtrade restart error: {e}")
-        raise
 
 
 @router.get("/analysis/factors")
@@ -1238,9 +1203,8 @@ async def docker_purge(request: Request):
                 content     = {"success": False, "reason": "Invalid TOTP code"}
             )
 
+        import subprocess
         disk_before = psutil.disk_usage('/').used
-
-        import os as _os
 
         result = subprocess.run(
             ["/usr/bin/docker", "system", "prune", "-f", "--volumes"],
@@ -1248,7 +1212,7 @@ async def docker_purge(request: Request):
             text           = True,
             timeout        = 120,
             cwd            = "/home/ubuntu/crypto-engine",
-            env            = {**_os.environ, "HOME": "/root", "PATH": "/usr/bin:/usr/local/bin:/bin"}
+            env            = {**os.environ, "HOME": "/root", "PATH": "/usr/bin:/usr/local/bin:/bin"}
         )
 
         disk_after = psutil.disk_usage('/').used
@@ -1280,7 +1244,8 @@ async def docker_purge(request: Request):
     except Exception as e:
         log.error(f"Docker purge error: {e}")
         raise HTTPException(500, str(e))
-    
+
+
 @router.get("/dashboard/coin/{coin}")
 async def dashboard_coin_detail(request: Request, coin: str):
     _auth(request)
