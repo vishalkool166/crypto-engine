@@ -37,8 +37,8 @@ def _deviation_check(
         return False, "Missing price data"
 
     sl_distance   = abs(signal_entry - sl) / signal_entry
-    max_adverse   = sl_distance * 0.20
-    max_favorable = sl_distance * 0.50
+    max_adverse   = sl_distance * 0.35
+    max_favorable = sl_distance * 0.60
 
     if direction == "SHORT":
         deviation = (current_price - signal_entry) / signal_entry
