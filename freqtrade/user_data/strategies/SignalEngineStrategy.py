@@ -176,6 +176,7 @@ class SignalEngineStrategy(IStrategy):
     stoploss                      = -0.99
     timeframe                     = "5m"
     can_short                     = True
+    use_custom_stoploss           = True
     stoploss_on_exchange          = os.getenv("TRADING_MODE", "paper") == "live"
     stoploss_on_exchange_interval = 60
 
