@@ -205,6 +205,10 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
     if btc_score < cfg.B_GRADE_BTC_SCORE_MIN:
         return False, f"BTC score {btc_score} too low — BTC conflicting"
 
+    entry_score = wconf.get("entry_score", 0)
+    if entry_score < cfg.B_GRADE_ENTRY_SCORE_MIN:
+        return False, f"Entry score {entry_score} below minimum {cfg.B_GRADE_ENTRY_SCORE_MIN}"
+
     hard_blocks  = no_trade.get("hard_blocks", [])
     entry_blocks = no_trade.get("entry_blocks", [])
 

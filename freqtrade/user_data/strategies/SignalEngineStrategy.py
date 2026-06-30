@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import requests
 from datetime import datetime, timezone
 from typing import Optional
@@ -19,7 +20,6 @@ def _get_redis():
         return _redis_client
     try:
         import redis
-        import os
         url = os.getenv("REDIS_URL", "redis://localhost:6379")
         client = redis.from_url(
             url,
@@ -176,7 +176,7 @@ class SignalEngineStrategy(IStrategy):
     stoploss                      = -0.99
     timeframe                     = "5m"
     can_short                     = True
-    stoploss_on_exchange          = True
+    stoploss_on_exchange          = os.getenv("TRADING_MODE", "paper") == "live"
     stoploss_on_exchange_interval = 60
 
     minimal_roi = {"0": 100}
@@ -204,7 +204,6 @@ class SignalEngineStrategy(IStrategy):
         side:              str,
         **kwargs
     ) -> float:
-        import os
         lev = int(os.getenv("LEVERAGE", 10))
         return min(float(lev), max_leverage)
 

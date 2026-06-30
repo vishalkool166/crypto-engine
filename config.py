@@ -193,6 +193,7 @@ class Config:
 
     B_GRADE_MARKET_SCORE_MIN = 65
     B_GRADE_BTC_SCORE_MIN    = 4
+    B_GRADE_ENTRY_SCORE_MIN  = 50
 
     GRADE_APLUS = 85
     GRADE_A     = 68
