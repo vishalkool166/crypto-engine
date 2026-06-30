@@ -249,6 +249,7 @@ async def ft_force_enter(
             "price":        entry,
             "stake_amount": round(stake, 2),
             "leverage":     leverage,
+            "stoploss":     sl,
         }
         if signal_id:
             body["enter_tag"] = f"SE_{grade}_{signal_id}"

@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime, timezone
 from typing import Optional
-from freqtrade.strategy import IStrategy
+from freqtrade.strategy import IStrategy, stoploss_from_open
 from freqtrade.persistence import Trade
 from pandas import DataFrame
 
@@ -135,10 +135,6 @@ def _get_signal_levels(trade: Trade) -> dict | None:
                             f"sl={sl} tp1={tp1} entry={entry}"
                         )
                         return {"sl": sl, "tp1": tp1, "entry": entry}
-                    logger.warning(
-                        f"Signal {signal_id} has zero/null sl/tp1 "
-                        f"— falling back to Redis"
-                    )
 
         coin = trade.pair.replace("/USDT:USDT", "").replace("/USDT", "")
         r    = _get_redis()
@@ -322,20 +318,28 @@ class SignalEngineStrategy(IStrategy):
             if not levels:
                 return self.stoploss
 
-            sl_price     = float(levels.get("sl") or 0)
-            signal_entry = float(levels.get("entry") or 0)
-            base_price   = signal_entry if signal_entry > 0 else trade.open_rate
+            sl_price  = float(levels.get("sl") or 0)
+            open_rate = trade.open_rate
 
-            if not sl_price or not base_price:
+            if not sl_price or not open_rate:
                 return self.stoploss
 
             if trade.is_short:
-                sl_pct = -abs((sl_price - base_price) / base_price)
+                open_relative_stop = (sl_price - open_rate) / open_rate
             else:
-                sl_pct = (sl_price - base_price) / base_price
+                open_relative_stop = -((open_rate - sl_price) / open_rate)
 
-            sl_pct = max(-0.99, min(-0.001, sl_pct))
-            return sl_pct
+            result = stoploss_from_open(
+                open_relative_stop = open_relative_stop,
+                current_profit     = current_profit,
+                is_short           = trade.is_short,
+                leverage           = trade.leverage
+            )
+
+            if result == 1:
+                return self.stoploss
+
+            return result
 
         except Exception as e:
             logger.error(f"custom_stoploss error {pair}: {e}")
