@@ -245,8 +245,8 @@ class Config:
         if e.strip()
     ]
 
-    OAUTH_JWT_SECRET  = os.getenv("OAUTH_JWT_SECRET", "")
-    OAUTH_JWT_EXPIRY  = int(os.getenv("OAUTH_JWT_EXPIRY_HOURS", "168"))
+    OAUTH_JWT_SECRET = os.getenv("OAUTH_JWT_SECRET", "")
+    OAUTH_JWT_EXPIRY = int(os.getenv("OAUTH_JWT_EXPIRY_HOURS", "168"))
 
     SESSION_COOKIE_NAME     = "se_user_token"
     SESSION_COOKIE_HTTPONLY = True
