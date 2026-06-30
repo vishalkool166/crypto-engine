@@ -14,7 +14,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 from api.routes       import router, build_dashboard_payload
-from api.freqtrade    import router as ft_router, start_ft_ws, stop_ft_ws, on_ft_event
+from api.trading      import router as trading_router
 from saas.admin       import router as admin_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
@@ -61,16 +61,13 @@ def _get_client_tier(websocket: WebSocket) -> str:
 
 
 async def _build_ticker_payload(tier: str = "admin") -> dict:
-    from api.freqtrade import _ft_get_safe
-    from saas.signals  import get_summary_for_tier
+    from saas.signals import get_summary_for_tier
 
     summary = get_summary_for_tier(tier)
-    status  = await _ft_get_safe("/status") or []
 
     return {
         "type":    "ticker",
         "items":   [],
-        "status":  status,
         "summary": {
             "next_scan_epoch": summary.get("next_scan_epoch", 0),
             "mode":            summary.get("mode",          "paper"),
@@ -144,86 +141,27 @@ async def push_event(event_type: str, data: dict = None):
         log.error(f"push_event error: {e}")
 
 
-async def _push_ft_update(event_type: str, data: dict = None):
+async def _push_trade_update(event_type: str, data: dict = None):
     if not _dashboard_clients:
         return
     try:
-        from api.freqtrade import _ft_get_safe
-        from database import SessionLocal
-        from database import Signal as SignalModel
+        from trade.monitor import get_open_positions_enriched, get_profit_summary
 
-        status, profit, balance, config = await asyncio.gather(
-            _ft_get_safe("/status"),
-            _ft_get_safe("/profit"),
-            _ft_get_safe("/balance"),
-            _ft_get_safe("/show_config"),
-        )
-
-        bot_state = "unknown"
-        if config:
-            bot_state = config.get("state", "unknown")
-
-        trades_with_health = []
-        if status and isinstance(status, list):
-            tp1_map = {}
-            sl_map  = {}
-            try:
-                with SessionLocal() as db:
-                    for trade in status:
-                        pair      = trade.get("pair", "")
-                        coin      = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                        is_short  = trade.get("is_short", False)
-                        direction = "SHORT" if is_short else "LONG"
-                        signal    = db.query(SignalModel).filter(
-                            SignalModel.coin      == coin,
-                            SignalModel.direction == direction,
-                            SignalModel.outcome   == "pending"
-                        ).order_by(SignalModel.timestamp.desc()).first()
-                        if not signal:
-                            signal = db.query(SignalModel).filter(
-                                SignalModel.coin      == coin,
-                                SignalModel.direction == direction
-                            ).order_by(SignalModel.timestamp.desc()).first()
-                        if signal:
-                            if signal.tp1: tp1_map[coin] = float(signal.tp1)
-                            if signal.sl:  sl_map[coin]  = float(signal.sl)
-            except Exception as e:
-                log.warning(f"ft push tp1/sl error: {e}")
-
-            for trade in status:
-                pair   = trade.get("pair", "")
-                coin   = pair.replace("/USDT:USDT", "").replace("/USDT", "")
-                health = None
-                try:
-                    from trade.health_monitor import get_health_from_redis
-                    health = get_health_from_redis(coin)
-                except Exception:
-                    pass
-                trade_copy              = dict(trade)
-                trade_copy["health"]    = health
-                trade_copy["tp1"]       = tp1_map.get(coin, None)
-                trade_copy["sl_signal"] = sl_map.get(coin, None)
-                trades_with_health.append(trade_copy)
+        positions = await get_open_positions_enriched()
+        profit    = get_profit_summary()
 
         payload = json.dumps({
-            "type":      "ft_update",
+            "type":      "trade_update",
             "event":     event_type,
-            "status":    trades_with_health,
-            "profit":    profit    if profit    else {},
-            "balance":   balance   if balance   else {},
-            "bot_state": bot_state
+            "status":    positions,
+            "profit":    profit,
+            "bot_state": "running"
         })
 
         await _push_to_clients(payload)
 
     except Exception as e:
-        log.error(f"_push_ft_update error: {e}")
-
-
-async def _on_ft_event(event_type: str, data: dict):
-    push_types = {"entry_fill", "exit_fill", "trade", "status"}
-    if event_type in push_types:
-        await _push_ft_update(event_type, data)
+        log.error(f"_push_trade_update error: {e}")
 
 
 async def _dashboard_push_loop():
@@ -260,7 +198,6 @@ async def lifespan(app: FastAPI):
     _bootstrap_secrets()
 
     on_event(push_event)
-    on_ft_event(_on_ft_event)
 
     from auth import setup_status
     status = setup_status()
@@ -282,9 +219,11 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
-    await start_ft_ws()
+    from trade.exchange import get_exchange
+    exchange = get_exchange()
+    log.info(f"Exchange initialized: {cfg.TRADING_MODE} mode")
 
-    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
 
     await send(
@@ -323,7 +262,12 @@ async def lifespan(app: FastAPI):
     except asyncio.CancelledError:
         pass
 
-    await stop_ft_ws()
+    from trade.exchange import close_exchange
+    await close_exchange()
+
+    from trade.monitor import stop_monitor
+    stop_monitor()
+
     stop_scheduler()
 
     await send("🔴 *Signal Engine v5 Stopped*")
@@ -343,8 +287,8 @@ app.add_middleware(
     SessionMiddleware,
     secret_key = cfg.JWT_SECRET,
     max_age    = 3600,
-    https_only = True,
-    same_site  = "none",
+    https_only = cfg.ENV == "production",
+    same_site  = "lax",
 )
 
 app.state.limiter = limiter
@@ -466,22 +410,9 @@ async def auth_callback_google(request: Request):
             user_agent = user_agent,
         )
 
-        jwt_token = create_oauth_jwt(
-            user_id    = user["id"],
-            email      = user["email"],
-            tier       = user["tier"],
-            is_admin   = user["is_admin"],
-        )
-
-        import json as _json
-        token_with_session = create_oauth_jwt(
-            user_id  = user["id"],
-            email    = user["email"],
-            tier     = user["tier"],
-            is_admin = user["is_admin"],
-        )
-
-        from jose import jwt as _jwt
+        from jose import jwt as jose_jwt
+        import datetime as _dt
+        from datetime import timedelta
         payload = {
             "sub":        str(user["id"]),
             "email":      user["email"],
@@ -489,16 +420,12 @@ async def auth_callback_google(request: Request):
             "is_admin":   user["is_admin"],
             "session_id": session_id,
             "type":       "oauth",
+            "iat":        _dt.datetime.now(_dt.timezone.utc),
+            "exp":        _dt.datetime.now(_dt.timezone.utc) + timedelta(hours=cfg.OAUTH_JWT_EXPIRY),
         }
-        from datetime import timedelta
-        from jose import jwt as jose_jwt
-        import datetime as _dt
-        payload["iat"] = _dt.datetime.now(_dt.timezone.utc)
-        payload["exp"] = _dt.datetime.now(_dt.timezone.utc) + timedelta(hours=cfg.OAUTH_JWT_EXPIRY)
-        final_token    = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
+        final_token = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
 
         is_new   = user.get("is_new", False)
-
         redirect = f"{cfg.DOMAIN}/"
 
         response = RedirectResponse(url=redirect)
@@ -568,6 +495,7 @@ async def auth_session(request: Request):
             status_code = 401,
             content     = {"authenticated": False}
         )
+
 
 @app.get("/auth/logout")
 async def auth_logout(request: Request):
@@ -643,9 +571,9 @@ async def revoke_all_my_sessions(request: Request):
         if not user:
             raise HTTPException(401, "Authentication required")
 
-        user_id    = int(user.get("sub", 0))
+        user_id     = int(user.get("sub", 0))
         current_sid = user.get("session_id")
-        result     = revoke_all_sessions(user_id, except_session=current_sid)
+        result      = revoke_all_sessions(user_id, except_session=current_sid)
 
         return JSONResponse(content=result)
 
@@ -854,8 +782,8 @@ async def auth_login(request: Request):
                 key      = "se_token",
                 value    = result["token"],
                 httponly = True,
-                secure   = True,
-                samesite = "none",
+                secure   = cfg.ENV == "production",
+                samesite = "lax",
                 max_age  = 86400
             )
             return response
@@ -880,11 +808,28 @@ async def auth_login(request: Request):
 @limiter.limit("5/minute")
 async def request_totp_via_telegram(request: Request):
     try:
+        body     = await request.json()
+        password = body.get("password", "")
+
+        if not password:
+            return JSONResponse(
+                status_code = 400,
+                content     = {"success": False, "reason": "Password required"}
+            )
+
+        from auth import verify_password
+        if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
+            return JSONResponse(
+                status_code = 401,
+                content     = {"success": False, "reason": "Invalid password"}
+            )
+
         if not cfg.TOTP_SECRET:
             return JSONResponse(
                 status_code = 400,
                 content     = {"success": False, "reason": "TOTP not configured"}
             )
+
         import pyotp
         from alerts.telegram import send
         code = pyotp.TOTP(cfg.TOTP_SECRET).now()
@@ -1050,20 +995,22 @@ async def telegram_webhook(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-app.include_router(router,       prefix="/api")
-app.include_router(ft_router,    prefix="/api")
-app.include_router(admin_router, prefix="/api")
+app.include_router(router,         prefix="/api")
+app.include_router(trading_router, prefix="/api")
+app.include_router(admin_router,   prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os
 
+
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str):
     static_dir = "frontend"
-    file_path = _os.path.join(static_dir, full_path)
+    file_path  = _os.path.join(static_dir, full_path)
     if _os.path.exists(file_path) and _os.path.isfile(file_path):
         return FileResponse(file_path)
     return FileResponse(_os.path.join(static_dir, "index.html"))
+
 
 app.mount(
     "/",

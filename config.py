@@ -145,6 +145,10 @@ class Config:
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_SECRET  = os.getenv("BINANCE_SECRET")
 
+    BINANCE_DEMO_API_KEY = os.getenv("BINANCE_DEMO_API_KEY")
+    BINANCE_DEMO_SECRET  = os.getenv("BINANCE_DEMO_SECRET")
+    BINANCE_DEMO_BASE_URL= os.getenv("BINANCE_DEMO_BASE_URL", "https://demo.binance.com")
+
     TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -165,10 +169,6 @@ class Config:
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
     ML_MIN_TRADES = 100
     ML_ENABLED    = os.getenv("ML_ENABLED", "False").lower() == "true"
-
-    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "http://freqtrade:8080")
-    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "freqtrade")
-    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
 
     TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
     TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
@@ -296,6 +296,12 @@ class Config:
             e.lower() for e in self.ADMIN_EMAILS
         ]
 
+    def is_demo_configured(self) -> bool:
+        return bool(self.BINANCE_DEMO_API_KEY and self.BINANCE_DEMO_SECRET)
+
+    def is_live_configured(self) -> bool:
+        return bool(self.BINANCE_API_KEY and self.BINANCE_SECRET)
+
 
 def _bootstrap_secrets():
     import logging
@@ -341,11 +347,31 @@ def _bootstrap_secrets():
         cfg.DASHBOARD_USERNAME = "admin"
         changed = True
 
+    if not os.getenv("TRADING_MODE"):
+        _ensure("TRADING_MODE", "paper")
+        cfg.TRADING_MODE  = "paper"
+        cfg.PAPER_TRADING = True
+        changed = True
+
     if changed:
         log.info(
             "[FIRST RUN] Secrets written to .env — "
             "visit /auth/setup to complete setup"
         )
+
+    if cfg.TRADING_MODE == "paper" and not cfg.is_demo_configured():
+        log.warning(
+            "TRADING_MODE=paper but BINANCE_DEMO_API_KEY not set — "
+            "add demo keys to .env"
+        )
+
+    if cfg.TRADING_MODE == "live" and not cfg.is_live_configured():
+        log.warning(
+            "TRADING_MODE=live but BINANCE_API_KEY not set — "
+            "switching to paper mode"
+        )
+        cfg.TRADING_MODE  = "paper"
+        cfg.PAPER_TRADING = True
 
 
 cfg = Config()

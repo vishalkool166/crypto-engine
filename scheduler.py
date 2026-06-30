@@ -21,6 +21,14 @@ async def job_scan():
         log.error(f"Scan job error: {e}")
 
 
+async def job_monitor():
+    try:
+        from trade.monitor import run_monitor_cycle
+        await run_monitor_cycle()
+    except Exception as e:
+        log.error(f"Monitor job error: {e}")
+
+
 async def job_ml_check():
     try:
         from ml.eligibility import check_and_train_if_ready
@@ -34,7 +42,10 @@ async def job_sync_outcomes():
         from trade.sync import sync_freqtrade_outcomes
         result = await sync_freqtrade_outcomes()
         if result.get("synced", 0) > 0:
-            log.info(f"Outcome sync: {result['synced']} synced {result['unmatched']} unmatched")
+            log.info(
+                f"Outcome sync: {result['synced']} synced "
+                f"{result['unmatched']} unmatched"
+            )
     except Exception as e:
         log.error(f"Outcome sync job error: {e}")
 
@@ -82,8 +93,10 @@ def get_next_scan_epoch() -> int:
             return int(next_dt.timestamp() * 1000)
 
     next_hour = now.replace(
-        hour=(now.hour + 1) % 24,
-        minute=0, second=0, microsecond=0
+        hour    = (now.hour + 1) % 24,
+        minute  = 0,
+        second  = 0,
+        microsecond = 0
     )
     return int(next_hour.timestamp() * 1000)
 
@@ -91,45 +104,45 @@ def get_next_scan_epoch() -> int:
 def start_scheduler():
     scheduler.add_job(
         job_scan,
-        trigger=CronTrigger(minute="0,15,30,45", timezone="UTC"),
-        id="scan",
-        replace_existing=True
+        trigger        = CronTrigger(minute="0,15,30,45", timezone="UTC"),
+        id             = "scan",
+        replace_existing = True
+    )
+
+    scheduler.add_job(
+        job_monitor,
+        trigger        = IntervalTrigger(seconds=30),
+        id             = "monitor",
+        replace_existing = True
     )
 
     scheduler.add_job(
         job_ml_check,
-        trigger=IntervalTrigger(hours=1),
-        id="ml_check",
-        replace_existing=True
-    )
-
-    scheduler.add_job(
-        job_sync_outcomes,
-        trigger=IntervalTrigger(minutes=30),
-        id="sync_outcomes",
-        replace_existing=True
+        trigger        = IntervalTrigger(hours=1),
+        id             = "ml_check",
+        replace_existing = True
     )
 
     scheduler.add_job(
         job_health_check,
-        trigger=IntervalTrigger(minutes=1),
-        id="health_check",
-        replace_existing=True
+        trigger        = IntervalTrigger(minutes=1),
+        id             = "health_check",
+        replace_existing = True
     )
 
     scheduler.add_job(
         job_purge_content,
-        trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
-        id="purge_content",
-        replace_existing=True
+        trigger        = CronTrigger(hour=3, minute=0, timezone="UTC"),
+        id             = "purge_content",
+        replace_existing = True
     )
 
     scheduler.start()
     log.info(
         f"Scheduler started — "
         f"scan::00/:15/:30/:45 — "
+        f"monitor:30s — "
         f"health:1m — "
-        f"sync:30m — "
         f"ml:1h — "
         f"purge:03:00 UTC — "
         f"next scan:{get_next_scan_time()}"

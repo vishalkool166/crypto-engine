@@ -24,15 +24,11 @@ from content.pipeline import run_content_pipeline, run_commentary_pipeline
 
 log = logging.getLogger(__name__)
 
-CACHE_TTL           = 1500
-ENTRY_PRICE_TOL     = 0.003
-MAX_ENTRY_DEVIATION = 0.02
+CACHE_TTL            = 1500
 MAX_SIGNAL_AGE_HOURS = 4
 
-_scan_running   = False
-_scan_semaphore = asyncio.Semaphore(3)
-
-_pending_forceenter: list = []
+_scan_running    = False
+_scan_semaphore  = asyncio.Semaphore(3)
 
 
 def _interpret_oi(market: dict) -> dict:
@@ -42,9 +38,7 @@ def _interpret_oi(market: dict) -> dict:
 
     bullish_confirm = pu and oiu
     bearish_confirm = (not pu) and oiu
-
-    oi_change = market.get("oi_change", 0)
-    oi_flat   = abs(oi_change) <= 1
+    oi_flat         = abs(market.get("oi_change", 0)) <= 1
 
     if bullish_confirm:
         primary_score = 7
@@ -103,7 +97,6 @@ def _extract_key_levels(d1d_df, d1w_df) -> dict:
 def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
     if not cfg.ML_ENABLED:
         return True, 1.0
-
     try:
         from ml.predictor import is_ml_approved
         approved, prob = is_ml_approved(signal, wconf)
@@ -139,21 +132,18 @@ def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
         log.error(f"Redis signal write error {coin}: {e}")
 
 
-def _is_signal_fresh(sig, current_price: float) -> tuple[bool, str]:
-    if sig.timestamp:
-        sig_ts = sig.timestamp
-        if sig_ts.tzinfo is None:
-            sig_ts = sig_ts.replace(tzinfo=timezone.utc)
-        age_hours = (datetime.now(timezone.utc) - sig_ts).total_seconds() / 3600
-        if age_hours > MAX_SIGNAL_AGE_HOURS:
-            return False, f"signal {age_hours:.1f}h old (max {MAX_SIGNAL_AGE_HOURS}h)"
-
-    if current_price and sig.entry:
-        deviation = abs(current_price - sig.entry) / sig.entry
-        if deviation > MAX_ENTRY_DEVIATION:
-            return False, f"price moved {deviation*100:.2f}% from entry (max {MAX_ENTRY_DEVIATION*100:.1f}%)"
-
-    return True, ""
+def _write_active_pairs_to_redis():
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return
+        pairs   = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
+        payload = json.dumps({"pairs": pairs, "refresh_period": 1800})
+        r.setex("pairs:active", 1800, payload)
+        log.info(f"Active pairs written to Redis: {len(pairs)} pairs")
+    except Exception as e:
+        log.error(f"Redis active pairs write failed: {e}")
 
 
 def save_signal_to_db(signal, coin, regime, session, sweep,
@@ -176,8 +166,11 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
             ).first()
 
             if existing:
-                log.debug(f"Skipping duplicate signal — {coin} {signal['direction']} already pending id:{existing.id}")
-                return existing.id
+                log.debug(
+                    f"Duplicate signal — {coin} {signal['direction']} "
+                    f"already pending id:{existing.id}"
+                )
+                return None
 
             factor_scores_json = None
             if wconf and wconf.get("factors"):
@@ -217,7 +210,10 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
             db.add(row)
             db.flush()
             db.refresh(row)
-            log.info(f"Signal saved — ID:{row.id} {coin} Grade:{signal['grade']} TP:{signal.get('tp1')}")
+            log.info(
+                f"Signal saved — ID:{row.id} {coin} "
+                f"Grade:{signal['grade']} TP:{signal.get('tp1')}"
+            )
             return row.id
 
     except Exception as e:
@@ -225,100 +221,44 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
         return None
 
 
-async def _execute_priority_entries():
-    global _pending_forceenter
+async def _do_open_trade(item: dict) -> bool:
+    from trade.executor import open_position, has_open_trade
 
-    log.info(f"_execute_priority_entries — pending: {len(_pending_forceenter)}")
+    coin      = item["coin"]
+    signal    = item["signal"]
+    db_id     = item["db_id"]
+    allocation= item.get("allocation", {})
+    direction = signal.get("direction", "")
+    entry     = float(signal.get("entry", 0))
+    sl        = float(signal.get("sl", 0))
+    tp        = float(signal.get("tp1", 0))
+    grade     = signal.get("grade", "")
+    stake     = float(allocation.get("stake", 0))
+    leverage  = int(allocation.get("leverage", 10))
 
-    if not _pending_forceenter:
-        return
+    if not entry or not sl or not tp:
+        log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
+        return False
+
+    if stake <= 0:
+        log.error(f"Invalid stake for {coin} — stake:{stake}")
+        return False
+
+    if has_open_trade(coin):
+        log.info(f"Skipping — {coin} already has open trade in DB")
+        return False
 
     try:
-        from api.freqtrade import ft_open_trade_count, ft_has_open_trade
-        from engines.capital import get_portfolio_state
-
-        portfolio  = await get_portfolio_state()
-        open_count = portfolio.get("open_trades", 0)
-
-        grade_order = {"A+": 0, "A": 1, "B": 2}
-        sorted_signals = sorted(
-            _pending_forceenter,
-            key=lambda x: (grade_order.get(x["grade"], 99), -x["score"])
-        )
-
-        log.info(f"Signals queued: {[(s['coin'], s['grade'], s['score']) for s in sorted_signals]}")
-
-        entered       = 0
-        entered_coins = set()
-
-        for item in sorted_signals:
-            allocation = item.get("allocation", {})
-            if allocation.get("skip"):
-                log.info(f"Skipping {item['coin']} — allocation said skip: {allocation.get('reason')}")
-                continue
-
-            max_trades = allocation.get("max_trades_allowed", 3)
-            if open_count >= max_trades:
-                log.info(f"Max trades {max_trades} reached for current regime — stopping")
-                break
-
-            coin = item["coin"]
-
-            if coin in entered_coins:
-                continue
-
-            if await ft_has_open_trade(coin):
-                continue
-
-            result = await _do_forceenter(item)
-            if result:
-                entered      += 1
-                open_count   += 1
-                entered_coins.add(coin)
-
-        log.info(f"Priority entries complete — {entered} trades opened")
-
-    except Exception as e:
-        log.error(f"_execute_priority_entries error: {e}", exc_info=True)
-    finally:
-        _pending_forceenter = []
-
-
-async def _do_forceenter(item: dict) -> bool:
-    try:
-        from api.freqtrade import ft_force_enter
-
-        coin       = item["coin"]
-        signal     = item["signal"]
-        db_id      = item["db_id"]
-        allocation = item.get("allocation", {})
-        direction  = signal.get("direction", "")
-        side       = "short" if direction == "SHORT" else "long"
-        entry      = float(signal.get("entry", 0))
-        sl         = float(signal.get("sl", 0))
-        tp         = float(signal.get("tp1", 0))
-        grade      = signal.get("grade", "")
-        stake      = float(allocation.get("stake", 0))
-        leverage   = int(allocation.get("leverage", 10))
-
-        if not entry or not sl or not tp:
-            log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
-            return False
-
-        if stake <= 0:
-            log.error(f"Invalid stake for {coin} — stake:{stake}")
-            return False
-
-        result = await ft_force_enter(
+        result = await open_position(
             coin      = coin,
-            side      = side,
+            direction = direction,
             entry     = entry,
             sl        = sl,
             tp        = tp,
-            leverage  = leverage,
             stake     = stake,
+            leverage  = leverage,
             signal_id = db_id,
-            grade     = grade
+            grade     = grade,
         )
 
         if result.get("success"):
@@ -328,96 +268,72 @@ async def _do_forceenter(item: dict) -> bool:
                 f"trade_id:{result.get('trade_id')}"
             )
             return True
+        elif result.get("deviation_rejected"):
+            log.info(f"Trade skipped — entry deviation: {coin} — {result.get('error')}")
+            return False
         else:
-            log.error(f"forceenter failed: {coin} — {result.get('error')}")
+            log.error(f"Trade open failed: {coin} — {result.get('error')}")
             return False
 
     except Exception as e:
-        log.error(f"_do_forceenter error {item.get('coin')}: {e}", exc_info=True)
+        log.error(f"_do_open_trade error {coin}: {e}", exc_info=True)
         return False
 
 
-async def _queue_cached_signals_for_entry(results: list):
+async def _execute_priority_entries(pending: list):
+    if not pending:
+        return
+
+    from trade.executor import has_open_trade, get_open_trade_count
+
+    log.info(f"_execute_priority_entries — pending: {len(pending)}")
+
     try:
-        from api.freqtrade import ft_has_open_trade
+        open_count = get_open_trade_count()
 
-        for r in results:
-            coin  = r.get("coin")
-            grade = r.get("grade")
-            dir_  = r.get("direction")
+        grade_order    = {"A+": 0, "A": 1, "B": 2}
+        sorted_signals = sorted(
+            pending,
+            key=lambda x: (grade_order.get(x["grade"], 99), -x["score"])
+        )
 
-            if grade not in cfg.MIN_GRADE_TO_TRADE:
-                continue
-            if dir_ not in ["LONG", "SHORT"]:
-                continue
-            if any(p["coin"] == coin for p in _pending_forceenter):
-                continue
-            if await ft_has_open_trade(coin):
-                continue
+        entered       = 0
+        entered_coins = set()
 
-            with get_session() as db:
-                sig = db.query(SignalModel).filter(
-                    SignalModel.coin      == coin,
-                    SignalModel.direction == dir_,
-                    SignalModel.outcome   == "pending"
-                ).order_by(SignalModel.timestamp.desc()).first()
-
-            if not sig or not sig.entry or not sig.sl or not sig.tp1:
-                continue
-
-            current_price = r.get("market", {}).get("price", 0)
-            fresh, reason = _is_signal_fresh(sig, current_price)
-            if not fresh:
-                log.info(f"Skipping stale cached signal {coin} {dir_} — {reason}")
-                continue
-
-            signal_dict = {
-                "grade":     sig.grade,
-                "direction": sig.direction,
-                "score":     sig.score or 0,
-                "entry":     sig.entry,
-                "sl":        sig.sl,
-                "tp1":       sig.tp1,
-                "sl_pct":    sig.sl_pct or 0,
-                "risk_amt":  sig.risk_amt or 0,
-                "pos_size":  sig.position or 0,
-            }
-
-            wconf_cached = r.get("wconf", {})
-            regime_cached = {"type": r.get("regime", "unknown"), "label": r.get("regime", "unknown")}
-            vol_profile_cached = {
-                "volatility_class": r.get("signal", {}).get("vol_class", "normal"),
-                "atr_pct":          r.get("signal", {}).get("atr_pct", 2.0),
-                "adx":              r.get("signal", {}).get("adx_used", 20),
-            }
-
-            allocation = await compute_allocation(
-                signal      = signal_dict,
-                wconf       = wconf_cached,
-                regime      = regime_cached,
-                vol_profile = vol_profile_cached,
-                direction   = dir_,
-            )
+        for item in sorted_signals:
+            allocation = item.get("allocation", {})
 
             if allocation.get("skip"):
-                log.info(f"Cached signal {coin} skipped by allocation: {allocation.get('reason')}")
+                log.info(
+                    f"Skipping {item['coin']} — allocation said skip: "
+                    f"{allocation.get('reason')}"
+                )
                 continue
 
-            _pending_forceenter.append({
-                "coin":       coin,
-                "grade":      sig.grade,
-                "score":      sig.score or 0,
-                "signal":     signal_dict,
-                "db_id":      sig.id,
-                "allocation": allocation,
-            })
-            log.info(
-                f"Queued cached signal: {coin} {dir_} Grade:{grade} "
-                f"stake:{allocation.get('stake'):.2f} lev:{allocation.get('leverage')}x"
-            )
+            max_trades = allocation.get("max_trades_allowed", 3)
+            if open_count >= max_trades:
+                log.info(f"Max trades {max_trades} reached — stopping")
+                break
+
+            coin = item["coin"]
+
+            if coin in entered_coins:
+                continue
+
+            if has_open_trade(coin):
+                log.info(f"Skipping {coin} — already has open trade")
+                continue
+
+            result = await _do_open_trade(item)
+            if result:
+                entered      += 1
+                open_count   += 1
+                entered_coins.add(coin)
+
+        log.info(f"Priority entries complete — {entered} trades opened")
 
     except Exception as e:
-        log.error(f"_queue_cached_signals_for_entry error: {e}", exc_info=True)
+        log.error(f"_execute_priority_entries error: {e}", exc_info=True)
 
 
 async def analyze_coin(
@@ -566,15 +482,21 @@ async def _analyze_coin_inner(
     signal["coin"]        = coin
 
     db_id = save_signal_to_db(
-        signal=signal, coin=coin,
-        regime=regime["label"], session=session["name"],
-        sweep=sweep, retest=retest, disp=disp,
-        market=market, wconf=wconf
+        signal  = signal,
+        coin    = coin,
+        regime  = regime["label"],
+        session = session["name"],
+        sweep   = sweep,
+        retest  = retest,
+        disp    = disp,
+        market  = market,
+        wconf   = wconf
     )
+
+    pending_entry = None
 
     if db_id:
         signal["db_id"] = db_id
-
         _write_signal_to_redis(coin, signal, db_id)
 
         if cfg.CONTENT_ENABLED and signal.get("grade") in ["A+", "A"]:
@@ -584,39 +506,46 @@ async def _analyze_coin_inner(
            signal.get("direction") in ["LONG", "SHORT"] and \
            signal.get("entry"):
 
-            ml_passed, ml_prob = _check_ml_gate(signal, wconf)
+            from trade.executor import has_open_trade
+            if has_open_trade(coin):
+                log.info(f"Skipping entry queue — {coin} already has open trade")
+            else:
+                ml_passed, ml_prob = _check_ml_gate(signal, wconf)
 
-            if ml_passed:
-                vol_profile = {
-                    "volatility_class": signal.get("vol_class", "normal"),
-                    "atr_pct":          signal.get("atr_pct", 2.0),
-                    "adx":              signal.get("adx_used", 20),
-                }
+                if ml_passed:
+                    vol_profile = {
+                        "volatility_class": signal.get("vol_class",  "normal"),
+                        "atr_pct":          signal.get("atr_pct",    2.0),
+                        "adx":              signal.get("adx_used",   20),
+                    }
 
-                allocation = await compute_allocation(
-                    signal      = signal,
-                    wconf       = wconf,
-                    regime      = regime,
-                    vol_profile = vol_profile,
-                    direction   = signal.get("direction"),
-                )
+                    allocation = await compute_allocation(
+                        signal      = signal,
+                        wconf       = wconf,
+                        regime      = regime,
+                        vol_profile = vol_profile,
+                        direction   = signal.get("direction"),
+                    )
 
-                if not allocation.get("skip"):
-                    signal["risk_amt"]  = allocation["risk_amt"]
-                    signal["pos_size"]  = allocation["pos_size"]
-                    signal["leverage"]  = allocation["leverage"]
-                    signal["stake"]     = allocation["stake"]
+                    if not allocation.get("skip"):
+                        signal["risk_amt"] = allocation["risk_amt"]
+                        signal["pos_size"] = allocation["pos_size"]
+                        signal["leverage"] = allocation["leverage"]
+                        signal["stake"]    = allocation["stake"]
 
-                    _pending_forceenter.append({
-                        "coin":       coin,
-                        "grade":      signal.get("grade"),
-                        "score":      signal.get("score", 0),
-                        "signal":     signal,
-                        "db_id":      db_id,
-                        "allocation": allocation,
-                    })
-                else:
-                    log.info(f"Signal {coin} skipped by allocation engine: {allocation.get('reason')}")
+                        pending_entry = {
+                            "coin":       coin,
+                            "grade":      signal.get("grade"),
+                            "score":      signal.get("score", 0),
+                            "signal":     signal,
+                            "db_id":      db_id,
+                            "allocation": allocation,
+                        }
+                    else:
+                        log.info(
+                            f"Signal {coin} skipped by allocation: "
+                            f"{allocation.get('reason')}"
+                        )
 
     result = {
         "coin":              coin,
@@ -649,6 +578,7 @@ async def _analyze_coin_inner(
         "actual_rr":         signal.get("actual_rr", 0),
         "tp_mult":           signal.get("tp_mult", 2.0),
         "cached_at":         time.time(),
+        "pending_entry":     pending_entry,
         "data_quality": {
             tf: {
                 "valid":   r["valid"],
@@ -670,15 +600,15 @@ async def _analyze_coin_inner(
 
 
 async def scan_all_coins() -> list:
-    global _scan_running, _pending_forceenter
+    global _scan_running
 
     if _scan_running:
         log.info("Scan already running — skipping")
         return []
 
-    _scan_running       = True
-    _pending_forceenter = []
-    results             = []
+    _scan_running = True
+    results       = []
+    pending       = []
 
     try:
         log.info(f"Scan started — {len(cfg.COINS)} coins")
@@ -703,24 +633,24 @@ async def scan_all_coins() -> list:
         for r in scan_results:
             if r and "error" not in r:
                 results.append(r)
+                if r.get("pending_entry"):
+                    pending.append(r["pending_entry"])
 
         results.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         _write_active_pairs_to_redis()
 
-        await _queue_cached_signals_for_entry(results)
-
         seen_coins = {}
-        for item in _pending_forceenter:
+        for item in pending:
             coin  = item["coin"]
             score = item.get("score", 0)
             if coin not in seen_coins or score > seen_coins[coin]["score"]:
                 seen_coins[coin] = item
 
-        _pending_forceenter = list(seen_coins.values())
-        log.info(f"Deduplicated pending signals: {len(_pending_forceenter)} unique coins")
+        pending = list(seen_coins.values())
+        log.info(f"Deduplicated pending signals: {len(pending)} unique coins")
 
-        await _execute_priority_entries()
+        await _execute_priority_entries(pending)
 
         tradeable = [
             r for r in results
@@ -744,22 +674,6 @@ async def scan_all_coins() -> list:
     return results
 
 
-def _write_active_pairs_to_redis():
-    try:
-        from redis_client import get_redis
-        r = get_redis()
-        if not r:
-            return
-
-        pairs   = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
-        payload = json.dumps({"pairs": pairs, "refresh_period": 1800})
-        r.setex("pairs:active", 1800, payload)
-        log.info(f"Active pairs written to Redis: {len(pairs)} pairs")
-
-    except Exception as e:
-        log.error(f"Redis active pairs write failed: {e}")
-
-
 async def _scan_coin_safe(coin: str) -> dict:
     try:
         r = await analyze_coin(coin)
@@ -768,30 +682,6 @@ async def _scan_coin_safe(coin: str) -> dict:
     except Exception as e:
         log.error(f"Scan error {coin}: {e}")
         return None
-
-
-def _check_heartbeat():
-    import runtime_state as rs
-    last = rs.get_last_signal_time()
-    if last == 0:
-        rs.set_last_signal_time(time.time())
-        return
-    hours_since = (time.time() - last) / 3600
-    if hours_since >= 3:
-        rs.set_last_signal_time(time.time())
-        asyncio.create_task(_send_heartbeat(hours_since))
-
-
-async def _send_heartbeat(hours: float):
-    try:
-        from alerts.telegram import send
-        await send(
-            f"💓 *Bot Heartbeat*\n\n"
-            f"No tradeable signals in `{hours:.1f}h`.\n"
-            f"Bot alive and scanning every 15 minutes."
-        )
-    except Exception:
-        pass
 
 
 def get_db_stats() -> dict:
