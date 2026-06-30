@@ -219,8 +219,7 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
-    from trade.exchange import get_exchange
-    exchange = get_exchange()
+    from trade.exchange import ping
     log.info(f"Exchange initialized: {cfg.TRADING_MODE} mode")
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
