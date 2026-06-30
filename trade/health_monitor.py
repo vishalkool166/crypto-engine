@@ -15,28 +15,80 @@ _ALERT_COOLDOWN = 300
 
 
 async def run_health_checks():
-    """
-    Runs health checks on all active Freqtrade trades.
-    Called every 1 minute by scheduler.
-    Writes health state to Redis.
-    Sends Telegram alert on state change.
-    """
     try:
-        from api.freqtrade import _ft_get
-        trades = await _ft_get("/status")
-
-        if not trades or not isinstance(trades, list) or len(trades) == 0:
+        from trade.monitor import _get_open_trades_from_db
+        trades = _get_open_trades_from_db()
+        if not trades:
             return
-
         for trade in trades:
             try:
-                await _check_single_trade(trade)
+                await _check_single_trade_db(trade)
             except Exception as e:
-                pair = trade.get("pair", "--")
-                log.error(f"Health check error for {pair}: {e}")
-
+                log.error(f"Health check error for {trade.get('coin')}: {e}")
     except Exception as e:
         log.error(f"run_health_checks error: {e}")
+
+
+async def _check_single_trade_db(trade: dict):
+    from trade.exchange import get_ticker_price
+    from data.cache import cache
+
+    coin      = trade["coin"]
+    open_rate = float(trade.get("entry_price") or 0)
+    direction = trade.get("direction", "LONG")
+
+    if not coin or not open_rate:
+        return
+
+    current_price = await get_ticker_price(f"{coin}/USDT:USDT")
+    if not current_price:
+        return
+
+    cached = cache.get_raw(f"signal_{coin}")
+    if not cached:
+        return
+
+    d1d       = cached.get("d1d", {})
+    d4h       = cached.get("d4h", {})
+    retest    = cached.get("retest", {})
+    sweep     = cached.get("sweep", {})
+    oi_matrix = cached.get("oi_matrix", {})
+    thesis    = cached.get("explanation", {}).get("thesis", "")
+    btc_data  = cache.get_raw("btc_1d_data")
+
+    class _TradeMock:
+        def __init__(self):
+            self.direction   = direction
+            self.entry_price = open_rate
+            self.is_long     = direction == "LONG"
+
+    current_state = _last_health_states.get(coin, HEALTHY)
+
+    health = check_trade_health(
+        trade           = _TradeMock(),
+        current_price   = current_price,
+        d1d             = d1d,
+        d4h             = d4h,
+        btc_data        = btc_data,
+        oi_matrix       = oi_matrix,
+        retest          = retest,
+        sweep           = sweep,
+        original_thesis = thesis,
+        current_state   = current_state
+    )
+
+    new_state = health["state"]
+    _write_health_to_redis(coin, health)
+
+    if _should_alert(coin, new_state, current_state):
+        await _send_health_alert(
+            coin,
+            health,
+            {"pair": f"{coin}/USDT:USDT", "profit_abs": 0.0}
+        )
+        _last_alert_times[coin] = time.time()
+
+    _last_health_states[coin] = new_state
 
 
 async def _check_single_trade(trade: dict):

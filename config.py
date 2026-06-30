@@ -167,6 +167,10 @@ class Config:
     JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
+    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "")
+    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "")
+    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
+
     ML_MIN_TRADES = 100
     ML_ENABLED    = os.getenv("ML_ENABLED", "False").lower() == "true"
 
