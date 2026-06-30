@@ -166,11 +166,13 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
             ).first()
 
             if existing:
-                log.debug(
-                    f"Duplicate signal — {coin} {signal['direction']} "
-                    f"already pending id:{existing.id}"
-                )
-                return None
+                from trade.executor import has_open_trade
+                if has_open_trade(coin):
+                    log.debug(f"Trade open for {coin} — keeping existing signal ID:{existing.id}")
+                    return None
+                else:
+                    existing.outcome = "expired"
+                    log.info(f"Expired stale signal ID:{existing.id} {coin} {signal['direction']} — saving fresh signal")
 
             factor_scores_json = None
             if wconf and wconf.get("factors"):
