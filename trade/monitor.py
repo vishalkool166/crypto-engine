@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta, date
 from database import get_session, Trade as TradeModel, Signal as SignalModel
-from trade.exchange import get_exchange, get_positions, get_ticker_price
+from trade.exchange import get_positions, get_ticker_price
 from config import cfg
 
 log = logging.getLogger(__name__)
