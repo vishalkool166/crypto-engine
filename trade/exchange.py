@@ -13,7 +13,7 @@ _client: httpx.AsyncClient = None
 def _get_base_url() -> str:
     if cfg.TRADING_MODE == "live":
         return "https://fapi.binance.com"
-    return "https://demo.binance.com"
+    return cfg.BINANCE_DEMO_BASE_URL or "https://testnet.binancefuture.com"
 
 
 def _get_api_key() -> str:
