@@ -62,12 +62,15 @@ def _get_client_tier(websocket: WebSocket) -> str:
 
 async def _build_ticker_payload(tier: str = "admin") -> dict:
     from saas.signals import get_summary_for_tier
+    from trade.ws import get_all_mark_prices
 
-    summary = get_summary_for_tier(tier)
+    summary     = get_summary_for_tier(tier)
+    mark_prices = get_all_mark_prices()
 
     return {
-        "type":    "ticker",
-        "items":   [],
+        "type":        "ticker",
+        "items":       [],
+        "mark_prices": mark_prices,
         "summary": {
             "next_scan_epoch": summary.get("next_scan_epoch", 0),
             "mode":            summary.get("mode",          "paper"),
@@ -81,7 +84,41 @@ async def _build_ticker_payload(tier: str = "admin") -> dict:
 
 async def _build_ws_payload(tier: str = "admin") -> dict:
     from saas.signals import get_dashboard_for_tier
-    return get_dashboard_for_tier(tier)
+    from trade.ws import get_all_mark_prices
+    from trade.monitor import get_open_positions_enriched
+    from trade.ws import get_mark_price
+
+    dashboard   = get_dashboard_for_tier(tier)
+    mark_prices = get_all_mark_prices()
+
+    try:
+        open_trades = await get_open_positions_enriched()
+        for trade in open_trades:
+            coin       = trade.get("coin", "")
+            live_price = get_mark_price(coin)
+            if live_price:
+                trade["current_price"] = live_price
+                entry    = float(trade.get("entry_price") or 0)
+                leverage = int(trade.get("leverage") or 1)
+                margin   = float(trade.get("margin_used") or 0)
+                is_short = trade.get("is_short", False)
+                if entry > 0:
+                    if is_short:
+                        pnl = (entry - live_price) / entry * margin * leverage
+                    else:
+                        pnl = (live_price - entry) / entry * margin * leverage
+                    trade["profit_abs"]   = round(pnl - margin * leverage * 0.001, 4)
+                    trade["profit_ratio"] = round(
+                        (live_price - entry) / entry * leverage if not is_short
+                        else (entry - live_price) / entry * leverage,
+                        4
+                    )
+        dashboard["open_trades"] = open_trades
+    except Exception as e:
+        log.error(f"Trade enrichment error: {e}")
+
+    dashboard["mark_prices"] = mark_prices
+    return dashboard
 
 
 async def _push_to_clients(payload_str: str):
@@ -146,16 +183,23 @@ async def _push_trade_update(event_type: str, data: dict = None):
         return
     try:
         from trade.monitor import get_open_positions_enriched, get_profit_summary
+        from trade.ws import get_mark_price
 
-        positions = await get_open_positions_enriched()
-        profit    = get_profit_summary()
+        open_trades = await get_open_positions_enriched()
+        for trade in open_trades:
+            coin       = trade.get("coin", "")
+            live_price = get_mark_price(coin)
+            if live_price:
+                trade["current_price"] = live_price
+
+        profit = get_profit_summary()
 
         payload = json.dumps({
-            "type":      "trade_update",
-            "event":     event_type,
-            "status":    positions,
-            "profit":    profit,
-            "bot_state": "running"
+            "type":        "trade_update",
+            "event":       event_type,
+            "open_trades": open_trades,
+            "profit":      profit,
+            "data":        data or {},
         })
 
         await _push_to_clients(payload)
@@ -164,9 +208,15 @@ async def _push_trade_update(event_type: str, data: dict = None):
         log.error(f"_push_trade_update error: {e}")
 
 
+async def _on_trade_event(event_type: str, data: dict):
+    push_types = {"trade_closed", "order_filled", "account_update"}
+    if event_type in push_types:
+        await _push_trade_update(event_type, data)
+
+
 async def _dashboard_push_loop():
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
         if _dashboard_clients:
             await push_event("ping")
 
@@ -199,6 +249,9 @@ async def lifespan(app: FastAPI):
 
     on_event(push_event)
 
+    from trade.ws import start_ws, on_trade_event
+    on_trade_event(_on_trade_event)
+
     from auth import setup_status
     status = setup_status()
     if not status["setup_complete"]:
@@ -219,8 +272,8 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
-    from trade.exchange import ping
-    log.info(f"Exchange initialized: {cfg.TRADING_MODE} mode")
+    await start_ws()
+    log.info("Binance WebSocket streams started")
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
@@ -231,6 +284,7 @@ async def lifespan(app: FastAPI):
         f"Coins:    `{len(cfg.COINS)} coins`\n"
         f"Grades:   `{grades}`\n"
         f"Webhook:  `✅ Active`\n"
+        f"WS:       `✅ Binance streams active`\n"
         f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
@@ -260,6 +314,9 @@ async def lifespan(app: FastAPI):
         await _session_cleanup
     except asyncio.CancelledError:
         pass
+
+    from trade.ws import stop_ws
+    await stop_ws()
 
     from trade.exchange import close_exchange
     await close_exchange()
@@ -830,7 +887,6 @@ async def request_totp_via_telegram(request: Request):
             )
 
         import pyotp
-        from alerts.telegram import send
         code = pyotp.TOTP(cfg.TOTP_SECRET).now()
         await send(
             f"🔐 *Login Code Requested*\n\n"
@@ -964,6 +1020,12 @@ async def auth_qr_png():
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/ws/status")
+async def ws_status(request: Request):
+    from trade.ws import get_ws_status
+    return JSONResponse(content=get_ws_status())
+
+
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
@@ -973,8 +1035,7 @@ async def dashboard_websocket(websocket: WebSocket):
     _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier}
 
     try:
-        from saas.signals import get_dashboard_for_tier
-        initial = get_dashboard_for_tier(tier)
+        initial = await _build_ws_payload(tier)
         await websocket.send_text(json.dumps(initial))
     except Exception as e:
         log.error(f"Dashboard WS initial push error: {e}")

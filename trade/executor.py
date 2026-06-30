@@ -8,7 +8,7 @@ from trade.exchange import (
     get_balance, get_positions, get_ticker_price,
     set_leverage, set_margin_mode, place_order,
     cancel_order, get_order, cancel_all_orders,
-    get_symbol_precision
+    get_symbol_precision, get_user_trades
 )
 from database import get_session, Trade as TradeModel, Signal as SignalModel
 from config import cfg
@@ -119,6 +119,9 @@ async def open_position(
     leverage:  int,
     signal_id: int  = None,
     grade:     str  = "",
+    regime:    str  = "",
+    session:   str  = "",
+    score:     float = 0.0,
 ) -> dict:
     symbol   = f"{coin}USDT"
     is_short = direction == "SHORT"
@@ -161,7 +164,7 @@ async def open_position(
             f"Opening position: {coin} {direction} "
             f"price:{current_price} qty:{quantity} "
             f"stake:{stake:.2f} leverage:{leverage}x "
-            f"sl:{sl} tp:{tp}"
+            f"sl:{sl} tp:{tp} regime:{regime} session:{session}"
         )
 
         entry_order = await _place_order_with_retry(
@@ -173,8 +176,8 @@ async def open_position(
 
         entry_order = await _wait_for_fill(symbol, entry_order["orderId"])
 
-        fill_price  = float(entry_order.get("avgPrice") or entry_order.get("price") or current_price)
-        filled_qty  = float(entry_order.get("executedQty", quantity))
+        fill_price = float(entry_order.get("avgPrice") or entry_order.get("price") or current_price)
+        filled_qty = float(entry_order.get("executedQty", quantity))
 
         log.info(f"Entry filled: {coin} {direction} fill_price:{fill_price} qty:{filled_qty}")
 
@@ -183,18 +186,32 @@ async def open_position(
 
         try:
             sl_order = await _place_order_with_retry(
-                symbol      = symbol,
-                side        = sl_side,
-                order_type  = "STOP_MARKET",
-                quantity    = filled_qty,
-                stop_price  = sl,
-                reduce_only = True,
-                working_type= "MARK_PRICE",
+                symbol       = symbol,
+                side         = sl_side,
+                order_type   = "STOP_MARKET",
+                quantity     = filled_qty,
+                stop_price   = round(sl, 6),
+                reduce_only  = True,
+                working_type = "MARK_PRICE",
             )
             sl_order_id = str(sl_order.get("orderId", ""))
             log.info(f"SL order placed: {coin} sl:{sl} order_id:{sl_order_id}")
         except Exception as e:
-            log.error(f"SL order failed {coin}: {e}")
+            log.error(f"SL order failed (MARK_PRICE) {coin}: {e}")
+            try:
+                sl_order = await _place_order_with_retry(
+                    symbol       = symbol,
+                    side         = sl_side,
+                    order_type   = "STOP_MARKET",
+                    quantity     = filled_qty,
+                    stop_price   = round(sl, 6),
+                    reduce_only  = True,
+                    working_type = "CONTRACT_PRICE",
+                )
+                sl_order_id = str(sl_order.get("orderId", ""))
+                log.info(f"SL order placed (CONTRACT_PRICE): {coin} sl:{sl} order_id:{sl_order_id}")
+            except Exception as e2:
+                log.error(f"SL order failed both attempts {coin}: {e2}")
 
         try:
             tp_order = await _place_order_with_retry(
@@ -202,7 +219,7 @@ async def open_position(
                 side        = tp_side,
                 order_type  = "LIMIT",
                 quantity    = filled_qty,
-                price       = tp,
+                price       = round(tp, 6),
                 reduce_only = True,
             )
             tp_order_id = str(tp_order.get("orderId", ""))
@@ -224,19 +241,27 @@ async def open_position(
             sl_order_id    = sl_order_id,
             tp1_order_id   = tp_order_id,
             entry_order_id = str(entry_order.get("orderId", "")),
+            regime         = regime,
+            session        = session,
+            score          = score,
         )
 
         from alerts.telegram import send
-        mode  = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
-        emoji = "📈" if direction == "LONG" else "📉"
+        mode      = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
+        emoji     = "📈" if direction == "LONG" else "📉"
+        sl_status = "✅" if sl_order_id else "⚠️ Failed"
+        tp_status = "✅" if tp_order_id else "⚠️ Failed"
+
         await send(
             f"{emoji} *{coin} {direction} Opened — {mode}*\n\n"
             f"Entry:    `${fill_price:.6f}`\n"
-            f"SL:       `${sl:.6f}`\n"
-            f"TP:       `${tp:.6f}`\n"
+            f"SL:       `${sl:.6f}` {sl_status}\n"
+            f"TP:       `${tp:.6f}` {tp_status}\n"
             f"Stake:    `${stake:.2f}` × `{leverage}x`\n"
             f"Position: `${stake * leverage:.2f}`\n"
-            f"Grade:    `{grade}`"
+            f"Grade:    `{grade}` · Score: `{score}`\n"
+            f"Regime:   `{regime}`\n"
+            f"Session:  `{session}`"
         )
 
         return {
@@ -298,9 +323,9 @@ async def close_position(
             close_order.get("price") or 0
         )
 
-        entry    = _get_trade_entry(trade_id)
-        lev      = _get_trade_leverage(trade_id)
-        margin   = _get_trade_margin(trade_id)
+        entry  = _get_trade_entry(trade_id)
+        lev    = _get_trade_leverage(trade_id)
+        margin = _get_trade_margin(trade_id)
 
         pnl = _calculate_pnl(
             direction  = direction,
@@ -366,33 +391,39 @@ def _save_trade(
     sl_order_id:    str,
     tp1_order_id:   str,
     entry_order_id: str,
+    regime:         str   = "",
+    session:        str   = "",
+    score:          float = 0.0,
 ) -> int:
     try:
         with get_session() as db:
             trade = TradeModel(
-                signal_id      = signal_id,
-                coin           = coin,
-                direction      = direction,
-                grade          = grade,
-                state          = "open",
-                is_active      = True,
-                entry_price    = entry_price,
-                sl_price       = sl_price,
-                tp1_price      = tp1_price,
-                position_size  = position_size,
-                margin_used    = margin_used,
-                leverage       = leverage,
-                sl_order_id    = sl_order_id,
-                tp1_order_id   = tp1_order_id,
-                entry_order_id = entry_order_id,
-                opened_at      = datetime.now(timezone.utc),
-                outcome        = "pending",
-                balance_at_open= margin_used,
+                signal_id        = signal_id,
+                coin             = coin,
+                direction        = direction,
+                grade            = grade,
+                state            = "open",
+                is_active        = True,
+                entry_price      = entry_price,
+                sl_price         = sl_price,
+                tp1_price        = tp1_price,
+                position_size    = position_size,
+                margin_used      = margin_used,
+                leverage         = leverage,
+                sl_order_id      = sl_order_id,
+                tp1_order_id     = tp1_order_id,
+                entry_order_id   = entry_order_id,
+                opened_at        = datetime.now(timezone.utc),
+                outcome          = "pending",
+                balance_at_open  = margin_used,
+                regime_at_entry  = regime,
+                session_at_entry = session,
+                score_at_entry   = score,
             )
             db.add(trade)
             db.flush()
             db.refresh(trade)
-            log.info(f"Trade saved: id:{trade.id} {coin} {direction}")
+            log.info(f"Trade saved: id:{trade.id} {coin} {direction} regime:{regime} session:{session} score:{score}")
             return trade.id
     except Exception as e:
         log.error(f"_save_trade error: {e}")
@@ -412,6 +443,7 @@ def _mark_trade_closed(
             ).first()
             if not trade:
                 return
+
             trade.is_active    = False
             trade.state        = "closed"
             trade.exit_price   = exit_price
@@ -419,6 +451,20 @@ def _mark_trade_closed(
             trade.close_reason = reason
             trade.closed_at    = datetime.now(timezone.utc)
             trade.outcome      = "win" if pnl > 0 else "loss"
+            trade.tp1_hit      = reason in ("tp_hit",)
+
+            try:
+                from trade.health_monitor import get_health_from_redis
+                health = get_health_from_redis(trade.coin)
+                if health:
+                    import json
+                    trade.health_at_close = json.dumps({
+                        "state":    health.get("state"),
+                        "failures": health.get("failures", []),
+                        "warnings": health.get("warnings", []),
+                    })
+            except Exception:
+                pass
 
             if trade.signal_id:
                 sig = db.query(SignalModel).filter(
@@ -431,7 +477,8 @@ def _mark_trade_closed(
 
             log.info(
                 f"Trade closed: id:{trade_id} "
-                f"exit:{exit_price} pnl:{pnl} reason:{reason}"
+                f"exit:{exit_price} pnl:{pnl} "
+                f"reason:{reason} tp1_hit:{trade.tp1_hit}"
             )
     except Exception as e:
         log.error(f"_mark_trade_closed error: {e}")

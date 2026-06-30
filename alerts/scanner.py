@@ -27,8 +27,8 @@ log = logging.getLogger(__name__)
 CACHE_TTL            = 1500
 MAX_SIGNAL_AGE_HOURS = 4
 
-_scan_running    = False
-_scan_semaphore  = asyncio.Semaphore(3)
+_scan_running   = False
+_scan_semaphore = asyncio.Semaphore(3)
 
 
 def _interpret_oi(market: dict) -> dict:
@@ -224,17 +224,20 @@ def save_signal_to_db(signal, coin, regime, session, sweep,
 async def _do_open_trade(item: dict) -> bool:
     from trade.executor import open_position, has_open_trade
 
-    coin      = item["coin"]
-    signal    = item["signal"]
-    db_id     = item["db_id"]
-    allocation= item.get("allocation", {})
-    direction = signal.get("direction", "")
-    entry     = float(signal.get("entry", 0))
-    sl        = float(signal.get("sl", 0))
-    tp        = float(signal.get("tp1", 0))
-    grade     = signal.get("grade", "")
-    stake     = float(allocation.get("stake", 0))
-    leverage  = int(allocation.get("leverage", 10))
+    coin       = item["coin"]
+    signal     = item["signal"]
+    db_id      = item["db_id"]
+    allocation = item.get("allocation", {})
+    direction  = signal.get("direction", "")
+    entry      = float(signal.get("entry", 0))
+    sl         = float(signal.get("sl", 0))
+    tp         = float(signal.get("tp1", 0))
+    grade      = signal.get("grade", "")
+    stake      = float(allocation.get("stake", 0))
+    leverage   = int(allocation.get("leverage", 10))
+    regime     = item.get("regime", "")
+    session    = item.get("session", "")
+    score      = float(item.get("score", 0))
 
     if not entry or not sl or not tp:
         log.error(f"Invalid signal levels for {coin} — entry:{entry} sl:{sl} tp:{tp}")
@@ -259,6 +262,9 @@ async def _do_open_trade(item: dict) -> bool:
             leverage  = leverage,
             signal_id = db_id,
             grade     = grade,
+            regime    = regime,
+            session   = session,
+            score     = score,
         )
 
         if result.get("success"):
@@ -540,6 +546,8 @@ async def _analyze_coin_inner(
                             "signal":     signal,
                             "db_id":      db_id,
                             "allocation": allocation,
+                            "regime":     regime["label"],
+                            "session":    session["name"],
                         }
                     else:
                         log.info(

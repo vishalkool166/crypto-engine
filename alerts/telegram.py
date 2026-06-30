@@ -147,10 +147,10 @@ async def register_commands():
         {"command": "queue",     "description": "Top 3 signals right now"},
         {"command": "scan",      "description": "Trigger manual scan"},
         {"command": "health",    "description": "All open trades health"},
-        {"command": "trades",    "description": "Open trades"},
+        {"command": "trades",    "description": "Open trades with live PnL"},
+        {"command": "position",  "description": "Deep dive on trade — /position XLM"},
         {"command": "balance",   "description": "Account balance"},
         {"command": "profit",    "description": "Profit summary"},
-        {"command": "close",     "description": "Close a trade — /close COIN"},
         {"command": "btc",       "description": "BTC analysis"},
         {"command": "coin",      "description": "Any coin analysis — /coin ETH"},
         {"command": "funding",   "description": "Funding rates"},
@@ -190,7 +190,7 @@ async def handle_webhook(request: Request):
         return
 
     try:
-        data = await request.json()
+        data    = await request.json()
         msg     = data.get("message", {})
         text    = msg.get("text", "").strip()
         chat_id = str(msg.get("chat", {}).get("id", ""))
@@ -238,6 +238,15 @@ async def _handle_command(text: str, chat_id: str = ""):
             )
         return
 
+    if t.startswith("/position"):
+        parts = t.split()
+        coin  = parts[1].upper() if len(parts) > 1 else ""
+        if not coin:
+            await send("⚠️ Usage: `/position XLM`")
+            return
+        await _cmd_position(coin)
+        return
+
     if t.startswith("/backtest"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else ""
@@ -265,15 +274,6 @@ async def _handle_command(text: str, chat_id: str = ""):
             await send("⚠️ Usage: `/discard 5`")
         return
 
-    if t.startswith("/close"):
-        parts = t.split()
-        coin  = parts[1].upper() if len(parts) > 1 else ""
-        if not coin:
-            await send("⚠️ Usage: `/close BTC`")
-            return
-        await send(f"⚠️ Use dashboard Force Sell button to close `{coin}` — TOTP required.")
-        return
-
     if t.startswith("#") and len(t) > 1:
         try:
             post_id = int(t.replace("#", "").strip())
@@ -283,26 +283,26 @@ async def _handle_command(text: str, chat_id: str = ""):
         return
 
     handlers = {
-        "/status":  _cmd_status,
-        "/pnl":     _cmd_pnl,
-        "/queue":   _cmd_queue,
-        "/daily":   _cmd_daily,
-        "/scan":    _cmd_scan,
-        "/help":    _cmd_help,
-        "/btc":     _cmd_btc,
-        "/funding": _cmd_funding,
-        "/fear":    _cmd_fear,
-        "/history": _cmd_history,
-        "/stats":   _cmd_stats,
-        "/grade":   _cmd_grade,
-        "/mode":    _cmd_mode,
-        "/brief":   _cmd_brief,
-        "/ml":      _cmd_ml,
-        "/trades":  _cmd_trades,
-        "/balance": _cmd_balance,
-        "/profit":  _cmd_profit,
-        "/health":  _cmd_health,
-        "/pending": _cmd_pending,
+        "/status":   _cmd_status,
+        "/pnl":      _cmd_pnl,
+        "/queue":    _cmd_queue,
+        "/daily":    _cmd_daily,
+        "/scan":     _cmd_scan,
+        "/help":     _cmd_help,
+        "/btc":      _cmd_btc,
+        "/funding":  _cmd_funding,
+        "/fear":     _cmd_fear,
+        "/history":  _cmd_history,
+        "/stats":    _cmd_stats,
+        "/grade":    _cmd_grade,
+        "/mode":     _cmd_mode,
+        "/brief":    _cmd_brief,
+        "/ml":       _cmd_ml,
+        "/trades":   _cmd_trades,
+        "/balance":  _cmd_balance,
+        "/profit":   _cmd_profit,
+        "/health":   _cmd_health,
+        "/pending":  _cmd_pending,
     }
 
     if t.startswith("/"):
@@ -326,9 +326,11 @@ async def _cmd_status():
     from alerts.scanner import get_db_stats
     from scheduler import get_next_scan_time
     from trade.monitor import get_open_positions_enriched
+    from trade.ws import get_ws_status
 
     stats     = get_db_stats()
     next_scan = get_next_scan_time()
+    ws_status = get_ws_status()
 
     try:
         open_trades = await get_open_positions_enriched()
@@ -342,29 +344,31 @@ async def _cmd_status():
         r.get("direction") in ["LONG", "SHORT"]
     ]
 
-    mode = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    mode     = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    ws_emoji = "✅" if ws_status["mark_price_connected"] else "❌"
 
     await send(
         f"📊 *Bot Status*\n"
         f"_{_now_ist_full()}_\n\n"
-        f"State: `RUNNING`\n"
-        f"Mode: `{mode}`\n"
-        f"Coins: `{len(cfg.COINS)} being scanned`\n"
-        f"Grades: `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
+        f"State:       `RUNNING`\n"
+        f"Mode:        `{mode}`\n"
+        f"Coins:       `{len(cfg.COINS)} being scanned`\n"
+        f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Open trades: `{len(open_trades)}`\n"
-        f"Signals in cache: `{len(cached_results)}`\n"
-        f"Tradeable now: `{len(tradeable)}`\n\n"
+        f"Signals:     `{len(cached_results)}` cached · `{len(tradeable)}` tradeable\n"
+        f"WS Stream:   {ws_emoji} `{ws_status['prices_cached']} prices cached`\n\n"
         f"All-time signals: `{stats.get('total', 0)}`\n"
         f"Closed: `{stats.get('closed', 0)}`\n"
         f"Win rate: `{stats.get('win_rate', 0)}%`\n\n"
-        f"Next scan: `{next_scan}`\n"
-        f"Type /scan to scan now."
+        f"Next scan: `{next_scan}`"
     )
 
 
 async def _cmd_trades():
     try:
         from trade.monitor import get_open_positions_enriched
+        from trade.ws import get_mark_price
+
         trades = await get_open_positions_enriched()
 
         if not trades:
@@ -376,20 +380,54 @@ async def _cmd_trades():
         for t in trades:
             coin      = t.get("coin", "--")
             direction = t.get("direction", "--")
-            pnl       = float(t.get("profit_abs", 0))
-            pnl_pct   = float(t.get("profit_ratio", 0)) * 100
-            pnl_str   = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
-            side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"
+            entry     = float(t.get("entry_price") or 0)
+            leverage  = int(t.get("leverage") or 1)
+            margin    = float(t.get("margin_used") or 0)
+            is_short  = direction == "SHORT"
+            grade     = t.get("grade", "--")
+            regime    = t.get("regime_at_entry", "--")
+            session   = t.get("session_at_entry", "--")
             duration  = t.get("duration", "--")
+
+            live_price = get_mark_price(coin)
+            if not live_price:
+                live_price = float(t.get("current_price") or entry)
+
+            if entry > 0 and live_price > 0:
+                if is_short:
+                    pnl_pct = (entry - live_price) / entry * leverage * 100
+                    pnl_abs = (entry - live_price) / entry * margin * leverage
+                else:
+                    pnl_pct = (live_price - entry) / entry * leverage * 100
+                    pnl_abs = (live_price - entry) / entry * margin * leverage
+                pnl_abs = round(pnl_abs - margin * leverage * 0.001, 4)
+            else:
+                pnl_pct = 0.0
+                pnl_abs = 0.0
+
+            pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
+            pnl_emoji = "🟢" if pnl_abs >= 0 else "🔴"
+            side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"
+
             health    = t.get("health", {})
             h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
             h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
 
+            sl  = t.get("sl_price")
+            tp  = t.get("tp1_price")
+
+            sl_dist = abs(live_price - sl) / entry * 100 if sl and entry else 0
+            tp_dist = abs(tp - live_price) / entry * 100 if tp and entry else 0
+
             lines.append(
-                f"{side} `{coin}`\n"
-                f"Entry: `{t.get('entry_price')}` · Current: `{t.get('current_price')}`\n"
-                f"PnL: `{pnl_str}` ({pnl_pct:.2f}%) · Open: `{duration}`\n"
-                f"Health: {h_emoji} `{h_state}`\n"
+                f"{side} `{coin}` — Grade `{grade}`\n"
+                f"Entry: `{entry:.6f}` · Live: `{live_price:.6f}`\n"
+                f"PnL: {pnl_emoji} `{pnl_str}` ({pnl_pct:.2f}%)\n"
+                f"SL: `{sl:.6f}` ({sl_dist:.2f}% away)\n"
+                f"TP: `{tp:.6f}` ({tp_dist:.2f}% away)\n"
+                f"Leverage: `{leverage}x` · Margin: `${margin:.2f}`\n"
+                f"Regime: `{regime}` · Session: `{session}`\n"
+                f"Health: {h_emoji} `{h_state}` · Open: `{duration}`\n"
             )
 
         await send("\n".join(lines))
@@ -399,17 +437,129 @@ async def _cmd_trades():
         await send("❌ Could not fetch trades.")
 
 
+async def _cmd_position(coin: str):
+    try:
+        from trade.monitor import get_open_positions_enriched
+        from trade.ws import get_mark_price
+        from database import get_session, Trade as TradeModel
+
+        trades = await get_open_positions_enriched()
+        trade  = next((t for t in trades if t.get("coin") == coin), None)
+
+        if not trade:
+            with get_session() as db:
+                db_trade = db.query(TradeModel).filter(
+                    TradeModel.coin      == coin,
+                    TradeModel.is_active == True,
+                ).first()
+            if not db_trade:
+                await send(f"⚠️ No open trade found for `{coin}`.")
+                return
+
+        entry     = float(trade.get("entry_price") or 0)
+        direction = trade.get("direction", "--")
+        leverage  = int(trade.get("leverage") or 1)
+        margin    = float(trade.get("margin_used") or 0)
+        is_short  = direction == "SHORT"
+        grade     = trade.get("grade", "--")
+        sl        = trade.get("sl_price")
+        tp        = trade.get("tp1_price")
+        duration  = trade.get("duration", "--")
+        regime    = trade.get("regime_at_entry", "--")
+        session   = trade.get("session_at_entry", "--")
+
+        live_price = get_mark_price(coin)
+        if not live_price:
+            live_price = float(trade.get("current_price") or entry)
+
+        if entry > 0 and live_price > 0:
+            if is_short:
+                pnl_pct = (entry - live_price) / entry * leverage * 100
+                pnl_abs = (entry - live_price) / entry * margin * leverage
+            else:
+                pnl_pct = (live_price - entry) / entry * leverage * 100
+                pnl_abs = (live_price - entry) / entry * margin * leverage
+            pnl_abs = round(pnl_abs - margin * leverage * 0.001, 4)
+        else:
+            pnl_pct = 0.0
+            pnl_abs = 0.0
+
+        pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
+        pnl_emoji = "🟢" if pnl_abs >= 0 else "🔴"
+        side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"
+
+        sl_dist   = abs(live_price - sl) / entry * 100 if sl and entry else 0
+        tp_dist   = abs(tp - live_price) / entry * 100 if tp and entry else 0
+        sl_pct    = abs(entry - sl) / entry * 100 if sl and entry else 0
+
+        health    = trade.get("health", {})
+        h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
+        h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
+        failures  = health.get("failures", []) if health else []
+        warnings  = health.get("warnings", []) if health else []
+
+        cached = cache.get_raw(f"signal_{coin}")
+        thesis = ""
+        if cached:
+            thesis = cached.get("explanation", {}).get("thesis", "")
+
+        msg = (
+            f"{side} *{coin}USDT — Position Detail*\n"
+            f"_{_now_ist()}_\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Grade:    `{grade}`\n"
+            f"Regime:   `{regime}`\n"
+            f"Session:  `{session}`\n\n"
+            f"Entry:    `${entry:.6f}`\n"
+            f"Live:     `${live_price:.6f}`\n"
+            f"PnL:      {pnl_emoji} `{pnl_str}` ({pnl_pct:.2f}%)\n\n"
+            f"SL:       `${sl:.6f}` ({sl_pct:.2f}% from entry)\n"
+            f"          `{sl_dist:.2f}%` away from current\n"
+            f"TP:       `${tp:.6f}`\n"
+            f"          `{tp_dist:.2f}%` away from current\n\n"
+            f"Leverage: `{leverage}x` · Margin: `${margin:.2f}`\n"
+            f"Position: `${margin * leverage:.2f}`\n"
+            f"Open:     `{duration}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Health: {h_emoji} `{h_state}`\n"
+        )
+
+        if failures:
+            msg += "\n*Failures:*\n"
+            for f in failures[:2]:
+                msg += f"✘ _{f}_\n"
+        elif warnings:
+            msg += "\n*Warnings:*\n"
+            for w in warnings[:2]:
+                msg += f"⚠ _{w}_\n"
+
+        if thesis:
+            msg += f"\n*Original Thesis:*\n_{thesis[:200]}_\n"
+
+        msg += "\n_Use dashboard Force Sell to close._"
+
+        await send(msg)
+
+    except Exception as e:
+        log.error(f"_cmd_position error {coin}: {e}")
+        await send(f"❌ Could not fetch position for `{coin}`.")
+
+
 async def _cmd_balance():
     try:
         from trade.exchange import get_balance
-        balance = await get_balance()
-        mode    = "DEMO" if cfg.PAPER_TRADING else "LIVE"
+        from trade.ws import get_ws_status
+        balance   = await get_balance()
+        mode      = "DEMO" if cfg.PAPER_TRADING else "LIVE"
+        ws_status = get_ws_status()
         await send(
             f"💰 *Balance — {mode}*\n"
             f"_{_now_ist()}_\n\n"
-            f"Total:  `${balance['total']:.2f} USDT`\n"
-            f"Free:   `${balance['free']:.2f} USDT`\n"
-            f"Used:   `${balance['used']:.2f} USDT`\n"
+            f"Total:      `${balance['total']:.2f} USDT`\n"
+            f"Free:       `${balance['free']:.2f} USDT`\n"
+            f"Used:       `${balance['used']:.2f} USDT`\n"
+            f"Unrealized: `${balance.get('unrealized', 0):.4f} USDT`\n\n"
+            f"WS: `{'✅ Connected' if ws_status['user_data_connected'] else '❌ Disconnected'}`"
         )
     except Exception as e:
         log.error(f"_cmd_balance error: {e}")
@@ -432,7 +582,9 @@ async def _cmd_profit():
             f"Win Rate:     `{win_rate:.1f}%`\n"
             f"Total Trades: `{trades}`\n"
             f"Wins:         `{data.get('wins', 0)}`\n"
-            f"Losses:       `{data.get('losses', 0)}`\n"
+            f"Losses:       `{data.get('losses', 0)}`\n\n"
+            f"Best:  `{data.get('best_pair', '--')}` `${data.get('best_pair_profit_ratio', 0):.4f}`\n"
+            f"Worst: `{data.get('worst_pair', '--')}` `${data.get('worst_pair_profit_ratio', 0):.4f}`\n"
         )
     except Exception as e:
         log.error(f"_cmd_profit error: {e}")
@@ -442,6 +594,8 @@ async def _cmd_profit():
 async def _cmd_health():
     try:
         from trade.monitor import get_open_positions_enriched
+        from trade.ws import get_mark_price
+
         trades = await get_open_positions_enriched()
 
         if not trades:
@@ -453,14 +607,31 @@ async def _cmd_health():
         for t in trades:
             coin      = t.get("coin", "--")
             direction = t.get("direction", "--")
-            pnl       = float(t.get("profit_abs", 0))
-            pnl_str   = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            entry     = float(t.get("entry_price") or 0)
+            leverage  = int(t.get("leverage") or 1)
+            margin    = float(t.get("margin_used") or 0)
+            is_short  = direction == "SHORT"
             side      = "📈" if direction == "LONG" else "📉"
-            health    = t.get("health", {})
-            h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
-            h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
-            failures  = health.get("failures", []) if health else []
-            warnings  = health.get("warnings", []) if health else []
+
+            live_price = get_mark_price(coin)
+            if not live_price:
+                live_price = float(t.get("current_price") or entry)
+
+            if entry > 0 and live_price > 0:
+                if is_short:
+                    pnl_abs = (entry - live_price) / entry * margin * leverage
+                else:
+                    pnl_abs = (live_price - entry) / entry * margin * leverage
+                pnl_abs = round(pnl_abs - margin * leverage * 0.001, 4)
+            else:
+                pnl_abs = 0.0
+
+            pnl_str  = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
+            health   = t.get("health", {})
+            h_state  = health.get("state", "UNKNOWN") if health else "Checking..."
+            h_emoji  = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
+            failures = health.get("failures", []) if health else []
+            warnings = health.get("warnings", []) if health else []
 
             lines.append(f"{side} `{coin}` — {h_emoji} `{h_state}` · `{pnl_str}`")
 
@@ -501,13 +672,15 @@ async def _cmd_coin(coin: str):
     actual_rr = cached.get("actual_rr", 0)
     tp_mult   = cached.get("tp_mult", 1.5)
 
-    price   = market.get("price", 0)
-    change  = market.get("change24", 0)
-    funding = market.get("funding", 0) * 100
-    sign    = "+" if change >= 0 else ""
-    em      = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
-    rsi     = d1d.get("rsi")
-    adx     = d1d.get("adx")
+    from trade.ws import get_mark_price
+    live_price = get_mark_price(coin)
+    price      = live_price if live_price else market.get("price", 0)
+    change     = market.get("change24", 0)
+    funding    = market.get("funding", 0) * 100
+    sign       = "+" if change >= 0 else ""
+    em         = "📈" if dir_ == "LONG" else "📉" if dir_ == "SHORT" else "👁"
+    rsi        = d1d.get("rsi")
+    adx        = d1d.get("adx")
 
     sig   = cached.get("signal", {})
     entry = sig.get("entry")
@@ -696,8 +869,11 @@ async def _cmd_grade():
 
 
 async def _cmd_mode():
-    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
-    grades = ', '.join(cfg.MIN_GRADE_TO_TRADE)
+    from trade.ws import get_ws_status
+    mode      = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+    grades    = ', '.join(cfg.MIN_GRADE_TO_TRADE)
+    ws_status = get_ws_status()
+
     await send(
         f"⚙️ *Bot Configuration*\n\n"
         f"Mode:        `{mode}`\n"
@@ -707,6 +883,8 @@ async def _cmd_mode():
         f"Scan:        `every :00/:15/:30/:45 UTC`\n"
         f"ML:          `{'✅ Active' if cfg.ML_ENABLED else '⏳ Collecting data'}`\n"
         f"Content:     `{'✅ Enabled' if cfg.CONTENT_ENABLED else '❌ Disabled'}`\n"
+        f"WS Prices:   `{'✅ Live' if ws_status['mark_price_connected'] else '❌ Disconnected'}`\n"
+        f"WS UserData: `{'✅ Live' if ws_status['user_data_connected'] else '❌ Disconnected'}`\n"
     )
 
 
@@ -744,8 +922,8 @@ async def _cmd_brief():
         sessions = [r.get("session", "") for r in cached_results if r.get("session")]
         session  = sessions[0] if sessions else "Unknown"
 
-        now  = datetime.now(timezone.utc)
-        hour = now.hour
+        now        = datetime.now(timezone.utc)
+        hour       = now.hour
         time_label = "Morning" if hour < 12 else "Evening" if hour >= 17 else "Midday"
 
         context = {
@@ -841,7 +1019,7 @@ async def _cmd_show_post(post_id: int):
     from content.approval_flow import get_post_text
     text = await get_post_text(post_id)
 
-    if not text: 
+    if not text:
         await send(f"⚠️ Post #{post_id} not found.")
         return
 
@@ -875,9 +1053,9 @@ async def _cmd_backtest(coin: str):
         result = await asyncio.wait_for(
             loop.run_in_executor(
                 None, lambda: run_backtest(
-                    coin=coin,
-                    capital=cfg.CAPITAL,
-                    leverage=10
+                    coin    = coin,
+                    capital = cfg.CAPITAL,
+                    leverage= 10
                 )
             ),
             timeout=120.0
@@ -965,15 +1143,15 @@ async def _cmd_help():
     await send(
         "🤖 *Signal Engine v5 — Commands*\n\n"
         "*ESSENTIALS*\n"
-        "/status  — bot status overview\n"
-        "/queue   — top 3 signals right now\n"
-        "/scan    — trigger manual scan\n"
-        "/health  — all open trades health\n\n"
+        "/status   — bot status + WS connection\n"
+        "/queue    — top 3 signals right now\n"
+        "/scan     — trigger manual scan\n\n"
         "*TRADING*\n"
-        "/trades   — open trades\n"
-        "/balance  — account balance\n"
-        "/profit   — profit summary\n"
-        "/close COIN — close a trade\n\n"
+        "/trades          — all open positions\n"
+        "/position XLM   — deep dive on trade\n"
+        "/health          — health check all trades\n"
+        "/balance         — account balance\n"
+        "/profit          — profit summary\n\n"
         "*MARKET*\n"
         "/btc         — BTC analysis\n"
         "/coin ETH    — any coin analysis\n"
@@ -993,7 +1171,7 @@ async def _cmd_help():
         "/backtest BTC — backtest a coin\n\n"
         "*OTHER*\n"
         "/ml      — ML model status\n"
-        "/mode    — bot config\n"
+        "/mode    — bot config + WS status\n"
         "/help    — this message\n"
     )
 

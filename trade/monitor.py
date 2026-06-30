@@ -3,16 +3,15 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta, date
 from database import get_session, Trade as TradeModel, Signal as SignalModel
-from trade.exchange import get_positions, get_ticker_price
+from trade.exchange import get_positions, get_ticker_price, get_balance
 from config import cfg
 
 log = logging.getLogger(__name__)
 
-_position_cache:     dict  = {}
-_cache_updated_at:   float = 0.0
-_CACHE_TTL                 = 15.0
-
-_monitor_running:    bool  = False
+_position_cache:   dict  = {}
+_cache_updated_at: float = 0.0
+_CACHE_TTL               = 15.0
+_monitor_running:  bool  = False
 
 
 def _get_open_trades_from_db() -> list:
@@ -46,23 +45,22 @@ def _enrich_with_live_data(db_trades: list, positions: list) -> list:
     position_map = {}
     for p in positions:
         symbol = p.get("symbol", "")
-        coin   = symbol.replace("/USDT:USDT", "").replace("/USDT", "")
+        coin   = symbol.replace("USDT", "")
         position_map[coin] = p
 
     result = []
     for trade in db_trades:
-        coin     = trade["coin"]
-        position = position_map.get(coin)
-
-        entry        = float(trade.get("entry_price") or 0)
-        direction    = trade.get("direction", "LONG")
-        leverage     = int(trade.get("leverage") or 1)
-        margin       = float(trade.get("margin_used") or 0)
-        is_short     = direction == "SHORT"
+        coin      = trade["coin"]
+        position  = position_map.get(coin)
+        entry     = float(trade.get("entry_price") or 0)
+        direction = trade.get("direction", "LONG")
+        leverage  = int(trade.get("leverage") or 1)
+        margin    = float(trade.get("margin_used") or 0)
+        is_short  = direction == "SHORT"
 
         if position:
-            current_price  = float(position.get("markPrice")    or position.get("entryPrice") or entry)
-            unrealized_pnl = float(position.get("unrealizedPnl") or 0)
+            current_price  = float(position.get("markPrice")     or position.get("entryPrice") or entry)
+            unrealized_pnl = float(position.get("unRealizedProfit") or 0)
             liquidation    = float(position.get("liquidationPrice") or 0)
         else:
             current_price  = entry
@@ -164,105 +162,132 @@ def invalidate_position_cache():
     _cache_updated_at = 0.0
 
 
-async def _check_sl_tp_hit(trade: dict) -> tuple[bool, str, float]:
-    coin      = trade["coin"]
-    symbol    = f"{coin}/USDT:USDT"
-    is_short  = trade["is_short"]
-    sl        = float(trade.get("sl_price")  or 0)
-    tp        = float(trade.get("tp1_price") or 0)
-
-    if not sl or not tp:
-        return False, "", 0.0
-
-    try:
-        current_price = await get_ticker_price(symbol)
-        if not current_price:
-            return False, "", 0.0
-
-        if is_short:
-            if current_price >= sl:
-                return True, "sl_hit", current_price
-            if current_price <= tp:
-                return True, "tp_hit", current_price
-        else:
-            if current_price <= sl:
-                return True, "sl_hit", current_price
-            if current_price >= tp:
-                return True, "tp_hit", current_price
-
-        return False, "", current_price
-
-    except Exception as e:
-        log.error(f"_check_sl_tp_hit error {coin}: {e}")
-        return False, "", 0.0
-
-
-async def _verify_position_closed_on_exchange(coin: str) -> bool:
-    try:
-        symbol    = f"{coin}/USDT:USDT"
-        positions = await get_positions()
-        for p in positions:
-            sym = p.get("symbol", "")
-            c   = sym.replace("/USDT:USDT", "").replace("/USDT", "")
-            if c == coin and float(p.get("contracts", 0)) > 0:
-                return False
-        return True
-    except Exception as e:
-        log.error(f"_verify_position_closed_on_exchange error {coin}: {e}")
-        return False
-
-
-async def _handle_closed_trade(
-    trade:       dict,
-    exit_reason: str,
-    exit_price:  float,
+async def _detect_exchange_closed_trades(
+    db_trades: list,
+    positions: list,
 ):
-    from trade.executor import _mark_trade_closed, _calculate_pnl
+    position_symbols = set()
+    for p in positions:
+        symbol = p.get("symbol", "")
+        coin   = symbol.replace("USDT", "")
+        if float(p.get("positionAmt", 0)) != 0:
+            position_symbols.add(coin)
 
-    trade_id  = trade["trade_id"]
-    coin      = trade["coin"]
-    direction = trade["direction"]
+    for trade in db_trades:
+        coin     = trade["coin"]
+        trade_id = trade["id"]
+
+        if coin not in position_symbols:
+            log.info(
+                f"Position closed on exchange: {coin} trade_id:{trade_id} "
+                f"— detecting exit price"
+            )
+
+            exit_price = await _get_exit_price(coin, trade)
+            direction  = trade["direction"]
+            entry      = float(trade.get("entry_price") or 0)
+            margin     = float(trade.get("margin_used") or 0)
+            leverage   = int(trade.get("leverage") or 1)
+
+            from trade.executor import _calculate_pnl, _mark_trade_closed
+            pnl = _calculate_pnl(
+                direction  = direction,
+                entry      = entry,
+                exit_price = exit_price,
+                margin     = margin,
+                leverage   = leverage,
+            )
+
+            exit_reason = _determine_exit_reason(trade, exit_price)
+            _mark_trade_closed(trade_id, exit_price, pnl, exit_reason)
+            invalidate_position_cache()
+
+            from trade.health_monitor import clear_health_state
+            clear_health_state(coin)
+
+            emoji   = "✅" if pnl >= 0 else "❌"
+            pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+
+            from alerts.telegram import send
+            await send(
+                f"{emoji} *{coin} {direction} Closed*\n\n"
+                f"Reason: `{exit_reason}`\n"
+                f"Exit:   `${exit_price:.6f}`\n"
+                f"PnL:    `{pnl_str}`"
+            )
+
+            from events import emit
+            asyncio.create_task(emit("trade_closed", {
+                "coin":      coin,
+                "direction": direction,
+                "pnl":       pnl,
+                "reason":    exit_reason,
+            }))
+
+            log.info(
+                f"Trade closed: {coin} {direction} "
+                f"exit:{exit_price} pnl:{pnl} reason:{exit_reason}"
+            )
+
+
+async def _get_exit_price(coin: str, trade: dict) -> float:
+    try:
+        from trade.exchange import _get, _timestamp, _sign
+        symbol = f"{coin}USDT"
+
+        params = {
+            "symbol":    symbol,
+            "timestamp": _timestamp(),
+            "limit":     5,
+        }
+        params["signature"] = _sign(params)
+
+        data = await _get("/fapi/v1/userTrades", params, signed=False)
+
+        if data and isinstance(data, list):
+            last_trade = data[-1]
+            return float(last_trade.get("price", 0))
+
+    except Exception as e:
+        log.error(f"_get_exit_price error {coin}: {e}")
+
+    try:
+        return await get_ticker_price(f"{coin}USDT")
+    except Exception:
+        return float(trade.get("entry_price") or 0)
+
+
+def _determine_exit_reason(trade: dict, exit_price: float) -> str:
     entry     = float(trade.get("entry_price") or 0)
-    margin    = float(trade.get("margin_used") or 0)
-    leverage  = int(trade.get("leverage") or 1)
+    sl        = float(trade.get("sl_price")    or 0)
+    tp        = float(trade.get("tp1_price")   or 0)
+    direction = trade.get("direction", "LONG")
+    is_short  = direction == "SHORT"
 
-    pnl = _calculate_pnl(
-        direction  = direction,
-        entry      = entry,
-        exit_price = exit_price,
-        position   = margin,
-        leverage   = leverage,
-    )
+    if not entry:
+        return "exchange_closed"
 
-    _mark_trade_closed(trade_id, exit_price, pnl, exit_reason)
-    invalidate_position_cache()
+    sl_tolerance = abs(entry - sl) * 0.02 if sl else 0
+    tp_tolerance = abs(entry - tp) * 0.02 if tp else 0
 
-    from trade.health_monitor import clear_health_state
-    clear_health_state(coin)
+    if sl and abs(exit_price - sl) <= sl_tolerance:
+        return "sl_hit"
 
-    emoji   = "✅" if pnl >= 0 else "❌"
-    pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+    if tp and abs(exit_price - tp) <= tp_tolerance:
+        return "tp_hit"
 
-    from alerts.telegram import send
-    await send(
-        f"{emoji} *{coin} {direction} Closed*\n\n"
-        f"Reason: `{exit_reason}`\n"
-        f"Exit:   `${exit_price:.6f}`\n"
-        f"PnL:    `{pnl_str}`"
-    )
+    if is_short:
+        if exit_price >= sl * 0.98 if sl else False:
+            return "sl_hit"
+        if exit_price <= tp * 1.02 if tp else False:
+            return "tp_hit"
+    else:
+        if exit_price <= sl * 1.02 if sl else False:
+            return "sl_hit"
+        if exit_price >= tp * 0.98 if tp else False:
+            return "tp_hit"
 
-    from events import emit
-    asyncio.create_task(emit("trade_closed", {
-        "coin":      coin,
-        "direction": direction,
-        "pnl":       pnl,
-        "reason":    exit_reason,
-    }))
-
-    log.info(
-        f"Trade closed: {coin} {direction} "
-        f"exit:{exit_price} pnl:{pnl} reason:{exit_reason}"
-    )
+    return "exchange_closed"
 
 
 async def run_monitor_cycle():
@@ -277,31 +302,9 @@ async def run_monitor_cycle():
         return
 
     enriched = _enrich_with_live_data(db_trades, positions)
-
     _position_cache.update({t["trade_id"]: t for t in enriched})
 
-    for trade in enriched:
-        coin     = trade["coin"]
-        trade_id = trade["trade_id"]
-
-        try:
-            hit, reason, exit_price = await _check_sl_tp_hit(trade)
-
-            if hit:
-                log.info(f"Exit detected: {coin} reason:{reason} price:{exit_price}")
-
-                confirmed = await _verify_position_closed_on_exchange(coin)
-
-                if confirmed:
-                    await _handle_closed_trade(trade, reason, exit_price)
-                else:
-                    log.warning(
-                        f"Exit detected for {coin} but position still open on exchange "
-                        f"— exchange order may still be working"
-                    )
-
-        except Exception as e:
-            log.error(f"Monitor cycle error for {coin} trade_id:{trade_id}: {e}")
+    await _detect_exchange_closed_trades(db_trades, positions)
 
     try:
         from trade.health_monitor import run_health_checks
@@ -319,17 +322,17 @@ def get_profit_summary() -> dict:
 
             if not closed:
                 return {
-                    "profit_all_coin":        0.0,
-                    "profit_all_percent":     0.0,
-                    "profit_closed_coin":     0.0,
-                    "winrate":                0.0,
-                    "trade_count":            0,
-                    "wins":                   0,
-                    "losses":                 0,
-                    "best_pair":              "--",
-                    "best_pair_profit_ratio": 0.0,
-                    "worst_pair":             "--",
-                    "worst_pair_profit_ratio":0.0,
+                    "profit_all_coin":         0.0,
+                    "profit_all_percent":      0.0,
+                    "profit_closed_coin":      0.0,
+                    "winrate":                 0.0,
+                    "trade_count":             0,
+                    "wins":                    0,
+                    "losses":                  0,
+                    "best_pair":               "--",
+                    "best_pair_profit_ratio":  0.0,
+                    "worst_pair":              "--",
+                    "worst_pair_profit_ratio": 0.0,
                 }
 
             total_pnl = sum(float(t.pnl or 0) for t in closed)
@@ -376,7 +379,6 @@ def get_daily_breakdown(days: int = 7) -> list:
         with get_session() as db:
             for i in range(days):
                 day       = today - timedelta(days=i)
-                day_str   = day.isoformat()
                 day_start = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
                 day_end   = day_start + timedelta(days=1)
 
@@ -391,12 +393,12 @@ def get_daily_breakdown(days: int = 7) -> list:
                 day_losses = sum(1 for t in trades if t.outcome == "loss")
 
                 result.append({
-                    "date":          day_str,
-                    "profit_abs":    round(day_pnl, 4),
-                    "profit_ratio":  0.0,
-                    "trade_count":   len(trades),
-                    "wins":          day_wins,
-                    "losses":        day_losses,
+                    "date":        day.isoformat(),
+                    "profit_abs":  round(day_pnl, 4),
+                    "profit_ratio":0.0,
+                    "trade_count": len(trades),
+                    "wins":        day_wins,
+                    "losses":      day_losses,
                 })
 
         return result
@@ -458,24 +460,24 @@ def get_trade_history(limit: int = 50) -> list:
             ).limit(limit).all()
 
             return [{
-                "trade_id":    t.id,
-                "coin":        t.coin,
-                "pair":        f"{t.coin}/USDT:USDT",
-                "direction":   t.direction,
-                "grade":       t.grade,
-                "is_short":    t.direction == "SHORT",
-                "entry_price": t.entry_price,
-                "exit_price":  t.exit_price,
-                "sl_price":    t.sl_price,
-                "tp1_price":   t.tp1_price,
-                "leverage":    t.leverage,
-                "margin_used": t.margin_used,
-                "pnl":         round(float(t.pnl or 0), 4),
-                "outcome":     t.outcome,
-                "close_reason":t.close_reason,
-                "opened_at":   t.opened_at.isoformat()  if t.opened_at  else None,
-                "closed_at":   t.closed_at.isoformat()  if t.closed_at  else None,
-                "is_open":     t.is_active,
+                "trade_id":     t.id,
+                "coin":         t.coin,
+                "pair":         f"{t.coin}/USDT:USDT",
+                "direction":    t.direction,
+                "grade":        t.grade,
+                "is_short":     t.direction == "SHORT",
+                "entry_price":  t.entry_price,
+                "exit_price":   t.exit_price,
+                "sl_price":     t.sl_price,
+                "tp1_price":    t.tp1_price,
+                "leverage":     t.leverage,
+                "margin_used":  t.margin_used,
+                "pnl":          round(float(t.pnl or 0), 4),
+                "outcome":      t.outcome,
+                "close_reason": t.close_reason,
+                "opened_at":    t.opened_at.isoformat()  if t.opened_at  else None,
+                "closed_at":    t.closed_at.isoformat()  if t.closed_at  else None,
+                "is_open":      t.is_active,
             } for t in trades]
 
     except Exception as e:
