@@ -20,12 +20,12 @@ def _get_redis():
     try:
         import redis
         import os
-        url    = os.getenv("REDIS_URL", "redis://localhost:6379")
+        url = os.getenv("REDIS_URL", "redis://localhost:6379")
         client = redis.from_url(
             url,
-            decode_responses        = True,
-            socket_connect_timeout  = 3,
-            socket_timeout          = 3
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=3
         )
         client.ping()
         _redis_client = client
@@ -40,7 +40,8 @@ def _push_candles_to_redis(coin: str, tf: str, df: DataFrame):
         r = _get_redis()
         if not r or df is None or df.empty:
             return
-        r.setex(f"candles:{coin}USDT:{tf}", 900, df.to_json())
+        key = f"candles:{coin}USDT:{tf}"
+        r.setex(key, 900, df.to_json())
     except Exception as e:
         logger.error(f"Redis candle push failed {coin} {tf}: {e}")
 
@@ -50,11 +51,12 @@ def _push_ticker_to_redis(coin: str, ticker: dict):
         r = _get_redis()
         if not r or not ticker:
             return
+        key     = f"ticker:{coin}USDT"
         payload = json.dumps({
             "last":       ticker.get("last", 0),
             "percentage": ticker.get("percentage", 0)
         })
-        r.setex(f"ticker:{coin}USDT", 60, payload)
+        r.setex(key, 60, payload)
     except Exception as e:
         logger.error(f"Redis ticker push failed {coin}: {e}")
 
@@ -113,30 +115,30 @@ def _get_signal_from_db(signal_id: int) -> dict | None:
     return None
 
 
-def _fetch_signal_levels_at_entry(trade: Trade) -> dict | None:
+def _get_signal_levels(trade: Trade) -> dict | None:
     try:
         enter_tag = getattr(trade, "enter_tag", "") or ""
-        logger.info(f"Fetching entry levels: pair={trade.pair} tag={enter_tag}")
+        logger.info(f"_get_signal_levels: pair={trade.pair} enter_tag={enter_tag}")
 
         if enter_tag.startswith("SE_"):
             parts = enter_tag.split("_")
             if len(parts) >= 3:
                 signal_id = int(parts[-1])
-                sig       = _get_signal_from_db(signal_id)
+                sig = _get_signal_from_db(signal_id)
                 if sig:
                     sl    = sig.get("sl")
                     tp1   = sig.get("tp1")
                     entry = sig.get("entry")
                     if sl and float(sl) > 0 and tp1 and float(tp1) > 0:
                         logger.info(
-                            f"Locked from DB signal {signal_id}: "
+                            f"Signal {signal_id} loaded: "
                             f"sl={sl} tp1={tp1} entry={entry}"
                         )
-                        return {
-                            "sl":    float(sl),
-                            "tp1":   float(tp1),
-                            "entry": float(entry) if entry else trade.open_rate
-                        }
+                        return {"sl": sl, "tp1": tp1, "entry": entry}
+                    logger.warning(
+                        f"Signal {signal_id} has zero/null sl/tp1 "
+                        f"— falling back to Redis"
+                    )
 
         coin = trade.pair.replace("/USDT:USDT", "").replace("/USDT", "")
         r    = _get_redis()
@@ -151,31 +153,20 @@ def _fetch_signal_levels_at_entry(trade: Trade) -> dict | None:
                     entry = sig.get("entry")
                     if sl and float(sl) > 0 and tp1 and float(tp1) > 0:
                         logger.info(
-                            f"Locked from Redis for {coin}: "
+                            f"Redis fallback successful for {coin} "
                             f"sl={sl} tp1={tp1}"
                         )
-                        return {
-                            "sl":    float(sl),
-                            "tp1":   float(tp1),
-                            "entry": float(entry) if entry else trade.open_rate
-                        }
+                        return {"sl": sl, "tp1": tp1, "entry": entry}
 
         logger.warning(
-            f"No signal levels found at entry for {trade.pair} "
-            f"tag={enter_tag}"
+            f"No valid signal levels found for {trade.pair} "
+            f"enter_tag={enter_tag}"
         )
         return None
 
     except Exception as e:
-        logger.error(f"_fetch_signal_levels_at_entry error: {e}")
+        logger.error(f"_get_signal_levels error: {e}")
         return None
-
-
-def _get_locked_levels(trade: Trade) -> dict | None:
-    trade_id = trade.id
-    if trade_id in _locked_levels:
-        return _locked_levels[trade_id]
-    return None
 
 
 class SignalEngineStrategy(IStrategy):
@@ -307,6 +298,92 @@ class SignalEngineStrategy(IStrategy):
         dataframe["exit_short"] = 0
         return dataframe
 
+    def custom_stoploss(
+        self,
+        pair:           str,
+        trade:          Trade,
+        current_time:   datetime,
+        current_rate:   float,
+        current_profit: float,
+        **kwargs
+    ) -> float:
+        try:
+            if trade.id in _locked_levels:
+                levels = _locked_levels[trade.id]
+            else:
+                levels = _get_signal_levels(trade)
+                if levels:
+                    _locked_levels[trade.id] = levels
+                    logger.info(
+                        f"Levels locked for trade {trade.id} "
+                        f"{pair}: sl={levels['sl']} tp1={levels['tp1']}"
+                    )
+
+            if not levels:
+                return self.stoploss
+
+            sl_price     = float(levels.get("sl") or 0)
+            signal_entry = float(levels.get("entry") or 0)
+            base_price   = signal_entry if signal_entry > 0 else trade.open_rate
+
+            if not sl_price or not base_price:
+                return self.stoploss
+
+            if trade.is_short:
+                sl_pct = -abs((sl_price - base_price) / base_price)
+            else:
+                sl_pct = (sl_price - base_price) / base_price
+
+            sl_pct = max(-0.99, min(-0.001, sl_pct))
+            return sl_pct
+
+        except Exception as e:
+            logger.error(f"custom_stoploss error {pair}: {e}")
+            return self.stoploss
+
+    def custom_exit(
+        self,
+        pair:           str,
+        trade:          Trade,
+        current_time:   datetime,
+        current_rate:   float,
+        current_profit: float,
+        **kwargs
+    ) -> Optional[str]:
+        try:
+            if trade.id in _locked_levels:
+                levels = _locked_levels[trade.id]
+            else:
+                levels = _get_signal_levels(trade)
+                if levels:
+                    _locked_levels[trade.id] = levels
+                    logger.info(
+                        f"Levels locked for trade {trade.id} "
+                        f"{pair}: sl={levels['sl']} tp1={levels['tp1']}"
+                    )
+
+            if not levels:
+                return None
+
+            tp = float(levels.get("tp1") or 0)
+            if not tp:
+                return None
+
+            if not trade.is_short and current_rate >= tp:
+                logger.info(f"TP hit: {pair} rate={current_rate} tp={tp}")
+                _locked_levels.pop(trade.id, None)
+                return "tp_hit"
+
+            if trade.is_short and current_rate <= tp:
+                logger.info(f"TP hit: {pair} rate={current_rate} tp={tp}")
+                _locked_levels.pop(trade.id, None)
+                return "tp_hit"
+
+        except Exception as e:
+            logger.error(f"custom_exit error {pair}: {e}")
+
+        return None
+
     def confirm_trade_entry(
         self,
         pair:          str,
@@ -334,88 +411,3 @@ class SignalEngineStrategy(IStrategy):
         **kwargs
     ) -> bool:
         return True
-
-    def custom_stoploss(
-        self,
-        pair:           str,
-        trade:          Trade,
-        current_time:   datetime,
-        current_rate:   float,
-        current_profit: float,
-        **kwargs
-    ) -> float:
-        try:
-            levels = _get_locked_levels(trade)
-
-            if levels is None:
-                levels = _fetch_signal_levels_at_entry(trade)
-                if levels:
-                    _locked_levels[trade.id] = levels
-                    logger.info(
-                        f"Levels locked for trade {trade.id} "
-                        f"{pair}: sl={levels['sl']} tp1={levels['tp1']}"
-                    )
-
-            if not levels:
-                return self.stoploss
-
-            sl_price   = levels["sl"]
-            base_price = levels["entry"]
-
-            if not sl_price or not base_price:
-                return self.stoploss
-
-            if trade.is_short:
-                sl_pct = -abs((sl_price - base_price) / base_price)
-            else:
-                sl_pct = (sl_price - base_price) / base_price
-
-            sl_pct = max(-0.99, min(-0.001, sl_pct))
-            return sl_pct
-
-        except Exception as e:
-            logger.error(f"custom_stoploss error {pair}: {e}")
-            return self.stoploss
-
-    def custom_exit(
-        self,
-        pair:           str,
-        trade:          Trade,
-        current_time:   datetime,
-        current_rate:   float,
-        current_profit: float,
-        **kwargs
-    ) -> Optional[str]:
-        try:
-            levels = _get_locked_levels(trade)
-
-            if levels is None:
-                levels = _fetch_signal_levels_at_entry(trade)
-                if levels:
-                    _locked_levels[trade.id] = levels
-                    logger.info(
-                        f"Levels locked for trade {trade.id} "
-                        f"{pair}: sl={levels['sl']} tp1={levels['tp1']}"
-                    )
-
-            if not levels:
-                return None
-
-            tp = levels["tp1"]
-            if not tp:
-                return None
-
-            if not trade.is_short and current_rate >= tp:
-                logger.info(f"TP hit: {pair} rate={current_rate} tp={tp}")
-                _locked_levels.pop(trade.id, None)
-                return "tp_hit"
-
-            if trade.is_short and current_rate <= tp:
-                logger.info(f"TP hit: {pair} rate={current_rate} tp={tp}")
-                _locked_levels.pop(trade.id, None)
-                return "tp_hit"
-
-        except Exception as e:
-            logger.error(f"custom_exit error {pair}: {e}")
-
-        return None
