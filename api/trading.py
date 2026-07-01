@@ -109,13 +109,17 @@ async def trades_summary(request: Request):
         )
         from trade.exchange import get_balance
 
-        positions, profit, balance, daily = await __import__(
-            "asyncio"
-        ).gather(
+        async def _profit() -> dict:
+            return get_profit_summary()
+
+        async def _daily() -> list:
+            return get_daily_breakdown(7)
+
+        positions, profit, balance, daily = await asyncio.gather(
             get_open_positions_enriched(),
-            __import__("asyncio").coroutine(lambda: get_profit_summary())(),
+            _profit(),
             get_balance(),
-            __import__("asyncio").coroutine(lambda: get_daily_breakdown(7))(),
+            _daily(),
             return_exceptions=True
         )
 
