@@ -940,14 +940,14 @@ async def send_scan_summary(results: list) -> None:
             direction = r.get("direction", "?")
             score     = r.get("score", 0)
             coin      = r.get("coin", "?")
-            conf      = r.get("explanation", {}).get("confidence_label", "")
+            conf_label = r.get("explanation", {}).get("confidence_label", "")
             ml_prob   = r.get("ml_probability")
             actual_rr = r.get("actual_rr", 0)
             emoji     = "🏆" if g == "A+" else "✅" if g == "A" else "👀"
             dir_emoji = "📈" if direction == "LONG" else "📉"
             ml_str    = f" · ML:`{ml_prob*100:.0f}%`" if ml_prob is not None else ""
             lines.append(
-                f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf if conf else ''}{ml_str}\n"
+                f"{emoji} *{coin}* — Grade {g} ({score}/100){' · ' + conf_label if conf_label else ''}{ml_str}\n"
                 f"{dir_emoji} {direction} · R:R `1:{actual_rr}`\n"
             )
         lines.append(f"\nNext scan: `{next_scan}`")

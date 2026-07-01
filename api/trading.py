@@ -10,7 +10,7 @@ log    = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _auth(request: Request):
+def _auth(request: Request) -> None:
     if not is_authenticated(request):
         raise HTTPException(401, "Unauthorized")
 
@@ -23,7 +23,7 @@ async def trades_open(request: Request):
         positions = await get_open_positions_enriched()
         return JSONResponse(content=positions)
     except Exception as e:
-        log.error(f"trades_open error: {e}")
+        log.error("trades_open error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -34,20 +34,19 @@ async def trades_balance(request: Request):
         from trade.exchange import get_balance
         balance = await get_balance()
         return JSONResponse(content={
-            "currencies": [
-                {
-                    "currency": "USDT",
-                    "free":     balance["free"],
-                    "used":     balance["used"],
-                    "total":    balance["total"],
-                }
-            ],
-            "total":  balance["total"],
-            "free":   balance["free"],
-            "used":   balance["used"],
+            "currencies": [{
+                "currency": "USDT",
+                "free":     balance["free"],
+                "used":     balance["used"],
+                "total":    balance["total"],
+            }],
+            "total":      balance["total"],
+            "free":       balance["free"],
+            "used":       balance["used"],
+            "unrealized": balance.get("unrealized", 0.0),
         })
     except Exception as e:
-        log.error(f"trades_balance error: {e}")
+        log.error("trades_balance error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -56,22 +55,21 @@ async def trades_profit(request: Request):
     _auth(request)
     try:
         from trade.monitor import get_profit_summary
-        summary = get_profit_summary()
-        return JSONResponse(content=summary)
+        return JSONResponse(content=get_profit_summary())
     except Exception as e:
-        log.error(f"trades_profit error: {e}")
+        log.error("trades_profit error: %s", e)
         raise HTTPException(500, str(e))
 
 
 @router.get("/trades/history")
-async def trades_history(request: Request, limit: int = 50):
+async def trades_history(request: Request, limit: int = 20, offset: int = 0):
     _auth(request)
     try:
         from trade.monitor import get_trade_history
-        trades = get_trade_history(limit=limit)
+        trades = get_trade_history(limit=limit, offset=offset)
         return JSONResponse(content={"trades": trades, "trades_count": len(trades)})
     except Exception as e:
-        log.error(f"trades_history error: {e}")
+        log.error("trades_history error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -80,10 +78,9 @@ async def trades_daily(request: Request, days: int = 7):
     _auth(request)
     try:
         from trade.monitor import get_daily_breakdown
-        daily = get_daily_breakdown(days=days)
-        return JSONResponse(content={"data": daily})
+        return JSONResponse(content={"data": get_daily_breakdown(days=days)})
     except Exception as e:
-        log.error(f"trades_daily error: {e}")
+        log.error("trades_daily error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -92,10 +89,9 @@ async def trades_performance(request: Request):
     _auth(request)
     try:
         from trade.monitor import get_performance_by_coin
-        performance = get_performance_by_coin()
-        return JSONResponse(content=performance)
+        return JSONResponse(content=get_performance_by_coin())
     except Exception as e:
-        log.error(f"trades_performance error: {e}")
+        log.error("trades_performance error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -103,11 +99,7 @@ async def trades_performance(request: Request):
 async def trades_summary(request: Request):
     _auth(request)
     try:
-        from trade.monitor import (
-            get_open_positions_enriched,
-            get_profit_summary,
-            get_daily_breakdown,
-        )
+        from trade.monitor import get_open_positions_enriched, get_profit_summary, get_daily_breakdown
         from trade.exchange import get_balance
 
         async def _profit() -> dict:
@@ -121,34 +113,35 @@ async def trades_summary(request: Request):
             _profit(),
             get_balance(),
             _daily(),
-            return_exceptions=True
+            return_exceptions=True,
         )
 
         if isinstance(positions, Exception): positions = []
         if isinstance(profit,    Exception): profit    = {}
-        if isinstance(balance,   Exception): balance   = {"total": 0, "free": 0, "used": 0}
+        if isinstance(balance,   Exception): balance   = {"total": 0, "free": 0, "used": 0, "unrealized": 0}
         if isinstance(daily,     Exception): daily     = []
-
-        bot_state = "running" if cfg.TRADING_MODE else "stopped"
 
         return JSONResponse(content={
             "status":    positions,
             "profit":    profit,
-            "balance":   {
+            "balance": {
                 "currencies": [{
                     "currency": "USDT",
-                    "free":     balance["free"],
-                    "used":     balance["used"],
-                    "total":    balance["total"],
+                    "free":     balance.get("free",       0),
+                    "used":     balance.get("used",       0),
+                    "total":    balance.get("total",      0),
+                    "unrealized": balance.get("unrealized", 0),
                 }],
-                "total": balance["total"],
-                "free":  balance["free"],
+                "total":      balance.get("total",      0),
+                "free":       balance.get("free",       0),
+                "used":       balance.get("used",       0),
+                "unrealized": balance.get("unrealized", 0),
             },
-            "daily":     daily,
-            "bot_state": bot_state,
+            "daily":     {"data": daily},
+            "bot_state": "running",
         })
     except Exception as e:
-        log.error(f"trades_summary error: {e}")
+        log.error("trades_summary error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -174,9 +167,7 @@ async def trades_close(request: Request):
         if not coin or not direction:
             from database import get_session, Trade as TradeModel
             with get_session() as db:
-                trade = db.query(TradeModel).filter(
-                    TradeModel.id == trade_id
-                ).first()
+                trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
                 if not trade:
                     raise HTTPException(404, "Trade not found")
                 coin      = trade.coin
@@ -189,13 +180,12 @@ async def trades_close(request: Request):
             trade_id  = trade_id,
             reason    = "manual_close",
         )
-
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"trades_close error: {e}")
+        log.error("trades_close error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -204,14 +194,10 @@ async def trades_start(request: Request):
     _auth(request)
     try:
         from alerts.scanner import scan_all_coins
-        import asyncio
         asyncio.create_task(scan_all_coins())
-        return JSONResponse(content={
-            "status":  "ok",
-            "message": "Scanner started"
-        })
+        return JSONResponse(content={"status": "ok", "message": "Scanner started"})
     except Exception as e:
-        log.error(f"trades_start error: {e}")
+        log.error("trades_start error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -221,12 +207,9 @@ async def trades_stop(request: Request):
     try:
         from trade.monitor import stop_monitor
         stop_monitor()
-        return JSONResponse(content={
-            "status":  "ok",
-            "message": "Monitor stopped"
-        })
+        return JSONResponse(content={"status": "ok", "message": "Monitor stopped"})
     except Exception as e:
-        log.error(f"trades_stop error: {e}")
+        log.error("trades_stop error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -234,19 +217,12 @@ async def trades_stop(request: Request):
 async def trades_ping(request: Request):
     _auth(request)
     try:
-        from trade.exchange import get_exchange
-        exchange = get_exchange()
-        await exchange.fetch_time()
-        return JSONResponse(content={
-            "status": "ok",
-            "mode":   cfg.TRADING_MODE,
-        })
+        from trade.exchange import ping
+        ok = await ping()
+        return JSONResponse(content={"status": "ok" if ok else "error", "mode": cfg.TRADING_MODE})
     except Exception as e:
-        log.error(f"trades_ping error: {e}")
-        return JSONResponse(content={
-            "status": "error",
-            "reason": str(e),
-        })
+        log.error("trades_ping error: %s", e)
+        return JSONResponse(content={"status": "error", "reason": str(e)})
 
 
 @router.get("/trades/ws_status")
@@ -270,12 +246,12 @@ async def trades_ws_status(request: Request):
 async def trades_config(request: Request):
     _auth(request)
     return JSONResponse(content={
-        "trading_mode":   cfg.TRADING_MODE,
-        "paper_trading":  cfg.PAPER_TRADING,
-        "coins":          cfg.COINS,
-        "grades":         cfg.MIN_GRADE_TO_TRADE,
-        "risk_pct":       cfg.RISK_PCT_PER_TRADE,
-        "state":          "running",
+        "trading_mode":  cfg.TRADING_MODE,
+        "paper_trading": cfg.PAPER_TRADING,
+        "coins":         cfg.COINS,
+        "grades":        cfg.MIN_GRADE_TO_TRADE,
+        "risk_pct":      cfg.RISK_PCT_PER_TRADE,
+        "state":         "running",
     })
 
 
@@ -292,14 +268,13 @@ async def trades_whitelist(request: Request):
 async def trades_mode(request: Request):
     _auth(request)
     try:
-        body      = await request.json()
-        totp_code = body.get("totp_code", "")
-        new_mode  = body.get("mode", "")
+        body     = await request.json()
+        new_mode = body.get("mode", "")
 
         if new_mode not in ["live", "paper"]:
             raise HTTPException(400, "mode must be live or paper")
 
-        if not verify_totp(totp_code):
+        if not verify_totp(body.get("totp_code", "")):
             return JSONResponse(
                 status_code = 401,
                 content     = {"success": False, "reason": "Invalid TOTP code"}
@@ -316,15 +291,11 @@ async def trades_mode(request: Request):
                 }
             )
 
-        if new_mode == "live":
-            if not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET:
-                return JSONResponse(
-                    status_code = 400,
-                    content     = {
-                        "success": False,
-                        "reason":  "Binance live API keys not configured"
-                    }
-                )
+        if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
+            return JSONResponse(
+                status_code = 400,
+                content     = {"success": False, "reason": "Binance live API keys not configured"}
+            )
 
         from config import _ensure
         from trade.exchange import close_exchange
@@ -336,8 +307,7 @@ async def trades_mode(request: Request):
         await close_exchange()
 
         from auth import audit
-        ip = request.client.host if request.client else ""
-        audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=ip)
+        audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
 
         from api.dashboard import invalidate_all
         invalidate_all()
@@ -351,5 +321,5 @@ async def trades_mode(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"trades_mode error: {e}")
+        log.error("trades_mode error: %s", e)
         raise HTTPException(500, str(e))
