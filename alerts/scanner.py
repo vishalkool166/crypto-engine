@@ -203,7 +203,7 @@ def save_signal_to_db(
 
 
 async def _do_open_trade(item: dict) -> bool:
-    from trade.executor import open_position, has_open_trade
+    from trade.executor import open_position, has_open_trade_or_position
 
     coin       = item["coin"]
     signal     = item["signal"]
@@ -218,8 +218,8 @@ async def _do_open_trade(item: dict) -> bool:
         log.error("Invalid stake for %s", coin)
         return False
 
-    if has_open_trade(coin):
-        log.info("Skipping %s — already has open trade", coin)
+    if await has_open_trade_or_position(coin):
+        log.info("Skipping %s — already has open trade or position on exchange", coin)
         return False
 
     result = await open_position(
@@ -273,7 +273,7 @@ async def _execute_priority_entries(pending: list) -> None:
             log.info("Max trades reached — stopping")
             break
         coin = item["coin"]
-        if coin in entered_coins or has_open_trade(coin):
+        if coin in entered_coins:
             continue
         if await _do_open_trade(item):
             open_count   += 1
@@ -400,9 +400,9 @@ async def _analyze_coin_inner(coin: str) -> dict:
                 signal.get("direction") in ["LONG", "SHORT"] and
                 signal.get("entry")):
 
-            from trade.executor import has_open_trade
-            if has_open_trade(coin):
-                log.info("Skipping entry queue — %s already has open trade", coin)
+            from trade.executor import has_open_trade_or_position
+            if await has_open_trade_or_position(coin):
+                log.info("Skipping entry queue — %s already has open trade or position", coin)
             else:
                 ml_passed, _ = _check_ml_gate(signal, wconf)
                 if ml_passed:

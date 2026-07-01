@@ -343,6 +343,16 @@ async def open_position(
         if balance["free"] < stake:
             return {"success": False, "error": f"Insufficient balance ${balance['free']:.2f}"}
 
+        positions = await get_positions()
+        existing  = next(
+            (p for p in positions
+             if p.get("symbol") == symbol and float(p.get("positionAmt", 0)) != 0),
+            None,
+        )
+        if existing:
+            log.warning("Position already exists on exchange for %s — skipping", coin)
+            return {"success": False, "error": f"Position already exists on Binance for {coin}"}
+
         await set_margin_mode(symbol, "ISOLATED")
         await set_leverage(symbol, leverage)
 
@@ -362,6 +372,8 @@ async def open_position(
         fill_price = float(filled.get("avgPrice") or filled.get("price") or current)
         filled_qty = _round_step(float(filled.get("executedQty", quantity)), qty_step)
         entry_oid  = str(filled.get("orderId", ""))
+        actual_position_size = round(filled_qty * fill_price, 4)
+        actual_margin        = round(actual_position_size / leverage, 4)
 
         log.info("Entry filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
 
@@ -383,8 +395,8 @@ async def open_position(
             entry_price        = fill_price,
             sl_price           = sl,
             tp1_price          = tp,
-            position_size      = stake * leverage,
-            margin_used        = stake,
+            position_size      = actual_position_size,
+            margin_used        = actual_margin,
             leverage           = leverage,
             sl_order_id        = sl_oid,
             tp1_order_id       = tp_oid,
@@ -526,6 +538,20 @@ def has_open_trade(coin: str) -> bool:
             return db.query(TradeModel).filter(
                 TradeModel.coin == coin, TradeModel.is_active == True
             ).first() is not None
+    except Exception:
+        return False
+
+
+async def has_open_trade_or_position(coin: str) -> bool:
+    if has_open_trade(coin):
+        return True
+    try:
+        symbol    = f"{coin}USDT"
+        positions = await get_positions()
+        return any(
+            p.get("symbol") == symbol and float(p.get("positionAmt", 0)) != 0
+            for p in positions
+        )
     except Exception:
         return False
 
