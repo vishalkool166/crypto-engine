@@ -558,7 +558,7 @@ def get_db_stats() -> dict:
     try:
         with get_session() as db:
             all_sigs = db.query(SignalModel).all()
-            closed   = [s for s in all_sigs if s.outcome not in ["pending", None]]
+            closed = [s for s in all_sigs if s.outcome in ["win", "loss"]]
             wins     = [s for s in closed if s.outcome == "win"]
             by_grade = {}
             for g in ["A+", "A", "B"]:
