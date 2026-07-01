@@ -253,10 +253,14 @@ async def trades_ping(request: Request):
 async def trades_ws_status(request: Request):
     _auth(request)
     try:
-        from trade.monitor import is_monitor_running
+        from trade.ws import get_ws_status
+        status = get_ws_status()
         return JSONResponse(content={
-            "connected": is_monitor_running(),
-            "mode":      cfg.TRADING_MODE,
+            "connected":            status["mark_price_connected"] and status["user_data_connected"],
+            "mark_price_connected": status["mark_price_connected"],
+            "user_data_connected":  status["user_data_connected"],
+            "prices_cached":        status["prices_cached"],
+            "mode":                 cfg.TRADING_MODE,
         })
     except Exception as e:
         raise HTTPException(500, str(e))

@@ -266,6 +266,50 @@ async def cancel_all_orders(symbol: str) -> dict:
         log.error("cancel_all_orders %s: %s", symbol, e)
         return {}
 
+async def place_algo_order(
+    symbol:        str,
+    side:          str,
+    order_type:    str,
+    quantity:      float,
+    trigger_price: float,
+    reduce_only:   bool = True,
+    working_type:  str  = "MARK_PRICE",
+) -> dict:
+    params: dict = {
+        "symbol":       _clean(symbol),
+        "side":         side.upper(),
+        "type":         order_type.upper(),
+        "algoType":     "CONDITIONAL",
+        "quantity":     quantity,
+        "triggerPrice": trigger_price,
+        "workingType":  working_type,
+        "priceProtect": "false",
+    }
+    if reduce_only:
+        params["reduceOnly"] = "true"
+    return await _post("/fapi/v1/algoOrder", params, signed=True)
+
+
+async def cancel_algo_order(symbol: str, algo_id: int) -> dict:
+    try:
+        return await _delete("/fapi/v1/algoOrder", {
+            "symbol":  _clean(symbol),
+            "algoId":  algo_id,
+        }, signed=True)
+    except Exception as e:
+        log.error("cancel_algo_order %s: %s", symbol, e)
+        return {}
+
+
+async def cancel_all_algo_orders(symbol: str) -> dict:
+    try:
+        return await _delete("/fapi/v1/algoOrder/all", {
+            "symbol": _clean(symbol),
+        }, signed=True)
+    except Exception as e:
+        log.error("cancel_all_algo_orders %s: %s", symbol, e)
+        return {}
+
 
 async def get_open_orders(symbol: str) -> list:
     try:

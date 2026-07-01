@@ -897,7 +897,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
     ml_prob   = signal.get("ml_probability")
     expl      = signal.get("explanation", {})
     thesis    = expl.get("thesis", "")
-    conf_line   = f"Confidence: `{conf} ({score}/100)`\n" if conf else ""
+    conf_line   = f"Confidence: `{conf_label} ({score}/100)`\n" if conf_label else ""
     ml_line     = f"ML Prob: {'✅' if ml_prob >= 0.65 else '❌'} `{ml_prob*100:.1f}%`\n" if ml_prob is not None else ""
     grade_note  = "_Grade B — paper mode only_\n\n" if grade == "B" else ""
     thesis_line = f"\n*Why:* {thesis}\n" if thesis else ""

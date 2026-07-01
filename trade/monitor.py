@@ -45,27 +45,30 @@ def _get_open_trades_from_db() -> list:
         return []
 
 
-def _duration_str(opened_at: str | None) -> str:
+def _duration_str(opened_at: str | None, closed_at: datetime | None = None) -> str:
     if not opened_at:
-        return "--"
+        return "—"
     try:
         dt = datetime.fromisoformat(opened_at)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        diff = datetime.now(timezone.utc) - dt
+        end  = closed_at if closed_at else datetime.now(timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        diff = end - dt
         mins = int(diff.total_seconds() / 60)
         hrs  = mins // 60
         return f"{hrs}h {mins % 60}m" if hrs > 0 else f"{mins}m"
     except Exception:
-        return "--"
+        return "—"
 
 
 def _live_pnl(
-    entry:     float,
-    price:     float,
-    margin:    float,
-    leverage:  int,
-    is_short:  bool,
+    entry:    float,
+    price:    float,
+    margin:   float,
+    leverage: int,
+    is_short: bool,
 ) -> tuple[float, float]:
     if not entry or not price or not margin:
         return 0.0, 0.0
@@ -98,9 +101,9 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
 
     profit_ratio, profit_abs = _live_pnl(entry, live_price, margin, leverage, is_short)
 
-    funding  = float(trade.get("funding_fees_paid") or 0)
-    total_fee= float(trade.get("total_commission")  or 0)
-    net_live = round(profit_abs - total_fee - funding, 4)
+    funding   = float(trade.get("funding_fees_paid") or 0)
+    total_fee = float(trade.get("total_commission")  or 0)
+    net_live  = round(profit_abs - total_fee - funding, 4)
 
     health = None
     try:
@@ -120,7 +123,7 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "current_price":     live_price,
         "sl_price":          trade.get("sl_price"),
         "tp1_price":         trade.get("tp1_price"),
-        "position_size":     trade.get("position_size"),
+        "position_size":     trade.get("position_size") or (margin * leverage),
         "margin_used":       margin,
         "leverage":          leverage,
         "profit_abs":        round(profit_abs, 4),
@@ -207,10 +210,10 @@ async def _update_funding_fees(db_trades: list) -> None:
 
 
 def _determine_exit_reason(trade: dict, exit_price: float) -> str:
-    entry     = float(trade.get("entry_price") or 0)
-    sl        = float(trade.get("sl_price")    or 0)
-    tp        = float(trade.get("tp1_price")   or 0)
-    is_short  = trade.get("direction", "LONG") == "SHORT"
+    entry    = float(trade.get("entry_price") or 0)
+    sl       = float(trade.get("sl_price")    or 0)
+    tp       = float(trade.get("tp1_price")   or 0)
+    is_short = trade.get("direction", "LONG") == "SHORT"
 
     if not entry:
         return "exchange_closed"
@@ -274,12 +277,11 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
         from trade.health_monitor import clear_health_state
         clear_health_state(coin)
 
-        emoji   = "✅" if pnl >= 0 else "❌"
         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
 
         from alerts.telegram import send
         await send(
-            f"{emoji} *{coin} {trade['direction']} Closed*\n\n"
+            f"{'✅' if pnl >= 0 else '❌'} *{coin} {trade['direction']} Closed*\n\n"
             f"Reason: `{exit_reason}`\n"
             f"Exit:   `${exit_price:.6f}`\n"
             f"PnL:    `{pnl_str}`"
@@ -339,7 +341,7 @@ def get_profit_summary() -> dict:
         winrate    = len(wins) / len(closed)
         avg_margin = sum(float(t.margin_used or 0) for t in closed) / len(closed) or 1
 
-        by_coin = {}
+        by_coin: dict = {}
         for t in closed:
             by_coin[t.coin] = by_coin.get(t.coin, 0.0) + float(t.net_pnl or t.pnl or 0)
 
@@ -390,7 +392,7 @@ def get_daily_breakdown(days: int = 7) -> list:
                     "commission":  round(sum(float(t.total_commission  or 0) for t in trades), 4),
                     "funding":     round(sum(float(t.funding_fees_paid or 0) for t in trades), 4),
                 })
-        return result
+        return list(reversed(result))
     except Exception as e:
         log.error("get_daily_breakdown error: %s", e)
         return []
@@ -436,37 +438,46 @@ def get_trade_history(limit: int = 50) -> list:
         with get_session() as db:
             trades = db.query(TradeModel).order_by(TradeModel.opened_at.desc()).limit(limit).all()
         return [{
-            "trade_id":           t.id,
-            "coin":               t.coin,
-            "pair":               f"{t.coin}/USDT:USDT",
-            "direction":          t.direction,
-            "grade":              t.grade,
-            "is_short":           t.direction == "SHORT",
-            "entry_price":        t.entry_price,
-            "actual_fill_entry":  t.actual_fill_entry,
-            "exit_price":         t.exit_price,
-            "actual_fill_exit":   t.actual_fill_exit,
-            "sl_price":           t.sl_price,
-            "tp1_price":          t.tp1_price,
-            "leverage":           t.leverage,
-            "margin_used":        t.margin_used,
-            "pnl":                round(float(t.net_pnl or t.pnl or 0), 4),
-            "realized_pnl":       round(float(t.realized_pnl_exchange or 0), 4),
-            "total_commission":   round(float(t.total_commission  or 0), 6),
-            "funding_fees_paid":  round(float(t.funding_fees_paid or 0), 6),
-            "entry_role":         t.entry_role,
-            "exit_role":          t.exit_role,
-            "slippage_entry_pct": round(float(t.slippage_entry_pct or 0), 4),
-            "slippage_exit_pct":  round(float(t.slippage_exit_pct  or 0), 4),
-            "outcome":            t.outcome,
-            "close_reason":       t.close_reason,
-            "tp1_hit":            t.tp1_hit,
-            "regime_at_entry":    t.regime_at_entry,
-            "session_at_entry":   t.session_at_entry,
-            "score_at_entry":     t.score_at_entry,
-            "opened_at":          t.opened_at.isoformat() if t.opened_at  else None,
-            "closed_at":          t.closed_at.isoformat() if t.closed_at  else None,
-            "is_open":            t.is_active,
+            "trade_id":             t.id,
+            "coin":                 t.coin,
+            "pair":                 f"{t.coin}/USDT:USDT",
+            "direction":            t.direction,
+            "grade":                t.grade,
+            "is_short":             t.direction == "SHORT",
+            "entry_price":          t.entry_price,
+            "actual_fill_entry":    t.actual_fill_entry,
+            "exit_price":           t.exit_price,
+            "actual_fill_exit":     t.actual_fill_exit,
+            "sl_price":             t.sl_price,
+            "tp1_price":            t.tp1_price,
+            "leverage":             t.leverage,
+            "margin_used":          t.margin_used,
+            "position_size":        t.position_size or (float(t.margin_used or 0) * int(t.leverage or 1)),
+            "pnl":                  round(float(t.net_pnl or t.pnl or 0), 4),
+            "realized_pnl":         round(float(t.realized_pnl_exchange or 0), 4),
+            "total_commission":     round(float(t.total_commission  or 0), 6),
+            "funding_fees_paid":    round(float(t.funding_fees_paid or 0), 6),
+            "entry_commission":     round(float(t.entry_commission  or 0), 6),
+            "exit_commission":      round(float(t.exit_commission   or 0), 6),
+            "entry_role":           t.entry_role,
+            "exit_role":            t.exit_role,
+            "slippage_entry_pct":   round(float(t.slippage_entry_pct or 0), 4),
+            "slippage_exit_pct":    round(float(t.slippage_exit_pct  or 0), 4),
+            "outcome":              t.outcome,
+            "close_reason":         t.close_reason,
+            "tp1_hit":              t.tp1_hit,
+            "regime_at_entry":      t.regime_at_entry,
+            "session_at_entry":     t.session_at_entry,
+            "score_at_entry":       t.score_at_entry,
+            "opened_at":            t.opened_at.isoformat() if t.opened_at  else None,
+            "closed_at":            t.closed_at.isoformat() if t.closed_at  else None,
+            "is_open":              t.is_active,
+            "duration": (
+                _duration_str(
+                    t.opened_at.isoformat() if t.opened_at else None,
+                    t.closed_at
+                )
+            ),
         } for t in trades]
     except Exception as e:
         log.error("get_trade_history error: %s", e)

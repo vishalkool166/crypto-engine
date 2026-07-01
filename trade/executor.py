@@ -4,13 +4,14 @@ import math
 from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import httpx
-from config import cfg, TAKER_FEE, ORDER_FILL_TIMEOUT, ORDER_POLL_INTERVAL, MIN_STAKE_USDT
+from config import cfg, TAKER_FEE, ORDER_FILL_TIMEOUT, ORDER_POLL_INTERVAL, MIN_STAKE_USDT, ENTRY_DEVIATION_MULT, ENTRY_FAVORABLE_MULT
 from trade.exchange import (
     get_balance, get_positions, get_ticker_price,
     set_leverage, set_margin_mode, place_order,
     cancel_order, get_order, cancel_all_orders,
     get_open_orders, get_symbol_precision,
-    get_commission_from_order,
+    get_commission_from_order, place_algo_order,
+    cancel_all_algo_orders,
 )
 from database import get_session, Trade as TradeModel, Signal as SignalModel
 
@@ -33,7 +34,7 @@ def _deviation_check(
     if not signal_entry or not current_price or not sl:
         return False, "Missing price data"
     sl_distance = abs(signal_entry - sl) / signal_entry
-    max_adverse = sl_distance * cfg.ENTRY_DEVIATION_MULT
+    max_adverse = sl_distance * ENTRY_DEVIATION_MULT
     deviation   = (
         (current_price - signal_entry) / signal_entry if direction == "SHORT"
         else (signal_entry - current_price) / signal_entry
@@ -93,31 +94,29 @@ async def _get_commission(symbol: str, order_id: str) -> dict:
 
 
 async def _place_sl(symbol: str, side: str, qty: float, sl: float) -> str | None:
-    for wt in ("MARK_PRICE", "CONTRACT_PRICE"):
-        try:
-            order = await _place_with_retry(
-                symbol       = symbol,
-                side         = side,
-                order_type   = "STOP_MARKET",
-                quantity     = qty,
-                stop_price   = round(sl, 6),
-                reduce_only  = True,
-                working_type = wt,
-            )
-            oid = str(order.get("orderId", ""))
-            log.info("SL placed (%s): %s sl:%.6f id:%s", wt, symbol, sl, oid)
-            return oid
-        except Exception as e:
-            log.error("SL failed (%s) %s: %s", wt, symbol, e)
-
-    from alerts.telegram import send
-    coin = symbol.replace("USDT", "")
-    await send(
-        f"⚠️ *SL Order Failed — {coin}*\n\n"
-        f"Could not place SL at `${sl:.6f}`\n"
-        f"Position is unprotected — place SL manually."
-    )
-    return None
+    try:
+        order   = await place_algo_order(
+            symbol        = symbol,
+            side          = side,
+            order_type    = "STOP_MARKET",
+            quantity      = qty,
+            trigger_price = round(sl, 6),
+            reduce_only   = True,
+            working_type  = "MARK_PRICE",
+        )
+        algo_id = str(order.get("algoId", ""))
+        log.info("SL algo order placed: %s sl:%.6f algoId:%s", symbol, sl, algo_id)
+        return algo_id
+    except Exception as e:
+        log.error("SL algo order failed %s: %s", symbol, e)
+        from alerts.telegram import send
+        coin = symbol.replace("USDT", "")
+        await send(
+            f"⚠️ *SL Order Failed — {coin}*\n\n"
+            f"Could not place SL at `${sl:.6f}`\n"
+            f"Position is unprotected — place SL manually."
+        )
+        return None
 
 
 async def _place_tp(symbol: str, side: str, qty: float, tp: float) -> str | None:
@@ -141,6 +140,7 @@ async def _place_tp(symbol: str, side: str, qty: float, tp: float) -> str | None
 async def _cleanup_orders(symbol: str) -> None:
     try:
         await cancel_all_orders(symbol)
+        await cancel_all_algo_orders(symbol)
         await asyncio.sleep(1.0)
         for order in await get_open_orders(symbol):
             oid = str(order.get("orderId", ""))

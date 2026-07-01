@@ -218,7 +218,7 @@ async def _dashboard_push_loop():
     while True:
         await asyncio.sleep(2)
         if _dashboard_clients:
-            await push_event("ping")
+            await push_event("dashboard")
 
 
 async def _cpu_warmup_loop():
