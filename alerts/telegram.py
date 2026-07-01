@@ -894,16 +894,16 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
     ml_prob   = signal.get("ml_probability")
     expl      = signal.get("explanation", {})
     thesis    = expl.get("thesis", "")
-    conf      = expl.get("confidence_label", "")
-    emoji     = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
-    dir_emoji = "📈" if direction == "LONG" else "📉"
-    ml_line   = f"ML Prob: {'✅' if ml_prob >= 0.65 else '❌'} `{ml_prob*100:.1f}%`\n" if ml_prob is not None else ""
+    conf_line   = f"Confidence: `{conf} ({score}/100)`\n" if conf else ""
+    ml_line     = f"ML Prob: {'✅' if ml_prob >= 0.65 else '❌'} `{ml_prob*100:.1f}%`\n" if ml_prob is not None else ""
+    grade_note  = "_Grade B — paper mode only_\n\n" if grade == "B" else ""
+    thesis_line = f"\n*Why:* {thesis}\n" if thesis else ""
 
     await send(
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
-        f"{f'Confidence: `{conf} ({score}/100)`{chr(10)}' if conf else ''}"
+        f"{conf_line}"
         f"{ml_line}"
         f"Regime:  `{regime}`\n"
         f"Session: `{session}`\n"
@@ -916,8 +916,8 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Risk:    `${risk_amt:.2f}`\n"
         f"Size:    `${pos_size:.2f}`\n\n"
-        f"{'_Grade B — paper mode only_' + chr(10) + chr(10) if grade == 'B' else ''}"
-        f"{chr(10) + '*Why:* ' + thesis + chr(10) if thesis else ''}"
+        f"{grade_note}"
+        f"{thesis_line}"
         f"_Signal forwarded to execution engine._"
     )
 
