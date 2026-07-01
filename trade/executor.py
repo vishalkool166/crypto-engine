@@ -93,45 +93,54 @@ async def _get_commission(symbol: str, order_id: str) -> dict:
     return await get_commission_from_order(symbol, order_id)
 
 
-async def _place_sl(symbol: str, side: str, qty: float, sl: float) -> str | None:
+async def _place_sl(
+    symbol:          str,
+    side:            str,
+    sl:              float,
+    price_precision: int = 2,
+) -> str | None:
     try:
         order   = await place_algo_order(
-            symbol        = symbol,
-            side          = side,
-            order_type    = "STOP_MARKET",
-            quantity      = qty,
-            trigger_price = round(sl, 6),
-            reduce_only   = True,
-            working_type  = "MARK_PRICE",
+            symbol          = symbol,
+            side            = side,
+            order_type      = "STOP_MARKET",
+            trigger_price   = sl,
+            price_precision = price_precision,
+            close_position  = True,
         )
         algo_id = str(order.get("algoId", ""))
-        log.info("SL algo order placed: %s sl:%.6f algoId:%s", symbol, sl, algo_id)
+        log.info("SL placed: %s sl:%s algoId:%s", symbol, round(sl, price_precision), algo_id)
         return algo_id
     except Exception as e:
-        log.error("SL algo order failed %s: %s", symbol, e)
+        log.error("SL failed %s: %s", symbol, e)
         from alerts.telegram import send
         coin = symbol.replace("USDT", "")
         await send(
             f"⚠️ *SL Order Failed — {coin}*\n\n"
-            f"Could not place SL at `${sl:.6f}`\n"
+            f"Could not place SL at `${round(sl, price_precision)}`\n"
             f"Position is unprotected — place SL manually."
         )
         return None
 
 
-async def _place_tp(symbol: str, side: str, qty: float, tp: float) -> str | None:
+async def _place_tp(
+    symbol:          str,
+    side:            str,
+    tp:              float,
+    price_precision: int = 2,
+) -> str | None:
     try:
-        order = await _place_with_retry(
-            symbol      = symbol,
-            side        = side,
-            order_type  = "LIMIT",
-            quantity    = qty,
-            price       = round(tp, 6),
-            reduce_only = True,
+        order   = await place_algo_order(
+            symbol          = symbol,
+            side            = side,
+            order_type      = "TAKE_PROFIT_MARKET",
+            trigger_price   = tp,
+            price_precision = price_precision,
+            close_position  = True,
         )
-        oid = str(order.get("orderId", ""))
-        log.info("TP placed: %s tp:%.6f id:%s", symbol, tp, oid)
-        return oid
+        algo_id = str(order.get("algoId", ""))
+        log.info("TP placed: %s tp:%s algoId:%s", symbol, round(tp, price_precision), algo_id)
+        return algo_id
     except Exception as e:
         log.error("TP failed %s: %s", symbol, e)
         return None
@@ -337,10 +346,13 @@ async def open_position(
         await set_margin_mode(symbol, "ISOLATED")
         await set_leverage(symbol, leverage)
 
-        prec     = await get_symbol_precision(symbol)
-        quantity = _round_step((stake * leverage) / current, prec.get("step_size", 0.001))
+        prec            = await get_symbol_precision(symbol)
+        qty_step        = prec.get("step_size",       0.001)
+        min_qty         = prec.get("min_qty",         0.001)
+        price_precision = prec.get("price_precision", 2)
+        quantity        = _round_step((stake * leverage) / current, qty_step)
 
-        if quantity < prec.get("min_qty", 0.001):
+        if quantity < min_qty:
             return {"success": False, "error": f"Quantity {quantity} below minimum"}
 
         log.info("Opening: %s %s price:%.6f qty:%s stake:%.2f lev:%dx", coin, direction, current, quantity, stake, leverage)
@@ -348,7 +360,7 @@ async def open_position(
         raw        = await _place_with_retry(symbol=symbol, side=side, order_type="MARKET", quantity=quantity)
         filled     = await _wait_for_fill(symbol, raw["orderId"])
         fill_price = float(filled.get("avgPrice") or filled.get("price") or current)
-        filled_qty = float(filled.get("executedQty", quantity))
+        filled_qty = _round_step(float(filled.get("executedQty", quantity)), qty_step)
         entry_oid  = str(filled.get("orderId", ""))
 
         log.info("Entry filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
@@ -360,8 +372,8 @@ async def open_position(
         entry_role   = comm.get("role", "taker")
         slippage_pct = abs(fill_price - entry) / entry * 100 if entry > 0 else 0.0
 
-        sl_oid = await _place_sl(symbol, sl_side, filled_qty, sl)
-        tp_oid = await _place_tp(symbol, tp_side, filled_qty, tp)
+        sl_oid = await _place_sl(symbol, sl_side, sl, price_precision)
+        tp_oid = await _place_tp(symbol, tp_side, tp, price_precision)
 
         trade_id = _save_trade(
             coin               = coin,
@@ -394,9 +406,9 @@ async def open_position(
 
         await send(
             f"{emoji} *{coin} {direction} Opened — {mode}*\n\n"
-            f"Entry:   `${fill_price:.6f}` (signal `${entry:.6f}` slip `{slippage_pct:.3f}%`)\n"
-            f"SL:      `${sl:.6f}` {sl_status}\n"
-            f"TP:      `${tp:.6f}` {tp_status}\n"
+            f"Entry:   `${fill_price:.{price_precision}f}` (signal `${entry:.{price_precision}f}` slip `{slippage_pct:.3f}%`)\n"
+            f"SL:      `${round(sl, price_precision)}` {sl_status}\n"
+            f"TP:      `${round(tp, price_precision)}` {tp_status}\n"
             f"Stake:   `${stake:.2f}` × `{leverage}x` = `${stake*leverage:.2f}`\n"
             f"Fee:     `${entry_fee:.4f}` ({entry_role})\n"
             f"Grade:   `{grade}` · Score `{score}`\n"

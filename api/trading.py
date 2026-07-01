@@ -35,10 +35,11 @@ async def trades_balance(request: Request):
         balance = await get_balance()
         return JSONResponse(content={
             "currencies": [{
-                "currency": "USDT",
-                "free":     balance["free"],
-                "used":     balance["used"],
-                "total":    balance["total"],
+                "currency":   "USDT",
+                "free":       balance["free"],
+                "used":       balance["used"],
+                "total":      balance["total"],
+                "unrealized": balance.get("unrealized", 0.0),
             }],
             "total":      balance["total"],
             "free":       balance["free"],
@@ -121,21 +122,26 @@ async def trades_summary(request: Request):
         if isinstance(balance,   Exception): balance   = {"total": 0, "free": 0, "used": 0, "unrealized": 0}
         if isinstance(daily,     Exception): daily     = []
 
+        unrealized = sum(
+            float(t.get("unrealized_pnl") or 0)
+            for t in (positions if isinstance(positions, list) else [])
+        )
+
         return JSONResponse(content={
             "status":    positions,
             "profit":    profit,
             "balance": {
                 "currencies": [{
-                    "currency": "USDT",
-                    "free":     balance.get("free",       0),
-                    "used":     balance.get("used",       0),
-                    "total":    balance.get("total",      0),
-                    "unrealized": balance.get("unrealized", 0),
+                    "currency":   "USDT",
+                    "free":       balance.get("free",       0),
+                    "used":       balance.get("used",       0),
+                    "total":      balance.get("total",      0),
+                    "unrealized": unrealized,
                 }],
-                "total":      balance.get("total",      0),
-                "free":       balance.get("free",       0),
-                "used":       balance.get("used",       0),
-                "unrealized": balance.get("unrealized", 0),
+                "total":      balance.get("total", 0),
+                "free":       balance.get("free",  0),
+                "used":       balance.get("used",  0),
+                "unrealized": unrealized,
             },
             "daily":     {"data": daily},
             "bot_state": "running",

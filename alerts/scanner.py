@@ -288,7 +288,7 @@ async def analyze_coin(coin: str, capital: float = None, leverage: int = None) -
 
 
 async def _analyze_coin_inner(coin: str) -> dict:
-    cached = cache.get(f"signal_{coin}")
+    cached = cache.get_raw(f"signal_{coin}")
     if cached:
         return cached
 

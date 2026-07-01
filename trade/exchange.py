@@ -267,26 +267,31 @@ async def cancel_all_orders(symbol: str) -> dict:
         return {}
 
 async def place_algo_order(
-    symbol:        str,
-    side:          str,
-    order_type:    str,
-    quantity:      float,
-    trigger_price: float,
-    reduce_only:   bool = True,
-    working_type:  str  = "MARK_PRICE",
+    symbol:         str,
+    side:           str,
+    order_type:     str,
+    trigger_price:  float,
+    price_precision:int  = 2,
+    quantity:       float | None = None,
+    close_position: bool = True,
+    working_type:   str  = "MARK_PRICE",
 ) -> dict:
     params: dict = {
         "symbol":       _clean(symbol),
         "side":         side.upper(),
         "type":         order_type.upper(),
         "algoType":     "CONDITIONAL",
-        "quantity":     quantity,
-        "triggerPrice": trigger_price,
+        "triggerPrice": round(trigger_price, price_precision),
         "workingType":  working_type,
         "priceProtect": "false",
     }
-    if reduce_only:
+    if close_position:
+        params["closePosition"] = "true"
+    else:
+        if quantity is not None:
+            params["quantity"]   = quantity
         params["reduceOnly"] = "true"
+    log.info("Algo order payload: %s", params)
     return await _post("/fapi/v1/algoOrder", params, signed=True)
 
 
