@@ -352,7 +352,7 @@ async def cancel_all_orders(symbol: str) -> dict:
         return {}
 
 
-async def get_user_trades(symbol: str, limit: int = 5) -> list:
+async def get_user_trades(symbol: str, limit: int = 10) -> list:
     try:
         clean = symbol.replace("/USDT:USDT", "USDT").replace("/USDT", "USDT")
         if not clean.endswith("USDT"):
@@ -369,6 +369,89 @@ async def get_user_trades(symbol: str, limit: int = 5) -> list:
     except Exception as e:
         log.error(f"get_user_trades error {symbol}: {e}")
         return []
+
+
+async def get_order_trades(symbol: str, order_id: str) -> list:
+    try:
+        clean = symbol.replace("/USDT:USDT", "USDT").replace("/USDT", "USDT")
+        if not clean.endswith("USDT"):
+            clean = clean + "USDT"
+        params = {
+            "symbol":    clean,
+            "orderId":   order_id,
+            "timestamp": _timestamp(),
+            "recvWindow": 5000,
+        }
+        params["signature"] = _sign(params)
+        data = await _get("/fapi/v1/userTrades", params)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        log.error(f"get_order_trades error {symbol} order:{order_id}: {e}")
+        return []
+
+
+async def get_funding_fees(symbol: str, start_time: int = None) -> float:
+    try:
+        clean = symbol.replace("/USDT:USDT", "USDT").replace("/USDT", "USDT")
+        if not clean.endswith("USDT"):
+            clean = clean + "USDT"
+
+        params = {
+            "symbol":     clean,
+            "incomeType": "FUNDING_FEE",
+            "limit":      100,
+            "timestamp":  _timestamp(),
+            "recvWindow": 5000,
+        }
+
+        if start_time:
+            params["startTime"] = start_time
+
+        params["signature"] = _sign(params)
+        data = await _get("/fapi/v1/income", params)
+
+        if not isinstance(data, list):
+            return 0.0
+
+        total = sum(float(item.get("income", 0)) for item in data)
+        return round(total, 8)
+
+    except Exception as e:
+        log.error(f"get_funding_fees error {symbol}: {e}")
+        return 0.0
+
+
+async def get_commission_from_order(symbol: str, order_id: str) -> dict:
+    try:
+        trades = await get_order_trades(symbol, order_id)
+        if not trades:
+            return {
+                "commission":      0.0,
+                "commission_asset": "USDT",
+                "role":            "taker",
+                "realized_pnl":    0.0,
+            }
+
+        total_commission = sum(float(t.get("commission", 0)) for t in trades)
+        realized_pnl     = sum(float(t.get("realizedPnl", 0)) for t in trades)
+        is_maker         = any(t.get("maker", False) for t in trades)
+        commission_asset = trades[0].get("commissionAsset", "USDT") if trades else "USDT"
+
+        return {
+            "commission":       round(total_commission, 8),
+            "commission_asset": commission_asset,
+            "role":             "maker" if is_maker else "taker",
+            "realized_pnl":     round(realized_pnl, 8),
+        }
+
+    except Exception as e:
+        log.error(f"get_commission_from_order error {symbol} order:{order_id}: {e}")
+        return {
+            "commission":       0.0,
+            "commission_asset": "USDT",
+            "role":             "taker",
+            "realized_pnl":     0.0,
+        }
 
 
 async def get_listen_key() -> str:
@@ -389,7 +472,7 @@ async def get_listen_key() -> str:
 
 
 async def refresh_listen_key() -> bool:
-    global _listen_key
+    global _listen_key, _listen_key_created_at
     try:
         if not _listen_key:
             await get_listen_key()

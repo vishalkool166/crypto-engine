@@ -12,14 +12,16 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
-_mark_prices:        dict         = {}
-_ws_task:            asyncio.Task = None
-_user_ws_task:       asyncio.Task = None
-_listen_key_task:    asyncio.Task = None
-_ws_connected:       bool         = False
-_user_ws_connected:  bool         = False
+_mark_prices:          dict         = {}
+_ws_task:              asyncio.Task = None
+_user_ws_task:         asyncio.Task = None
+_listen_key_task:      asyncio.Task = None
+_ws_connected:         bool         = False
+_user_ws_connected:    bool         = False
 
 _trade_event_callbacks = []
+
+_pending_commissions:  dict         = {}
 
 
 def on_trade_event(callback):
@@ -38,6 +40,14 @@ def get_all_mark_prices() -> dict:
 
 def is_connected() -> bool:
     return _ws_connected and _user_ws_connected
+
+
+def get_pending_commission(order_id: str) -> dict | None:
+    return _pending_commissions.get(str(order_id))
+
+
+def clear_pending_commission(order_id: str):
+    _pending_commissions.pop(str(order_id), None)
 
 
 async def _emit_trade_event(event_type: str, data: dict):
@@ -152,58 +162,86 @@ async def _handle_order_update(data: dict):
     try:
         order = data.get("o", {})
 
-        symbol      = order.get("s", "")
-        coin        = symbol.replace("USDT", "")
-        order_id    = str(order.get("i", ""))
-        status      = order.get("X", "")
-        order_type  = order.get("o", "")
-        side        = order.get("S", "")
-        avg_price   = float(order.get("ap", 0) or order.get("p", 0))
-        qty         = float(order.get("q", 0))
-        filled_qty  = float(order.get("z", 0))
-        reduce_only = order.get("R", False)
-        close_pos   = order.get("cp", False)
+        symbol       = order.get("s", "")
+        coin         = symbol.replace("USDT", "")
+        order_id     = str(order.get("i", ""))
+        status       = order.get("X", "")
+        order_type   = order.get("o", "")
+        side         = order.get("S", "")
+        avg_price    = float(order.get("ap", 0) or order.get("p", 0))
+        filled_qty   = float(order.get("z", 0))
+        reduce_only  = order.get("R", False)
+        close_pos    = order.get("cp", False)
+        commission   = float(order.get("n", 0) or 0)
+        comm_asset   = order.get("N", "USDT") or "USDT"
+        is_maker     = order.get("m", False)
+        realized_pnl = float(order.get("rp", 0) or 0)
 
         log.info(
             f"Order update: {coin} {side} {order_type} "
-            f"status:{status} price:{avg_price} qty:{filled_qty}"
+            f"status:{status} price:{avg_price} qty:{filled_qty} "
+            f"commission:{commission} {comm_asset} "
+            f"role:{'maker' if is_maker else 'taker'} "
+            f"realized_pnl:{realized_pnl}"
         )
 
-        if status != "FILLED":
-            return
+        if status == "FILLED":
+            _pending_commissions[order_id] = {
+                "commission":       commission,
+                "commission_asset": comm_asset,
+                "role":             "maker" if is_maker else "taker",
+                "realized_pnl":     realized_pnl,
+                "avg_price":        avg_price,
+                "filled_qty":       filled_qty,
+                "coin":             coin,
+                "order_type":       order_type,
+                "side":             side,
+                "timestamp":        time.time(),
+            }
 
-        if reduce_only or close_pos:
-            await _handle_position_closed(
-                coin       = coin,
-                exit_price = avg_price,
-                order_id   = order_id,
-                order_type = order_type,
-                side       = side,
-            )
-        else:
-            await _emit_trade_event("order_filled", {
-                "coin":       coin,
-                "order_id":   order_id,
-                "side":       side,
-                "price":      avg_price,
-                "quantity":   filled_qty,
-                "order_type": order_type,
-            })
+            if reduce_only or close_pos:
+                await _handle_position_closed(
+                    coin         = coin,
+                    exit_price   = avg_price,
+                    order_id     = order_id,
+                    order_type   = order_type,
+                    side         = side,
+                    commission   = commission,
+                    comm_asset   = comm_asset,
+                    is_maker     = is_maker,
+                    realized_pnl = realized_pnl,
+                )
+            else:
+                await _emit_trade_event("order_filled", {
+                    "coin":             coin,
+                    "order_id":         order_id,
+                    "side":             side,
+                    "price":            avg_price,
+                    "quantity":         filled_qty,
+                    "order_type":       order_type,
+                    "commission":       commission,
+                    "commission_asset": comm_asset,
+                    "role":             "maker" if is_maker else "taker",
+                    "realized_pnl":     realized_pnl,
+                })
 
     except Exception as e:
         log.error(f"_handle_order_update error: {e}")
 
 
 async def _handle_position_closed(
-    coin:       str,
-    exit_price: float,
-    order_id:   str,
-    order_type: str,
-    side:       str,
+    coin:         str,
+    exit_price:   float,
+    order_id:     str,
+    order_type:   str,
+    side:         str,
+    commission:   float = 0.0,
+    comm_asset:   str   = "USDT",
+    is_maker:     bool  = False,
+    realized_pnl: float = 0.0,
 ):
     try:
         from database import get_session, Trade as TradeModel, Signal as SignalModel
-        from trade.executor import _calculate_pnl, _mark_trade_closed
         from trade.monitor import invalidate_position_cache
         from trade.health_monitor import clear_health_state
 
@@ -217,61 +255,117 @@ async def _handle_position_closed(
                 log.debug(f"No active trade found for {coin} — may already be closed")
                 return
 
-            trade_id  = trade.id
-            direction = trade.direction
-            entry     = float(trade.entry_price or 0)
-            margin    = float(trade.margin_used or 0)
-            leverage  = int(trade.leverage or 1)
+            trade_id         = trade.id
+            direction        = trade.direction
+            entry            = float(trade.entry_price or 0)
+            margin           = float(trade.margin_used or 0)
+            leverage         = int(trade.leverage or 1)
+            entry_commission = float(trade.entry_commission or 0)
+            signal_entry     = entry
 
-        exit_reason = _determine_exit_reason_from_order(
-            order_type = order_type,
-            order_id   = order_id,
-            trade_sl   = None,
-            trade_tp   = None,
-        )
+            exit_reason = _determine_exit_reason_from_order(
+                order_type = order_type,
+                order_id   = order_id,
+                trade_sl   = str(trade.sl_order_id or ""),
+                trade_tp   = str(trade.tp1_order_id or ""),
+            )
 
-        pnl = _calculate_pnl(
-            direction  = direction,
-            entry      = entry,
-            exit_price = exit_price,
-            margin     = margin,
-            leverage   = leverage,
-        )
+            total_commission = round(entry_commission + commission, 8)
 
-        _mark_trade_closed(trade_id, exit_price, pnl, exit_reason)
+            if realized_pnl != 0:
+                net_pnl = round(realized_pnl - commission, 8)
+            else:
+                TAKER_FEE = 0.0005
+                position  = margin * leverage
+                if direction == "LONG":
+                    gross = (exit_price - entry) / entry * position
+                else:
+                    gross = (entry - exit_price) / entry * position
+                net_pnl = round(gross - total_commission, 4)
+
+            slippage_exit_pct = 0.0
+            if exit_reason == "tp_hit" and trade.tp1_price:
+                slippage_exit_pct = abs(exit_price - float(trade.tp1_price)) / float(trade.tp1_price) * 100
+            elif exit_reason == "sl_hit" and trade.sl_price:
+                slippage_exit_pct = abs(exit_price - float(trade.sl_price)) / float(trade.sl_price) * 100
+
+            health_at_close = None
+            try:
+                from trade.health_monitor import get_health_from_redis
+                health = get_health_from_redis(coin)
+                if health:
+                    health_at_close = json.dumps({
+                        "state":    health.get("state"),
+                        "failures": health.get("failures", []),
+                        "warnings": health.get("warnings", []),
+                    })
+            except Exception:
+                pass
+
+            trade.is_active            = False
+            trade.state                = "closed"
+            trade.exit_price           = exit_price
+            trade.actual_fill_exit     = exit_price
+            trade.slippage_exit_pct    = round(slippage_exit_pct, 4)
+            trade.exit_commission      = round(commission, 8)
+            trade.exit_role            = "maker" if is_maker else "taker"
+            trade.total_commission     = total_commission
+            trade.realized_pnl_exchange= round(realized_pnl, 8)
+            trade.net_pnl              = net_pnl
+            trade.pnl                  = net_pnl
+            trade.close_reason         = exit_reason
+            trade.closed_at            = datetime.now(timezone.utc)
+            trade.outcome              = "win" if net_pnl > 0 else "loss"
+            trade.tp1_hit              = exit_reason == "tp_hit"
+            trade.health_at_close      = health_at_close
+
+            if trade.signal_id:
+                sig = db.query(SignalModel).filter(
+                    SignalModel.id == trade.signal_id
+                ).first()
+                if sig:
+                    sig.outcome    = trade.outcome
+                    sig.pnl        = net_pnl
+                    sig.exit_price = exit_price
+
         invalidate_position_cache()
         clear_health_state(coin)
 
-        emoji   = "✅" if pnl >= 0 else "❌"
-        pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+        emoji   = "✅" if net_pnl >= 0 else "❌"
+        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
 
         from alerts.telegram import send
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"
-            f"Reason: `{exit_reason}`\n"
-            f"Exit:   `${exit_price:.6f}`\n"
-            f"PnL:    `{pnl_str}`"
+            f"Reason:      `{exit_reason}`\n"
+            f"Exit:        `${exit_price:.6f}`\n"
+            f"Net PnL:     `{pnl_str}`\n"
+            f"Commission:  `${total_commission:.4f}`\n"
+            f"Role:        `{'maker' if is_maker else 'taker'}`\n"
+            f"Realized:    `${realized_pnl:.4f}` (exchange)"
         )
 
         await _emit_trade_event("trade_closed", {
-            "coin":       coin,
-            "direction":  direction,
-            "exit_price": exit_price,
-            "pnl":        pnl,
-            "reason":     exit_reason,
+            "coin":        coin,
+            "direction":   direction,
+            "exit_price":  exit_price,
+            "net_pnl":     net_pnl,
+            "commission":  total_commission,
+            "reason":      exit_reason,
         })
 
         from events import emit
         asyncio.create_task(emit("trade_closed", {
             "coin":      coin,
             "direction": direction,
-            "pnl":       pnl,
+            "pnl":       net_pnl,
             "reason":    exit_reason,
         }))
 
         log.info(
             f"Position closed via WS: {coin} {direction} "
-            f"exit:{exit_price} pnl:{pnl} reason:{exit_reason}"
+            f"exit:{exit_price} net_pnl:{net_pnl} "
+            f"commission:{total_commission} reason:{exit_reason}"
         )
 
     except Exception as e:
@@ -305,8 +399,8 @@ def _determine_exit_reason_from_order(
 
 async def _handle_account_update(data: dict):
     try:
-        account = data.get("a", {})
-        balances = account.get("B", [])
+        account   = data.get("a", {})
+        balances  = account.get("B", [])
         positions = account.get("P", [])
 
         for b in balances:
@@ -345,9 +439,9 @@ async def start_ws():
     if _ws_task and not _ws_task.done():
         return
 
-    _ws_task          = asyncio.create_task(_mark_price_stream())
-    _user_ws_task     = asyncio.create_task(_user_data_stream())
-    _listen_key_task  = asyncio.create_task(_listen_key_refresh_loop())
+    _ws_task         = asyncio.create_task(_mark_price_stream())
+    _user_ws_task    = asyncio.create_task(_user_data_stream())
+    _listen_key_task = asyncio.create_task(_listen_key_refresh_loop())
 
     log.info("Binance WebSocket streams started")
 
@@ -364,10 +458,10 @@ async def stop_ws():
             except asyncio.CancelledError:
                 pass
 
-    _ws_task         = None
-    _user_ws_task    = None
-    _listen_key_task = None
-    _ws_connected    = False
+    _ws_task           = None
+    _user_ws_task      = None
+    _listen_key_task   = None
+    _ws_connected      = False
     _user_ws_connected = False
 
     try:

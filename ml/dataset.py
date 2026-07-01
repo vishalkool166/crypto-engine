@@ -2,7 +2,7 @@ import json
 import logging
 import pandas as pd
 import numpy as np
-from database import SessionLocal, Signal as SignalModel
+from database import SessionLocal, Signal as SignalModel, Trade as TradeModel
 
 log = logging.getLogger(__name__)
 
@@ -48,19 +48,29 @@ GRADE_MAP = {
     "F": -1,
 }
 
+ROLE_MAP = {
+    "maker": 0,
+    "taker": 1,
+}
+
 
 def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
-    """
-    Build feature matrix X and label vector y from Signal table.
-    Only includes closed signals with win/loss outcome.
-    Returns (X, y) or (None, None) if not enough data.
-    """
     try:
         with SessionLocal() as db:
             signals = db.query(SignalModel).filter(
                 SignalModel.outcome.in_(["win", "loss"]),
                 SignalModel.factor_scores.isnot(None)
             ).all()
+
+            signal_ids = [s.id for s in signals]
+
+            trades_map = {}
+            if signal_ids:
+                trades = db.query(TradeModel).filter(
+                    TradeModel.signal_id.in_(signal_ids),
+                    TradeModel.outcome.in_(["win", "loss"])
+                ).all()
+                trades_map = {t.signal_id: t for t in trades}
 
         if not signals:
             log.warning("No closed signals with factor scores found")
@@ -79,11 +89,9 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
 
             row = {}
 
-            # Factor scores — 16 features
             for key in FEATURE_KEYS:
                 row[key] = float(factor_scores.get(key, 0))
 
-            # Additional numeric features
             row["sweep_score"]  = float(s.sweep_score  or 0)
             row["retest_score"] = float(s.retest_score or 0)
             row["disp_score"]   = float(s.disp_score   or 0)
@@ -93,11 +101,58 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
             row["score"]        = float(s.score         or 0)
             row["funding"]      = float(s.funding       or 0) * 100
 
-            # Categorical features encoded
-            row["grade_encoded"]   = GRADE_MAP.get(s.grade, 0)
-            row["regime_encoded"]  = REGIME_MAP.get(s.regime or "", 0)
-            row["session_encoded"] = SESSION_MAP.get(s.session or "", 0)
+            row["grade_encoded"]     = GRADE_MAP.get(s.grade, 0)
+            row["regime_encoded"]    = REGIME_MAP.get(s.regime or "", 0)
+            row["session_encoded"]   = SESSION_MAP.get(s.session or "", 0)
             row["direction_encoded"] = 1 if s.direction == "LONG" else -1
+
+            trade = trades_map.get(s.id)
+            if trade:
+                row["entry_role_encoded"]   = ROLE_MAP.get(trade.entry_role or "taker", 1)
+                row["exit_role_encoded"]    = ROLE_MAP.get(trade.exit_role  or "taker", 1)
+                row["slippage_entry_pct"]   = float(trade.slippage_entry_pct or 0)
+                row["slippage_exit_pct"]    = float(trade.slippage_exit_pct  or 0)
+                row["total_commission_pct"] = (
+                    float(trade.total_commission or 0) /
+                    float(trade.margin_used or 1) * 100
+                )
+                row["funding_fees_pct"]     = (
+                    float(trade.funding_fees_paid or 0) /
+                    float(trade.margin_used or 1) * 100
+                )
+                row["tp1_hit"]              = 1 if trade.tp1_hit else 0
+
+                if trade.opened_at and trade.closed_at:
+                    try:
+                        opened = trade.opened_at
+                        closed = trade.closed_at
+                        if opened.tzinfo is None:
+                            from datetime import timezone
+                            opened = opened.replace(tzinfo=timezone.utc)
+                        if closed.tzinfo is None:
+                            from datetime import timezone
+                            closed = closed.replace(tzinfo=timezone.utc)
+                        hold_hours = (closed - opened).total_seconds() / 3600
+                        row["hold_duration_hours"] = round(hold_hours, 2)
+                    except Exception:
+                        row["hold_duration_hours"] = 0.0
+                else:
+                    row["hold_duration_hours"] = 0.0
+
+                net_pnl = float(trade.net_pnl or trade.pnl or 0)
+                margin  = float(trade.margin_used or 1)
+                row["net_pnl_pct"] = round(net_pnl / margin * 100, 4) if margin > 0 else 0.0
+
+            else:
+                row["entry_role_encoded"]   = 1
+                row["exit_role_encoded"]    = 1
+                row["slippage_entry_pct"]   = 0.0
+                row["slippage_exit_pct"]    = 0.0
+                row["total_commission_pct"] = 0.1
+                row["funding_fees_pct"]     = 0.0
+                row["tp1_hit"]              = 0
+                row["hold_duration_hours"]  = 0.0
+                row["net_pnl_pct"]          = 0.0
 
             rows.append(row)
             labels.append(1 if s.outcome == "win" else 0)
@@ -109,7 +164,6 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
         X = pd.DataFrame(rows)
         y = pd.Series(labels, name="outcome")
 
-        # Fill any NaN with 0
         X = X.fillna(0)
 
         log.info(
@@ -132,17 +186,17 @@ def get_feature_names() -> list:
         "btc_score", "market_score", "entry_score",
         "score", "funding",
         "grade_encoded", "regime_encoded",
-        "session_encoded", "direction_encoded"
+        "session_encoded", "direction_encoded",
+        "entry_role_encoded", "exit_role_encoded",
+        "slippage_entry_pct", "slippage_exit_pct",
+        "total_commission_pct", "funding_fees_pct",
+        "tp1_hit", "hold_duration_hours", "net_pnl_pct",
     ]
 
 
 def get_signal_features(signal: dict, wconf: dict) -> dict | None:
-    """
-    Extract features from a live signal for ML prediction.
-    Same feature engineering as build_dataset().
-    """
     try:
-        factors = wconf.get("factors", [])
+        factors       = wconf.get("factors", [])
         factor_scores = {f["key"]: f["earned"] for f in factors}
 
         row = {}
@@ -163,6 +217,16 @@ def get_signal_features(signal: dict, wconf: dict) -> dict | None:
         row["regime_encoded"]    = 0
         row["session_encoded"]   = 0
         row["direction_encoded"] = 1 if signal.get("direction") == "LONG" else -1
+
+        row["entry_role_encoded"]   = 1
+        row["exit_role_encoded"]    = 1
+        row["slippage_entry_pct"]   = 0.0
+        row["slippage_exit_pct"]    = 0.0
+        row["total_commission_pct"] = 0.1
+        row["funding_fees_pct"]     = 0.0
+        row["tp1_hit"]              = 0
+        row["hold_duration_hours"]  = 0.0
+        row["net_pnl_pct"]          = 0.0
 
         return row
 

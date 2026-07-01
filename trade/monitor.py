@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import datetime, timezone, timedelta, date
 from database import get_session, Trade as TradeModel, Signal as SignalModel
-from trade.exchange import get_positions, get_ticker_price, get_balance
+from trade.exchange import get_positions, get_ticker_price, get_balance, get_funding_fees
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -21,21 +21,27 @@ def _get_open_trades_from_db() -> list:
                 TradeModel.is_active == True
             ).all()
             return [{
-                "id":            t.id,
-                "coin":          t.coin,
-                "direction":     t.direction,
-                "grade":         t.grade,
-                "entry_price":   t.entry_price,
-                "sl_price":      t.sl_price,
-                "tp1_price":     t.tp1_price,
-                "position_size": t.position_size,
-                "margin_used":   t.margin_used,
-                "leverage":      t.leverage,
-                "sl_order_id":   t.sl_order_id,
-                "tp1_order_id":  t.tp1_order_id,
-                "opened_at":     t.opened_at.isoformat() if t.opened_at else None,
-                "signal_id":     t.signal_id,
-            } for t in trades]
+                "id":                trade.id,
+                "coin":              trade.coin,
+                "direction":         trade.direction,
+                "grade":             trade.grade,
+                "entry_price":       trade.entry_price,
+                "sl_price":          trade.sl_price,
+                "tp1_price":         trade.tp1_price,
+                "position_size":     trade.position_size,
+                "margin_used":       trade.margin_used,
+                "leverage":          trade.leverage,
+                "sl_order_id":       trade.sl_order_id,
+                "tp1_order_id":      trade.tp1_order_id,
+                "opened_at":         trade.opened_at.isoformat() if trade.opened_at else None,
+                "signal_id":         trade.signal_id,
+                "regime_at_entry":   trade.regime_at_entry,
+                "session_at_entry":  trade.session_at_entry,
+                "score_at_entry":    trade.score_at_entry,
+                "entry_commission":  trade.entry_commission,
+                "funding_fees_paid": trade.funding_fees_paid,
+                "total_commission":  trade.total_commission,
+            } for trade in trades]
     except Exception as e:
         log.error(f"_get_open_trades_from_db error: {e}")
         return []
@@ -58,24 +64,40 @@ def _enrich_with_live_data(db_trades: list, positions: list) -> list:
         margin    = float(trade.get("margin_used") or 0)
         is_short  = direction == "SHORT"
 
+        try:
+            from trade.ws import get_mark_price
+            live_price = get_mark_price(coin)
+        except Exception:
+            live_price = 0.0
+
+        if not live_price and position:
+            live_price = float(position.get("markPrice") or position.get("entryPrice") or entry)
+
+        if not live_price:
+            live_price = entry
+
         if position:
-            current_price  = float(position.get("markPrice")     or position.get("entryPrice") or entry)
             unrealized_pnl = float(position.get("unRealizedProfit") or 0)
             liquidation    = float(position.get("liquidationPrice") or 0)
         else:
-            current_price  = entry
             unrealized_pnl = 0.0
             liquidation    = 0.0
 
-        if entry > 0:
+        if entry > 0 and live_price > 0:
             if is_short:
-                profit_ratio = (entry - current_price) / entry
+                profit_ratio = (entry - live_price) / entry
             else:
-                profit_ratio = (current_price - entry) / entry
+                profit_ratio = (live_price - entry) / entry
             profit_ratio_leveraged = profit_ratio * leverage
+            profit_abs = profit_ratio * margin * leverage
         else:
             profit_ratio           = 0.0
             profit_ratio_leveraged = 0.0
+            profit_abs             = 0.0
+
+        funding_fees = float(trade.get("funding_fees_paid") or 0)
+        total_comm   = float(trade.get("total_commission") or 0)
+        net_pnl_live = round(profit_abs - total_comm - funding_fees, 4)
 
         opened_at    = trade.get("opened_at")
         duration_str = "--"
@@ -103,27 +125,33 @@ def _enrich_with_live_data(db_trades: list, positions: list) -> list:
             pass
 
         result.append({
-            "trade_id":      trade["id"],
-            "coin":          coin,
-            "pair":          f"{coin}/USDT:USDT",
-            "direction":     direction,
-            "grade":         trade.get("grade", "--"),
-            "is_short":      is_short,
-            "entry_price":   entry,
-            "current_price": current_price,
-            "sl_price":      trade.get("sl_price"),
-            "tp1_price":     trade.get("tp1_price"),
-            "position_size": trade.get("position_size"),
-            "margin_used":   margin,
-            "leverage":      leverage,
-            "profit_abs":    round(unrealized_pnl, 4),
-            "profit_ratio":  round(profit_ratio_leveraged, 4),
-            "liquidation":   liquidation,
-            "duration":      duration_str,
-            "opened_at":     opened_at,
-            "health":        health,
-            "tp1":           trade.get("tp1_price"),
-            "sl_signal":     trade.get("sl_price"),
+            "trade_id":          trade["id"],
+            "coin":              coin,
+            "pair":              f"{coin}/USDT:USDT",
+            "direction":         direction,
+            "grade":             trade.get("grade", "--"),
+            "is_short":          is_short,
+            "entry_price":       entry,
+            "current_price":     live_price,
+            "sl_price":          trade.get("sl_price"),
+            "tp1_price":         trade.get("tp1_price"),
+            "position_size":     trade.get("position_size"),
+            "margin_used":       margin,
+            "leverage":          leverage,
+            "profit_abs":        round(profit_abs, 4),
+            "profit_ratio":      round(profit_ratio_leveraged, 4),
+            "net_pnl_live":      net_pnl_live,
+            "funding_fees_paid": funding_fees,
+            "total_commission":  total_comm,
+            "liquidation":       liquidation,
+            "duration":          duration_str,
+            "opened_at":         opened_at,
+            "health":            health,
+            "tp1":               trade.get("tp1_price"),
+            "sl_signal":         trade.get("sl_price"),
+            "regime_at_entry":   trade.get("regime_at_entry", "--"),
+            "session_at_entry":  trade.get("session_at_entry", "--"),
+            "score_at_entry":    trade.get("score_at_entry", 0),
         })
 
     return result
@@ -162,6 +190,55 @@ def invalidate_position_cache():
     _cache_updated_at = 0.0
 
 
+async def _update_funding_fees(db_trades: list):
+    for trade in db_trades:
+        trade_id  = trade["id"]
+        coin      = trade["coin"]
+        opened_at = trade.get("opened_at")
+
+        if not opened_at:
+            continue
+
+        try:
+            if isinstance(opened_at, str):
+                opened_dt = datetime.fromisoformat(opened_at)
+            else:
+                opened_dt = opened_at
+            if opened_dt.tzinfo is None:
+                opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+
+            hours_open = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600
+            if hours_open < 8:
+                continue
+
+            start_time_ms = int(opened_dt.timestamp() * 1000)
+            symbol        = f"{coin}USDT"
+
+            funding_total = await get_funding_fees(symbol, start_time_ms)
+
+            if funding_total == 0.0:
+                continue
+
+            with get_session() as db:
+                t = db.query(TradeModel).filter(
+                    TradeModel.id == trade_id
+                ).first()
+                if t:
+                    current_funding = float(t.funding_fees_paid or 0)
+                    if abs(funding_total - current_funding) > 0.000001:
+                        t.funding_fees_paid = funding_total
+                        entry_comm          = float(t.entry_commission or 0)
+                        exit_comm           = float(t.exit_commission or 0)
+                        t.total_commission  = round(entry_comm + exit_comm + abs(funding_total), 8)
+                        log.info(
+                            f"Funding fees updated: {coin} "
+                            f"total:{funding_total:.6f} USDT"
+                        )
+
+        except Exception as e:
+            log.error(f"_update_funding_fees error {coin}: {e}")
+
+
 async def _detect_exchange_closed_trades(
     db_trades: list,
     positions: list,
@@ -179,8 +256,7 @@ async def _detect_exchange_closed_trades(
 
         if coin not in position_symbols:
             log.info(
-                f"Position closed on exchange: {coin} trade_id:{trade_id} "
-                f"— detecting exit price"
+                f"Position closed on exchange: {coin} trade_id:{trade_id}"
             )
 
             exit_price = await _get_exit_price(coin, trade)
@@ -224,37 +300,32 @@ async def _detect_exchange_closed_trades(
                 "reason":    exit_reason,
             }))
 
-            log.info(
-                f"Trade closed: {coin} {direction} "
-                f"exit:{exit_price} pnl:{pnl} reason:{exit_reason}"
-            )
-
 
 async def _get_exit_price(coin: str, trade: dict) -> float:
     try:
-        from trade.exchange import _get, _timestamp, _sign
+        from trade.exchange import get_user_trades
         symbol = f"{coin}USDT"
-
-        params = {
-            "symbol":    symbol,
-            "timestamp": _timestamp(),
-            "limit":     5,
-        }
-        params["signature"] = _sign(params)
-
-        data = await _get("/fapi/v1/userTrades", params, signed=False)
-
-        if data and isinstance(data, list):
-            last_trade = data[-1]
-            return float(last_trade.get("price", 0))
-
+        trades = await get_user_trades(symbol, limit=5)
+        if trades:
+            reduce_trades = [
+                t for t in trades
+                if t.get("reduceOnly") or float(t.get("realizedPnl", 0)) != 0
+            ]
+            if reduce_trades:
+                return float(reduce_trades[-1].get("price", 0))
+            return float(trades[-1].get("price", 0))
     except Exception as e:
         log.error(f"_get_exit_price error {coin}: {e}")
 
     try:
-        return await get_ticker_price(f"{coin}USDT")
+        from trade.ws import get_mark_price
+        price = get_mark_price(coin)
+        if price:
+            return price
     except Exception:
-        return float(trade.get("entry_price") or 0)
+        pass
+
+    return float(trade.get("entry_price") or 0)
 
 
 def _determine_exit_reason(trade: dict, exit_price: float) -> str:
@@ -267,24 +338,24 @@ def _determine_exit_reason(trade: dict, exit_price: float) -> str:
     if not entry:
         return "exchange_closed"
 
-    sl_tolerance = abs(entry - sl) * 0.02 if sl else 0
-    tp_tolerance = abs(entry - tp) * 0.02 if tp else 0
-
-    if sl and abs(exit_price - sl) <= sl_tolerance:
-        return "sl_hit"
-
-    if tp and abs(exit_price - tp) <= tp_tolerance:
-        return "tp_hit"
-
-    if is_short:
-        if exit_price >= sl * 0.98 if sl else False:
+    if sl and tp:
+        dist_sl = abs(exit_price - sl)
+        dist_tp = abs(exit_price - tp)
+        if dist_sl < dist_tp:
             return "sl_hit"
-        if exit_price <= tp * 1.02 if tp else False:
+        else:
             return "tp_hit"
-    else:
-        if exit_price <= sl * 1.02 if sl else False:
+
+    if sl:
+        if is_short and exit_price >= sl * 0.99:
             return "sl_hit"
-        if exit_price >= tp * 0.98 if tp else False:
+        if not is_short and exit_price <= sl * 1.01:
+            return "sl_hit"
+
+    if tp:
+        if is_short and exit_price <= tp * 1.01:
+            return "tp_hit"
+        if not is_short and exit_price >= tp * 0.99:
             return "tp_hit"
 
     return "exchange_closed"
@@ -305,6 +376,8 @@ async def run_monitor_cycle():
     _position_cache.update({t["trade_id"]: t for t in enriched})
 
     await _detect_exchange_closed_trades(db_trades, positions)
+
+    await _update_funding_fees(db_trades)
 
     try:
         from trade.health_monitor import run_health_checks
@@ -329,21 +402,25 @@ def get_profit_summary() -> dict:
                     "trade_count":             0,
                     "wins":                    0,
                     "losses":                  0,
+                    "total_commission":        0.0,
+                    "total_funding_fees":      0.0,
                     "best_pair":               "--",
                     "best_pair_profit_ratio":  0.0,
                     "worst_pair":              "--",
                     "worst_pair_profit_ratio": 0.0,
                 }
 
-            total_pnl = sum(float(t.pnl or 0) for t in closed)
-            wins      = [t for t in closed if t.outcome == "win"]
-            winrate   = len(wins) / len(closed) if closed else 0
+            total_pnl        = sum(float(t.net_pnl or t.pnl or 0) for t in closed)
+            total_commission = sum(float(t.total_commission or 0) for t in closed)
+            total_funding    = sum(float(t.funding_fees_paid or 0) for t in closed)
+            wins             = [t for t in closed if t.outcome == "win"]
+            winrate          = len(wins) / len(closed) if closed else 0
 
             by_coin = {}
             for t in closed:
                 if t.coin not in by_coin:
                     by_coin[t.coin] = 0.0
-                by_coin[t.coin] += float(t.pnl or 0)
+                by_coin[t.coin] += float(t.net_pnl or t.pnl or 0)
 
             best_coin  = max(by_coin, key=by_coin.get) if by_coin else "--"
             worst_coin = min(by_coin, key=by_coin.get) if by_coin else "--"
@@ -360,6 +437,8 @@ def get_profit_summary() -> dict:
                 "trade_count":             len(closed),
                 "wins":                    len(wins),
                 "losses":                  len(closed) - len(wins),
+                "total_commission":        round(total_commission, 4),
+                "total_funding_fees":      round(total_funding, 4),
                 "best_pair":               best_coin,
                 "best_pair_profit_ratio":  round(by_coin.get(best_coin, 0) / avg_margin, 4) if avg_margin else 0,
                 "worst_pair":              worst_coin,
@@ -388,9 +467,11 @@ def get_daily_breakdown(days: int = 7) -> list:
                     TradeModel.outcome.in_(["win", "loss"])
                 ).all()
 
-                day_pnl    = sum(float(t.pnl or 0) for t in trades)
-                day_wins   = sum(1 for t in trades if t.outcome == "win")
-                day_losses = sum(1 for t in trades if t.outcome == "loss")
+                day_pnl        = sum(float(t.net_pnl or t.pnl or 0) for t in trades)
+                day_commission = sum(float(t.total_commission or 0) for t in trades)
+                day_funding    = sum(float(t.funding_fees_paid or 0) for t in trades)
+                day_wins       = sum(1 for t in trades if t.outcome == "win")
+                day_losses     = sum(1 for t in trades if t.outcome == "loss")
 
                 result.append({
                     "date":        day.isoformat(),
@@ -399,6 +480,8 @@ def get_daily_breakdown(days: int = 7) -> list:
                     "trade_count": len(trades),
                     "wins":        day_wins,
                     "losses":      day_losses,
+                    "commission":  round(day_commission, 4),
+                    "funding":     round(day_funding, 4),
                 })
 
         return result
@@ -419,12 +502,16 @@ def get_performance_by_coin() -> list:
             for t in closed:
                 if t.coin not in by_coin:
                     by_coin[t.coin] = {
-                        "coin":   t.coin,
-                        "wins":   0,
-                        "losses": 0,
-                        "pnl":    0.0,
+                        "coin":       t.coin,
+                        "wins":       0,
+                        "losses":     0,
+                        "pnl":        0.0,
+                        "commission": 0.0,
+                        "funding":    0.0,
                     }
-                by_coin[t.coin]["pnl"] += float(t.pnl or 0)
+                by_coin[t.coin]["pnl"]        += float(t.net_pnl or t.pnl or 0)
+                by_coin[t.coin]["commission"]  += float(t.total_commission or 0)
+                by_coin[t.coin]["funding"]     += float(t.funding_fees_paid or 0)
                 if t.outcome == "win":
                     by_coin[t.coin]["wins"]   += 1
                 else:
@@ -442,6 +529,8 @@ def get_performance_by_coin() -> list:
                     "profit_abs":   round(data["pnl"], 4),
                     "profit_ratio": round(win_rate, 4),
                     "win_rate":     round(win_rate * 100, 1),
+                    "commission":   round(data["commission"], 4),
+                    "funding":      round(data["funding"], 4),
                 })
 
             result.sort(key=lambda x: x["profit_abs"], reverse=True)
@@ -460,24 +549,37 @@ def get_trade_history(limit: int = 50) -> list:
             ).limit(limit).all()
 
             return [{
-                "trade_id":     t.id,
-                "coin":         t.coin,
-                "pair":         f"{t.coin}/USDT:USDT",
-                "direction":    t.direction,
-                "grade":        t.grade,
-                "is_short":     t.direction == "SHORT",
-                "entry_price":  t.entry_price,
-                "exit_price":   t.exit_price,
-                "sl_price":     t.sl_price,
-                "tp1_price":    t.tp1_price,
-                "leverage":     t.leverage,
-                "margin_used":  t.margin_used,
-                "pnl":          round(float(t.pnl or 0), 4),
-                "outcome":      t.outcome,
-                "close_reason": t.close_reason,
-                "opened_at":    t.opened_at.isoformat()  if t.opened_at  else None,
-                "closed_at":    t.closed_at.isoformat()  if t.closed_at  else None,
-                "is_open":      t.is_active,
+                "trade_id":             t.id,
+                "coin":                 t.coin,
+                "pair":                 f"{t.coin}/USDT:USDT",
+                "direction":            t.direction,
+                "grade":                t.grade,
+                "is_short":             t.direction == "SHORT",
+                "entry_price":          t.entry_price,
+                "actual_fill_entry":    t.actual_fill_entry,
+                "exit_price":           t.exit_price,
+                "actual_fill_exit":     t.actual_fill_exit,
+                "sl_price":             t.sl_price,
+                "tp1_price":            t.tp1_price,
+                "leverage":             t.leverage,
+                "margin_used":          t.margin_used,
+                "pnl":                  round(float(t.net_pnl or t.pnl or 0), 4),
+                "realized_pnl":         round(float(t.realized_pnl_exchange or 0), 4),
+                "total_commission":     round(float(t.total_commission or 0), 6),
+                "funding_fees_paid":    round(float(t.funding_fees_paid or 0), 6),
+                "entry_role":           t.entry_role,
+                "exit_role":            t.exit_role,
+                "slippage_entry_pct":   round(float(t.slippage_entry_pct or 0), 4),
+                "slippage_exit_pct":    round(float(t.slippage_exit_pct or 0), 4),
+                "outcome":              t.outcome,
+                "close_reason":         t.close_reason,
+                "tp1_hit":              t.tp1_hit,
+                "regime_at_entry":      t.regime_at_entry,
+                "session_at_entry":     t.session_at_entry,
+                "score_at_entry":       t.score_at_entry,
+                "opened_at":            t.opened_at.isoformat()  if t.opened_at  else None,
+                "closed_at":            t.closed_at.isoformat()  if t.closed_at  else None,
+                "is_open":              t.is_active,
             } for t in trades]
 
     except Exception as e:
