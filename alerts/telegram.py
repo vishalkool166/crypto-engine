@@ -738,12 +738,15 @@ async def _cmd_pending() -> None:
         return
     lines = [f"📋 *Pending Posts — {len(posts)}*\n", "_Reply `#N` to see full text_\n"]
     for p in posts:
-        pt      = p.get("post_type", "signal")
-        icon    = "📊" if pt == "signal" else "💬"
-        preview = p.get("post", "")[:80] + ("..." if len(p.get("post", "")) > 80 else "")
+        pt       = p.get("post_type", "signal")
+        icon     = "📊" if pt == "signal" else "💬"
+        preview  = p.get("post", "")[:80] + ("..." if len(p.get("post", "")) > 80 else "")
+        coin_str = (
+            f" — `{p.get('coin', 'MARKET')}USDT {p.get('direction', '--')}` Grade `{p.get('grade', '--')}`"
+            if pt == "signal" else " — Market Commentary"
+        )
         lines.append(
-            f"{icon} *#{p['post_id']}*"
-            f"{f' — `{p.get(\"coin\", \"MARKET\")}USDT {p.get(\"direction\", \"--\")}` Grade `{p.get(\"grade\", \"--\")}`' if pt == 'signal' else ' — Market Commentary'}\n"
+            f"{icon} *#{p['post_id']}*{coin_str}\n"
             f"_{preview}_\n"
         )
     lines.append("_Use `/discard N` to delete_")
