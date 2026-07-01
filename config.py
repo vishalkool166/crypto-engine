@@ -11,11 +11,15 @@ _coins_cache:      list  = []
 _coins_cache_time: float = 0.0
 _COINS_CACHE_TTL:  float = 30.0
 
-
-def _ensure(key: str, value: str):
-    os.environ[key] = value
-    set_key(ENV_FILE, key, value)
-
+TAKER_FEE            = 0.0005
+MAKER_FEE            = 0.0002
+ORDER_FILL_TIMEOUT   = 60
+ORDER_POLL_INTERVAL  = 3
+MIN_STAKE_USDT       = 5.0
+SIGNAL_CACHE_TTL     = 1500
+MAX_SIGNAL_AGE_HOURS = 4
+ENTRY_DEVIATION_MULT = 0.40
+ENTRY_FAVORABLE_MULT = 0.60
 
 TIER_FREE  = "free"
 TIER_PRO   = "pro"
@@ -124,13 +128,17 @@ TIER_PRICING = {
 }
 
 
+def _ensure(key: str, value: str) -> None:
+    os.environ[key] = value
+    set_key(ENV_FILE, key, value)
+
+
 def get_tier_features(tier: str) -> dict:
     return TIER_FEATURES.get(tier, TIER_FEATURES[TIER_FREE])
 
 
 def tier_has_feature(tier: str, feature: str) -> bool:
-    features = get_tier_features(tier)
-    return bool(features.get(feature, False))
+    return bool(get_tier_features(tier).get(feature, False))
 
 
 def tier_rank(tier: str) -> int:
@@ -145,9 +153,9 @@ class Config:
     BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
     BINANCE_SECRET  = os.getenv("BINANCE_SECRET")
 
-    BINANCE_DEMO_API_KEY = os.getenv("BINANCE_DEMO_API_KEY")
-    BINANCE_DEMO_SECRET  = os.getenv("BINANCE_DEMO_SECRET")
-    BINANCE_DEMO_BASE_URL= os.getenv("BINANCE_DEMO_BASE_URL", "https://demo.binance.com")
+    BINANCE_DEMO_API_KEY  = os.getenv("BINANCE_DEMO_API_KEY")
+    BINANCE_DEMO_SECRET   = os.getenv("BINANCE_DEMO_SECRET")
+    BINANCE_DEMO_BASE_URL = os.getenv("BINANCE_DEMO_BASE_URL", "https://testnet.binancefuture.com")
 
     TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -167,10 +175,6 @@ class Config:
     JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
-    FREQTRADE_URL      = os.getenv("FREQTRADE_URL", "")
-    FREQTRADE_USERNAME = os.getenv("FREQTRADE_USERNAME", "")
-    FREQTRADE_PASSWORD = os.getenv("FREQTRADE_PASSWORD", "")
-
     ML_MIN_TRADES = 100
     ML_ENABLED    = os.getenv("ML_ENABLED", "False").lower() == "true"
 
@@ -181,7 +185,7 @@ class Config:
     CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "True").lower() == "true"
     CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
-    _FALLBACK_COINS = []
+    _FALLBACK_COINS: list = []
 
     TIMEFRAMES = ["1w", "1d", "4h", "1h"]
 
@@ -277,9 +281,7 @@ class Config:
         try:
             from database import SessionLocal, CoinConfig
             with SessionLocal() as db:
-                rows = db.query(CoinConfig).filter(
-                    CoinConfig.enabled == True
-                ).all()
+                rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
                 if rows:
                     _coins_cache      = [r.coin for r in rows]
                     _coins_cache_time = time.time()
@@ -290,15 +292,13 @@ class Config:
         return self._FALLBACK_COINS
 
     @COINS.setter
-    def COINS(self, value: list):
+    def COINS(self, value: list) -> None:
         global _coins_cache, _coins_cache_time
         _coins_cache      = []
         _coins_cache_time = 0.0
 
     def is_admin_email(self, email: str) -> bool:
-        return email.strip().lower() in [
-            e.lower() for e in self.ADMIN_EMAILS
-        ]
+        return email.strip().lower() in [e.lower() for e in self.ADMIN_EMAILS]
 
     def is_demo_configured(self) -> bool:
         return bool(self.BINANCE_DEMO_API_KEY and self.BINANCE_DEMO_SECRET)
@@ -307,10 +307,9 @@ class Config:
         return bool(self.BINANCE_API_KEY and self.BINANCE_SECRET)
 
 
-def _bootstrap_secrets():
+def _bootstrap_secrets() -> None:
     import logging
     log = logging.getLogger(__name__)
-
     changed = False
 
     if not os.getenv("TOTP_SECRET"):
@@ -318,32 +317,29 @@ def _bootstrap_secrets():
         secret = pyotp.random_base32()
         _ensure("TOTP_SECRET", secret)
         cfg.TOTP_SECRET = secret
-        log.info(f"[FIRST RUN] TOTP_SECRET generated: {secret}")
+        log.info("[FIRST RUN] TOTP_SECRET generated: %s", secret)
         changed = True
 
     if not os.getenv("DASHBOARD_API_KEY"):
         key = secrets.token_hex(32)
         _ensure("DASHBOARD_API_KEY", key)
         cfg.DASHBOARD_API_KEY = key
-        log.info(f"[FIRST RUN] DASHBOARD_API_KEY generated: {key}")
+        log.info("[FIRST RUN] DASHBOARD_API_KEY generated: %s", key)
         changed = True
 
     if not os.getenv("WEBHOOK_SECRET"):
-        ws = secrets.token_hex(16)
-        _ensure("WEBHOOK_SECRET", ws)
-        cfg.WEBHOOK_SECRET = ws
+        _ensure("WEBHOOK_SECRET", secrets.token_hex(16))
+        cfg.WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
         changed = True
 
     if not os.getenv("JWT_SECRET"):
-        js = secrets.token_hex(32)
-        _ensure("JWT_SECRET", js)
-        cfg.JWT_SECRET = js
+        _ensure("JWT_SECRET", secrets.token_hex(32))
+        cfg.JWT_SECRET = os.getenv("JWT_SECRET", "")
         changed = True
 
     if not os.getenv("OAUTH_JWT_SECRET"):
-        ojs = secrets.token_hex(32)
-        _ensure("OAUTH_JWT_SECRET", ojs)
-        cfg.OAUTH_JWT_SECRET = ojs
+        _ensure("OAUTH_JWT_SECRET", secrets.token_hex(32))
+        cfg.OAUTH_JWT_SECRET = os.getenv("OAUTH_JWT_SECRET", "")
         changed = True
 
     if not os.getenv("DASHBOARD_USERNAME"):
@@ -358,22 +354,13 @@ def _bootstrap_secrets():
         changed = True
 
     if changed:
-        log.info(
-            "[FIRST RUN] Secrets written to .env — "
-            "visit /auth/setup to complete setup"
-        )
+        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete setup")
 
     if cfg.TRADING_MODE == "paper" and not cfg.is_demo_configured():
-        log.warning(
-            "TRADING_MODE=paper but BINANCE_DEMO_API_KEY not set — "
-            "add demo keys to .env"
-        )
+        log.warning("TRADING_MODE=paper but BINANCE_DEMO_API_KEY not set")
 
     if cfg.TRADING_MODE == "live" and not cfg.is_live_configured():
-        log.warning(
-            "TRADING_MODE=live but BINANCE_API_KEY not set — "
-            "switching to paper mode"
-        )
+        log.warning("TRADING_MODE=live but BINANCE_API_KEY not set — switching to paper")
         cfg.TRADING_MODE  = "paper"
         cfg.PAPER_TRADING = True
 
