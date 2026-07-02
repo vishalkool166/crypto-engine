@@ -508,15 +508,15 @@ def _coin_volatility_profile(
 
 
 def _calculate_sl(
-    is_long:    bool,
-    entry:      float,
-    sweep:      dict,
-    retest:     dict,
-    d4h:        dict,
-    d1d:        dict,
-    swings:     dict,
-    key_levels: dict,
-    grade:      str,
+    is_long:     bool,
+    entry:       float,
+    sweep:       dict,
+    retest:      dict,
+    d4h:         dict,
+    d1d:         dict,
+    swings:      dict,
+    key_levels:  dict,
+    grade:       str,
     vol_profile: dict
 ) -> tuple[float, str, bool]:
 
@@ -525,16 +525,25 @@ def _calculate_sl(
     if atr_4h <= 0:
         atr_4h = entry * 0.015
 
+    atr_1d = float(d1d.get("atr") or atr_4h)
+    if atr_1d <= 0:
+        atr_1d = atr_4h
+
     atr_mult    = get_atr_mult(grade, adx)
     max_sl_dist = atr_4h * atr_mult
-    buffer      = atr_4h * 0.2
-    sl          = None
-    sl_method   = ""
+
+    def _buf(level_type: str) -> float:
+        if level_type in ("sweep", "swing", "pdl", "pdh", "pwl", "pwh"):
+            return atr_1d * 0.3
+        return atr_4h * 0.3
+
+    sl        = None
+    sl_method = ""
 
     if is_long:
         sweep_low = _safe_float(sweep.get("sweep_low") or 0)
         if sweep_low > 0 and sweep_low < entry:
-            candidate = sweep_low - buffer
+            candidate = sweep_low - _buf("sweep")
             if abs(entry - candidate) <= max_sl_dist:
                 sl        = candidate
                 sl_method = "Below sweep low"
@@ -545,7 +554,7 @@ def _calculate_sl(
             if nearest_ob and not nearest_ob.get("mitigated"):
                 ob_bottom = _safe_float(nearest_ob.get("bottom", 0))
                 if ob_bottom > 0 and ob_bottom < entry:
-                    candidate = ob_bottom - buffer
+                    candidate = ob_bottom - _buf("ob")
                     if abs(entry - candidate) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Below OB bottom"
@@ -555,7 +564,7 @@ def _calculate_sl(
             if retest_zone:
                 rb = _safe_float(retest_zone.get("bottom", 0))
                 if rb > 0 and rb < entry:
-                    candidate = rb - buffer
+                    candidate = rb - _buf("retest")
                     if abs(entry - candidate) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Below retest zone"
@@ -564,7 +573,7 @@ def _calculate_sl(
             if swings.get("last_low"):
                 swing_low = _safe_float(swings["last_low"]["price"])
                 if swing_low > 0 and swing_low < entry:
-                    candidate = swing_low - buffer
+                    candidate = swing_low - _buf("swing")
                     if abs(entry - candidate) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Below swing low"
@@ -572,7 +581,7 @@ def _calculate_sl(
         if sl is None:
             pdl = _safe_float(key_levels.get("pdl", 0))
             if pdl > 0 and pdl < entry:
-                candidate = pdl - buffer
+                candidate = pdl - _buf("pdl")
                 if abs(entry - candidate) <= max_sl_dist:
                     sl        = candidate
                     sl_method = "Below PDL"
@@ -580,7 +589,7 @@ def _calculate_sl(
     else:
         sweep_high = _safe_float(sweep.get("sweep_high") or 0)
         if sweep_high > 0 and sweep_high > entry:
-            candidate = sweep_high + buffer
+            candidate = sweep_high + _buf("sweep")
             if abs(candidate - entry) <= max_sl_dist:
                 sl        = candidate
                 sl_method = "Above sweep high"
@@ -591,7 +600,7 @@ def _calculate_sl(
             if nearest_ob and not nearest_ob.get("mitigated"):
                 ob_top = _safe_float(nearest_ob.get("top", 0))
                 if ob_top > 0 and ob_top > entry:
-                    candidate = ob_top + buffer
+                    candidate = ob_top + _buf("ob")
                     if abs(candidate - entry) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Above OB top"
@@ -601,7 +610,7 @@ def _calculate_sl(
             if retest_zone:
                 rt = _safe_float(retest_zone.get("top", 0))
                 if rt > 0 and rt > entry:
-                    candidate = rt + buffer
+                    candidate = rt + _buf("retest")
                     if abs(candidate - entry) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Above retest zone"
@@ -610,7 +619,7 @@ def _calculate_sl(
             if swings.get("last_high"):
                 swing_high = _safe_float(swings["last_high"]["price"])
                 if swing_high > 0 and swing_high > entry:
-                    candidate = swing_high + buffer
+                    candidate = swing_high + _buf("swing")
                     if abs(candidate - entry) <= max_sl_dist:
                         sl        = candidate
                         sl_method = "Above swing high"
@@ -618,7 +627,7 @@ def _calculate_sl(
         if sl is None:
             pdh = _safe_float(key_levels.get("pdh", 0))
             if pdh > 0 and pdh > entry:
-                candidate = pdh + buffer
+                candidate = pdh + _buf("pdh")
                 if abs(candidate - entry) <= max_sl_dist:
                     sl        = candidate
                     sl_method = "Above PDH"

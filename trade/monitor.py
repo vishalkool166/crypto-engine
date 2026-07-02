@@ -31,7 +31,7 @@ def _get_open_trades_from_db() -> list:
                 "leverage":           t.leverage,
                 "sl_order_id":        t.sl_order_id,
                 "tp1_order_id":       t.tp1_order_id,
-                "opened_at":          t.opened_at.isoformat() if t.opened_at else None,
+                "opened_at": t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
                 "signal_id":          t.signal_id,
                 "regime_at_entry":    t.regime_at_entry,
                 "session_at_entry":   t.session_at_entry,
@@ -493,10 +493,10 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "regime_at_entry":      t.regime_at_entry,
             "session_at_entry":     t.session_at_entry,
             "score_at_entry":       t.score_at_entry,
-            "opened_at":            t.opened_at.isoformat() if t.opened_at  else None,
-            "closed_at":            t.closed_at.isoformat() if t.closed_at  else None,
+            "opened_at": t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
+            "closed_at": t.closed_at.replace(tzinfo=timezone.utc).isoformat() if t.closed_at else None,
             "duration":             _duration_str(
-                t.opened_at.isoformat() if t.opened_at else None,
+                t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
                 t.closed_at
             ),
         } for t in trades]

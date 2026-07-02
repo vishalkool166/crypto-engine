@@ -1,7 +1,7 @@
 import logging
 import time
 from datetime import datetime, timezone, date
-from database import SessionLocal, Signal as SignalModel, CoinConfig
+from database import SessionLocal, Signal as SignalModel, Trade as TradeModel, CoinConfig
 from data.cache import cache
 from alerts.scanner import get_db_stats
 from scheduler import get_next_scan_epoch
@@ -55,15 +55,14 @@ def get_summary() -> dict:
         today_pnl    = 0.0
         today_trades = 0
         try:
-            today_str = date.today().isoformat()
+            today_start = datetime(date.today().year, date.today().month, date.today().day, tzinfo=timezone.utc)
             with SessionLocal() as db:
-                today_sigs = db.query(SignalModel).filter(
-                    SignalModel.timestamp >= today_str,
-                    SignalModel.outcome.notin_(["pending"]),
-                    SignalModel.outcome.isnot(None)
+                today_closed = db.query(TradeModel).filter(
+                    TradeModel.closed_at >= today_start,
+                    TradeModel.outcome.in_(["win", "loss"])
                 ).all()
-                today_pnl    = sum(float(s.pnl or 0) for s in today_sigs)
-                today_trades = len(today_sigs)
+                today_pnl    = sum(float(t.net_pnl or t.pnl or 0) for t in today_closed)
+                today_trades = len(today_closed)
         except Exception:
             pass
 
@@ -112,82 +111,74 @@ def get_performance() -> dict:
         return _cache[key]
 
     try:
-        stats = get_db_stats()
-
         with SessionLocal() as db:
-            closed_signals = db.query(SignalModel).filter(
-                SignalModel.outcome.notin_(["pending"]),
-                SignalModel.outcome.isnot(None)
-            ).order_by(SignalModel.timestamp.asc()).all()
+            closed_trades = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).order_by(TradeModel.opened_at.asc()).all()
 
-        if not closed_signals:
+        if not closed_trades:
             result = _empty_performance()
             _store(key, result)
             return result
 
-        pnls      = [float(s.pnl or 0) for s in closed_signals]
-        gross_p   = sum(p for p in pnls if p > 0)
-        gross_l   = abs(sum(p for p in pnls if p < 0))
-        pf        = round(gross_p / gross_l, 2) if gross_l > 0 else 0
-        best      = max(pnls) if pnls else 0
-        best_sig  = next((s for s in closed_signals if float(s.pnl or 0) == best), None)
+        pnls     = [float(t.net_pnl or t.pnl or 0) for t in closed_trades]
+        wins     = [t for t in closed_trades if t.outcome == "win"]
+        losses   = [t for t in closed_trades if t.outcome == "loss"]
+        win_rate = round(len(wins) / len(closed_trades) * 100, 1) if closed_trades else 0
 
-        peak   = 0
-        max_dd = 0
-        equity = 0
+        gross_p  = sum(p for p in pnls if p > 0)
+        gross_l  = abs(sum(p for p in pnls if p < 0))
+        pf       = round(gross_p / gross_l, 2) if gross_l > 0 else 0
+        best     = max(pnls) if pnls else 0
+        best_t   = next((t for t in closed_trades if float(t.net_pnl or t.pnl or 0) == best), None)
+        total_pnl= round(sum(pnls), 4)
+
+        peak         = 0
+        max_dd       = 0
+        equity       = 0
         equity_curve = []
 
-        for s in closed_signals:
-            equity += float(s.pnl or 0)
+        for t in closed_trades:
+            equity += float(t.net_pnl or t.pnl or 0)
             if equity > peak:
                 peak = equity
             dd = (peak - equity) / peak * 100 if peak > 0 else 0
             if dd > max_dd:
                 max_dd = dd
             equity_curve.append({
-                "date":   s.timestamp.strftime("%Y-%m-%d") if s.timestamp else "",
-                "pnl":    round(float(s.pnl or 0), 4),
+                "date":   t.opened_at.strftime("%Y-%m-%d") if t.opened_at else "",
+                "pnl":    round(float(t.net_pnl or t.pnl or 0), 4),
                 "equity": round(equity, 4)
             })
 
-        bg = stats.get("by_grade", {})
-        ap = bg.get("A+", {})
-        a  = bg.get("A",  {})
-        b  = bg.get("B",  {})
+        def _grade_stats(grade: str) -> dict:
+            gt = [t for t in closed_trades if t.grade == grade]
+            gw = [t for t in gt if t.outcome == "win"]
+            return {
+                "win_rate": round(len(gw) / len(gt) * 100, 1) if gt else 0,
+                "wins":     len(gw),
+                "total":    len(gt),
+                "pnl":      round(sum(float(t.net_pnl or t.pnl or 0) for t in gt), 4),
+            }
 
         result = {
-            "win_rate":         stats.get("win_rate", 0),
-            "total_pnl":        stats.get("total_pnl", 0),
-            "total_pnl_pos":    stats.get("total_pnl", 0) >= 0,
-            "wins":             stats.get("wins",   0),
-            "losses":           stats.get("losses", 0),
-            "closed":           stats.get("closed", 0),
+            "win_rate":         win_rate,
+            "total_pnl":        total_pnl,
+            "total_pnl_pos":    total_pnl >= 0,
+            "wins":             len(wins),
+            "losses":           len(losses),
+            "closed":           len(closed_trades),
             "profit_factor":    pf,
             "gross_profit":     round(gross_p, 2),
             "gross_loss":       round(gross_l, 2),
             "best_trade":       round(best, 4),
-            "best_trade_coin":  best_sig.coin if best_sig else "--",
+            "best_trade_coin":  best_t.coin if best_t else "--",
             "max_drawdown":     round(max_dd, 2),
             "peak_equity":      round(peak, 4),
             "equity_curve":     equity_curve[-200:],
-            "aplus": {
-                "win_rate": ap.get("win_rate", 0),
-                "wins":     ap.get("wins",     0),
-                "total":    ap.get("total",    0),
-                "pnl":      ap.get("total_pnl",0),
-            },
-            "a": {
-                "win_rate": a.get("win_rate", 0),
-                "wins":     a.get("wins",     0),
-                "total":    a.get("total",    0),
-                "pnl":      a.get("total_pnl",0),
-            },
-            "b": {
-                "win_rate": b.get("win_rate", 0),
-                "wins":     b.get("wins",     0),
-                "total":    b.get("total",    0),
-                "pnl":      b.get("total_pnl",0),
-            },
+            "aplus": _grade_stats("A+"),
+            "a":     _grade_stats("A"),
+            "b":     _grade_stats("B"),
         }
 
         _store(key, result)
@@ -232,6 +223,7 @@ def get_signals_data() -> dict:
                 "actual_rr":      r.get("actual_rr", 0),
                 "regime":         r.get("regime",  "--"),
                 "session":        r.get("session", "--"),
+                "timestamp":      r.get("cached_at"),
             })
 
         queue = []
@@ -281,29 +273,28 @@ def get_signals_data() -> dict:
 def get_history(limit: int = 10) -> list:
     try:
         with SessionLocal() as db:
-            signals = db.query(SignalModel).filter(
-                SignalModel.outcome.notin_(["pending"]),
-                SignalModel.outcome.isnot(None)
-            ).order_by(SignalModel.timestamp.desc()).limit(limit).all()
+            trades = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).order_by(TradeModel.opened_at.desc()).limit(limit).all()
 
         return [{
-            "id":          s.id,
-            "coin":        s.coin,
-            "direction":   s.direction,
-            "grade":       s.grade,
-            "outcome":     s.outcome,
-            "pnl":         round(float(s.pnl or 0), 4),
-            "pnl_pos":     (s.pnl or 0) >= 0,
-            "entry_price": s.entry,
-            "exit_price":  s.exit_price,
-            "sl_price":    s.sl,
-            "tp1_price":   s.tp1,
-            "risk_amt":    s.risk_amt,
-            "score":       s.score,
-            "regime":      s.regime,
-            "session":     s.session,
-            "timestamp":   s.timestamp.isoformat() if s.timestamp else None,
-        } for s in signals]
+            "id":          t.id,
+            "coin":        t.coin,
+            "direction":   t.direction,
+            "grade":       t.grade,
+            "outcome":     t.outcome,
+            "pnl":         round(float(t.net_pnl or t.pnl or 0), 4),
+            "pnl_pos":     (t.net_pnl or t.pnl or 0) >= 0,
+            "entry_price": t.entry_price,
+            "exit_price":  t.exit_price,
+            "sl_price":    t.sl_price,
+            "tp1_price":   t.tp1_price,
+            "risk_amt":    t.margin_used,
+            "score":       t.score_at_entry,
+            "regime":      t.regime_at_entry,
+            "session":     t.session_at_entry,
+            "timestamp":   t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
+        } for t in trades]
 
     except Exception as e:
         log.error(f"get_history error: {e}")
