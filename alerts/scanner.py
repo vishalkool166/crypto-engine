@@ -2,7 +2,8 @@ import asyncio
 import logging
 import time
 import json
-from config import cfg, SIGNAL_CACHE_TTL
+from datetime import datetime, timezone
+from config import cfg
 from data.cache import cache
 from engines.validator import validate_all_timeframes
 from database import get_session, Signal as SignalModel
@@ -22,6 +23,17 @@ log = logging.getLogger(__name__)
 
 _scan_running   = False
 _scan_semaphore = asyncio.Semaphore(3)
+
+
+def _seconds_to_next_scan() -> int:
+    now     = datetime.now(timezone.utc)
+    minute  = now.minute
+    second  = now.second
+    buckets = [0, 15, 30, 45]
+    for b in buckets:
+        if minute < b:
+            return (b - minute) * 60 - second
+    return (60 - minute) * 60 - second
 
 
 def _interpret_oi(market: dict) -> dict:
@@ -475,7 +487,9 @@ async def _analyze_coin_inner(coin: str) -> dict:
         },
     }
 
-    cache.set(f"signal_{coin}", result, ttl=SIGNAL_CACHE_TTL)
+    ttl = max(60, _seconds_to_next_scan() - 5)
+    cache.set(f"signal_{coin}", result, ttl=ttl)
+    log.debug("Cache set for %s ttl:%ds", coin, ttl)
 
     if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and signal.get("direction") in ["LONG", "SHORT"]:
         await send_signal(signal, coin, regime["label"], session["name"])
@@ -558,7 +572,7 @@ def get_db_stats() -> dict:
     try:
         with get_session() as db:
             all_sigs = db.query(SignalModel).all()
-            closed = [s for s in all_sigs if s.outcome in ["win", "loss"]]
+            closed   = [s for s in all_sigs if s.outcome in ["win", "loss"]]
             wins     = [s for s in closed if s.outcome == "win"]
             by_grade = {}
             for g in ["A+", "A", "B"]:
