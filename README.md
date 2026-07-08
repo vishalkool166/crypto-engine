@@ -1,4 +1,3 @@
-```markdown
 # Signal Engine v5
 
 <div align="center">
@@ -588,4 +587,3 @@ This demonstrates the core skill of modern AI-augmented development:
 ⭐ Star this repo if you found it interesting!
 
 </div>
-```
