@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import math
 import time
 import logging
 import httpx
@@ -58,6 +59,14 @@ def _signed(params: dict) -> dict:
 def _clean(symbol: str) -> str:
     s = symbol.replace("/USDT:USDT", "USDT").replace("/USDT", "USDT")
     return s if s.endswith("USDT") else s + "USDT"
+
+
+def _precision_from_step(step: float) -> int:
+    if not step or step <= 0:
+        return 8
+    if step >= 1:
+        return 0
+    return max(0, int(round(-math.log10(step))))
 
 
 async def _http() -> httpx.AsyncClient:
@@ -168,23 +177,53 @@ async def get_symbol_precision(symbol: str) -> dict:
     try:
         clean = _clean(symbol)
         info  = await _get("/fapi/v1/exchangeInfo", {"symbol": clean})
+
         for s in info.get("symbols", []):
             if s["symbol"] != clean:
                 continue
-            min_qty = step_size = 0.0
+
+            min_qty   = 0.0
+            step_size = 0.0
+            tick_size = 0.0
+            min_price = 0.0
+
             for f in s.get("filters", []):
                 if f["filterType"] == "LOT_SIZE":
                     min_qty   = float(f.get("minQty",   0))
                     step_size = float(f.get("stepSize", 0))
+                if f["filterType"] == "PRICE_FILTER":
+                    tick_size = float(f.get("tickSize", 0))
+                    min_price = float(f.get("minPrice", 0))
+
+            price_precision = _precision_from_step(tick_size)
+            qty_precision   = _precision_from_step(step_size)
+
+            log.debug(
+                "Precision %s tick=%.10f price_prec=%d step=%.10f qty_prec=%d",
+                clean, tick_size, price_precision, step_size, qty_precision
+            )
+
             return {
-                "qty_precision":   int(s.get("quantityPrecision", 0)),
-                "price_precision": int(s.get("pricePrecision",    0)),
+                "qty_precision":   qty_precision,
+                "price_precision": price_precision,
                 "min_qty":         min_qty,
                 "step_size":       step_size,
+                "tick_size":       tick_size,
+                "min_price":       min_price,
             }
+
     except Exception as e:
         log.error("get_symbol_precision %s: %s", symbol, e)
-    return {"qty_precision": 3, "price_precision": 2, "min_qty": 0.001, "step_size": 0.001}
+
+    log.warning("get_symbol_precision fallback used for %s", symbol)
+    return {
+        "qty_precision":   8,
+        "price_precision": 8,
+        "min_qty":         0.0,
+        "step_size":       0.0,
+        "tick_size":       0.0,
+        "min_price":       0.0,
+    }
 
 
 async def set_leverage(symbol: str, leverage: int) -> dict:
@@ -223,20 +262,29 @@ async def place_order(
     working_type: str          = "MARK_PRICE",
 ) -> dict:
     params: dict = {
-        "symbol":   _clean(symbol),
-        "side":     side.upper(),
-        "type":     order_type.upper(),
-        "quantity": quantity,
+        "symbol": _clean(symbol),
+        "side":   side.upper(),
+        "type":   order_type.upper(),
     }
+
+    if quantity and quantity > 0:
+        params["quantity"] = quantity
+
     if price:
         params["price"]       = price
         params["timeInForce"] = "GTC"
+
     if stop_price:
         params["stopPrice"]    = stop_price
         params["workingType"]  = working_type
         params["priceProtect"] = "FALSE"
+
     if reduce_only:
-        params["reduceOnly"] = "true"
+        if not quantity or quantity <= 0:
+            params["closePosition"] = "true"
+        else:
+            params["reduceOnly"] = "true"
+
     return await _post("/fapi/v1/order", params, signed=True)
 
 
@@ -266,15 +314,16 @@ async def cancel_all_orders(symbol: str) -> dict:
         log.error("cancel_all_orders %s: %s", symbol, e)
         return {}
 
+
 async def place_algo_order(
-    symbol:         str,
-    side:           str,
-    order_type:     str,
-    trigger_price:  float,
-    price_precision:int  = 2,
-    quantity:       float | None = None,
-    close_position: bool = True,
-    working_type:   str  = "MARK_PRICE",
+    symbol:          str,
+    side:            str,
+    order_type:      str,
+    trigger_price:   float,
+    price_precision: int   = 8,
+    quantity:        float | None = None,
+    close_position:  bool  = True,
+    working_type:    str   = "MARK_PRICE",
 ) -> dict:
     params: dict = {
         "symbol":       _clean(symbol),
@@ -283,7 +332,7 @@ async def place_algo_order(
         "algoType":     "CONDITIONAL",
         "triggerPrice": round(trigger_price, price_precision),
         "workingType":  working_type,
-        "priceProtect": "false",
+        "priceProtect": "FALSE",
     }
     if close_position:
         params["closePosition"] = "true"

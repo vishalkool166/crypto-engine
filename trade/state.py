@@ -1,9 +1,3 @@
-# trade/state.py — compatibility stub
-# trade/ folder was removed in Phase 1.
-# This stub exists only to satisfy imports in
-# engines/signal.py check_correlation() function.
-# Do not add real logic here.
-
 import logging
 log = logging.getLogger(__name__)
 
