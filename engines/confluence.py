@@ -25,8 +25,6 @@ ENTRY_OPPORTUNITY_KEYS = [
 NON_NEGOTIABLE_KEYS = [
     "market_regime",
     "weekly_filter",
-    "btc_alignment",
-    "liquidity_sweep",
 ]
 
 

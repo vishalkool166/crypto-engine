@@ -1054,10 +1054,45 @@ def run_no_trade_engine(
             failed = wconf.get("non_neg_failed", [])
             hard_entry(
                 "🚫",
-                f"Non-negotiable factors failed: {', '.join(failed)}",
-                "Core requirements not met — no trade",
+                f"Core market conditions failed: {', '.join(failed)}",
+                "Market regime or weekly filter not met — no trade",
                 penalty=30
             )
+
+        btc_score = wconf.get("btc_score", 0)
+        if btc_score < 3:
+            soft(
+                "⚠️",
+                "BTC alignment very weak",
+                f"BTC score {btc_score}/8 — heavy conflict with direction",
+                penalty=15
+            )
+        elif btc_score < 5:
+            soft(
+                "⚠️",
+                "BTC alignment weak",
+                f"BTC score {btc_score}/8 — partial conflict",
+                penalty=8
+            )
+
+        sweep_score = wconf.get("factors", [])
+        sweep_factor = next((f for f in sweep_score if f["key"] == "liquidity_sweep"), None)
+        if sweep_factor:
+            earned = sweep_factor.get("earned", 0)
+            if earned == 0:
+                soft(
+                    "⚠️",
+                    "No liquidity sweep detected",
+                    "No sweep on any key level — setup incomplete",
+                    penalty=12
+                )
+            elif earned < 5:
+                soft(
+                    "⚠️",
+                    "Sweep weak or stale",
+                    f"Sweep score {earned}/12 — low confidence",
+                    penalty=6
+                )
 
     if coin:
         corr = check_correlation(coin)
