@@ -1,17 +1,19 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from config import cfg
 
 log = logging.getLogger(__name__)
 
 MIN_STAKE          = 5.0
-MAX_RISK_PCT       = 0.03
+MAX_RISK_PCT       = 0.02
 MIN_RISK_PCT       = 0.005
 PAPER_LEVERAGE_CAP = 10
-LIVE_LEVERAGE_CAP  = 20
-PAPER_BASE_RISK    = 0.02
+LIVE_LEVERAGE_CAP  = 15
+PAPER_BASE_RISK    = 0.015
 LIVE_BASE_RISK     = 0.01
 ML_MIN_TRADES      = 100
+DAILY_LOSS_LIMIT   = 0.02
+CHOP_RISK_MULT     = 0.5
 
 
 async def _get_balance() -> float:
@@ -35,14 +37,19 @@ async def _get_open_trades() -> list:
 
 def _get_realized_daily_pnl() -> float:
     try:
-        from database import SessionLocal, Signal as SignalModel
-        today = date.today().isoformat()
+        from database import SessionLocal, Trade as TradeModel
+        today_start = datetime(
+            date.today().year,
+            date.today().month,
+            date.today().day,
+            tzinfo=timezone.utc
+        )
         with SessionLocal() as db:
-            sigs = db.query(SignalModel).filter(
-                SignalModel.timestamp >= today,
-                SignalModel.outcome.in_(["win", "loss"])
+            trades = db.query(TradeModel).filter(
+                TradeModel.closed_at >= today_start,
+                TradeModel.outcome.in_(["win", "loss"])
             ).all()
-            return sum(float(s.pnl or 0) for s in sigs)
+            return sum(float(t.net_pnl or t.pnl or 0) for t in trades)
     except Exception as e:
         log.error(f"_get_realized_daily_pnl error: {e}")
         return 0.0
@@ -50,23 +57,23 @@ def _get_realized_daily_pnl() -> float:
 
 def _get_peak_and_drawdown(current_balance: float) -> tuple[float, float]:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            closed = db.query(SignalModel).filter(
-                SignalModel.outcome.in_(["win", "loss"]),
-                SignalModel.pnl.isnot(None)
-            ).order_by(SignalModel.timestamp.asc()).all()
+            closed = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"]),
+                TradeModel.net_pnl.isnot(None)
+            ).order_by(TradeModel.opened_at.asc()).all()
 
         if not closed:
             return current_balance, 0.0
 
-        total_pnl = sum(float(s.pnl or 0) for s in closed)
+        total_pnl = sum(float(t.net_pnl or t.pnl or 0) for t in closed)
         starting  = current_balance - total_pnl
         equity    = starting
         peak      = starting
 
-        for s in closed:
-            equity += float(s.pnl or 0)
+        for t in closed:
+            equity += float(t.net_pnl or t.pnl or 0)
             if equity > peak:
                 peak = equity
 
@@ -80,11 +87,11 @@ def _get_peak_and_drawdown(current_balance: float) -> tuple[float, float]:
 
 def _get_performance() -> dict:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            closed = db.query(SignalModel).filter(
-                SignalModel.outcome.in_(["win", "loss"])
-            ).order_by(SignalModel.timestamp.desc()).limit(20).all()
+            closed = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).order_by(TradeModel.opened_at.desc()).limit(20).all()
 
         if not closed:
             return {
@@ -94,16 +101,16 @@ def _get_performance() -> dict:
                 "streak_type": None,
             }
 
-        wins     = sum(1 for s in closed if s.outcome == "win")
+        wins     = sum(1 for t in closed if t.outcome == "win")
         win_rate = wins / len(closed)
 
         streak      = 0
         streak_type = None
-        for s in closed:
+        for t in closed:
             if streak == 0:
-                streak_type = s.outcome
+                streak_type = t.outcome
                 streak      = 1
-            elif s.outcome == streak_type:
+            elif t.outcome == streak_type:
                 streak += 1
             else:
                 break
@@ -122,87 +129,114 @@ def _get_performance() -> dict:
 
 def _get_total_closed_trades() -> int:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            return db.query(SignalModel).filter(
-                SignalModel.outcome.in_(["win", "loss"])
+            return db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
             ).count()
     except Exception:
         return 0
 
 
-def _dynamic_risk(base: float, perf: dict, drawdown: float) -> float:
+def _dynamic_risk(
+    base:     float,
+    perf:     dict,
+    drawdown: float,
+    regime:   str = "unknown"
+) -> float:
     win_rate    = perf.get("win_rate")
     streak      = perf.get("streak", 0)
     streak_type = perf.get("streak_type")
     total       = perf.get("total", 0)
 
-    if win_rate is None or total < 5:
-        perf_mult = 1.0
-    elif win_rate > 0.65:
-        perf_mult = 1.30
-    elif win_rate > 0.55:
-        perf_mult = 1.10
-    elif win_rate > 0.45:
+    if win_rate is None or total < 10:
+        perf_mult = 0.8
+    elif win_rate > 0.60:
+        perf_mult = 1.20
+    elif win_rate > 0.50:
         perf_mult = 1.00
-    elif win_rate > 0.35:
-        perf_mult = 0.80
+    elif win_rate > 0.40:
+        perf_mult = 0.85
+    elif win_rate > 0.30:
+        perf_mult = 0.70
     else:
-        perf_mult = 0.60
+        perf_mult = 0.50
 
     streak_mult = 1.0
     if streak_type == "win":
         if streak >= 5:
-            streak_mult = 1.25
-        elif streak >= 3:
             streak_mult = 1.15
-    elif streak_type == "loss":
-        if streak >= 5:
-            streak_mult = 0.75
         elif streak >= 3:
+            streak_mult = 1.08
+    elif streak_type == "loss":
+        if streak >= 3:
+            streak_mult = 0.70
+        elif streak >= 2:
             streak_mult = 0.85
 
-    if drawdown > 0.25:
-        dd_mult = 0.50
+    if drawdown > 0.20:
+        dd_mult = 0.40
     elif drawdown > 0.15:
-        dd_mult = 0.70
+        dd_mult = 0.60
     elif drawdown > 0.10:
-        dd_mult = 0.85
+        dd_mult = 0.75
+    elif drawdown > 0.05:
+        dd_mult = 0.90
     else:
         dd_mult = 1.00
 
-    risk = base * perf_mult * streak_mult * dd_mult
+    regime_mult = 1.0
+    if regime in ("chop", "ranging", "unknown"):
+        regime_mult = CHOP_RISK_MULT
+    elif regime == "weak-trend":
+        regime_mult = 0.70
+    elif regime in ("trending-bull", "trending-bear"):
+        regime_mult = 1.00
+    elif regime == "expansion":
+        regime_mult = 0.85
+
+    risk = base * perf_mult * streak_mult * dd_mult * regime_mult
     return max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk))
 
 
-def _dynamic_leverage(atr_pct: float, adx: float, cap: int) -> int:
+def _dynamic_leverage(
+    atr_pct: float,
+    adx:     float,
+    cap:     int
+) -> int:
     if atr_pct > 5.0:
-        low, high = 2, 4
+        low, high = 2, 3
     elif atr_pct > 3.0:
-        low, high = 3, 6
+        low, high = 3, 5
     elif atr_pct > 2.0:
-        low, high = 4, 8
+        low, high = 4, 7
     elif atr_pct > 1.0:
-        low, high = 6, 12
+        low, high = 5, 10
     else:
-        low, high = 8, 18
+        low, high = 6, 12
 
     if adx >= 40:
         leverage = high
-    elif adx >= 25:
+    elif adx >= 30:
         leverage = round((low + high) / 2)
+    elif adx >= 25:
+        leverage = round((low + high) / 2) - 1
     else:
         leverage = low
 
     return max(2, min(leverage, cap))
 
 
-def _dynamic_max_trades(drawdown: float, perf: dict, is_paper: bool) -> int:
+def _dynamic_max_trades(
+    drawdown: float,
+    perf:     dict,
+    is_paper: bool
+) -> int:
     win_rate = perf.get("win_rate")
     total    = perf.get("total", 0)
 
     if is_paper:
-        base = 3
+        base = 2
     else:
         total_live = _get_total_closed_trades()
         if total_live < 50:
@@ -212,20 +246,20 @@ def _dynamic_max_trades(drawdown: float, perf: dict, is_paper: bool) -> int:
         else:
             base = 3
 
-    if win_rate is None or total < 5:
-        return base
-
-    if drawdown > 0.20:
-        return max(1, base - 2)
-    elif drawdown > 0.10:
+    if win_rate is None or total < 10:
         return max(1, base - 1)
 
-    if win_rate > 0.60:
+    if drawdown > 0.15:
+        return 1
+    elif drawdown > 0.08:
+        return max(1, base - 1)
+
+    if win_rate > 0.55:
         return base
-    elif win_rate > 0.45:
+    elif win_rate > 0.40:
         return max(1, base - 1)
     else:
-        return max(1, base - 2)
+        return 1
 
 
 def _ml_mult(signal: dict, total_trades: int) -> float:
@@ -258,11 +292,12 @@ async def compute_allocation(
     vol_profile: dict,
     direction:   str,
 ) -> dict:
-    is_paper = cfg.PAPER_TRADING
-    coin     = signal.get("coin", "UNKNOWN")
-    grade    = signal.get("grade", "F")
-    entry    = float(signal.get("entry", 0))
-    sl       = float(signal.get("sl", 0))
+    is_paper   = cfg.PAPER_TRADING
+    coin       = signal.get("coin", "UNKNOWN")
+    grade      = signal.get("grade", "F")
+    entry      = float(signal.get("entry", 0))
+    sl         = float(signal.get("sl", 0))
+    regime_type = regime.get("type", "unknown")
 
     balance = await _get_balance()
     if balance < MIN_STAKE:
@@ -280,21 +315,20 @@ async def compute_allocation(
     sl_distance = abs(entry - sl) / entry
     if sl_distance < 0.005:
         return _skip(f"SL too tight: {sl_distance*100:.2f}%")
-    if sl_distance > 0.10:
+    if sl_distance > 0.12:
         return _skip(f"SL too wide: {sl_distance*100:.2f}%")
 
     peak, drawdown = _get_peak_and_drawdown(balance)
     perf           = _get_performance()
     total_trades   = _get_total_closed_trades()
 
-    if not is_paper:
-        daily_pnl   = _get_realized_daily_pnl()
-        daily_limit = balance * 0.03
-        if daily_pnl < 0 and abs(daily_pnl) >= daily_limit:
-            return _skip(
-                f"Daily loss limit: ${abs(daily_pnl):.2f} "
-                f"of ${daily_limit:.2f} limit"
-            )
+    daily_pnl   = _get_realized_daily_pnl()
+    daily_limit = balance * DAILY_LOSS_LIMIT
+    if daily_pnl < 0 and abs(daily_pnl) >= daily_limit:
+        return _skip(
+            f"Daily loss limit hit: ${abs(daily_pnl):.2f} "
+            f"of ${daily_limit:.2f} limit — no more trades today"
+        )
 
     max_trades = _dynamic_max_trades(drawdown, perf, is_paper)
     if len(open_trades) >= max_trades:
@@ -304,9 +338,14 @@ async def compute_allocation(
 
     base_risk  = PAPER_BASE_RISK if is_paper else LIVE_BASE_RISK
     lev_cap    = PAPER_LEVERAGE_CAP if is_paper else LIVE_LEVERAGE_CAP
-    grade_mult = {"A+": 1.0, "A": 0.90, "B": 0.75}.get(grade, 0.50)
 
-    risk_pct = _dynamic_risk(base_risk, perf, drawdown)
+    grade_mult = {
+        "A+": 1.00,
+        "A":  0.85,
+        "B":  0.65
+    }.get(grade, 0.50)
+
+    risk_pct = _dynamic_risk(base_risk, perf, drawdown, regime_type)
     risk_pct = risk_pct * grade_mult
     risk_pct = risk_pct * _ml_mult(signal, total_trades)
     risk_pct = max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk_pct))
@@ -318,7 +357,7 @@ async def compute_allocation(
     risk_amt      = balance * risk_pct
     position_size = risk_amt / sl_distance
     stake         = position_size / leverage
-    max_stake     = balance * 0.25
+    max_stake     = balance * 0.20
     stake         = min(stake, max_stake)
     stake         = max(stake, MIN_STAKE)
     position_size = stake * leverage
@@ -347,6 +386,9 @@ async def compute_allocation(
         "win_rate":           round(perf["win_rate"] * 100, 1) if perf["win_rate"] is not None else None,
         "streak":             perf["streak"],
         "streak_type":        perf["streak_type"],
+        "regime_type":        regime_type,
+        "daily_pnl":          round(daily_pnl, 4),
+        "daily_limit":        round(daily_limit, 4),
     }
 
     log.info(
@@ -357,7 +399,8 @@ async def compute_allocation(
         f"risk:{risk_pct*100:.2f}% "
         f"stake:${stake:.2f} "
         f"lev:{leverage}x "
-        f"sl:{sl_distance*100:.2f}%"
+        f"sl:{sl_distance*100:.2f}% "
+        f"regime:{regime_type}"
     )
 
     await _notify_allocation(coin, direction, result)
@@ -369,7 +412,7 @@ async def _notify_allocation(coin: str, direction: str, r: dict):
         from alerts.telegram import send
         mode  = "PAPER" if r["is_paper"] else "LIVE"
         dd    = r["drawdown_pct"]
-        emoji = "🟢" if dd < 10 else "🟡" if dd < 20 else "🔴"
+        emoji = "🟢" if dd < 5 else "🟡" if dd < 15 else "🔴"
         wr    = f"{r['win_rate']}%" if r["win_rate"] is not None else "N/A"
 
         await send(
@@ -379,7 +422,9 @@ async def _notify_allocation(coin: str, direction: str, r: dict):
             f"Stake: `${r['stake']:.2f}` × `{r['leverage']}x`\n"
             f"SL: `{r['sl_dist_pct']}%` · "
             f"ATR: `{r['atr_pct']}%` · ADX: `{r['adx']}`\n"
-            f"Trades: `{r['open_trades']}/{r['max_trades_allowed']}`"
+            f"Regime: `{r['regime_type']}` · "
+            f"Trades: `{r['open_trades']}/{r['max_trades_allowed']}`\n"
+            f"Daily PnL: `${r['daily_pnl']:.2f}` / limit `${r['daily_limit']:.2f}`"
         )
     except Exception as e:
         log.error(f"Notify allocation error: {e}")
@@ -390,13 +435,12 @@ async def get_live_balance() -> float:
 
 
 async def get_portfolio_state() -> dict:
-    trades     = await _get_open_trades()
-    open_count = len(trades)
-
+    trades      = await _get_open_trades()
+    open_count  = len(trades)
     long_count  = sum(1 for t in trades if t.get("direction") == "LONG")
     short_count = sum(1 for t in trades if t.get("direction") == "SHORT")
     exposure    = sum(float(t.get("position_size") or 0) for t in trades)
-    daily_pnl   = sum(float(t.get("profit_abs") or 0) for t in trades)
+    daily_pnl   = _get_realized_daily_pnl()
 
     return {
         "open_trades":    open_count,

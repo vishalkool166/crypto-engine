@@ -14,11 +14,11 @@ def detect_retest(
     atr    = d4h.get("atr") or price * 0.015
     ema20  = d4h.get("ema20")
     ema50  = d4h.get("ema50")
-    vol_ma = float(
-        pd.Series(
-            [c["vol"] for c in d4h.get("last5", [])]
-        ).mean()
-    ) or 1
+
+    last5_vols = [c["vol"] for c in d4h.get("last5", [])]
+    vol_ma     = float(pd.Series(last5_vols).mean()) if last5_vols else 1.0
+    if vol_ma <= 0:
+        vol_ma = 1.0
 
     sweep_type = sweep.get("type", "")
     disp_type  = displacement.get("type", "")
@@ -36,7 +36,8 @@ def detect_retest(
     else:
         trade_dir = disp_type or "bull"
 
-    MIN_WIDTH_PCT = 0.003
+    MIN_WIDTH_PCT  = 0.003
+    MAX_DIST_PCT   = 0.06
 
     all_fvgs = []
     for fvg in d4h.get("fvgs", []):
@@ -55,11 +56,9 @@ def detect_retest(
         width = (fvg["top"] - fvg["bottom"]) / price
         if width < MIN_WIDTH_PCT:
             continue
-        if trade_dir == "bear" and fvg["bottom"] < price * 0.97:
-            continue
-        if trade_dir == "bull" and fvg["top"] > price * 1.03:
-            continue
         dist = abs(price - fvg["mid"]) / price
+        if dist > MAX_DIST_PCT:
+            continue
         valid_fvgs.append({**fvg, "width": width, "dist": dist})
 
     valid_fvgs.sort(key=lambda x: x["dist"])
@@ -78,11 +77,13 @@ def detect_retest(
     fvg_zone = None
 
     if nearest_ob and not nearest_ob.get("mitigated"):
-        ob_zone = {
-            "top":    nearest_ob["top"],
-            "bottom": nearest_ob["bottom"],
-            "mid":    nearest_ob["mid"]
-        }
+        ob_dist = abs(price - nearest_ob["mid"]) / price
+        if ob_dist <= MAX_DIST_PCT:
+            ob_zone = {
+                "top":    nearest_ob["top"],
+                "bottom": nearest_ob["bottom"],
+                "mid":    nearest_ob["mid"]
+            }
 
     if sweep.get("confirmed") and matching_fvg:
         fvg_zone = {
@@ -100,26 +101,26 @@ def detect_retest(
         else:
             zone      = fvg_zone
             tf        = matching_fvg.get("timeframe", "4h").upper()
-            zone_type = f"{tf} Bullish FVG" if trade_dir == "bull" else f"{tf} Bearish FVG"
+            zone_type = f"{tf} FVG"
     elif ob_zone:
         zone      = ob_zone
         zone_type = "4H Order Block"
     elif fvg_zone:
         zone      = fvg_zone
         tf        = matching_fvg.get("timeframe", "4h").upper()
-        zone_type = f"{tf} Bullish FVG" if trade_dir == "bull" else f"{tf} Bearish FVG"
-    elif ema20 and abs(price - ema20) / price < 0.04:
-        zone      = {"top": ema20 * 1.01, "bottom": ema20 * 0.99, "mid": ema20}
+        zone_type = f"{tf} FVG"
+    elif ema20 and abs(price - ema20) / price < 0.03:
+        zone      = {"top": ema20 * 1.005, "bottom": ema20 * 0.995, "mid": ema20}
         zone_type = "EMA20 Zone"
-    elif ema50 and abs(price - ema50) / price < 0.05:
-        zone      = {"top": ema50 * 1.01, "bottom": ema50 * 0.99, "mid": ema50}
+    elif ema50 and abs(price - ema50) / price < 0.04:
+        zone      = {"top": ema50 * 1.005, "bottom": ema50 * 0.995, "mid": ema50}
         zone_type = "EMA50 Zone"
 
     if not zone:
         return {
             "status":       "none",
             "label":        "No retest zone",
-            "desc":         "No valid OB, FVG or EMA zone found",
+            "desc":         "No valid OB, FVG or EMA zone found within range",
             "score":        0,
             "confirmed":    False,
             "failed":       False,
@@ -139,21 +140,21 @@ def detect_retest(
     def failed_retest():
         if trade_dir == "bull":
             entered = any(
-                c["low"] <= zone["top"] and c["high"] >= zone["bottom"]
+                float(c["low"]) <= zone["top"] and float(c["high"]) >= zone["bottom"]
                 for _, c in recent.iterrows()
             )
             closed_below = any(
-                c["close"] < zone["bottom"]
+                float(c["close"]) < zone["bottom"] * 0.998
                 for _, c in recent.tail(2).iterrows()
             )
             return entered and closed_below
         else:
             entered = any(
-                c["high"] >= zone["bottom"] and c["low"] <= zone["top"]
+                float(c["high"]) >= zone["bottom"] and float(c["low"]) <= zone["top"]
                 for _, c in recent.iterrows()
             )
             closed_above = any(
-                c["close"] > zone["top"]
+                float(c["close"]) > zone["top"] * 1.002
                 for _, c in recent.tail(2).iterrows()
             )
             return entered and closed_above
@@ -174,28 +175,38 @@ def detect_retest(
         }
 
     def rejection_candle():
+        zone_top    = zone["top"]
+        zone_bottom = zone["bottom"]
+
         for _, c in recent.tail(3).iterrows():
-            body = abs(c["close"] - c["open"])
-            rng  = c["high"] - c["low"]
+            c_high  = float(c["high"])
+            c_low   = float(c["low"])
+            c_open  = float(c["open"])
+            c_close = float(c["close"])
+
+            touching_zone = c_low <= zone_top and c_high >= zone_bottom
+            if not touching_zone:
+                continue
+
+            body = abs(c_close - c_open)
+            rng  = c_high - c_low
             if rng == 0:
                 continue
             br = body / rng
 
             if trade_dir == "bull":
-                lw = min(c["open"], c["close"]) - c["low"]
+                lw = min(c_open, c_close) - c_low
                 if (lw / rng > 0.4 and
-                        c["close"] > (c["high"] + c["low"]) / 2 and br < 0.5):
+                        c_close > (c_high + c_low) / 2 and br < 0.5):
                     return {"detected": True, "desc": "Hammer/Pin bar"}
-                if (c["close"] > c["open"] and br > 0.6 and
-                        c["close"] > zone["mid"]):
+                if (c_close > c_open and br > 0.6 and c_close > zone["mid"]):
                     return {"detected": True, "desc": "Bullish engulfing"}
             else:
-                uw = c["high"] - max(c["open"], c["close"])
+                uw = c_high - max(c_open, c_close)
                 if (uw / rng > 0.4 and
-                        c["close"] < (c["high"] + c["low"]) / 2 and br < 0.5):
+                        c_close < (c_high + c_low) / 2 and br < 0.5):
                     return {"detected": True, "desc": "Shooting star"}
-                if (c["close"] < c["open"] and br > 0.6 and
-                        c["close"] < zone["mid"]):
+                if (c_close < c_open and br > 0.6 and c_close < zone["mid"]):
                     return {"detected": True, "desc": "Bearish engulfing"}
 
         return {"detected": False}

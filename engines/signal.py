@@ -8,28 +8,28 @@ log = logging.getLogger(__name__)
 
 TIERS = {
     "A+": {
-        "min":         85,
+        "min":         82,
         "cls":         "aplus",
         "action":      "FULL SIGNAL — Institutional Quality",
         "desc":        "All confluence aligned. Full position.",
         "signal_type": "FULL"
     },
     "A": {
-        "min":         68,
+        "min":         65,
         "cls":         "a",
         "action":      "FULL SIGNAL — High Confidence",
         "desc":        "Strong confluence. Full position.",
         "signal_type": "FULL"
     },
     "B": {
-        "min":         52,
+        "min":         50,
         "cls":         "b",
         "action":      "QUALIFIED SIGNAL — Moderate Confidence",
-        "desc":        "Grade B — paper mode only with quality filter.",
+        "desc":        "Grade B — paper mode only.",
         "signal_type": "FULL"
     },
     "C": {
-        "min":         38,
+        "min":         36,
         "cls":         "c",
         "action":      "WATCH MODE — Set Alerts",
         "desc":        "Setup building. No entry.",
@@ -55,6 +55,8 @@ GRADE_ATR_MULT = {
     "A":  2.5,
     "B":  2.0,
 }
+
+WEEKLY_CONFLICT_PENALTY = 20
 
 
 def _safe_float(val, fallback: float = 0.0) -> float:
@@ -160,7 +162,7 @@ def get_session(vol_ratio: float = 1.0, current_time=None) -> dict:
 
     if vol_ratio < 0.6:
         s = _downgrade(s)
-        s["desc"] = s["desc"] + " — volume below 60% of average, quality downgraded."
+        s["desc"] = s["desc"] + " — volume below 60% of average."
 
     return s
 
@@ -176,7 +178,7 @@ def check_correlation(coin: str) -> dict:
                 if active.coin == "BTC":
                     return {
                         "blocked": True,
-                        "reason":  "BTC trade active — altcoin entries blocked (correlation risk)"
+                        "reason":  "BTC trade active — altcoin entries blocked"
                     }
                 if active.coin == coin:
                     return {
@@ -203,15 +205,18 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
 
     btc_score = wconf.get("btc_score", 0)
     if btc_score < cfg.B_GRADE_BTC_SCORE_MIN:
-        return False, f"BTC score {btc_score} too low — BTC conflicting"
+        return False, f"BTC score {btc_score} too low"
 
     entry_score = wconf.get("entry_score", 0)
     if entry_score < cfg.B_GRADE_ENTRY_SCORE_MIN:
-        return False, f"Entry score {entry_score} below minimum {cfg.B_GRADE_ENTRY_SCORE_MIN}"
+        return False, f"Entry score {entry_score} below minimum"
 
-    hard_blocks  = no_trade.get("hard_blocks", [])
-    entry_blocks = no_trade.get("entry_blocks", [])
+    non_neg_passed = wconf.get("non_neg_passed", False)
+    if not non_neg_passed:
+        failed = wconf.get("non_neg_failed", [])
+        return False, f"Non-negotiable failed: {', '.join(failed)}"
 
+    hard_blocks = no_trade.get("hard_blocks", [])
     non_session_hard = [
         b for b in hard_blocks
         if "session" not in b.get("reason", "").lower()
@@ -219,6 +224,7 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
     if len(non_session_hard) > 0:
         return False, f"Hard block: {non_session_hard[0].get('reason', 'unknown')}"
 
+    entry_blocks = no_trade.get("entry_blocks", [])
     if len(entry_blocks) > 1:
         return False, f"Too many entry blocks: {len(entry_blocks)}"
 
@@ -226,7 +232,7 @@ def should_trade_b_grade(wconf: dict, no_trade: dict, session: dict) -> tuple[bo
 
 
 def get_min_rr(grade: str) -> float:
-    return GRADE_MIN_RR.get(grade, 1.5)
+    return GRADE_MIN_RR.get(grade, 1.8)
 
 
 def get_atr_mult(grade: str, adx: float) -> float:
@@ -235,7 +241,7 @@ def get_atr_mult(grade: str, adx: float) -> float:
         return base * 1.2
     if adx >= 25:
         return base
-    return base * 0.8
+    return base * 0.9
 
 
 def check_15m_entry(
@@ -457,10 +463,10 @@ def _determine_direction(d1d: dict, d4h: dict) -> str:
     d1_cls = d1d.get("trend", {}).get("cls", "neutral")
     d4_cls = d4h.get("trend", {}).get("cls", "neutral")
 
-    if d1_cls == "bull" and d4_cls == "bull": return "LONG"
-    if d1_cls == "bear" and d4_cls == "bear": return "SHORT"
-    if d1_cls == "bull": return "LONG"
-    if d1_cls == "bear": return "SHORT"
+    if d1_cls == "bull" and d4_cls == "bull":
+        return "LONG"
+    if d1_cls == "bear" and d4_cls == "bear":
+        return "SHORT"
     return "WATCH"
 
 
@@ -475,9 +481,9 @@ def _coin_volatility_profile(
     bb      = d4h.get("bb") or d1d.get("bb") or {}
     bb_w    = _safe_float(bb.get("width", 5))
 
-    swings     = d1d.get("swings", {})
-    highs      = swings.get("highs", [])
-    lows       = swings.get("lows",  [])
+    swings       = d1d.get("swings", {})
+    highs        = swings.get("highs", [])
+    lows         = swings.get("lows",  [])
     swing_ranges = []
 
     for i in range(min(len(highs), len(lows), 5)):
@@ -533,9 +539,16 @@ def _calculate_sl(
     max_sl_dist = atr_4h * atr_mult
 
     def _buf(level_type: str) -> float:
+        atr_pct = atr_4h / entry if entry > 0 else 0.015
+        if atr_pct > 0.03:
+            multiplier = 0.2
+        elif atr_pct < 0.008:
+            multiplier = 0.4
+        else:
+            multiplier = 0.3
         if level_type in ("sweep", "swing", "pdl", "pdh", "pwl", "pwh"):
-            return atr_1d * 0.3
-        return atr_4h * 0.3
+            return atr_1d * multiplier
+        return atr_4h * multiplier
 
     sl        = None
     sl_method = ""
@@ -633,19 +646,25 @@ def _calculate_sl(
                     sl_method = "Above PDH"
 
     if sl is None:
+        fallback_dist = atr_4h * atr_mult
+        sl            = entry - fallback_dist if is_long else entry + fallback_dist
+        sl_method     = f"ATR fallback {atr_mult}x — no structural level found"
         log.warning(
-            f"No structural SL found within ATR limit "
-            f"(max_sl_dist={max_sl_dist:.4f} atr={atr_4h:.4f} mult={atr_mult}) "
-            f"— entry stale or structure too far"
+            f"No structural SL — ATR fallback "
+            f"entry={entry:.4f} sl={sl:.4f} dist={fallback_dist:.4f}"
         )
-        return 0.0, "SL_REJECTED — no structural level within ATR range (entry stale)", True
 
     if is_long and sl >= entry:
-        return 0.0, "SL_REJECTED — SL above entry for LONG", True
-    if not is_long and sl <= entry:
-        return 0.0, "SL_REJECTED — SL below entry for SHORT", True
+        fallback_dist = atr_4h * atr_mult
+        sl            = entry - fallback_dist
+        sl_method     = "ATR fallback — SL was above entry"
 
-    min_sl_dist = atr_4h * 0.3
+    if not is_long and sl <= entry:
+        fallback_dist = atr_4h * atr_mult
+        sl            = entry + fallback_dist
+        sl_method     = "ATR fallback — SL was below entry"
+
+    min_sl_dist = atr_4h * 0.4
     sl_dist     = abs(entry - sl)
 
     if sl_dist < min_sl_dist:
@@ -668,145 +687,193 @@ def _calculate_tp(
     vol_profile: dict
 ) -> tuple[float, float, str]:
 
-    sl_dist   = abs(entry - sl)
+    sl_dist = abs(entry - sl)
     if sl_dist <= 0:
         sl_dist = entry * 0.01
 
-    min_rr    = get_min_rr(grade)
-    bb_width  = vol_profile["bb_width"]
-    avg_swing = vol_profile["avg_swing"]
+    min_rr   = get_min_rr(grade)
+    atr_4h   = vol_profile["atr_4h"]
+    bb_width = vol_profile["bb_width"]
 
     tp_extension = (
-        1.3 if bb_width > 8 else
+        1.2 if bb_width > 8 else
         1.0 if bb_width > 4 else
-        0.8
+        0.85
     )
 
     if is_long:
         candidates = []
-
-        highs = swings.get("highs", [])
-        if len(highs) >= 2:
-            last_high = _safe_float(highs[-1]["price"])
-            prev_high = _safe_float(highs[-2]["price"])
-            if prev_high > 0 and abs(last_high - prev_high) / prev_high < 0.003:
-                equal_high = max(last_high, prev_high)
-                if equal_high > entry:
-                    candidates.append((equal_high, "Equal highs liquidity"))
-
-        if swings.get("last_high"):
-            sh = _safe_float(swings["last_high"]["price"])
-            if sh > entry:
-                candidates.append((sh, "Swing high"))
 
         if d1h:
             d1h_swings = d1h.get("swings", {})
             if d1h_swings.get("last_high"):
                 h1h = _safe_float(d1h_swings["last_high"]["price"])
                 if h1h > entry:
-                    candidates.append((h1h, "1H Swing high"))
+                    candidates.append((h1h, "1H Swing high", 1))
+            if d1h_swings.get("prev_high"):
+                ph1h = _safe_float(d1h_swings["prev_high"]["price"])
+                if ph1h > entry:
+                    candidates.append((ph1h, "1H Prev swing high", 1))
+
+            d1h_obs = d1h.get("order_blocks", {})
+            nearest_bear_ob = d1h_obs.get("nearest_bear")
+            if nearest_bear_ob and not nearest_bear_ob.get("mitigated"):
+                ob_bottom = _safe_float(nearest_bear_ob.get("bottom", 0))
+                if ob_bottom > entry:
+                    candidates.append((ob_bottom, "1H Bear OB bottom", 1))
+
+            for fvg in d1h.get("fvgs", []):
+                if fvg.get("type") == "bear" and fvg.get("bottom", 0) > entry:
+                    candidates.append((_safe_float(fvg["bottom"]), "1H Bear FVG", 1))
+
+        d4h_obs = swings
+        if d1h:
+            pass
+
+        ob_4h = d1d.get("order_blocks", {})
+        nearest_bear_4h = ob_4h.get("nearest_bear")
+        if nearest_bear_4h and not nearest_bear_4h.get("mitigated"):
+            ob_b = _safe_float(nearest_bear_4h.get("bottom", 0))
+            if ob_b > entry:
+                candidates.append((ob_b, "4H Bear OB bottom", 2))
+
+        highs = swings.get("highs", [])
+        if len(highs) >= 2:
+            last_high = _safe_float(highs[-1]["price"])
+            prev_high = _safe_float(highs[-2]["price"])
+            if prev_high > 0 and abs(last_high - prev_high) / prev_high < 0.008:
+                equal_high = max(last_high, prev_high)
+                if equal_high > entry:
+                    candidates.append((equal_high, "Equal highs liquidity", 2))
+
+        if swings.get("last_high"):
+            sh = _safe_float(swings["last_high"]["price"])
+            if sh > entry:
+                candidates.append((sh, "Daily swing high", 3))
 
         pdh = _safe_float(key_levels.get("pdh", 0))
         if pdh > entry:
-            candidates.append((pdh, "PDH"))
-
-        pwh = _safe_float(key_levels.get("pwh", 0))
-        if pwh > entry:
-            candidates.append((pwh, "PWH"))
+            candidates.append((pdh, "PDH", 3))
 
         vah = _safe_float(d1d.get("vah") or 0)
         if vah > entry:
-            candidates.append((vah, "VAH"))
+            candidates.append((vah, "VAH", 3))
 
         poc = _safe_float(d1d.get("poc") or 0)
         if poc > entry:
-            candidates.append((poc, "POC"))
+            candidates.append((poc, "POC", 3))
 
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
             if item.get("type") == "bear" and lvl > entry:
-                candidates.append((lvl, "Sweep level above"))
+                candidates.append((lvl, "Sweep level above", 2))
 
-        swing_target = entry + (avg_swing * 0.618 * tp_extension)
-        candidates.append((swing_target, "Swing range projection"))
+        swing_target = entry + (atr_4h * 3.0 * tp_extension)
+        candidates.append((swing_target, "3x ATR momentum target", 4))
+
+        pwh = _safe_float(key_levels.get("pwh", 0))
+        if pwh > entry:
+            candidates.append((pwh, "PWH", 5))
 
         valid_candidates = [
-            (lvl, lbl) for lvl, lbl in candidates
+            (lvl, lbl, pri) for lvl, lbl, pri in candidates
             if _safe_div(abs(lvl - entry), sl_dist) >= min_rr
         ]
 
         if valid_candidates:
-            valid_candidates.sort(key=lambda x: x[0])
-            tp, tp_label = valid_candidates[0]
-            actual_rr    = _safe_div(abs(tp - entry), sl_dist)
+            valid_candidates.sort(key=lambda x: (x[2], x[0]))
+            tp, tp_label, _ = valid_candidates[0]
+            actual_rr       = _safe_div(abs(tp - entry), sl_dist)
         else:
             tp        = entry + sl_dist * min_rr
-            tp_label  = f"{min_rr}x R:R floor — no structural level found"
+            tp_label  = f"{min_rr}x RR floor"
             actual_rr = min_rr
 
     else:
         candidates = []
-
-        lows = swings.get("lows", [])
-        if len(lows) >= 2:
-            last_low = _safe_float(lows[-1]["price"])
-            prev_low = _safe_float(lows[-2]["price"])
-            if prev_low > 0 and abs(last_low - prev_low) / prev_low < 0.003:
-                equal_low = min(last_low, prev_low)
-                if equal_low < entry:
-                    candidates.append((equal_low, "Equal lows liquidity"))
-
-        if swings.get("last_low"):
-            sl_swing = _safe_float(swings["last_low"]["price"])
-            if sl_swing < entry:
-                candidates.append((sl_swing, "Swing low"))
 
         if d1h:
             d1h_swings = d1h.get("swings", {})
             if d1h_swings.get("last_low"):
                 l1h = _safe_float(d1h_swings["last_low"]["price"])
                 if l1h < entry:
-                    candidates.append((l1h, "1H Swing low"))
+                    candidates.append((l1h, "1H Swing low", 1))
+            if d1h_swings.get("prev_low"):
+                pl1h = _safe_float(d1h_swings["prev_low"]["price"])
+                if pl1h < entry:
+                    candidates.append((pl1h, "1H Prev swing low", 1))
+
+            d1h_obs = d1h.get("order_blocks", {})
+            nearest_bull_ob = d1h_obs.get("nearest_bull")
+            if nearest_bull_ob and not nearest_bull_ob.get("mitigated"):
+                ob_top = _safe_float(nearest_bull_ob.get("top", 0))
+                if ob_top > 0 and ob_top < entry:
+                    candidates.append((ob_top, "1H Bull OB top", 1))
+
+            for fvg in d1h.get("fvgs", []):
+                if fvg.get("type") == "bull" and fvg.get("top", 0) < entry:
+                    candidates.append((_safe_float(fvg["top"]), "1H Bull FVG", 1))
+
+        ob_4h = d1d.get("order_blocks", {})
+        nearest_bull_4h = ob_4h.get("nearest_bull")
+        if nearest_bull_4h and not nearest_bull_4h.get("mitigated"):
+            ob_t = _safe_float(nearest_bull_4h.get("top", 0))
+            if ob_t > 0 and ob_t < entry:
+                candidates.append((ob_t, "4H Bull OB top", 2))
+
+        lows = swings.get("lows", [])
+        if len(lows) >= 2:
+            last_low = _safe_float(lows[-1]["price"])
+            prev_low = _safe_float(lows[-2]["price"])
+            if prev_low > 0 and abs(last_low - prev_low) / prev_low < 0.008:
+                equal_low = min(last_low, prev_low)
+                if equal_low < entry:
+                    candidates.append((equal_low, "Equal lows liquidity", 2))
+
+        if swings.get("last_low"):
+            sl_swing = _safe_float(swings["last_low"]["price"])
+            if sl_swing < entry:
+                candidates.append((sl_swing, "Daily swing low", 3))
 
         pdl = _safe_float(key_levels.get("pdl", 0))
         if pdl > 0 and pdl < entry:
-            candidates.append((pdl, "PDL"))
-
-        pwl = _safe_float(key_levels.get("pwl", 0))
-        if pwl > 0 and pwl < entry:
-            candidates.append((pwl, "PWL"))
+            candidates.append((pdl, "PDL", 3))
 
         val = _safe_float(d1d.get("val") or 0)
         if val > 0 and val < entry:
-            candidates.append((val, "VAL"))
+            candidates.append((val, "VAL", 3))
 
         poc = _safe_float(d1d.get("poc") or 0)
         if poc > 0 and poc < entry:
-            candidates.append((poc, "POC"))
+            candidates.append((poc, "POC", 3))
 
         sweep_items = sweep.get("items", [])
         for item in sweep_items:
             lvl = _safe_float(item.get("level", 0))
             if item.get("type") == "bull" and lvl > 0 and lvl < entry:
-                candidates.append((lvl, "Sweep level below"))
+                candidates.append((lvl, "Sweep level below", 2))
 
-        swing_target = entry - (avg_swing * 0.618 * tp_extension)
+        swing_target = entry - (atr_4h * 3.0 * tp_extension)
         if swing_target > 0:
-            candidates.append((swing_target, "Swing range projection"))
+            candidates.append((swing_target, "3x ATR momentum target", 4))
+
+        pwl = _safe_float(key_levels.get("pwl", 0))
+        if pwl > 0 and pwl < entry:
+            candidates.append((pwl, "PWL", 5))
 
         valid_candidates = [
-            (lvl, lbl) for lvl, lbl in candidates
+            (lvl, lbl, pri) for lvl, lbl, pri in candidates
             if _safe_div(abs(entry - lvl), sl_dist) >= min_rr
         ]
 
         if valid_candidates:
-            valid_candidates.sort(key=lambda x: x[0], reverse=True)
-            tp, tp_label = valid_candidates[0]
-            actual_rr    = _safe_div(abs(entry - tp), sl_dist)
+            valid_candidates.sort(key=lambda x: (x[2], -x[0]))
+            tp, tp_label, _ = valid_candidates[0]
+            actual_rr       = _safe_div(abs(entry - tp), sl_dist)
         else:
             tp        = entry - sl_dist * min_rr
-            tp_label  = f"{min_rr}x R:R floor — no structural level found"
+            tp_label  = f"{min_rr}x RR floor"
             actual_rr = min_rr
 
     return tp, round(actual_rr, 2), tp_label
@@ -832,6 +899,10 @@ def run_no_trade_engine(
     score_penalty    = 0
 
     d1_cls = d1d.get("trend", {}).get("cls", "neutral")
+    d4_cls = d4h.get("trend", {}).get("cls", "neutral")
+
+    intended_direction = _determine_direction(d1d, d4h)
+    wk_cls = d1w.get("trend", {}).get("cls", "neutral") if d1w else "neutral"
 
     def hard_market(icon, reason, detail):
         market_blocks.append({
@@ -874,37 +945,61 @@ def run_no_trade_engine(
         })
         score_penalty += penalty
 
-    if staleness and staleness.get("expired"):
-        soft(
-            "⚠️", "Setup aging — both sweep and displacement old",
-            " · ".join(staleness.get("reasons", ["Setup aging"])),
-            penalty=12
+    if not (d1_cls == "bull" and d4_cls == "bull") and \
+       not (d1_cls == "bear" and d4_cls == "bear"):
+        hard_market(
+            "🚫",
+            "1D and 4H not aligned",
+            f"Daily: {d1_cls} · 4H: {d4_cls} — both must agree"
         )
 
-    if regime.get("type") == "chop":
-        hard_market("🚫", "Market is CHOPPY", "ADX too weak on both TFs.")
+    if intended_direction == "SHORT" and wk_cls == "bull":
+        soft(
+            "⚠️",
+            "Weekly trend BULLISH — shorting against weekly",
+            "Heavy penalty — weekly trend opposes short direction",
+            penalty=WEEKLY_CONFLICT_PENALTY
+        )
+
+    if intended_direction == "LONG" and wk_cls == "bear":
+        soft(
+            "⚠️",
+            "Weekly trend BEARISH — longing against weekly",
+            "Heavy penalty — weekly trend opposes long direction",
+            penalty=WEEKLY_CONFLICT_PENALTY
+        )
+
+    if regime.get("type") in ("chop", "unknown"):
+        hard_market(
+            "🚫",
+            f"Market regime: {regime.get('label', 'UNCLEAR')}",
+            regime.get("desc", "No tradeable conditions")
+        )
+
+    if regime.get("type") == "weak-trend":
+        hard_market(
+            "🚫",
+            "Weak trend — ADX developing",
+            "Wait for ADX above 25 before entering"
+        )
 
     if d1w:
-        wk_cls = d1w.get("trend", {}).get("cls", "neutral")
-        if (wk_cls == "bear" and d1_cls == "bull") or \
-           (wk_cls == "bull" and d1_cls == "bear"):
-            hard_market(
-                "🚫", "Weekly gate BLOCKED",
-                "Weekly and daily directly conflict."
+        wk_cls_check = d1w.get("trend", {}).get("cls", "neutral")
+        if (wk_cls_check == "bear" and d1_cls == "bull") or \
+           (wk_cls_check == "bull" and d1_cls == "bear"):
+            soft(
+                "⚠️",
+                "Weekly and daily directly conflict",
+                "Weekly opposes daily direction — reduced confidence",
+                penalty=15
             )
-
-    adx = d1d.get("adx")
-    if adx is not None and adx < 18:
-        hard_market(
-            "🚫", f"ADX {adx:.1f} — no trend",
-            "ADX below 18. Ranging market."
-        )
 
     fund = _safe_float(market.get("funding", 0)) * 100
     if abs(fund) > 0.08:
         hard_market(
-            "🚫", f"Extreme funding {fund:.4f}%",
-            "Squeeze risk extremely high."
+            "🚫",
+            f"Extreme funding {fund:.4f}%",
+            "Squeeze risk extremely high"
         )
 
     if news_filter and news_filter.get("blocked"):
@@ -913,20 +1008,23 @@ def run_no_trade_engine(
             if a.get("active")
         )
         hard_market(
-            "🚫", "High-impact macro event ACTIVE",
-            active_events or "Check Finnhub calendar"
+            "🚫",
+            "High-impact macro event ACTIVE",
+            active_events or "Check calendar"
         )
 
     if retest.get("failed"):
         hard_entry(
-            "🚫", "Retest zone FAILED",
-            "Zone invalidated — wait for new setup to form.",
+            "🚫",
+            "Retest zone FAILED",
+            "Zone invalidated — wait for new setup",
             penalty=20
         )
 
-    if (len(btc_instability.get("warnings", [])) >= 2 and coin != "BTC"):
+    if len(btc_instability.get("warnings", [])) >= 2 and coin != "BTC":
         hard_entry(
-            "🚫", "BTC unstable",
+            "🚫",
+            "BTC unstable",
             " · ".join(btc_instability["warnings"][:2]),
             penalty=15
         )
@@ -936,25 +1034,29 @@ def run_no_trade_engine(
         disp_ok  = displacement.get("score", 0) >= 6
         if not sweep_ok and not disp_ok:
             hard_entry(
-                "🚫", "Minimum condition not met",
-                "Neither sweep nor displacement confirmed.",
+                "🚫",
+                "Minimum condition not met",
+                "Neither sweep nor displacement confirmed",
                 penalty=25
             )
 
     if not session.get("tradeable", True):
         hard_entry(
-            "🚫", f"{session['name']} — entries blocked",
+            "🚫",
+            f"{session['name']} — entries blocked",
             session["desc"],
             penalty=20
         )
 
-    if wconf and not wconf.get("non_neg_passed", True):
-        failed = wconf.get("non_neg_failed", [])
-        if failed:
-            soft(
-                "⚠️", f"Key factors weak: {', '.join(failed)}",
-                "Non-negotiable factors below threshold — score reduced",
-                penalty=10
+    if wconf:
+        non_neg_passed = wconf.get("non_neg_passed", False)
+        if not non_neg_passed:
+            failed = wconf.get("non_neg_failed", [])
+            hard_entry(
+                "🚫",
+                f"Non-negotiable factors failed: {', '.join(failed)}",
+                "Core requirements not met — no trade",
+                penalty=30
             )
 
     if coin:
@@ -962,20 +1064,28 @@ def run_no_trade_engine(
         if corr["blocked"]:
             hard_portfolio("🚫", "Correlation block", corr["reason"])
 
+    if staleness and staleness.get("expired"):
+        soft(
+            "⚠️",
+            "Setup aging — sweep and displacement old",
+            " · ".join(staleness.get("reasons", ["Setup aging"])),
+            penalty=12
+        )
+
     rsi = d1d.get("rsi")
     if rsi is not None:
         if rsi < 25 and d1_cls == "bear":
             soft("⚠️", f"RSI {rsi:.1f} — deeply oversold",
-                 "Bounce risk elevated.", penalty=6)
+                 "Bounce risk elevated", penalty=6)
         elif rsi < 30 and d1_cls == "bear":
             soft("⚠️", f"RSI {rsi:.1f} — approaching oversold",
-                 "Bounce risk present.", penalty=3)
+                 "Bounce risk present", penalty=3)
         if rsi > 75 and d1_cls == "bull":
             soft("⚠️", f"RSI {rsi:.1f} — deeply overbought",
-                 "Exhaustion risk elevated.", penalty=6)
+                 "Exhaustion risk elevated", penalty=6)
         elif rsi > 70 and d1_cls == "bull":
             soft("⚠️", f"RSI {rsi:.1f} — approaching overbought",
-                 "Exhaustion risk present.", penalty=3)
+                 "Exhaustion risk present", penalty=3)
 
     if news_filter and news_filter.get("warning"):
         upcoming = ", ".join(
@@ -987,11 +1097,11 @@ def run_no_trade_engine(
 
     if not sweep.get("detected"):
         soft("⚠️", "No liquidity sweep",
-             "Smart money has not hunted stops yet.", 4)
+             "Smart money has not hunted stops yet", 4)
 
     if retest.get("status") == "none":
         soft("⚠️", "No retest zone active",
-             "Wait for price to return to FVG or EMA.", 3)
+             "Wait for price to return to FVG or OB", 3)
 
     if oi_matrix.get("crowding_warning"):
         soft("⚠️", "Crowded positioning",
@@ -1001,14 +1111,15 @@ def run_no_trade_engine(
     if ((d1_cls == "bull" and struct_4h == "bear") or
             (d1_cls == "bear" and struct_4h == "bull")):
         soft("⚠️", "4H structure conflicts daily",
-             "Wait for 4H structure to align.", 3)
+             "Wait for 4H structure to align", 3)
 
     if staleness and staleness.get("degraded"):
         soft("⚠️", "Setup degraded",
              " · ".join(staleness.get("reasons", ["Setup aging"])), 3)
 
-    market_hard_blocked = len(market_blocks) > 0 and any(
-        b.get("severity") == "HARD" for b in market_blocks
+    market_hard_blocked = any(
+        b.get("severity") == "HARD"
+        for b in market_blocks
     )
     entry_hard_blocked  = len(entry_blocks) > 0
     portfolio_blocked   = len(portfolio_blocks) > 0
@@ -1016,8 +1127,8 @@ def run_no_trade_engine(
     adj_score    = max(0, base_score - score_penalty)
     market_score = wconf.get("market_score", 0) if wconf else 0
 
-    if market_score >= 70 and not market_hard_blocked:
-        adj_score = max(adj_score, 38)
+    if market_score >= 65 and not market_hard_blocked:
+        adj_score = max(adj_score, 36)
 
     if staleness and staleness.get("score_mult", 1.0) < 1.0:
         adj_score = round(adj_score * staleness["score_mult"])
@@ -1032,8 +1143,8 @@ def run_no_trade_engine(
         }
 
     all_reasons = market_blocks + entry_blocks + portfolio_blocks
-    hard_blocks = [r for r in all_reasons if r.get("severity") == "HARD"]
-    soft_blocks = [r for r in market_blocks if r.get("severity") == "SOFT"]
+    hard_blocks  = [r for r in all_reasons if r.get("severity") == "HARD"]
+    soft_blocks  = [r for r in market_blocks if r.get("severity") == "SOFT"]
 
     return {
         "reasons":           all_reasons,
@@ -1198,7 +1309,7 @@ def generate_signal(
             **base,
             "direction":   _determine_direction(d1d, d4h),
             "dir_class":   "watch",
-            "tier":        get_tier(38, False),
+            "tier":        get_tier(36, False),
             "grade":       "C",
             "signal_type": "WATCH",
             "reason":      "1D and 4H not aligned",
@@ -1291,8 +1402,7 @@ def generate_signal(
     sl_pct  = _safe_div(sl_dist, entry, fallback=0.5) * 100
 
     if sl_pct <= 0:
-        log.warning("sl_pct is zero — forcing minimum")
-        sl_pct = _safe_div(vol_profile["atr_4h"], entry) * 100 * 0.3
+        sl_pct = _safe_div(vol_profile["atr_4h"], entry) * 100 * 0.4
 
     tp1, actual_rr, tp_label = _calculate_tp(
         is_long     = is_long,
@@ -1306,6 +1416,12 @@ def generate_signal(
         sweep       = sweep or {},
         vol_profile = vol_profile
     )
+
+    if actual_rr < get_min_rr(grade_label):
+        tp1       = entry + sl_dist * get_min_rr(grade_label) if is_long \
+                    else entry - sl_dist * get_min_rr(grade_label)
+        tp_label  = f"{get_min_rr(grade_label)}x RR enforced"
+        actual_rr = get_min_rr(grade_label)
 
     result = {
         **base,
@@ -1322,7 +1438,7 @@ def generate_signal(
         "sl_pct":         sl_pct,
         "sl_method":      sl_method,
         "tp_label":       tp_label,
-        "tp_structural":  "floor" not in tp_label,
+        "tp_structural":  "floor" not in tp_label and "enforced" not in tp_label,
         "sl_rejected":    False,
         "risk_pct":       0,
         "risk_amt":       0,
@@ -1358,13 +1474,12 @@ def generate_signal(
 
     log.info(
         "Signal generated | grade=%s dir=%s score=%s entry=%s "
-        "entry_source=%s sl=%s tp1=%s rr=%s sl_method=%s tp_label=%s "
+        "sl=%s tp1=%s rr=%s sl_method=%s tp_label=%s "
         "vol_class=%s atr_pct=%.2f adx=%.1f",
         result.get("grade"),
         result.get("direction"),
         result.get("score"),
         result.get("entry"),
-        result.get("entry_source"),
         result.get("sl"),
         result.get("tp1"),
         result.get("actual_rr"),

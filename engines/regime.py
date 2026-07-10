@@ -9,14 +9,24 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
     s50    = d1d.get("slope50")
     trend  = d1d.get("trend", {})
 
-    if (adx_1d is not None and adx_4h is not None and
-            adx_1d < 18 and adx_4h < 18):
+    if adx_1d is not None and adx_4h is not None:
+        if adx_1d < 20 and adx_4h < 20:
+            return {
+                "type":           "chop",
+                "tradeable":      False,
+                "score":          0,
+                "label":          "CHOPPY MARKET",
+                "desc":           "ADX below 20 on both 1D and 4H. System silent.",
+                "atr_multiplier": 2.0
+            }
+
+    if adx_1d is not None and adx_1d < 20:
         return {
             "type":           "chop",
             "tradeable":      False,
             "score":          0,
-            "label":          "CHOPPY MARKET",
-            "desc":           "ADX weak on 1D+4H. No trend.",
+            "label":          "CHOPPY DAILY",
+            "desc":           "Daily ADX below 20. No clear trend.",
             "atr_multiplier": 2.0
         }
 
@@ -24,8 +34,7 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
         s20 is not None and abs(s20) < 0.15 and
         s50 is not None and abs(s50) < 0.15
     )
-    if (adx_1d is not None and adx_1d < 25 and
-            bb_1d and bb_1d["width"] < 3 and flat):
+    if adx_1d is not None and adx_1d < 25 and bb_1d and bb_1d["width"] < 3 and flat:
         return {
             "type":           "ranging",
             "tradeable":      False,
@@ -35,8 +44,7 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "atr_multiplier": 1.5
         }
 
-    if (bb_1d and bb_1d["width"] > 8 and
-            d1d["cur_vol"] > d1d["vol_ma5"] * 1.8):
+    if bb_1d and bb_1d["width"] > 8 and d1d["cur_vol"] > d1d["vol_ma5"] * 1.8:
         return {
             "type":           "expansion",
             "tradeable":      True,
@@ -52,7 +60,7 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "tradeable":      True,
             "score":          10,
             "label":          "TRENDING BULLISH",
-            "desc":           "Strong uptrend. Use continuation logic.",
+            "desc":           "Strong uptrend. Longs only.",
             "atr_multiplier": 2.0
         }
 
@@ -62,17 +70,17 @@ def detect_regime(d1d: dict, d4h: dict) -> dict:
             "tradeable":      True,
             "score":          10,
             "label":          "TRENDING BEARISH",
-            "desc":           "Strong downtrend. Use continuation logic.",
+            "desc":           "Strong downtrend. Shorts only.",
             "atr_multiplier": 2.0
         }
 
-    if adx_1d and 18 <= adx_1d < 25:
+    if adx_1d and 20 <= adx_1d < 25:
         return {
             "type":           "weak-trend",
-            "tradeable":      True,
-            "score":          4,
+            "tradeable":      False,
+            "score":          2,
             "label":          "WEAK TREND",
-            "desc":           "ADX developing — reduced confidence. Require stronger sweep/displacement.",
+            "desc":           "ADX developing. Wait for stronger trend confirmation.",
             "atr_multiplier": 1.5
         }
 
@@ -96,8 +104,10 @@ def assess_btc_stability(btc_data: dict) -> dict:
 
     warnings = []
     adx = btc_data.get("adx")
-    if adx and adx < 18:
+
+    if adx and adx < 20:
         warnings.append("BTC ADX weak — ranging")
+
     if (btc_data.get("structure", {}).get("struct_bias") == "bear" and
             btc_data.get("trend", {}).get("cls") == "bull"):
         warnings.append("BTC CHoCH detected")

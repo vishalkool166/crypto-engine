@@ -5,7 +5,7 @@ from typing import Optional
 from engines.orderblocks import detect_order_blocks
 
 
-def calculate_all(df: pd.DataFrame) -> dict:
+def calculate_all(df: pd.DataFrame, timeframe: str = "4h") -> dict:
     close  = df["close"]
     high   = df["high"]
     low    = df["low"]
@@ -41,15 +41,15 @@ def calculate_all(df: pd.DataFrame) -> dict:
     vol_ma10 = float(vol.rolling(10).mean().iloc[-1])
     cur_vol  = float(vol.iloc[-2])
 
-    trend      = _get_trend(price, e20, e50, e200)
-    swings     = _find_swings(df, 50)
-    structure  = _detect_structure(df, swings, price)
-    fvgs       = _detect_fvg(df)
-    ob_data    = detect_order_blocks(df, atr or price * 0.015, lookback=50)
-    vp         = _volume_profile(df, bins=50)
-    cvd        = _calculate_cvd(df)
-    divergence = _detect_divergence(df, rsi_series)
-    last5      = _last5(df)
+    swing_lookback = _get_swing_lookback(timeframe)
+    trend          = _get_trend(price, e20, e50, e200)
+    swings         = _find_swings(df, lookback=50, pivot_bars=swing_lookback)
+    structure      = _detect_structure(df, swings, price)
+    fvgs           = _detect_fvg(df)
+    ob_data        = detect_order_blocks(df, atr or price * 0.015, lookback=50)
+    vp             = _volume_profile(df, bins=50)
+    divergence     = _detect_divergence(df, rsi_series)
+    last5          = _last5(df)
 
     return {
         "price":        price,
@@ -74,10 +74,19 @@ def calculate_all(df: pd.DataFrame) -> dict:
         "poc":          vp["poc"],
         "vah":          vp["vah"],
         "val":          vp["val"],
-        "cvd":          cvd,
         "divergence":   divergence,
         "last5":        last5
     }
+
+
+def _get_swing_lookback(timeframe: str) -> int:
+    return {
+        "1w":  4,
+        "1d":  4,
+        "4h":  3,
+        "1h":  3,
+        "15m": 2
+    }.get(timeframe, 3)
 
 
 def _last(series) -> Optional[float]:
@@ -128,7 +137,13 @@ def _parse_bb(close, price: float) -> Optional[dict]:
             return None
         width = (upper - lower) / mid * 100 if mid > 0 else 0
         pct_b = (price - lower) / (upper - lower) * 100 if (upper - lower) > 0 else 50
-        return {"upper": upper, "mid": mid, "lower": lower, "width": width, "pct_b": pct_b}
+        return {
+            "upper": upper,
+            "mid":   mid,
+            "lower": lower,
+            "width": width,
+            "pct_b": pct_b
+        }
     except Exception:
         return None
 
@@ -139,63 +154,68 @@ def _get_trend(price, e20, e50, e200) -> dict:
 
     if e200 is not None:
         max_score += 1
-        if price > e200: score += 1
+        if price > e200:
+            score += 1
 
     if e50 is not None:
         max_score += 1
-        if price > e50: score += 1
+        if price > e50:
+            score += 1
 
     if e20 is not None:
         max_score += 1
-        if price > e20: score += 1
+        if price > e20:
+            score += 1
 
     if e20 is not None and e50 is not None:
         max_score += 1
-        if e20 > e50: score += 1
+        if e20 > e50:
+            score += 1
 
     if e50 is not None and e200 is not None:
         max_score += 1
-        if e50 > e200: score += 1
+        if e50 > e200:
+            score += 1
 
     if max_score == 0:
         return {"label": "Neutral", "cls": "neutral", "score": 0}
 
     ratio = score / max_score
+
     if ratio >= 0.7:
         return {"label": "Bullish", "cls": "bull",    "score": score}
-    if ratio <= 0.3:
+    if ratio <= 0.25:
         return {"label": "Bearish", "cls": "bear",    "score": score}
     return     {"label": "Neutral", "cls": "neutral", "score": score}
 
 
-def _find_swings(df: pd.DataFrame, lookback: int = 50) -> dict:
+def _find_swings(
+    df:         pd.DataFrame,
+    lookback:   int = 50,
+    pivot_bars: int = 3
+) -> dict:
     sl    = df.tail(lookback)
     highs = []
     lows  = []
     n     = len(sl)
+    pb    = pivot_bars
 
-    for i in range(2, n - 2):
+    for i in range(pb, n - pb):
         h = sl["high"].iloc[i]
-        if (h > sl["high"].iloc[i-1] and h > sl["high"].iloc[i-2] and
-                h > sl["high"].iloc[i+1] and h > sl["high"].iloc[i+2]):
+        is_swing_high = all(
+            h > sl["high"].iloc[i - j] and h > sl["high"].iloc[i + j]
+            for j in range(1, pb + 1)
+        )
+        if is_swing_high:
             highs.append({"price": h, "idx": i})
 
         l = sl["low"].iloc[i]
-        if (l < sl["low"].iloc[i-1] and l < sl["low"].iloc[i-2] and
-                l < sl["low"].iloc[i+1] and l < sl["low"].iloc[i+2]):
+        is_swing_low = all(
+            l < sl["low"].iloc[i - j] and l < sl["low"].iloc[i + j]
+            for j in range(1, pb + 1)
+        )
+        if is_swing_low:
             lows.append({"price": l, "idx": i})
-
-    if n >= 3:
-        last_low  = float(sl["low"].iloc[-1])
-        last_high = float(sl["high"].iloc[-1])
-        prev_low  = float(sl["low"].iloc[-2])
-        prev_high = float(sl["high"].iloc[-2])
-
-        if lows and last_low < lows[-1]["price"] and last_low < prev_low:
-            lows.append({"price": last_low, "idx": n - 1, "edge": True})
-
-        if highs and last_high > highs[-1]["price"] and last_high > prev_high:
-            highs.append({"price": last_high, "idx": n - 1, "edge": True})
 
     return {
         "highs":     highs,
@@ -215,13 +235,33 @@ def _detect_structure(df, swings, price) -> dict:
     pl = swings["prev_low"]
 
     if lh and price > lh["price"]:
-        events.append({"type": "BOS",   "bias": "bull", "label": "BOS Bullish",   "desc": f"Broke swing high {lh['price']:.2f}"})
+        events.append({
+            "type":  "BOS",
+            "bias":  "bull",
+            "label": "BOS Bullish",
+            "desc":  f"Broke swing high {lh['price']:.2f}"
+        })
     if ll and price < ll["price"]:
-        events.append({"type": "BOS",   "bias": "bear", "label": "BOS Bearish",   "desc": f"Broke swing low {ll['price']:.2f}"})
+        events.append({
+            "type":  "BOS",
+            "bias":  "bear",
+            "label": "BOS Bearish",
+            "desc":  f"Broke swing low {ll['price']:.2f}"
+        })
     if ph and lh and lh["price"] < ph["price"] and price > lh["price"]:
-        events.append({"type": "CHoCH", "bias": "bull", "label": "CHoCH Bullish", "desc": "Lower high broken — reversal up"})
+        events.append({
+            "type":  "CHoCH",
+            "bias":  "bull",
+            "label": "CHoCH Bullish",
+            "desc":  "Lower high broken — reversal up"
+        })
     if pl and ll and ll["price"] > pl["price"] and price < ll["price"]:
-        events.append({"type": "CHoCH", "bias": "bear", "label": "CHoCH Bearish", "desc": "Higher low broken — reversal down"})
+        events.append({
+            "type":  "CHoCH",
+            "bias":  "bear",
+            "label": "CHoCH Bearish",
+            "desc":  "Higher low broken — reversal down"
+        })
 
     bias = "neutral"
     if lh and ll and ph and pl:
@@ -229,8 +269,10 @@ def _detect_structure(df, swings, price) -> dict:
         hl  = ll["price"] > pl["price"]
         lh_ = lh["price"] < ph["price"]
         ll_ = ll["price"] < pl["price"]
-        if hh and hl:     bias = "bull"
-        elif lh_ and ll_: bias = "bear"
+        if hh and hl:
+            bias = "bull"
+        elif lh_ and ll_:
+            bias = "bear"
 
     return {"events": events, "struct_bias": bias}
 
@@ -239,7 +281,7 @@ def _detect_fvg(df: pd.DataFrame) -> list:
     fvgs = []
     sl   = df.tail(60)
     for i in range(2, len(sl)):
-        c1 = sl.iloc[i-2]
+        c1 = sl.iloc[i - 2]
         c3 = sl.iloc[i]
         if c1["high"] < c3["low"]:
             fvgs.append({
@@ -311,29 +353,6 @@ def _volume_profile(df: pd.DataFrame, bins: int = 50) -> dict:
     }
 
 
-def _calculate_cvd(df: pd.DataFrame) -> dict:
-    delta = []
-    for _, c in df.iterrows():
-        rng = c["high"] - c["low"]
-        if rng == 0:
-            delta.append(0)
-            continue
-        buy_ratio  = (c["close"] - c["low"])  / rng
-        sell_ratio = (c["high"]  - c["close"]) / rng
-        delta.append(c["volume"] * (buy_ratio - sell_ratio))
-
-    cvd_series = pd.Series(delta).cumsum()
-    price      = df["close"]
-    price_up   = float(price.iloc[-1]) > float(price.iloc[-10])
-    cvd_up     = float(cvd_series.iloc[-1]) > float(cvd_series.iloc[-10])
-
-    div = "none"
-    if price_up  and not cvd_up: div = "bearish"
-    if not price_up and cvd_up:  div = "bullish"
-
-    return {"value": float(cvd_series.iloc[-1]), "divergence": div}
-
-
 def _detect_divergence(df, rsi_series) -> dict:
     if rsi_series is None or len(rsi_series) < 20:
         return {"type": "none", "label": "None detected", "desc": ""}
@@ -353,19 +372,35 @@ def _detect_divergence(df, rsi_series) -> dict:
     if len(ph) >= 2:
         a, b = ph[-2], ph[-1]
         if b["v"] > a["v"] and b["ri"] < a["ri"]:
-            return {"type": "bearish",     "label": "Bearish Divergence", "desc": "Price HH, RSI LH"}
+            return {
+                "type":  "bearish",
+                "label": "Bearish Divergence",
+                "desc":  "Price HH, RSI LH"
+            }
 
     if len(pl) >= 2:
         a, b = pl[-2], pl[-1]
         if b["v"] < a["v"] and b["ri"] > a["ri"]:
-            return {"type": "bullish",     "label": "Bullish Divergence", "desc": "Price LL, RSI HL"}
+            return {
+                "type":  "bullish",
+                "label": "Bullish Divergence",
+                "desc":  "Price LL, RSI HL"
+            }
         if b["v"] > a["v"] and b["ri"] < a["ri"]:
-            return {"type": "hidden-bull", "label": "Hidden Bull Div",    "desc": "Price HL, RSI LL"}
+            return {
+                "type":  "hidden-bull",
+                "label": "Hidden Bull Div",
+                "desc":  "Price HL, RSI LL"
+            }
 
     if len(ph) >= 2:
         a, b = ph[-2], ph[-1]
         if b["v"] < a["v"] and b["ri"] > a["ri"]:
-            return {"type": "hidden-bear", "label": "Hidden Bear Div",    "desc": "Price LH, RSI HH"}
+            return {
+                "type":  "hidden-bear",
+                "label": "Hidden Bear Div",
+                "desc":  "Price LH, RSI HH"
+            }
 
     return {"type": "none", "label": "None detected", "desc": ""}
 

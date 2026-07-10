@@ -321,10 +321,11 @@ async def _analyze_coin_inner(coin: str) -> dict:
         return {"coin": coin, "error": f"Data quality failure: {' | '.join(validation['errors'])}"}
 
     klines = validation["klines"]
-    d1w    = calculate_all(klines["1w"])
-    d1d    = calculate_all(klines["1d"])
-    d4h    = calculate_all(klines["4h"])
-    d1h    = calculate_all(klines["1h"])
+
+    d1w = calculate_all(klines["1w"], timeframe="1w")
+    d1d = calculate_all(klines["1d"], timeframe="1d")
+    d4h = calculate_all(klines["4h"], timeframe="4h")
+    d1h = calculate_all(klines["1h"], timeframe="1h")
 
     if coin == "BTC":
         btc_data    = d1d
@@ -341,8 +342,12 @@ async def _analyze_coin_inner(coin: str) -> dict:
             try:
                 from data.fetcher import get_all_data
                 btc_raw     = await get_all_data("BTC")
-                btc_data    = calculate_all(btc_raw["klines"]["1d"])
-                btc_4h_data = calculate_all(btc_raw["klines"]["4h"])
+                btc_klines  = validate_all_timeframes(btc_raw["klines"], "BTC")
+                if btc_klines["valid"]:
+                    btc_data    = calculate_all(btc_klines["klines"]["1d"], timeframe="1d")
+                    btc_4h_data = calculate_all(btc_klines["klines"]["4h"], timeframe="4h")
+                else:
+                    btc_data = btc_4h_data = None
                 cache.set("btc_1d_data", btc_data,    ttl=900)
                 cache.set("btc_4h_data", btc_4h_data, ttl=900)
             except Exception:
@@ -368,15 +373,25 @@ async def _analyze_coin_inner(coin: str) -> dict:
     key_levels = _extract_key_levels(klines["1d"], klines["1w"])
     session    = get_trading_session(vol_ratio=vol_ratio)
     regime     = detect_regime(d1d, d4h)
-    sweep      = detect_sweep(klines["1d"], key_levels, d1d.get("atr", 0), d1d["swings"])
-    disp       = detect_displacement(klines["4h"], d4h.get("atr", 0))
-    retest     = detect_retest(klines["4h"], d4h, sweep, disp, d1h=d1h, d1d=d1d)
-    oi_matrix  = _interpret_oi(market)
+
+    sweep = detect_sweep(
+        klines["1d"],
+        key_levels,
+        d1d.get("atr", 0),
+        d1d["swings"],
+        timeframe="1d"
+    )
+
+    disp   = detect_displacement(klines["4h"], d4h.get("atr", 0))
+    retest = detect_retest(klines["4h"], d4h, sweep, disp, d1h=d1h, d1d=d1d)
+
+    oi_matrix = _interpret_oi(market)
 
     wconf = score_confluence(
         d1w, d1d, d4h, d1h, market, key_levels,
         session, btc_data, btc_inst, regime,
-        sweep, disp, retest, oi_matrix, coin, btc_4h=btc_4h_data,
+        sweep, disp, retest, oi_matrix, coin,
+        btc_4h=btc_4h_data,
     )
 
     no_trade = run_no_trade_engine(
@@ -516,8 +531,8 @@ async def scan_all_coins() -> list:
                 btc_raw = await get_all_data("BTC")
                 btc_v   = validate_all_timeframes(btc_raw["klines"], "BTC")
                 if btc_v["valid"]:
-                    cache.set("btc_1d_data", calculate_all(btc_v["klines"]["1d"]), ttl=900)
-                    cache.set("btc_4h_data", calculate_all(btc_v["klines"]["4h"]), ttl=900)
+                    cache.set("btc_1d_data", calculate_all(btc_v["klines"]["1d"], timeframe="1d"), ttl=900)
+                    cache.set("btc_4h_data", calculate_all(btc_v["klines"]["4h"], timeframe="4h"), ttl=900)
             except Exception as e:
                 log.warning("BTC pre-fetch failed: %s", e)
 

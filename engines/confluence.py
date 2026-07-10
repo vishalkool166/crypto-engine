@@ -22,6 +22,13 @@ ENTRY_OPPORTUNITY_KEYS = [
     "order_blocks",
 ]
 
+NON_NEGOTIABLE_KEYS = [
+    "market_regime",
+    "weekly_filter",
+    "btc_alignment",
+    "liquidity_sweep",
+]
+
 
 def _get_btc_correlation(coin: str) -> float:
     try:
@@ -74,8 +81,8 @@ def score_confluence(
         sw_score, W["liquidity_sweep"],
         sw_score >= 8,
         sweep.get("label", "No sweep") +
-        " — Relevance: " + f"{sweep.get('relevance', {}).get('label', '--')}" +
-        " · Intensity: " + f"{sweep.get('intensity', 0)}/10"
+        " — Age: " + sweep.get("relevance", {}).get("label", "--") +
+        " · " + sweep.get("desc", "")
     )
 
     rt_score   = min(retest.get("score", 0), W["retest_confirmation"])
@@ -116,7 +123,7 @@ def score_confluence(
         regime["label"] + " — " + regime["desc"]
     )
 
-    wk_cls    = d1w["trend"]["cls"]
+    wk_cls     = d1w["trend"]["cls"]
     wk_aligned = (
         (wk_cls == "bull" and d1_cls == "bull") or
         (wk_cls == "bear" and d1_cls == "bear")
@@ -126,18 +133,19 @@ def score_confluence(
 
     wk_score = (
         W["weekly_filter"] if wk_aligned else
-        round(W["weekly_filter"] * 0.5) if wk_neutral else 0
+        round(W["weekly_filter"] * 0.4) if wk_neutral else
+        0
     )
     if wk_ema200_missing and wk_score > 0:
         wk_score = round(wk_score * 0.8)
 
     wk_detail = (
         "Weekly aligned" if wk_aligned else
-        "Weekly neutral" if wk_neutral else
-        "Weekly conflicts"
+        "Weekly neutral — reduced score" if wk_neutral else
+        "Weekly conflicts — blocked"
     )
     if wk_ema200_missing:
-        wk_detail += " (EMA200 unavailable — reduced confidence)"
+        wk_detail += " (EMA200 unavailable)"
 
     add(
         "weekly_filter", "Weekly Filter",
@@ -153,7 +161,7 @@ def score_confluence(
     )
     st_score = (
         W["market_structure"] if st_aligned else
-        4 if sb != "neutral" else 0
+        3 if sb != "neutral" else 0
     )
     add(
         "market_structure", "Market Structure",
@@ -191,8 +199,10 @@ def score_confluence(
         if btc_4h_cls:
             both_bull = btc_1d_cls == "bull" and btc_4h_cls == "bull"
             both_bear = btc_1d_cls == "bear" and btc_4h_cls == "bear"
-            conflict  = (btc_1d_cls == "bull" and btc_4h_cls == "bear") or \
-                        (btc_1d_cls == "bear" and btc_4h_cls == "bull")
+            conflict  = (
+                (btc_1d_cls == "bull" and btc_4h_cls == "bear") or
+                (btc_1d_cls == "bear" and btc_4h_cls == "bull")
+            )
 
             if both_bull or both_bear:
                 btc_aligned_cls = btc_1d_cls
@@ -200,11 +210,11 @@ def score_confluence(
                 align_note      = f"BTC 1D+4H both {btc_1d_cls}"
             elif conflict:
                 btc_aligned_cls = btc_1d_cls
-                alignment_mult  = 0.5
-                align_note      = f"BTC 1D {btc_1d_cls} but 4H {btc_4h_cls} — partial"
+                alignment_mult  = 0.4
+                align_note      = f"BTC 1D {btc_1d_cls} but 4H {btc_4h_cls} — conflict"
             else:
                 btc_aligned_cls = btc_1d_cls
-                alignment_mult  = 0.75
+                alignment_mult  = 0.7
                 align_note      = f"BTC 1D {btc_1d_cls}, 4H neutral"
         else:
             btc_aligned_cls = btc_1d_cls
@@ -222,13 +232,13 @@ def score_confluence(
 
         if ba:
             base_score = W["btc_alignment"]
-            btc_detail = f"{align_note} — confirms"
+            btc_detail = f"{align_note} — confirms direction"
         elif bn:
-            base_score = 4
-            btc_detail = "BTC neutral"
+            base_score = round(W["btc_alignment"] * 0.4)
+            btc_detail = "BTC neutral — partial score"
         else:
-            base_score = round(W["btc_alignment"] * (1 - corr))
-            btc_detail = f"{align_note} — conflicts (correlation {corr:.1f})"
+            base_score = round(W["btc_alignment"] * (1 - corr) * 0.5)
+            btc_detail = f"{align_note} — conflicts (corr {corr:.1f})"
 
         btc_score = max(0, round(base_score * alignment_mult) - penalty)
 
@@ -255,16 +265,22 @@ def score_confluence(
         d1d["cur_vol"] / d1d["vol_ma5"]
         if d1d.get("vol_ma5") and d1d["vol_ma5"] > 0 else 0
     )
-    vr      = max(vr_4h, vr_1d)
-    v_score = (
-        W["volume_expansion"] if vr > 1.5 else
-        4 if vr > 0.85 else 0
+
+    v4h_score = (
+        W["volume_expansion"] if vr_4h > 1.5 else
+        round(W["volume_expansion"] * 0.6) if vr_4h > 0.85 else 0
     )
+    v1d_score = (
+        W["volume_expansion"] if vr_1d > 1.5 else
+        round(W["volume_expansion"] * 0.6) if vr_1d > 0.85 else 0
+    )
+    v_score = round((v4h_score * 0.6) + (v1d_score * 0.4))
+
     add(
         "volume_expansion", "Volume Expansion",
         v_score, W["volume_expansion"],
         v_score >= 5,
-        f"4H vol {vr_4h*100:.0f}% of MA5 · 1D vol {vr_1d*100:.0f}% of MA5"
+        f"4H vol {vr_4h*100:.0f}% of MA · 1D vol {vr_1d*100:.0f}% of MA"
     )
 
     add(
@@ -292,7 +308,7 @@ def score_confluence(
 
     atr    = d1d.get("atr") or 0
     ap     = (atr / d1_price * 100) if d1_price > 0 else 0
-    atr_ok = 0.5 < ap < 5
+    atr_ok = 0.5 < ap < 6
     add(
         "atr_volatility", "ATR Volatility",
         W["atr_volatility"] if atr_ok else 1,
@@ -411,16 +427,27 @@ def score_confluence(
     btc_factor    = next((f for f in factors if f["key"] == "btc_alignment"), None)
     btc_score_val = btc_factor["earned"] if btc_factor else 0
 
+    non_neg_passed = all(
+        next((f["pass"] for f in factors if f["key"] == k), False)
+        for k in NON_NEGOTIABLE_KEYS
+    )
+    non_neg_failed = [
+        k for k in NON_NEGOTIABLE_KEYS
+        if not next((f["pass"] for f in factors if f["key"] == k), False)
+    ]
+
     return {
-        "factors":       factors,
-        "total_earned":  total,
-        "max_possible":  max_weight,
-        "norm_score":    norm_score,
-        "market_score":  market_score,
-        "entry_score":   entry_score,
-        "market_earned": market_earned,
-        "market_max":    market_max,
-        "entry_earned":  entry_earned,
-        "entry_max":     entry_max,
-        "btc_score":     btc_score_val,
+        "factors":        factors,
+        "total_earned":   total,
+        "max_possible":   max_weight,
+        "norm_score":     norm_score,
+        "market_score":   market_score,
+        "entry_score":    entry_score,
+        "market_earned":  market_earned,
+        "market_max":     market_max,
+        "entry_earned":   entry_earned,
+        "entry_max":      entry_max,
+        "btc_score":      btc_score_val,
+        "non_neg_passed": non_neg_passed,
+        "non_neg_failed": non_neg_failed,
     }

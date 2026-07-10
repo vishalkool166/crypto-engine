@@ -1,35 +1,40 @@
 import pandas as pd
-from config import cfg
+
+
+TF_CANDLE_HOURS = {
+    "15m": 0.25,
+    "1h":  1.0,
+    "4h":  4.0,
+    "1d":  24.0,
+    "1w":  168.0
+}
 
 
 def detect_sweep(
     df:         pd.DataFrame,
     key_levels: dict,
     atr:        float,
-    swings:     dict
+    swings:     dict,
+    timeframe:  str = "4h"
 ) -> dict:
 
     price  = float(df["close"].iloc[-1])
     vol_ma = float(df["volume"].rolling(10).mean().iloc[-1]) or 1
     results = []
 
-    atr_pct = (atr / price) if price > 0 else 0.015
+    atr_pct          = (atr / price) if price > 0 else 0.015
+    hours_per_candle = TF_CANDLE_HOURS.get(timeframe, 4.0)
 
     def relevance(candles_ago: int) -> dict:
-        if atr_pct > 0.02:
-            thresholds = (3, 6, 10)
-        elif atr_pct < 0.005:
-            thresholds = (7, 15, 25)
-        else:
-            thresholds = (5, 12, 20)
+        age_hours = candles_ago * hours_per_candle
 
-        if candles_ago <= thresholds[0]:
+        if age_hours <= 12:
             return {"label": "HIGH",    "pts": 12, "mult": 1.0}
-        if candles_ago <= thresholds[1]:
+        if age_hours <= 48:
             return {"label": "MEDIUM",  "pts": 8,  "mult": 0.67}
-        if candles_ago <= thresholds[2]:
+        if age_hours <= 120:
             return {"label": "LOW",     "pts": 4,  "mult": 0.33}
-        return {"label": "EXPIRED", "pts": 0,  "mult": 0.0}
+        return     {"label": "EXPIRED", "pts": 0,  "mult": 0.0}
 
     def check_below(level, label, base_strength, lookback=20):
         if not level or level <= 0:
@@ -42,7 +47,8 @@ def detect_sweep(
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
                     continue
-                mag        = (level - c["low"]) / atr
+
+                mag        = (level - c["low"]) / atr if atr > 0 else 0
                 vs         = c["volume"] / vol_ma
                 body_below = min(c["open"], c["close"]) < level
 
@@ -53,7 +59,10 @@ def detect_sweep(
                     (2 if not body_below else 0)
                 )
 
-                confirmed = bool(price > level)
+                close_confirmed = bool(c["close"] > level)
+                price_confirmed = bool(price > level)
+                confirmed       = close_confirmed and price_confirmed
+
                 adj_score = round(rel["pts"] * (intensity / 10))
 
                 return {
@@ -67,12 +76,9 @@ def detect_sweep(
                     "intensity":   intensity,
                     "confirmed":   confirmed,
                     "candles_ago": candles_ago,
+                    "age_hours":   round(candles_ago * hours_per_candle, 1),
                     "relevance":   rel,
-                    "score": (
-                        adj_score
-                        if confirmed
-                        else round(adj_score * 0.5)
-                    )
+                    "score":       adj_score if confirmed else round(adj_score * 0.4)
                 }
         return None
 
@@ -87,7 +93,8 @@ def detect_sweep(
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
                     continue
-                mag        = (c["high"] - level) / atr
+
+                mag        = (c["high"] - level) / atr if atr > 0 else 0
                 vs         = c["volume"] / vol_ma
                 body_above = max(c["open"], c["close"]) > level
 
@@ -98,7 +105,10 @@ def detect_sweep(
                     (2 if not body_above else 0)
                 )
 
-                confirmed = bool(price < level)
+                close_confirmed = bool(c["close"] < level)
+                price_confirmed = bool(price < level)
+                confirmed       = close_confirmed and price_confirmed
+
                 adj_score = round(rel["pts"] * (intensity / 10))
 
                 return {
@@ -112,27 +122,24 @@ def detect_sweep(
                     "intensity":   intensity,
                     "confirmed":   confirmed,
                     "candles_ago": candles_ago,
+                    "age_hours":   round(candles_ago * hours_per_candle, 1),
                     "relevance":   rel,
-                    "score": (
-                        adj_score
-                        if confirmed
-                        else round(adj_score * 0.5)
-                    )
+                    "score":       adj_score if confirmed else round(adj_score * 0.4)
                 }
         return None
 
     checks = [
-        (check_below, key_levels.get("pdl"),                                         "PDL Sweep",        8),
-        (check_above, key_levels.get("pdh"),                                         "PDH Sweep",        8),
-        (check_below, swings["last_low"]["price"]  if swings["last_low"]  else None, "Swing Low Sweep",  7),
-        (check_above, swings["last_high"]["price"] if swings["last_high"] else None, "Swing High Sweep", 7),
-        (check_below, key_levels.get("pwl"),                                         "Weekly Low Sweep", 10),
-        (check_above, key_levels.get("pwh"),                                         "Weekly High Sweep",10),
+        (check_below, key_levels.get("pdl"),                                         "PDL Sweep",         8),
+        (check_above, key_levels.get("pdh"),                                         "PDH Sweep",         8),
+        (check_below, swings["last_low"]["price"]  if swings["last_low"]  else None, "Swing Low Sweep",   7),
+        (check_above, swings["last_high"]["price"] if swings["last_high"] else None, "Swing High Sweep",  7),
+        (check_below, key_levels.get("pwl"),                                         "Weekly Low Sweep",  10),
+        (check_above, key_levels.get("pwh"),                                         "Weekly High Sweep", 10),
     ]
 
     for fn, level, label, strength in checks:
         res = fn(level, label, strength)
-        if res and res["intensity"] >= 2:
+        if res and res["intensity"] >= 3:
             results.append(res)
 
     if not results:
@@ -161,10 +168,11 @@ def detect_sweep(
         "magnitude":   best["magnitude"],
         "vol_spike":   best["vol_spike"],
         "candles_ago": best["candles_ago"],
+        "age_hours":   best.get("age_hours", 0),
         "relevance":   best["relevance"],
         "score":       best["score"],
         "items":       results,
         "sweep_low":   best.get("sweep_low"),
         "sweep_high":  best.get("sweep_high"),
-        "desc":        f"Level: {best['level']:.4f}"
+        "desc":        f"Level: {best['level']:.4f} — {best['relevance']['label']} ({best.get('age_hours', 0):.1f}h ago)"
     }
