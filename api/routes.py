@@ -986,3 +986,107 @@ async def coins_states(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
+    
+@router.post("/content/generate")
+async def generate_content(request: Request):
+    from saas.middleware import get_current_user
+    from config import tier_meets_minimum, TIER_ELITE
+
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(401, "Authentication required")
+    if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
+        raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
+
+    try:
+        params     = dict(request.query_params)
+        coin       = params.get("coin", "")
+        post_type  = params.get("type", "market")
+
+        from config import cfg
+        if not cfg.GROQ_API_KEY:
+            raise HTTPException(503, "Groq not configured")
+
+        from groq import AsyncGroq
+        client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
+
+        if post_type == "signal" and coin:
+            cached = None
+            try:
+                from data.cache import cache
+                cached = cache.get_raw(f"signal_{coin}")
+            except Exception:
+                pass
+
+            narrative = ""
+            if cached:
+                narrative = cached.get("narrative", "") or cached.get("explanation", {}).get("thesis", "")
+
+            prompt = f"""You are a sharp crypto analyst with dry wit.
+
+Signal data:
+Coin: {coin}USDT
+{narrative[:500] if narrative else "Active setup detected"}
+
+Write a tweet about this setup. Rules:
+- Under 280 characters
+- Sharp, witty, slightly sarcastic
+- Factually grounded in the data
+- No hashtags
+- No emojis
+- Sounds like a smart human trader
+- Get to the point immediately
+- Do not start with "Just" or "So"
+
+Output only the tweet text. Nothing else."""
+
+        else:
+            from data.cache import cache
+            from config import cfg as _cfg
+
+            market_context = []
+            for c in _cfg.COINS[:5]:
+                cached = cache.get_raw(f"signal_{c}")
+                if cached:
+                    price  = cached.get("market", {}).get("price", 0)
+                    change = cached.get("market", {}).get("change24", 0)
+                    state  = cached.get("state", "idle")
+                    if price:
+                        market_context.append(f"{c}: ${price:.4f} ({change:+.2f}%) [{state}]")
+
+            context_str = "\n".join(market_context) if market_context else "Market scanning"
+
+            prompt = f"""You are a sharp crypto analyst with dry wit.
+
+Current market snapshot:
+{context_str}
+
+Write a market commentary tweet. Rules:
+- Under 280 characters
+- Sharp, witty, slightly sarcastic
+- Based on the actual data above
+- No hashtags
+- No emojis
+- Sounds like a smart human trader
+- Get to the point immediately
+- Do not start with "Just" or "So"
+
+Output only the tweet text. Nothing else."""
+
+        response = await client.chat.completions.create(
+            model       = "llama-3.3-70b-versatile",
+            messages    = [{"role": "user", "content": prompt}],
+            max_tokens  = 100,
+            temperature = 0.8,
+        )
+
+        text = response.choices[0].message.content.strip()
+        text = text.strip('"').strip("'")
+
+        return JSONResponse(content={"text": text, "coin": coin, "type": post_type})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Content generate error: %s", e)
+        raise HTTPException(500, str(e))
