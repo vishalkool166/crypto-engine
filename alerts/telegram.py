@@ -9,7 +9,18 @@ from config import cfg
 from database import SessionLocal, get_session
 from alerts.utils import now_ist, categorize_results
 from data.cache import cache
-from engines.session import get_session as get_trading_session
+
+def get_trading_session() -> dict:
+    hour = datetime.now(timezone.utc).hour
+    if 8 <= hour < 13:
+        return {"name": "London"}
+    if 13 <= hour < 17:
+        return {"name": "London/NY Overlap"}
+    if 17 <= hour < 21:
+        return {"name": "New York"}
+    if 0 <= hour < 8:
+        return {"name": "Asia"}
+    return {"name": "Off Hours"}
 
 log = logging.getLogger(__name__)
 
