@@ -2,48 +2,44 @@ import pandas as pd
 import logging
 from data.store import load_candles
 from engines.indicators import calculate_all
-from engines.sweep import detect_sweep
-from engines.displacement import detect_displacement
-from engines.bias import get_htf_bias
-from engines.zone_finder import get_active_zone
-from engines.signal_core import build_signal, validate_risk
-from config import cfg
+from engines.context import check as context_check
+from engines.sweep import detect as detect_sweep
+from engines.zone import detect as detect_zone
+from engines.risk import calculate as calculate_risk
+from config import cfg, TAKER_FEE
 
 log = logging.getLogger(__name__)
 
 
-def _align_window(
-    df:         pd.DataFrame,
-    current_ts: pd.Timestamp,
-    window:     int
-) -> pd.DataFrame:
+def _align_window(df: pd.DataFrame, current_ts: pd.Timestamp, window: int) -> pd.DataFrame:
     aligned = df[df.index < current_ts].copy()
     if len(aligned) < window:
         return aligned
     return aligned.iloc[-window:]
 
 
-def _simulate_trade_4h(
-    df_4h:       pd.DataFrame,
-    current_ts:  pd.Timestamp,
-    direction:   str,
-    entry:       float,
-    sl:          float,
-    tp1:         float,
-    max_candles: int = 120
+def _simulate_trade(
+    df_4h:      pd.DataFrame,
+    df_1h:      pd.DataFrame,
+    current_ts: pd.Timestamp,
+    direction:  str,
+    entry:      float,
+    sl:         float,
+    tp1:        float,
+    tp2:        float | None,
 ) -> dict:
-    future  = df_4h[df_4h.index > current_ts].head(max_candles)
+    future  = df_4h[df_4h.index > current_ts].head(120)
     is_long = direction == "LONG"
     tp1_hit = False
 
     if len(future) < 2:
         return {
-            "outcome":     "timeout",
-            "exit_price":  entry,
-            "exit_candle": 0,
-            "candles":     0,
-            "reason":      "insufficient_future_data",
-            "tp1_hit":     False,
+            "outcome":    "timeout",
+            "exit_price": entry,
+            "candles":    0,
+            "reason":     "insufficient_future_data",
+            "tp1_hit":    False,
+            "tp2_hit":    False,
         }
 
     for j, (ts, c) in enumerate(future.iterrows()):
@@ -51,52 +47,71 @@ def _simulate_trade_4h(
         l = float(c["low"])
         o = float(c["open"])
 
-        sl_hit      = (l <= sl)  if is_long else (h >= sl)
-        tp1_hit_now = (h >= tp1) if is_long else (l <= tp1)
+        sl_hit  = (l <= sl)  if is_long else (h >= sl)
+        tp1_now = (h >= tp1) if is_long else (l <= tp1)
+        tp2_now = (tp2 and ((h >= tp2) if is_long else (l <= tp2)))
 
         if not tp1_hit:
-            if sl_hit and tp1_hit_now:
-                gap_sl = (o <= sl) if is_long else (o >= sl)
+            if sl_hit and tp1_now:
                 return {
-                    "outcome":     "loss",
-                    "exit_price":  sl,
-                    "exit_candle": j,
-                    "candles":     j + 1,
-                    "reason":      "sl_gap" if gap_sl else "sl_before_tp1",
-                    "tp1_hit":     False,
+                    "outcome":    "loss",
+                    "exit_price": sl,
+                    "candles":    j + 1,
+                    "reason":     "sl_gap",
+                    "tp1_hit":    False,
+                    "tp2_hit":    False,
                 }
             if sl_hit:
                 return {
-                    "outcome":     "loss",
-                    "exit_price":  sl,
-                    "exit_candle": j,
-                    "candles":     j + 1,
-                    "reason":      "sl_hit",
-                    "tp1_hit":     False,
+                    "outcome":    "loss",
+                    "exit_price": sl,
+                    "candles":    j + 1,
+                    "reason":     "sl_hit",
+                    "tp1_hit":    False,
+                    "tp2_hit":    False,
                 }
-            if tp1_hit_now:
+            if tp1_now:
                 tp1_hit = True
                 sl      = entry
+                if not tp2:
+                    return {
+                        "outcome":    "win",
+                        "exit_price": tp1,
+                        "candles":    j + 1,
+                        "reason":     "tp1_hit",
+                        "tp1_hit":    True,
+                        "tp2_hit":    False,
+                    }
                 continue
         else:
+            if tp2_now:
+                return {
+                    "outcome":    "win",
+                    "exit_price": tp2,
+                    "candles":    j + 1,
+                    "reason":     "tp2_hit",
+                    "tp1_hit":    True,
+                    "tp2_hit":    True,
+                }
             if (l <= sl) if is_long else (h >= sl):
                 return {
-                    "outcome":     "win",
-                    "exit_price":  entry,
-                    "exit_candle": j,
-                    "candles":     j + 1,
-                    "reason":      "tp1_be_stop",
-                    "tp1_hit":     True,
+                    "outcome":    "win",
+                    "exit_price": entry,
+                    "candles":    j + 1,
+                    "reason":     "tp1_be_stop",
+                    "tp1_hit":    True,
+                    "tp2_hit":    False,
                 }
 
     last_close = float(future.iloc[-1]["close"])
+    outcome    = "win" if tp1_hit else "timeout"
     return {
-        "outcome":     "timeout",
-        "exit_price":  last_close,
-        "exit_candle": len(future),
-        "candles":     len(future),
-        "reason":      f"timeout_{len(future)}_candles",
-        "tp1_hit":     tp1_hit,
+        "outcome":    outcome,
+        "exit_price": last_close,
+        "candles":    len(future),
+        "reason":     f"timeout_{len(future)}_candles",
+        "tp1_hit":    tp1_hit,
+        "tp2_hit":    False,
     }
 
 
@@ -105,158 +120,174 @@ def _calculate_pnl(
     entry:      float,
     exit_price: float,
     pos_size:   float,
+    tp1_hit:    bool,
+    tp2_hit:    bool,
+    tp1:        float,
+    tp2:        float | None,
 ) -> float:
-    from config import TAKER_FEE
-    if direction == "LONG":
-        gross = (exit_price - entry) / entry * pos_size
+    tp1_pct  = cfg.SCALP_ENGINE["tp1_close_pct"]
+    tp2_pct  = cfg.SCALP_ENGINE["tp2_close_pct"]
+    fee_mult = TAKER_FEE * 2
+
+    if tp2_hit and tp2:
+        gross = (
+            ((tp1 - entry) / entry * pos_size * tp1_pct) +
+            ((tp2 - entry) / entry * pos_size * tp2_pct)
+            if direction == "LONG" else
+            ((entry - tp1) / entry * pos_size * tp1_pct) +
+            ((entry - tp2) / entry * pos_size * tp2_pct)
+        )
+    elif tp1_hit:
+        gross = (
+            (tp1 - entry) / entry * pos_size * tp1_pct
+            if direction == "LONG" else
+            (entry - tp1) / entry * pos_size * tp1_pct
+        )
     else:
-        gross = (entry - exit_price) / entry * pos_size
-    return round(gross - pos_size * TAKER_FEE * 2, 4)
+        gross = (
+            (exit_price - entry) / entry * pos_size
+            if direction == "LONG" else
+            (entry - exit_price) / entry * pos_size
+        )
+
+    return round(gross - pos_size * fee_mult, 4)
 
 
 def run_backtest(
-    coin:     str,
-    capital:  float = 1000.0,
-    leverage: int   = 10,
-    window:   int   = 200
+    coin:    str,
+    capital: float = 1000.0,
+    leverage:int   = 10,
+    window:  int   = 200,
 ) -> dict:
     log.info("Backtest started: %s", coin)
 
-    df_1d = load_candles(coin, "1d", limit=1000)
     df_4h = load_candles(coin, "4h", limit=2000)
     df_1h = load_candles(coin, "1h", limit=2000)
-    df_1w = load_candles(coin, "1w", limit=500)
 
-    if df_1d is None or len(df_1d) < window + 50:
-        return {"error": f"Insufficient 1D data: {coin}"}
-    if df_4h is None or len(df_4h) < 200:
+    if df_4h is None or len(df_4h) < window + 50:
         return {"error": f"Insufficient 4H data: {coin}"}
     if df_1h is None or len(df_1h) < 100:
         return {"error": f"Insufficient 1H data: {coin}"}
-    if df_1w is None or len(df_1w) < 20:
-        return {"error": f"Insufficient 1W data: {coin}"}
-
-    is_btc    = coin == "BTC"
-    df_btc_1d = None if is_btc else load_candles("BTC", "1d", limit=1000)
-    df_btc_4h = None if is_btc else load_candles("BTC", "4h", limit=2000)
 
     trades      = []
     signals_log = []
     equity      = capital
     peak_equity = capital
     skipped     = 0
+    SE          = cfg.SCALP_ENGINE
 
-    for i in range(window, len(df_1d) - 1):
-        current_ts = df_1d.index[i]
+    for i in range(window, len(df_4h) - 1):
+        current_ts = df_4h.index[i]
 
-        d1d_window = df_1d.iloc[i - window:i].copy()
-        d4h_window = _align_window(df_4h, current_ts, window)
+        d4h_window = df_4h.iloc[i - window:i].copy()
         d1h_window = _align_window(df_1h, current_ts, window)
-        d1w_window = _align_window(df_1w, current_ts, 100)
 
-        if len(d4h_window) < 50 or len(d1h_window) < 50 or len(d1w_window) < 10:
+        if len(d1h_window) < 50:
             skipped += 1
             continue
 
         try:
-            d1d = calculate_all(d1d_window, timeframe="1d")
             d4h = calculate_all(d4h_window, timeframe="4h")
             d1h = calculate_all(d1h_window, timeframe="1h")
-            d1w = calculate_all(d1w_window, timeframe="1w")
 
-            price = d1d.get("price", 0)
+            price = d4h.get("price", 0)
             if not price or price <= 0:
                 continue
 
-            key_levels = {
-                "pdh": float(d1d_window.iloc[-2]["high"])  if len(d1d_window) >= 2 else 0,
-                "pdl": float(d1d_window.iloc[-2]["low"])   if len(d1d_window) >= 2 else 0,
-                "pdc": float(d1d_window.iloc[-2]["close"]) if len(d1d_window) >= 2 else 0,
-                "pwh": float(d1w_window.iloc[-2]["high"])  if len(d1w_window) >= 2 else 0,
-                "pwl": float(d1w_window.iloc[-2]["low"])   if len(d1w_window) >= 2 else 0,
-            }
-
-            bias = get_htf_bias(d1w, d1d, d1d_window, key_levels)
-
-            signals_log.append({
-                "date":      str(current_ts.date()),
-                "bias":      bias.get("direction", "NONE"),
-                "strength":  bias.get("strength", "none"),
-                "reason":    bias.get("no_bias_reason", ""),
-                "price":     price,
-            })
-
-            if not bias["valid"]:
+            ctx = context_check(d4h, coin)
+            if not ctx["pass"]:
                 continue
 
-            zone = get_active_zone(d4h, bias["direction"])
-            if not zone:
+            direction = ctx["direction"]
+
+            atr_1h = d1h.get("atr") or price * 0.01
+
+            sweep_result = detect_sweep(d1h_window, d1h, direction)
+            if not sweep_result["detected"]:
+                continue
+            if sweep_result["score"] < SE["sweep_min_score"]:
                 continue
 
-            risk = validate_risk(
+            zone_result = detect_zone(d4h, d4h_window, direction, atr_1h)
+            if not zone_result["detected"]:
+                continue
+
+            sweep_data = sweep_result["sweep"]
+            atr_15m    = d4h.get("atr", price * 0.005) * 0.3
+
+            risk_result = calculate_risk(
+                direction = direction,
                 entry     = price,
-                zone      = zone,
-                direction = bias["direction"],
+                sweep     = sweep_data,
+                zone      = zone_result["zone"],
+                trigger   = {
+                    "candle_low":  float(d4h_window.iloc[-1]["low"]),
+                    "candle_high": float(d4h_window.iloc[-1]["high"]),
+                },
+                atr_15m   = atr_15m,
+                d1h       = d1h,
                 d4h       = d4h,
             )
 
-            if not risk["valid"]:
+            if not risk_result["valid"]:
                 continue
 
-            context = {
-                "direction":       bias["direction"],
-                "bias":            bias,
-                "zone":            zone,
-                "trigger_pattern": "backtest_bar",
-                "entry_price":     price,
-                "candle_low":      float(d1d_window.iloc[-1]["low"]),
-                "candle_high":     float(d1d_window.iloc[-1]["high"]),
-                "sl":              risk["sl"],
-                "tp1":             risk["tp1"],
-                "rr":              risk["rr"],
-                "rr_valid":        True,
-            }
+            entry = price
+            sl    = risk_result["sl"]
+            tp1   = risk_result["tp1"]
+            tp2   = risk_result["tp2"]
+            sl_pct= risk_result["sl_pct"]
 
-            signal = build_signal(coin, context, d1h, d4h)
-            if not signal:
-                continue
+            combined = round(
+                sweep_result["score"] * 0.40 +
+                zone_result["score"]  * 0.35 +
+                0.7                   * 0.25,
+                3
+            )
 
-            grade     = signal.get("grade")
-            direction = signal.get("direction")
-            entry     = price
-            sl        = signal.get("sl")
-            tp1       = signal.get("tp1")
-
-            if grade not in ("A+", "A") or direction not in ("LONG", "SHORT"):
-                continue
-            if not sl or not tp1:
-                continue
-            if direction == "LONG"  and (sl >= entry or tp1 <= entry):
-                continue
-            if direction == "SHORT" and (sl <= entry or tp1 >= entry):
+            if combined >= SE["grade_aplus_threshold"]:
+                grade = "A+"
+            elif combined >= SE["grade_a_threshold"]:
+                grade = "A"
+            elif combined >= SE["grade_b_threshold"]:
+                grade = "B"
+            else:
                 continue
 
-            sim = _simulate_trade_4h(
+            if grade not in ("A+", "A"):
+                continue
+
+            signals_log.append({
+                "date":      str(current_ts.date()),
+                "grade":     grade,
+                "direction": direction,
+                "price":     price,
+                "score":     combined,
+            })
+
+            sim = _simulate_trade(
                 df_4h      = df_4h,
+                df_1h      = df_1h,
                 current_ts = current_ts,
                 direction  = direction,
                 entry      = entry,
                 sl         = sl,
                 tp1        = tp1,
+                tp2        = tp2,
             )
 
-            sl_pct = abs(entry - sl) / entry
-            if sl_pct <= 0:
-                continue
-
-            risk_amt = equity * cfg.RISK_PCT_PER_TRADE
-            pos_size = risk_amt / sl_pct
+            risk_amt = equity * SE["base_risk_pct"]
+            pos_size = risk_amt / (sl_pct / 100)
 
             pnl = _calculate_pnl(
                 direction  = direction,
                 entry      = entry,
                 exit_price = sim["exit_price"],
                 pos_size   = pos_size,
+                tp1_hit    = sim["tp1_hit"],
+                tp2_hit    = sim["tp2_hit"],
+                tp1        = tp1,
+                tp2        = tp2,
             )
 
             equity      += pnl
@@ -270,21 +301,24 @@ def run_backtest(
                 "coin":        coin,
                 "grade":       grade,
                 "direction":   direction,
-                "entry":       round(entry, 6),
-                "sl":          round(sl, 6),
-                "tp1":         round(tp1, 6),
-                "exit_price":  round(sim["exit_price"], 6),
+                "entry":       round(entry,            6),
+                "sl":          round(sl,               6),
+                "tp1":         round(tp1,              6),
+                "tp2":         round(tp2,              6) if tp2 else None,
+                "exit_price":  round(sim["exit_price"],6),
                 "outcome":     sim["outcome"],
                 "pnl":         pnl,
-                "equity":      round(equity, 4),
+                "equity":      round(equity,           4),
                 "drawdown":    drawdown,
-                "exit_candle": sim.get("exit_candle"),
                 "candles":     sim.get("candles"),
                 "reason":      sim.get("reason", ""),
                 "tp1_hit":     sim.get("tp1_hit", False),
-                "bias_strength": bias.get("strength", ""),
-                "zone_type":   zone.get("type", ""),
-                "sweep_age_h": bias.get("sweep_age_hours", 0),
+                "tp2_hit":     sim.get("tp2_hit", False),
+                "sweep_score": sweep_result["score"],
+                "zone_score":  zone_result["score"],
+                "zone_type":   zone_result["zone"].get("type", ""),
+                "sweep_age_h": sweep_data.get("age_hours", 0) if sweep_data else 0,
+                "combined":    combined,
             })
 
         except Exception as e:

@@ -10,6 +10,7 @@ from database import SessionLocal, get_session
 from alerts.utils import now_ist, categorize_results
 from data.cache import cache
 
+
 def get_trading_session() -> dict:
     hour = datetime.now(timezone.utc).hour
     if 8 <= hour < 13:
@@ -21,6 +22,7 @@ def get_trading_session() -> dict:
     if 0 <= hour < 8:
         return {"name": "Asia"}
     return {"name": "Off Hours"}
+
 
 log = logging.getLogger(__name__)
 
@@ -131,11 +133,11 @@ async def register_webhook() -> None:
 async def register_commands() -> None:
     commands = [
         {"command": "status",   "description": "Bot status overview"},
-        {"command": "queue",    "description": "Top 3 signals right now"},
+        {"command": "queue",    "description": "Active zones and signals"},
         {"command": "scan",     "description": "Trigger manual scan"},
         {"command": "health",   "description": "All open trades health"},
         {"command": "trades",   "description": "Open trades with live PnL"},
-        {"command": "position", "description": "Deep dive on trade — /position XLM"},
+        {"command": "position", "description": "Deep dive on trade — /position ETH"},
         {"command": "balance",  "description": "Account balance"},
         {"command": "profit",   "description": "Profit summary"},
         {"command": "btc",      "description": "BTC analysis"},
@@ -204,7 +206,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     if t.startswith("/position"):
         parts = t.split()
         coin  = parts[1].upper() if len(parts) > 1 else ""
-        await (send("⚠️ Usage: `/position XLM`") if not coin else _cmd_position(coin))
+        await (send("⚠️ Usage: `/position ETH`") if not coin else _cmd_position(coin))
         return
 
     if t.startswith("/backtest"):
@@ -286,10 +288,10 @@ async def _cmd_status() -> None:
     from scheduler import get_next_scan_time
     from trade.monitor import get_open_positions_enriched
     from trade.ws import get_ws_status
-    from engines.coin_state import state_manager
+    from engines.state import get as get_coin_state
 
-    stats     = get_db_stats()
-    ws        = get_ws_status()
+    stats = get_db_stats()
+    ws    = get_ws_status()
 
     try:
         open_trades = await get_open_positions_enriched()
@@ -298,7 +300,7 @@ async def _cmd_status() -> None:
 
     state_counts = {}
     for coin in cfg.COINS:
-        s = state_manager.get_state(coin)
+        s = get_coin_state(coin)["status"]
         state_counts[s] = state_counts.get(s, 0) + 1
 
     mode     = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
@@ -306,18 +308,16 @@ async def _cmd_status() -> None:
 
     await send(
         f"📊 *Bot Status*\n_{_now_ist_full()}_\n\n"
-        f"State:       `RUNNING`\n"
         f"Mode:        `{mode}`\n"
         f"Coins:       `{len(cfg.COINS)} scanned`\n"
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Open trades: `{len(open_trades)}`\n"
         f"WS Stream:   {ws_emoji} `{ws['prices_cached']} prices`\n\n"
         f"Coin States:\n"
-        f"  Zone Active: `{state_counts.get('zone_active', 0)}`\n"
-        f"  Bias Defined: `{state_counts.get('bias_defined', 0)}`\n"
-        f"  No Bias: `{state_counts.get('no_bias', 0)}`\n"
-        f"  Trade Active: `{state_counts.get('trade_active', 0)}`\n"
-        f"  Cooldown: `{state_counts.get('cooldown', 0)}`\n\n"
+        f"  Watching:  `{state_counts.get('watching',  0)}`\n"
+        f"  In Trade:  `{state_counts.get('in_trade',  0)}`\n"
+        f"  Cooldown:  `{state_counts.get('cooldown',  0)}`\n"
+        f"  Idle:      `{state_counts.get('idle',      0)}`\n\n"
         f"All-time: `{stats.get('total', 0)}` signals · "
         f"`{stats.get('closed', 0)}` closed · "
         f"`{stats.get('win_rate', 0)}%` WR\n\n"
@@ -411,7 +411,6 @@ async def _cmd_position(coin: str) -> None:
             f"{side} *{coin}USDT — Position Detail*\n_{_now_ist()}_\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Grade:   `{trade.get('grade', '--')}` · Score `{trade.get('score_at_entry', 0)}`\n"
-            f"Regime:  `{trade.get('regime_at_entry', '--')}`\n"
             f"Session: `{trade.get('session_at_entry', '--')}`\n\n"
             f"Entry:   `${entry:.6f}`\n"
             f"Live:    `${live:.6f}`\n"
@@ -520,61 +519,48 @@ async def _cmd_btc() -> None:
 
 
 async def _cmd_coin(coin: str) -> None:
-    from engines.coin_state import state_manager
+    from engines.state import get as get_coin_state
     from trade.ws import get_mark_price
 
-    machine   = state_manager.get(coin)
-    context   = machine.context
-    state     = machine.state
-    direction = context.get("direction", "--")
-    zone      = context.get("zone", {})
-    bias      = context.get("bias", {})
-    live      = get_mark_price(coin) or 0
+    coin_state = get_coin_state(coin)
+    status     = coin_state["status"]
+    setup      = coin_state.get("setup") or {}
+    direction  = setup.get("direction", "--")
+    zone       = setup.get("zone",  {}) or {}
+    sweep      = setup.get("sweep", {}) or {}
+    live       = get_mark_price(coin) or 0
 
     state_emoji = {
-        "no_bias":      "😴",
-        "bias_defined": "👁",
-        "zone_active":  "⚡",
-        "signal_ready": "🎯",
-        "trade_active": "🔥",
-        "cooldown":     "⏳",
-    }.get(state, "❓")
+        "idle":     "😴",
+        "watching": "⚡",
+        "in_trade": "🔥",
+        "cooldown": "⏳",
+    }.get(status, "❓")
 
     dir_emoji = "📈" if direction == "LONG" else "📉" if direction == "SHORT" else "➖"
 
     msg = (
         f"📊 *{coin}USDT*\n_{_now_ist()}_\n\n"
         f"Price:     `${live:,.4f}`\n"
-        f"State:     {state_emoji} `{state.upper()}`\n"
+        f"State:     {state_emoji} `{status.upper()}`\n"
         f"Direction: {dir_emoji} `{direction}`\n"
     )
 
-    if bias:
+    if sweep and sweep.get("detected"):
         msg += (
-            f"\n*Bias:*\n"
-            f"Strength:  `{bias.get('strength', '--')}`\n"
-            f"Sweep:     `{bias.get('sweep_label', '--')}` "
-            f"({bias.get('sweep_age_hours', 0):.1f}h ago)\n"
-            f"Disp:      `{'✅' if bias.get('displacement') else '❌'}`\n"
+            f"\n*Sweep:*\n"
+            f"Label:     `{sweep.get('label', '--')}`\n"
+            f"Age:       `{sweep.get('age_hours', 0):.1f}h ago`\n"
+            f"Score:     `{sweep.get('score', 0):.2f}`\n"
         )
 
-    if zone:
+    if zone and zone.get("type"):
         msg += (
             f"\n*Zone:*\n"
             f"Type:      `{zone.get('type', '--')}`\n"
             f"Range:     `{zone.get('bottom', 0):.4f} - {zone.get('top', 0):.4f}`\n"
             f"Distance:  `{zone.get('distance_pct', 0):.2f}%`\n"
             f"Touches:   `{zone.get('touch_count', 0)}`\n"
-        )
-
-    if state == "signal_ready":
-        msg += (
-            f"\n*Signal:*\n"
-            f"Pattern:   `{context.get('trigger_pattern', '--')}`\n"
-            f"Entry:     `{context.get('entry_price', 0):.4f}`\n"
-            f"SL:        `{context.get('sl', 0):.4f}`\n"
-            f"TP1:       `{context.get('tp1', 0):.4f}`\n"
-            f"R:R:       `{context.get('rr', 0):.2f}`\n"
         )
 
     await send(msg)
@@ -700,12 +686,11 @@ async def _cmd_mode() -> None:
         f"Mode:        `{'🔴 LIVE' if not cfg.PAPER_TRADING else '🔵 PAPER'}`\n"
         f"Coins:       `{len(cfg.COINS)} coins`\n"
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
-        f"Bias scan:   `daily at 00:05 UTC`\n"
-        f"Zone scan:   `every 4H at :05 UTC`\n"
-        f"Trigger:     `every 15M`\n"
+        f"Scan:        `every :00/:15/:30/:45 UTC`\n"
         f"ML:          `{'✅ Active' if cfg.ML_ENABLED else '⏳ Collecting data'}`\n"
         f"Content:     `{'✅ Enabled' if cfg.CONTENT_ENABLED else '❌ Disabled'}`\n"
         f"WS Prices:   `{'✅ Live' if ws['mark_price_connected'] else '❌ Down'}`\n"
+        f"WS Kline:    `{'✅ Live' if ws.get('kline_ws_connected') else '❌ Down'}`\n"
         f"WS UserData: `{'✅ Live' if ws['user_data_connected'] else '❌ Down'}`\n"
     )
 
@@ -714,7 +699,7 @@ async def _cmd_brief() -> None:
     await send("⏳ Generating market brief...")
     try:
         from data.fetcher import get_fear_greed
-        from engines.coin_state import state_manager
+        from engines.state import get as get_coin_state
 
         fg = {"value": 50, "label": "Neutral"}
         try:
@@ -723,16 +708,16 @@ async def _cmd_brief() -> None:
             pass
 
         hour        = datetime.now(timezone.utc).hour
-        zone_active = [
+        watching    = [
             coin for coin in cfg.COINS
-            if state_manager.get_state(coin) in ("zone_active", "signal_ready")
+            if get_coin_state(coin)["status"] == "watching"
         ]
 
         context = {
             "fg_val":     fg.get("value", 50),
             "fg_label":   fg.get("label", "Neutral"),
-            "zone_count": len(zone_active),
-            "top_coins":  zone_active[:3],
+            "zone_count": len(watching),
+            "top_coins":  watching[:3],
             "time_label": "Morning" if hour < 12 else "Evening" if hour >= 17 else "Midday",
         }
 
@@ -845,10 +830,9 @@ async def _cmd_backtest(coin: str) -> None:
             f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
             f"Signals: `{result.get('total_signals', 0)}` · Trades: `{result.get('total_trades', 0)}`\n"
             f"WR: `{result.get('win_rate', 0)}%` · PnL: `${result.get('total_pnl', 0)}`\n"
-            f"Max DD: `{result.get('max_drawdown', 0)}%` · TP hit: `{pb.get('tp1_hit_rate', 0)}%`\n\n"
+            f"Max DD: `{result.get('max_drawdown', 0)}%` · TP1 hit: `{pb.get('tp1_hit_rate', 0)}%`\n\n"
             f"A+: `{bg.get('A+',{}).get('win_rate',0)}% WR` · `{bg.get('A+',{}).get('trades',0)} trades`\n"
             f"A:  `{bg.get('A',{}).get('win_rate',0)}% WR` · `{bg.get('A',{}).get('trades',0)} trades`\n"
-            f"B:  `{bg.get('B',{}).get('win_rate',0)}% WR` · `{bg.get('B',{}).get('trades',0)} trades`\n"
         )
     except asyncio.TimeoutError:
         await send("❌ Backtest timed out after 120s")
@@ -868,53 +852,44 @@ async def _cmd_scan() -> None:
 
 
 async def _cmd_queue() -> None:
-    from engines.coin_state import state_manager
+    from engines.state import get as get_coin_state
 
-    ready = [
+    watching = [
         coin for coin in cfg.COINS
-        if state_manager.get_state(coin) == "signal_ready"
+        if get_coin_state(coin)["status"] == "watching"
+    ]
+    in_trade = [
+        coin for coin in cfg.COINS
+        if get_coin_state(coin)["status"] == "in_trade"
     ]
 
-    zone_active = [
-        coin for coin in cfg.COINS
-        if state_manager.get_state(coin) == "zone_active"
-    ]
-
-    if not ready and not zone_active:
-        await send("📋 *Signal Queue*\n\nNo active zones or signals.\nUse /scan to scan now.")
+    if not watching and not in_trade:
+        await send("📋 *Signal Queue*\n\nNo active zones or trades.\nUse /scan to scan now.")
         return
 
     lines = [f"📋 *Signal Queue*\n_{_now_ist()}_\n"]
 
-    if ready:
-        lines.append(f"*🎯 Signal Ready — {len(ready)}*")
-        for coin in ready[:3]:
-            ctx       = state_manager.get_context(coin)
-            direction = ctx.get("direction", "--")
-            pattern   = ctx.get("trigger_pattern", "--")
-            entry     = ctx.get("entry_price", 0)
-            sl        = ctx.get("sl", 0)
-            tp1       = ctx.get("tp1", 0)
-            rr        = ctx.get("rr", 0)
+    if watching:
+        lines.append(f"*⚡ Watching Zones — {len(watching)}*")
+        for coin in watching[:5]:
+            s         = get_coin_state(coin)
+            setup     = s.get("setup") or {}
+            direction = setup.get("direction", "--")
+            zone      = setup.get("zone", {}) or {}
+            dist      = zone.get("distance_pct", 0)
             dir_emoji = "📈" if direction == "LONG" else "📉"
             lines.append(
-                f"{dir_emoji} *{coin}USDT* — `{direction}`\n"
-                f"Pattern: `{pattern}`\n"
-                f"Entry: `{entry:.4f}` · SL: `{sl:.4f}` · TP: `{tp1:.4f}`\n"
-                f"R:R: `{rr:.2f}`\n"
+                f"{dir_emoji} `{coin}` — `{direction}` · `{dist:.2f}%` from zone"
             )
 
-    if zone_active:
-        lines.append(f"\n*⚡ Zone Active — {len(zone_active)}*")
-        for coin in zone_active[:5]:
-            ctx       = state_manager.get_context(coin)
-            direction = ctx.get("direction", "--")
-            zone      = ctx.get("zone", {})
-            dist      = zone.get("distance_pct", 0) if zone else 0
+    if in_trade:
+        lines.append(f"\n*🔥 In Trade — {len(in_trade)}*")
+        for coin in in_trade[:3]:
+            s         = get_coin_state(coin)
+            setup     = s.get("setup") or {}
+            direction = setup.get("direction", "--")
             dir_emoji = "📈" if direction == "LONG" else "📉"
-            lines.append(
-                f"{dir_emoji} `{coin}` — `{direction}` · dist `{dist:.2f}%`"
-            )
+            lines.append(f"{dir_emoji} `{coin}` — `{direction}`")
 
     await send("\n".join(lines))
 
@@ -924,11 +899,11 @@ async def _cmd_help() -> None:
         "🤖 *Signal Engine v5 — Commands*\n\n"
         "*ESSENTIALS*\n"
         "/status   — bot status + coin states\n"
-        "/queue    — active zones + signals\n"
+        "/queue    — active zones + trades\n"
         "/scan     — manual scan\n\n"
         "*TRADING*\n"
         "/trades          — open positions\n"
-        "/position XLM   — deep dive\n"
+        "/position ETH   — deep dive\n"
         "/health          — health check\n"
         "/balance         — account balance\n"
         "/profit          — profit summary\n\n"
@@ -967,30 +942,35 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
     entry     = signal.get("entry", 0)
     sl        = signal.get("sl", 0)
     tp1       = signal.get("tp1", 0)
+    tp2       = signal.get("tp2")
     sl_pct    = signal.get("sl_pct", 0)
     risk_amt  = signal.get("risk_amt", 0)
     pos_size  = signal.get("pos_size", 0)
-    actual_rr = signal.get("actual_rr", 0)
+    rr1       = signal.get("rr1", 0)
     narrative = signal.get("narrative", "")
 
-    emoji     = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
-    dir_emoji = "📈" if direction == "LONG" else "📉"
-    grade_note= "_Grade B — paper mode only_\n\n" if grade == "B" else ""
+    emoji      = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
+    dir_emoji  = "📈" if direction == "LONG" else "📉"
+    grade_note = "_Grade B — paper mode only_\n\n" if grade == "B" else ""
 
-    await send(
+    msg = (
         f"{emoji} *Grade {grade} — {direction}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
-        f"Score:   `{score}/100`\n"
-        f"Regime:  `{regime}`\n"
-        f"Session: `{session}`\n"
+        f"Score:   `{score:.2f}`\n"
         f"Time:    `{_now_ist()}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry:   `{entry:.4f}`\n"
         f"SL:      `{sl:.4f}` ({sl_pct:.2f}%)\n"
-        f"TP1:     `{tp1:.4f}`\n"
-        f"R:R:     `1:{actual_rr}`\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"TP1:     `{tp1:.4f}` ({rr1:.1f}R)\n"
+    )
+
+    if tp2:
+        rr2  = signal.get("rr2", 0)
+        msg += f"TP2:     `{tp2:.4f}` ({rr2:.1f}R)\n"
+
+    msg += (
+        f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Risk:    `${risk_amt:.2f}`\n"
         f"Size:    `${pos_size:.2f}`\n\n"
         f"{grade_note}"
@@ -998,31 +978,33 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
         f"_Signal forwarded to execution engine._"
     )
 
+    await send(msg)
+
 
 async def send_scan_summary(results: list) -> None:
     from scheduler import get_next_scan_time
-    from engines.coin_state import state_manager
+    from engines.state import get as get_coin_state
 
-    next_scan   = get_next_scan_time()
-    total       = len(results)
-    zone_active = [r for r in results if r.get("state") == "zone_active"]
-    signal_ready= [r for r in results if r.get("state") == "signal_ready"]
-    bias_defined= [r for r in results if r.get("state") == "bias_defined"]
-    no_bias     = [r for r in results if r.get("state") == "no_bias"]
+    next_scan    = get_next_scan_time()
+    total        = len(results)
+    watching     = [r for r in results if r.get("state") == "watching"]
+    in_trade     = [r for r in results if r.get("state") == "in_trade"]
+    idle         = [r for r in results if r.get("state") == "idle"]
+    tradeable    = [r for r in results if r.get("grade") in ("A+", "A") and r.get("direction") in ("LONG", "SHORT")]
 
-    if signal_ready:
+    if tradeable:
         lines = [
-            f"🎯 *Signal Ready — {_now_ist()}*\n"
-            f"{len(signal_ready)} signal(s) confirmed\n"
+            f"🎯 *Signal Fired — {_now_ist()}*\n"
+            f"{len(tradeable)} signal(s) confirmed\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
         ]
-        for r in signal_ready[:3]:
-            ctx       = state_manager.get_context(r["coin"])
-            direction = ctx.get("direction", "--")
+        for r in tradeable[:3]:
+            direction = r.get("direction", "--")
             dir_emoji = "📈" if direction == "LONG" else "📉"
             lines.append(
                 f"{dir_emoji} *{r['coin']}* — `{direction}` "
-                f"R:R `{ctx.get('rr', 0):.2f}`\n"
+                f"Grade `{r.get('grade', '--')}` "
+                f"Score `{r.get('score', 0):.2f}`\n"
             )
         lines.append(f"\nNext scan: `{next_scan}`")
         await send("\n".join(lines))
@@ -1031,19 +1013,20 @@ async def send_scan_summary(results: list) -> None:
     lines = [
         f"🔍 *Scan Complete — {_now_ist()}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Total coins:    `{total}`\n"
-        f"Zone active:    `{len(zone_active)}`\n"
-        f"Bias defined:   `{len(bias_defined)}`\n"
-        f"No bias:        `{len(no_bias)}`\n"
+        f"Total coins:  `{total}`\n"
+        f"Watching:     `{len(watching)}`\n"
+        f"In trade:     `{len(in_trade)}`\n"
+        f"Idle:         `{len(idle)}`\n"
     ]
 
-    if zone_active:
+    if watching:
         lines.append("\n*⚡ Watching Zones:*")
-        for r in zone_active[:3]:
-            ctx       = state_manager.get_context(r["coin"])
-            direction = ctx.get("direction", "--")
-            zone      = ctx.get("zone", {})
-            dist      = zone.get("distance_pct", 0) if zone else 0
+        for r in watching[:3]:
+            s         = get_coin_state(r["coin"])
+            setup     = s.get("setup") or {}
+            direction = setup.get("direction", "--")
+            zone      = setup.get("zone", {}) or {}
+            dist      = zone.get("distance_pct", 0)
             dir_emoji = "📈" if direction == "LONG" else "📉"
             lines.append(
                 f"{dir_emoji} `{r['coin']}` — `{direction}` · `{dist:.2f}%` from zone"

@@ -71,19 +71,19 @@ def get_summary() -> dict:
         except Exception:
             pass
 
-        from engines.coin_state import state_manager
-        zone_active_count  = 0
-        bias_defined_count = 0
-        tradeable_count    = 0
+        from engines.state import get as get_coin_state
+        watching_count = 0
+        in_trade_count = 0
+        cooldown_count = 0
 
         for coin in cfg.COINS:
-            s = state_manager.get_state(coin)
-            if s == "zone_active":
-                zone_active_count += 1
-            elif s == "bias_defined":
-                bias_defined_count += 1
-            elif s == "signal_ready":
-                tradeable_count += 1
+            s = get_coin_state(coin)["status"]
+            if s == "watching":
+                watching_count += 1
+            elif s == "in_trade":
+                in_trade_count += 1
+            elif s == "cooldown":
+                cooldown_count += 1
 
         result = {
             "today_pnl":          round(today_pnl, 4),
@@ -91,17 +91,17 @@ def get_summary() -> dict:
             "today_trades":       today_trades,
             "win_rate":           stats.get("win_rate", 0),
             "coins_count":        len(cfg.COINS),
-            "tradeable_count":    tradeable_count,
-            "zone_active_count":  zone_active_count,
-            "bias_defined_count": bias_defined_count,
+            "watching_count":     watching_count,
+            "in_trade_count":     in_trade_count,
+            "cooldown_count":     cooldown_count,
             "mode":               "live" if not cfg.PAPER_TRADING else "paper",
             "grades":             cfg.MIN_GRADE_TO_TRADE,
             "next_scan_epoch":    get_next_scan_epoch(),
-            "total_signals":      stats.get("total",   0),
-            "closed_signals":     stats.get("closed",  0),
-            "pending_signals":    stats.get("pending", 0),
-            "wins":               stats.get("wins",    0),
-            "losses":             stats.get("losses",  0),
+            "total_signals":      stats.get("total",    0),
+            "closed_signals":     stats.get("closed",   0),
+            "pending_signals":    stats.get("pending",  0),
+            "wins":               stats.get("wins",     0),
+            "losses":             stats.get("losses",   0),
             "total_pnl":          stats.get("total_pnl", 0),
             "timestamp":          datetime.now(timezone.utc).isoformat(),
         }
@@ -204,8 +204,6 @@ def get_signals_data() -> dict:
         return _cache[key]
 
     try:
-        from engines.coin_state import state_manager
-
         cached_results = []
         for coin in cfg.COINS:
             c = cache.get_raw(f"signal_{coin}")
@@ -214,9 +212,8 @@ def get_signals_data() -> dict:
 
         cached_results.sort(
             key=lambda x: (
-                {"signal_ready": 0, "zone_active": 1, "bias_defined": 2,
-                 "trade_active": 3, "cooldown": 4, "no_bias": 5}.get(
-                    x.get("state", "no_bias"), 5
+                {"in_trade": 0, "watching": 1, "idle": 2, "cooldown": 3}.get(
+                    x.get("state", "idle"), 2
                 ),
                 -(x.get("score", 0) or 0)
             )
@@ -233,7 +230,7 @@ def get_signals_data() -> dict:
                 "grade":          r.get("grade",     "--"),
                 "direction":      r.get("direction", "--"),
                 "score":          r.get("score",     0),
-                "state":          r.get("state",     "no_bias"),
+                "state":          r.get("state",     "idle"),
                 "price":          market.get("price",    0),
                 "change":         market.get("change24", 0),
                 "change_pos":     market.get("change_pos", True),
@@ -263,7 +260,7 @@ def get_signals_data() -> dict:
                 "grade":            r.get("grade",     "?"),
                 "direction":        r.get("direction", "?"),
                 "score":            r.get("score",     0),
-                "state":            r.get("state",     "no_bias"),
+                "state":            r.get("state",     "idle"),
                 "entry":            sig.get("entry"),
                 "sl":               sig.get("sl"),
                 "tp1":              sig.get("tp1"),
@@ -336,13 +333,13 @@ def get_universe() -> list:
                 CoinConfig.coin.asc()
             ).all()
 
-        from engines.coin_state import state_manager
+        from engines.state import get as get_coin_state
 
         result = []
         for r in rows:
             c      = cache.get_raw(f"signal_{r.coin}")
             market = c.get("market", {}) if c else {}
-            state  = state_manager.get_state(r.coin) if r.enabled else "disabled"
+            status = get_coin_state(r.coin)["status"] if r.enabled else "disabled"
 
             result.append({
                 "coin":       r.coin,
@@ -354,7 +351,7 @@ def get_universe() -> list:
                 "grade":      c.get("grade",     "--") if c else "--",
                 "score":      c.get("score",     0)    if c else 0,
                 "direction":  c.get("direction", "--") if c else "--",
-                "state":      state,
+                "state":      status,
                 "has_signal": c is not None,
                 "price":      market.get("price",    0),
                 "change":     market.get("change24", 0),
@@ -407,7 +404,6 @@ def get_coin_detail(coin: str) -> dict:
         signal  = c.get("signal",      {})
         expl    = c.get("explanation", {})
         wconf   = c.get("wconf",       {})
-        bias    = c.get("bias",        {})
         sweep   = c.get("sweep",       {})
         factors = wconf.get("factors", [])
 
@@ -426,9 +422,8 @@ def get_coin_detail(coin: str) -> dict:
                 "detail": f.get("detail", ""),
             })
 
-        norm_score   = wconf.get("norm_score",   0)
-        market_score = wconf.get("market_score", 0)
-        entry_score  = wconf.get("entry_score",  0)
+        from engines.state import get as get_coin_state
+        coin_state = get_coin_state(coin)
 
         return {
             "coin":           coin,
@@ -437,10 +432,9 @@ def get_coin_detail(coin: str) -> dict:
             "direction":      c.get("direction", "--"),
             "regime":         c.get("regime",    "--"),
             "session":        c.get("session",   "--"),
-            "state":          c.get("state",     "no_bias"),
+            "state":          coin_state["status"],
             "ml_probability": c.get("ml_probability"),
             "actual_rr":      c.get("actual_rr", 0),
-            "bias_strength":  bias.get("strength", "--") if bias else "--",
             "market": {
                 "price":       market.get("price",       0),
                 "change":      market.get("change24",    0),
@@ -468,10 +462,10 @@ def get_coin_detail(coin: str) -> dict:
             "thesis":       expl.get("thesis", ""),
             "confidence":   expl.get("confidence_label", ""),
             "factors":      factor_list,
-            "norm_score":   norm_score,
-            "market_score": market_score,
-            "entry_score":  entry_score,
-            "btc_score":    wconf.get("btc_score", 0),
+            "norm_score":   wconf.get("norm_score",   0),
+            "market_score": wconf.get("market_score", 0),
+            "entry_score":  wconf.get("entry_score",  0),
+            "btc_score":    wconf.get("btc_score",    0),
         }
 
     except Exception as e:

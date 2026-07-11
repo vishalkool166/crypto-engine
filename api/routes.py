@@ -230,43 +230,20 @@ async def analyze(request: Request, coin: str):
     if coin not in cfg.COINS:
         raise HTTPException(400, f"{coin} not supported")
     try:
-        from engines.coin_state import state_manager
+        from engines.state import get as get_coin_state
         from trade.ws import get_mark_price
 
-        machine   = state_manager.get(coin)
-        context   = machine.context
-        zone      = context.get("zone", {})
-        bias      = context.get("bias", {})
-        live      = get_mark_price(coin) or 0
+        coin_state = get_coin_state(coin)
+        status     = coin_state["status"]
+        setup      = coin_state.get("setup") or {}
+        live       = get_mark_price(coin) or 0
 
         return JSONResponse(content=make_serializable({
             "coin":      coin,
-            "state":     machine.state,
-            "direction": context.get("direction", "--"),
-            "grade":     context.get("grade",     "--"),
-            "score":     context.get("score",     0),
+            "state":     status,
+            "direction": setup.get("direction", "--"),
             "price":     live,
-            "bias": {
-                "valid":           bias.get("valid",           False),
-                "strength":        bias.get("strength",        "none"),
-                "sweep_label":     bias.get("sweep_label",     "--"),
-                "sweep_age_hours": bias.get("sweep_age_hours", 0),
-                "displacement":    bias.get("displacement",    False),
-            },
-            "zone": {
-                "type":         zone.get("type",         "--"),
-                "top":          zone.get("top",          0),
-                "bottom":       zone.get("bottom",       0),
-                "distance_pct": zone.get("distance_pct", 0),
-                "touch_count":  zone.get("touch_count",  0),
-            } if zone else None,
-            "trigger": {
-                "pattern":     context.get("trigger_pattern"),
-                "entry_price": context.get("entry_price"),
-                "sl":          context.get("sl"),
-                "tp1":         context.get("tp1"),
-                "rr":          context.get("rr"),
-            } if machine.state == "signal_ready" else None,
+            "setup":     setup,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }))
     except Exception as e:
@@ -846,9 +823,10 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
     try:
         from data.store import load_candles
         from engines.indicators import calculate_all
-        from engines.bias import get_htf_bias
-        from engines.zone_finder import get_active_zone
-        from engines.signal_core import build_signal, validate_risk
+        from engines.context import check as context_check
+        from engines.sweep import detect as detect_sweep
+        from engines.zone import detect as detect_zone
+        from engines.risk import calculate as calculate_risk
         import pandas as pd
         import json
 
@@ -864,141 +842,111 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         target_ts = pd.Timestamp(date, tz="UTC")
         window    = 200
 
-        df_1d = load_candles(coin, "1d", limit=1000)
         df_4h = load_candles(coin, "4h", limit=2000)
         df_1h = load_candles(coin, "1h", limit=2000)
-        df_1w = load_candles(coin, "1w", limit=500)
 
-        if any(df is None for df in [df_1d, df_4h, df_1h, df_1w]):
+        if df_4h is None or df_1h is None:
             raise HTTPException(404, f"Insufficient data for {coin}")
 
-        d1d_w = df_1d[df_1d.index < target_ts].iloc[-window:]
         d4h_w = df_4h[df_4h.index < target_ts].iloc[-window:]
         d1h_w = df_1h[df_1h.index < target_ts].iloc[-window:]
-        d1w_w = df_1w[df_1w.index < target_ts].iloc[-100:]
 
-        if any(len(df) < 50 for df in [d1d_w, d4h_w, d1h_w]) or len(d1w_w) < 10:
+        if len(d4h_w) < 50 or len(d1h_w) < 50:
             raise HTTPException(404, f"Not enough historical data for {coin} at {date}")
 
-        d1d = calculate_all(d1d_w, timeframe="1d")
-        d4h = calculate_all(d4h_w, timeframe="4h")
-        d1h = calculate_all(d1h_w, timeframe="1h")
-        d1w = calculate_all(d1w_w, timeframe="1w")
+        d4h    = calculate_all(d4h_w, timeframe="4h")
+        d1h    = calculate_all(d1h_w, timeframe="1h")
+        atr_1h = d1h.get("atr") or float(d1h_w["close"].iloc[-1]) * 0.01
 
-        key_levels = {
-            "pdh": float(d1d_w.iloc[-2]["high"])  if len(d1d_w) >= 2 else 0,
-            "pdl": float(d1d_w.iloc[-2]["low"])   if len(d1d_w) >= 2 else 0,
-            "pdc": float(d1d_w.iloc[-2]["close"]) if len(d1d_w) >= 2 else 0,
-            "pwh": float(d1w_w.iloc[-2]["high"])  if len(d1w_w) >= 2 else 0,
-            "pwl": float(d1w_w.iloc[-2]["low"])   if len(d1w_w) >= 2 else 0,
-        }
-
-        bias = get_htf_bias(d1w, d1d, d1d_w, key_levels)
-
-        if not bias["valid"]:
+        ctx = context_check(d4h, coin)
+        if not ctx["pass"]:
             result = {
-                "coin":      coin,
-                "date":      date,
-                "grade":     "F",
-                "direction": "NO BIAS",
-                "score":     0,
-                "entry":     None,
-                "sl":        None,
-                "stoploss":  None,
-                "tp1":       None,
-                "signal_id": f"{coin}_{date}",
-                "reason":    bias.get("no_bias_reason", "no_bias"),
+                "coin": coin, "date": date, "grade": "F",
+                "direction": "NO_DIRECTION", "score": 0,
+                "entry": None, "sl": None, "stoploss": None, "tp1": None,
+                "signal_id": f"{coin}_{date}", "reason": ctx["reason"],
             }
             return JSONResponse(content=make_serializable(result))
 
-        zone = get_active_zone(d4h, bias["direction"])
+        direction    = ctx["direction"]
+        sweep_result = detect_sweep(d1h_w, d1h, direction)
 
-        if not zone:
+        if not sweep_result["detected"]:
             result = {
-                "coin":      coin,
-                "date":      date,
-                "grade":     "F",
-                "direction": bias["direction"],
-                "score":     0,
-                "entry":     None,
-                "sl":        None,
-                "stoploss":  None,
+                "coin": coin, "date": date, "grade": "F",
+                "direction": direction, "score": 0,
+                "entry": None, "sl": None, "stoploss": None, "tp1": None,
+                "signal_id": f"{coin}_{date}", "reason": "no_sweep",
+            }
+            return JSONResponse(content=make_serializable(result))
+
+        zone_result = detect_zone(d4h, d4h_w, direction, atr_1h)
+
+        if not zone_result["detected"]:
+            result = {
+                "coin": coin, "date": date, "grade": "F",
+                "direction": direction, "score": 0,
+                "entry": None, "sl": None,                 "stoploss":  None,
                 "tp1":       None,
                 "signal_id": f"{coin}_{date}",
                 "reason":    "no_zone",
             }
             return JSONResponse(content=make_serializable(result))
 
-        price = d1d["price"]
+        price   = d4h.get("price", 0)
+        atr_15m = d4h.get("atr", price * 0.005) * 0.3
 
-        risk = validate_risk(
+        risk_result = calculate_risk(
+            direction = direction,
             entry     = price,
-            zone      = zone,
-            direction = bias["direction"],
-            d4h       = d4h,
+            sweep     = sweep_result["sweep"],
+            zone      = zone_result["zone"],
+            trigger   = {
+                "candle_low":  float(d4h_w.iloc[-1]["low"]),
+                "candle_high": float(d4h_w.iloc[-1]["high"]),
+            },
+            atr_15m   = atr_15m,
             d1h       = d1h,
+            d4h       = d4h,
         )
 
-        if not risk["valid"]:
+        if not risk_result["valid"]:
             result = {
                 "coin":      coin,
                 "date":      date,
                 "grade":     "F",
-                "direction": bias["direction"],
+                "direction": direction,
                 "score":     0,
                 "entry":     None,
                 "sl":        None,
                 "stoploss":  None,
                 "tp1":       None,
                 "signal_id": f"{coin}_{date}",
-                "reason":    risk["reason"],
+                "reason":    risk_result["reason"],
             }
             return JSONResponse(content=make_serializable(result))
 
-        context = {
-            "direction":       bias["direction"],
-            "bias":            bias,
-            "zone":            zone,
-            "trigger_pattern": "backtest_bar",
-            "entry_price":     price,
-            "candle_low":      float(d1d_w.iloc[-1]["low"]),
-            "candle_high":     float(d1d_w.iloc[-1]["high"]),
-            "sl":              risk["sl"],
-            "tp1":             risk["tp1"],
-            "rr":              risk["rr"],
-            "rr_valid":        True,
-        }
-
-        signal = build_signal(coin, context, d1h, d4h)
-
-        if not signal:
-            result = {
-                "coin":      coin,
-                "date":      date,
-                "grade":     "F",
-                "direction": bias["direction"],
-                "score":     0,
-                "entry":     None,
-                "sl":        None,
-                "stoploss":  None,
-                "tp1":       None,
-                "signal_id": f"{coin}_{date}",
-                "reason":    "signal_build_failed",
-            }
-            return JSONResponse(content=make_serializable(result))
+        SE       = cfg.SCALP_ENGINE
+        combined = round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + 0.7 * 0.25, 3)
+        grade    = (
+            "A+" if combined >= SE["grade_aplus_threshold"] else
+            "A"  if combined >= SE["grade_a_threshold"]     else
+            "B"
+        )
 
         result = {
             "coin":      coin,
             "date":      date,
-            "grade":     signal.get("grade"),
-            "direction": signal.get("direction"),
-            "score":     signal.get("score", 0),
-            "entry":     signal.get("entry"),
-            "sl":        signal.get("sl"),
-            "stoploss":  signal.get("sl"),
-            "tp1":       signal.get("tp1"),
+            "grade":     grade,
+            "direction": direction,
+            "score":     combined,
+            "entry":     price,
+            "sl":        risk_result["sl"],
+            "stoploss":  risk_result["sl"],
+            "tp1":       risk_result["tp1"],
+            "tp2":       risk_result["tp2"],
+            "rr1":       risk_result["rr1"],
             "signal_id": f"{coin}_{date}",
-            "narrative": signal.get("narrative", ""),
         }
 
         if r:
@@ -1017,27 +965,21 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
 async def coins_states(request: Request):
     _auth(request)
     try:
-        from engines.coin_state import state_manager
-        result = []
-        for coin in cfg.COINS:
-            machine = state_manager.get(coin)
-            context = machine.context
-            zone    = context.get("zone", {})
-            bias    = context.get("bias", {})
+        from engines.state import get_all_states
+        all_states = get_all_states()
+        result     = []
+        for coin, s in all_states.items():
+            setup = s.get("setup") or {}
             result.append({
-                "coin":          coin,
-                "state":         machine.state,
-                "direction":     context.get("direction", "--"),
-                "strength":      bias.get("strength", "--") if bias else "--",
-                "sweep_age_h":   bias.get("sweep_age_hours") if bias else None,
-                "zone_type":     zone.get("type") if zone else None,
-                "zone_dist_pct": zone.get("distance_pct") if zone else None,
-                "rr":            context.get("rr"),
+                "coin":      coin,
+                "state":     s["status"],
+                "direction": setup.get("direction", "--"),
+                "setup":     setup,
             })
         result.sort(key=lambda x: (
-            ["signal_ready", "zone_active", "bias_defined", "cooldown", "trade_active", "no_bias"]
+            ["in_trade", "watching", "cooldown", "idle"]
             .index(x["state"]) if x["state"] in
-            ["signal_ready", "zone_active", "bias_defined", "cooldown", "trade_active", "no_bias"]
+            ["in_trade", "watching", "cooldown", "idle"]
             else 99
         ))
         return JSONResponse(content=make_serializable(result))
