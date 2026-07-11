@@ -37,6 +37,14 @@ async def job_trigger_check():
         log.error("Trigger check error: %s", e)
 
 
+async def job_market_data():
+    try:
+        from alerts.scanner import run_market_data_update
+        await run_market_data_update()
+    except Exception as e:
+        log.error("Market data update error: %s", e)
+
+
 async def job_monitor():
     try:
         from trade.monitor import run_monitor_cycle
@@ -131,6 +139,13 @@ def start_scheduler():
     )
 
     scheduler.add_job(
+        job_market_data,
+        trigger          = CronTrigger(minute="0,15,30,45", timezone="UTC"),
+        id               = "market_data",
+        replace_existing = True,
+    )
+
+    scheduler.add_job(
         job_monitor,
         trigger          = IntervalTrigger(seconds=30),
         id               = "monitor",
@@ -170,7 +185,7 @@ def start_scheduler():
         "Scheduler started — "
         "bias:00:05 UTC — "
         "zones:00,04,08,12,16,20:05 UTC — "
-        "trigger::00/:15/:30/:45 — "
+        "trigger+market::00/:15/:30/:45 — "
         "monitor:30s — "
         "health:1m — "
         "ml:1h — "

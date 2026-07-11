@@ -55,7 +55,12 @@ def get_summary() -> dict:
         today_pnl    = 0.0
         today_trades = 0
         try:
-            today_start = datetime(date.today().year, date.today().month, date.today().day, tzinfo=timezone.utc)
+            today_start = datetime(
+                date.today().year,
+                date.today().month,
+                date.today().day,
+                tzinfo=timezone.utc
+            )
             with SessionLocal() as db:
                 today_closed = db.query(TradeModel).filter(
                     TradeModel.closed_at >= today_start,
@@ -66,42 +71,46 @@ def get_summary() -> dict:
         except Exception:
             pass
 
-        cached_results = []
-        for coin in cfg.COINS:
-            c = cache.get_raw(f"signal_{coin}")
-            if c:
-                cached_results.append(c)
+        from engines.coin_state import state_manager
+        zone_active_count  = 0
+        bias_defined_count = 0
+        tradeable_count    = 0
 
-        tradeable_count = len([
-            r for r in cached_results
-            if r.get("grade") in cfg.MIN_GRADE_TO_TRADE
-            and r.get("direction") in ["LONG", "SHORT"]
-        ])
+        for coin in cfg.COINS:
+            s = state_manager.get_state(coin)
+            if s == "zone_active":
+                zone_active_count += 1
+            elif s == "bias_defined":
+                bias_defined_count += 1
+            elif s == "signal_ready":
+                tradeable_count += 1
 
         result = {
-            "today_pnl":        round(today_pnl, 4),
-            "today_pnl_pos":    today_pnl >= 0,
-            "today_trades":     today_trades,
-            "win_rate":         stats.get("win_rate", 0),
-            "coins_count":      len(cfg.COINS),
-            "tradeable_count":  tradeable_count,
-            "mode":             "live" if not cfg.PAPER_TRADING else "paper",
-            "grades":           cfg.MIN_GRADE_TO_TRADE,
-            "next_scan_epoch":  get_next_scan_epoch(),
-            "total_signals":    stats.get("total",   0),
-            "closed_signals":   stats.get("closed",  0),
-            "pending_signals":  stats.get("pending", 0),
-            "wins":             stats.get("wins",    0),
-            "losses":           stats.get("losses",  0),
-            "total_pnl":        stats.get("total_pnl", 0),
-            "timestamp":        datetime.now(timezone.utc).isoformat(),
+            "today_pnl":          round(today_pnl, 4),
+            "today_pnl_pos":      today_pnl >= 0,
+            "today_trades":       today_trades,
+            "win_rate":           stats.get("win_rate", 0),
+            "coins_count":        len(cfg.COINS),
+            "tradeable_count":    tradeable_count,
+            "zone_active_count":  zone_active_count,
+            "bias_defined_count": bias_defined_count,
+            "mode":               "live" if not cfg.PAPER_TRADING else "paper",
+            "grades":             cfg.MIN_GRADE_TO_TRADE,
+            "next_scan_epoch":    get_next_scan_epoch(),
+            "total_signals":      stats.get("total",   0),
+            "closed_signals":     stats.get("closed",  0),
+            "pending_signals":    stats.get("pending", 0),
+            "wins":               stats.get("wins",    0),
+            "losses":             stats.get("losses",  0),
+            "total_pnl":          stats.get("total_pnl", 0),
+            "timestamp":          datetime.now(timezone.utc).isoformat(),
         }
 
         _store(key, result)
         return result
 
     except Exception as e:
-        log.error(f"get_summary error: {e}")
+        log.error("get_summary error: %s", e)
         return {}
 
 
@@ -185,7 +194,7 @@ def get_performance() -> dict:
         return result
 
     except Exception as e:
-        log.error(f"get_performance error: {e}")
+        log.error("get_performance error: %s", e)
         return _empty_performance()
 
 
@@ -195,13 +204,23 @@ def get_signals_data() -> dict:
         return _cache[key]
 
     try:
+        from engines.coin_state import state_manager
+
         cached_results = []
         for coin in cfg.COINS:
             c = cache.get_raw(f"signal_{coin}")
             if c:
                 cached_results.append(c)
 
-        cached_results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        cached_results.sort(
+            key=lambda x: (
+                {"signal_ready": 0, "zone_active": 1, "bias_defined": 2,
+                 "trade_active": 3, "cooldown": 4, "no_bias": 5}.get(
+                    x.get("state", "no_bias"), 5
+                ),
+                -(x.get("score", 0) or 0)
+            )
+        )
 
         radar = []
         for r in cached_results:
@@ -211,13 +230,16 @@ def get_signals_data() -> dict:
 
             radar.append({
                 "coin":           r.get("coin",      "--"),
-                "grade":          r.get("grade",     "F"),
+                "grade":          r.get("grade",     "--"),
                 "direction":      r.get("direction", "--"),
                 "score":          r.get("score",     0),
+                "state":          r.get("state",     "no_bias"),
                 "price":          market.get("price",    0),
                 "change":         market.get("change24", 0),
+                "change_pos":     market.get("change_pos", True),
                 "funding":        round(market.get("funding", 0) * 100, 4),
-                "tradeable":      r.get("grade") in ["A+", "A"] and r.get("direction") in ["LONG", "SHORT"],
+                "tradeable":      r.get("grade") in ["A+", "A"] and
+                                  r.get("direction") in ["LONG", "SHORT"],
                 "confidence":     expl.get("confidence_label", ""),
                 "ml_probability": r.get("ml_probability"),
                 "actual_rr":      r.get("actual_rr", 0),
@@ -241,6 +263,7 @@ def get_signals_data() -> dict:
                 "grade":            r.get("grade",     "?"),
                 "direction":        r.get("direction", "?"),
                 "score":            r.get("score",     0),
+                "state":            r.get("state",     "no_bias"),
                 "entry":            sig.get("entry"),
                 "sl":               sig.get("sl"),
                 "tp1":              sig.get("tp1"),
@@ -266,7 +289,7 @@ def get_signals_data() -> dict:
         return result
 
     except Exception as e:
-        log.error(f"get_signals_data error: {e}")
+        log.error("get_signals_data error: %s", e)
         return {"radar": [], "queue": []}
 
 
@@ -297,7 +320,7 @@ def get_history(limit: int = 10) -> list:
         } for t in trades]
 
     except Exception as e:
-        log.error(f"get_history error: {e}")
+        log.error("get_history error: %s", e)
         return []
 
 
@@ -313,10 +336,13 @@ def get_universe() -> list:
                 CoinConfig.coin.asc()
             ).all()
 
+        from engines.coin_state import state_manager
+
         result = []
         for r in rows:
             c      = cache.get_raw(f"signal_{r.coin}")
             market = c.get("market", {}) if c else {}
+            state  = state_manager.get_state(r.coin) if r.enabled else "disabled"
 
             result.append({
                 "coin":       r.coin,
@@ -328,6 +354,7 @@ def get_universe() -> list:
                 "grade":      c.get("grade",     "--") if c else "--",
                 "score":      c.get("score",     0)    if c else 0,
                 "direction":  c.get("direction", "--") if c else "--",
+                "state":      state,
                 "has_signal": c is not None,
                 "price":      market.get("price",    0),
                 "change":     market.get("change24", 0),
@@ -338,7 +365,7 @@ def get_universe() -> list:
         return result
 
     except Exception as e:
-        log.error(f"get_universe error: {e}")
+        log.error("get_universe error: %s", e)
         return []
 
 
@@ -352,6 +379,12 @@ def get_ticker_bar() -> list:
             market = c.get("market", {})
             price  = market.get("price", 0)
             if not price:
+                try:
+                    from trade.ws import get_mark_price
+                    price = get_mark_price(coin)
+                except Exception:
+                    pass
+            if not price:
                 continue
             result.append({
                 "coin":   coin,
@@ -360,7 +393,7 @@ def get_ticker_bar() -> list:
             })
         return result
     except Exception as e:
-        log.error(f"get_ticker_bar error: {e}")
+        log.error("get_ticker_bar error: %s", e)
         return []
 
 
@@ -374,22 +407,28 @@ def get_coin_detail(coin: str) -> dict:
         signal  = c.get("signal",      {})
         expl    = c.get("explanation", {})
         wconf   = c.get("wconf",       {})
+        bias    = c.get("bias",        {})
+        sweep   = c.get("sweep",       {})
         factors = wconf.get("factors", [])
 
         factor_list = []
         for f in factors:
             earned = f.get("earned", 0)
-            max_w  = f.get("max", f.get("weight", 1))
-            pct    = round(earned / max_w * 100) if max_w > 0 else 0
+            max_w  = f.get("max", 1)
+            pct    = f.get("pct", round(earned / max_w * 100) if max_w > 0 else 0)
             factor_list.append({
-                "key":    f.get("key", ""),
-                "label":  f.get("key", "").replace("_", " ").title(),
+                "key":    f.get("key",    ""),
+                "label":  f.get("label",  f.get("key", "").replace("_", " ").title()),
                 "earned": earned,
                 "max":    max_w,
                 "pct":    pct,
+                "pass":   f.get("pass",   False),
+                "detail": f.get("detail", ""),
             })
 
-        factor_list.sort(key=lambda x: x["earned"], reverse=True)
+        norm_score   = wconf.get("norm_score",   0)
+        market_score = wconf.get("market_score", 0)
+        entry_score  = wconf.get("entry_score",  0)
 
         return {
             "coin":           coin,
@@ -398,12 +437,14 @@ def get_coin_detail(coin: str) -> dict:
             "direction":      c.get("direction", "--"),
             "regime":         c.get("regime",    "--"),
             "session":        c.get("session",   "--"),
+            "state":          c.get("state",     "no_bias"),
             "ml_probability": c.get("ml_probability"),
             "actual_rr":      c.get("actual_rr", 0),
+            "bias_strength":  bias.get("strength", "--") if bias else "--",
             "market": {
-                "price":       market.get("price",    0),
-                "change":      market.get("change24", 0),
-                "change_pos":  market.get("change24", 0) >= 0,
+                "price":       market.get("price",       0),
+                "change":      market.get("change24",    0),
+                "change_pos":  market.get("change_pos",  True),
                 "funding":     round(market.get("funding",   0) * 100, 4),
                 "oi_change":   round(market.get("oi_change", 0), 2),
                 "long_ratio":  round(market.get("long_ratio",  50), 1),
@@ -418,17 +459,23 @@ def get_coin_detail(coin: str) -> dict:
                 "leverage": signal.get("leverage",  10),
                 "stake":    signal.get("stake",     0),
             },
+            "sweep": {
+                "detected":  sweep.get("detected",  False),
+                "score":     sweep.get("score",     0),
+                "label":     sweep.get("label",     ""),
+                "age_hours": sweep.get("age_hours", 0),
+            },
             "thesis":       expl.get("thesis", ""),
             "confidence":   expl.get("confidence_label", ""),
             "factors":      factor_list,
-            "norm_score":   wconf.get("norm_score",   0),
-            "market_score": wconf.get("market_score", 0),
-            "entry_score":  wconf.get("entry_score",  0),
-            "btc_score":    wconf.get("btc_score",    0),
+            "norm_score":   norm_score,
+            "market_score": market_score,
+            "entry_score":  entry_score,
+            "btc_score":    wconf.get("btc_score", 0),
         }
 
     except Exception as e:
-        log.error(f"get_coin_detail error {coin}: {e}")
+        log.error("get_coin_detail error %s: %s", coin, e)
         return {}
 
 

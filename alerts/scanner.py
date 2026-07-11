@@ -5,7 +5,7 @@ import json
 from config import cfg
 from data.cache import cache
 from data.store import load_candles
-from data.fetcher import get_15m_data
+from data.fetcher import get_15m_data, get_ticker, get_funding_rate
 from engines.validator import validate_all_timeframes
 from engines.indicators import calculate_all
 from engines.sweep import detect_sweep
@@ -57,17 +57,15 @@ def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
 
 
 def _build_partial_score(machine_state: str, context: dict) -> float:
-    bias  = context.get("bias", {})
-    zone  = context.get("zone", {})
+    bias = context.get("bias", {})
+    zone = context.get("zone", {})
 
     if machine_state == "no_bias":
         return 0
 
     score = 0.0
 
-    sweep_score = bias.get("sweep_score", 0) if bias else 0
-    strength    = bias.get("strength", "weak") if bias else "weak"
-
+    strength = bias.get("strength", "weak") if bias else "weak"
     if strength == "strong":
         score += 30
     elif strength == "moderate":
@@ -75,6 +73,7 @@ def _build_partial_score(machine_state: str, context: dict) -> float:
     else:
         score += 10
 
+    sweep_score = bias.get("sweep_score", 0) if bias else 0
     score += min(sweep_score * 2, 20)
 
     if bias.get("displacement"):
@@ -84,7 +83,7 @@ def _build_partial_score(machine_state: str, context: dict) -> float:
             score += 8
 
     if machine_state in ("zone_active", "signal_ready"):
-        dist = zone.get("distance_pct", 99) if zone else 99
+        dist     = zone.get("distance_pct", 99) if zone else 99
         max_dist = zone.get("max_distance", 3.0) if zone else 3.0
         if max_dist > 0:
             proximity = max(0, 1 - (dist / max_dist))
@@ -102,6 +101,193 @@ def _build_partial_score(machine_state: str, context: dict) -> float:
     return min(round(score), 99)
 
 
+def _build_factor_scores(machine_state: str, context: dict) -> list:
+    bias = context.get("bias", {})
+    zone = context.get("zone", {})
+    d1d  = context.get("d1d", {})
+
+    factors = []
+
+    sweep_raw   = bias.get("sweep_score", 0) if bias else 0
+    sweep_max   = 12
+    sweep_pct   = round(min(sweep_raw / sweep_max, 1) * 100)
+    sweep_age   = bias.get("sweep_age_hours", 999) if bias else 999
+    sweep_label = bias.get("sweep_label", "No sweep") if bias else "No sweep"
+    sweep_desc  = f"{sweep_label} · {sweep_age:.0f}h ago" if bias and bias.get("sweep_detected") else "No sweep detected"
+    factors.append({
+        "key":    "liquidity_sweep",
+        "label":  "Liquidity Sweep",
+        "earned": min(sweep_raw, sweep_max),
+        "max":    sweep_max,
+        "pct":    sweep_pct,
+        "pass":   sweep_raw >= 3,
+        "detail": sweep_desc,
+    })
+
+    disp_atr    = bias.get("displacement_atr", 0) if bias else 0
+    disp_conf   = bias.get("displacement", False) if bias else False
+    disp_strong = bias.get("displacement_strong", False) if bias else False
+    disp_earned = 11 if disp_strong else 7 if disp_conf else 0
+    disp_max    = 11
+    disp_pct    = round(disp_earned / disp_max * 100)
+    disp_desc   = (
+        f"Strong displacement {disp_atr:.1f}x ATR" if disp_strong else
+        f"Moderate displacement {disp_atr:.1f}x ATR" if disp_conf else
+        "No displacement confirmed"
+    )
+    factors.append({
+        "key":    "displacement",
+        "label":  "Displacement",
+        "earned": disp_earned,
+        "max":    disp_max,
+        "pct":    disp_pct,
+        "pass":   disp_conf,
+        "detail": disp_desc,
+    })
+
+    ob_earned = 0
+    ob_max    = 10
+    ob_desc   = "No zone identified"
+    if zone and machine_state in ("zone_active", "signal_ready", "trade_active"):
+        strength  = float(zone.get("strength", 0))
+        touches   = int(zone.get("touch_count", 0))
+        in_zone   = zone.get("in_zone", False)
+        zone_type = zone.get("type", "OB")
+        dist      = zone.get("distance_pct", 99)
+        max_dist  = zone.get("max_distance", 3.0)
+
+        if in_zone:
+            ob_earned = 10
+        elif dist <= max_dist:
+            proximity = max(0, 1 - (dist / max_dist))
+            ob_earned = round(proximity * 8)
+        else:
+            ob_earned = 2
+
+        touch_penalty = touches * 2
+        ob_earned     = max(0, ob_earned - touch_penalty)
+        ob_desc       = (
+            f"{zone_type} zone · "
+            f"{'In zone' if in_zone else f'{dist:.2f}% away'} · "
+            f"{touches} touch{'es' if touches != 1 else ''}"
+        )
+
+    factors.append({
+        "key":    "order_blocks",
+        "label":  "Order Block / FVG",
+        "earned": ob_earned,
+        "max":    ob_max,
+        "pct":    round(ob_earned / ob_max * 100),
+        "pass":   ob_earned >= 5,
+        "detail": ob_desc,
+    })
+
+    rt_earned = 0
+    rt_max    = 10
+    rt_desc   = "No retest zone"
+    if zone and machine_state in ("zone_active", "signal_ready", "trade_active"):
+        touches  = int(zone.get("touch_count", 0))
+        in_zone  = zone.get("in_zone", False)
+        dist     = zone.get("distance_pct", 99)
+        max_dist = zone.get("max_distance", 3.0)
+
+        if machine_state == "signal_ready":
+            rt_earned = 10
+            rt_desc   = "Retest confirmed — rejection pattern detected"
+        elif in_zone:
+            rt_earned = 7
+            rt_desc   = "Price inside zone — awaiting rejection"
+        elif dist <= max_dist:
+            proximity = max(0, 1 - (dist / max_dist))
+            rt_earned = round(proximity * 5)
+            rt_desc   = f"Approaching zone — {dist:.2f}% away"
+        else:
+            rt_earned = 2
+            rt_desc   = "Zone identified but price not near"
+
+    factors.append({
+        "key":    "retest_confirmation",
+        "label":  "Retest / Rejection",
+        "earned": rt_earned,
+        "max":    rt_max,
+        "pct":    round(rt_earned / rt_max * 100),
+        "pass":   rt_earned >= 7,
+        "detail": rt_desc,
+    })
+
+    struct_bias = d1d.get("structure", {}).get("struct_bias", "neutral") if d1d else "neutral"
+    direction   = context.get("direction", "")
+    d1_cls      = d1d.get("trend", {}).get("cls", "neutral") if d1d else "neutral"
+
+    if (direction == "LONG"  and struct_bias == "bull") or \
+       (direction == "SHORT" and struct_bias == "bear"):
+        ms_earned = 9
+        ms_desc   = f"Structure {struct_bias}ish — aligned with {direction}"
+    elif struct_bias == "neutral":
+        ms_earned = 4
+        ms_desc   = "Structure neutral — no clear bias"
+    else:
+        ms_earned = 1
+        ms_desc   = f"Structure {struct_bias}ish — conflicts with {direction}"
+
+    ms_max = 9
+    factors.append({
+        "key":    "market_structure",
+        "label":  "Market Structure",
+        "earned": ms_earned,
+        "max":    ms_max,
+        "pct":    round(ms_earned / ms_max * 100),
+        "pass":   ms_earned >= 7,
+        "detail": ms_desc,
+    })
+
+    return factors
+
+
+def _get_live_market(coin: str, fallback_price: float = 0, df_1d=None) -> dict:
+    price = fallback_price
+
+    try:
+        from trade.ws import get_mark_price
+        live = get_mark_price(coin)
+        if live and live > 0:
+            price = live
+    except Exception:
+        pass
+
+    change24 = 0.0
+    if df_1d is not None and len(df_1d) >= 2:
+        try:
+            prev_close = float(df_1d.iloc[-2]["close"])
+            curr_close = float(df_1d.iloc[-1]["close"])
+            if prev_close > 0:
+                change24 = round((curr_close - prev_close) / prev_close * 100, 2)
+        except Exception:
+            pass
+
+    funding = 0.0
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if r:
+            raw = r.get(f"funding:{coin}USDT")
+            if raw:
+                funding = float(raw)
+    except Exception:
+        pass
+
+    return {
+        "price":       price,
+        "change24":    change24,
+        "funding":     funding,
+        "oi":          0,
+        "oi_change":   0,
+        "long_ratio":  50,
+        "short_ratio": 50,
+        "change_pos":  change24 >= 0,
+    }
+
+
 def _write_coin_cache(
     coin:          str,
     machine_state: str,
@@ -109,6 +295,7 @@ def _write_coin_cache(
     signal:        dict | None = None,
     price:         float       = 0,
     ttl:           int         = 900,
+    df_1d                      = None,
 ):
     try:
         zone      = context.get("zone", {})
@@ -129,6 +316,47 @@ def _write_coin_cache(
         else:
             regime_str = machine_state.replace("_", " ") if machine_state != "no_bias" else "--"
 
+        factors    = _build_factor_scores(machine_state, context)
+        max_weight = sum(f["max"] for f in factors)
+        total_earned = sum(f["earned"] for f in factors)
+        norm_score = round(total_earned / max_weight * 100) if max_weight > 0 else 0
+
+        market = _get_live_market(coin, price, df_1d)
+
+        sweep_data = {
+            "detected":  bias.get("sweep_detected", False) if bias else False,
+            "confirmed": bias.get("sweep_detected", False) if bias else False,
+            "score":     bias.get("sweep_score",    0)     if bias else 0,
+            "label":     bias.get("sweep_label",    "")    if bias else "",
+            "age_hours": bias.get("sweep_age_hours", 0)    if bias else 0,
+        }
+
+        thesis = ""
+        if signal:
+            thesis = signal.get("narrative", "")
+        elif bias and bias.get("valid"):
+            parts = []
+            if bias.get("sweep_detected"):
+                parts.append(
+                    f"✔ {bias.get('sweep_label','Sweep')} detected "
+                    f"{bias.get('sweep_age_hours',0):.0f}h ago"
+                )
+            if bias.get("displacement"):
+                parts.append(
+                    f"✔ Displacement confirmed "
+                    f"{bias.get('displacement_atr',0):.1f}x ATR"
+                )
+            if zone and machine_state in ("zone_active", "signal_ready"):
+                parts.append(
+                    f"✔ {zone.get('type','Zone')} identified "
+                    f"at {zone.get('bottom',0):.4f}–{zone.get('top',0):.4f}"
+                )
+            if machine_state == "zone_active":
+                parts.append(
+                    f"⏳ Watching for 15M rejection trigger"
+                )
+            thesis = "\n".join(parts)
+
         entry = {
             "coin":      coin,
             "grade":     display_grade,
@@ -136,20 +364,10 @@ def _write_coin_cache(
             "score":     display_score,
             "state":     machine_state,
             "signal":    signal or {},
-            "market": {
-                "price":    price,
-                "change24": 0,
-                "funding":  0,
-            },
+            "market":    market,
             "regime":    regime_str,
             "session":   get_session().get("name", "--"),
-            "sweep": {
-                "detected":  bias.get("sweep_detected", False) if bias else False,
-                "confirmed": bias.get("sweep_detected", False) if bias else False,
-                "score":     bias.get("sweep_score",    0)     if bias else 0,
-                "label":     bias.get("sweep_label",    "")    if bias else "",
-                "age_hours": bias.get("sweep_age_hours", 0)    if bias else 0,
-            },
+            "sweep":     sweep_data,
             "displacement": {
                 "confirmed": bias.get("displacement",        False) if bias else False,
                 "strong":    bias.get("displacement_strong", False) if bias else False,
@@ -166,12 +384,23 @@ def _write_coin_cache(
             "d4h":       context.get("d4h", {}),
             "oi_matrix": {},
             "explanation": {
-                "thesis":           signal.get("narrative", "") if signal else "",
-                "confidence_label": signal.get("grade",     "") if signal else "",
+                "thesis":           thesis,
+                "confidence_label": (
+                    signal.get("grade", "") if signal
+                    else bias.get("strength", "").title() if bias and bias.get("valid")
+                    else ""
+                ),
             },
             "actual_rr":      signal.get("actual_rr", 0) if signal else 0,
             "ml_probability": None,
             "cached_at":      time.time(),
+            "wconf": {
+                "factors":      factors,
+                "norm_score":   norm_score,
+                "market_score": norm_score,
+                "entry_score":  norm_score,
+                "btc_score":    0,
+            },
         }
 
         cache.set(f"signal_{coin}", entry, ttl=ttl)
@@ -307,6 +536,43 @@ async def _open_trade(coin: str, signal: dict, db_id: int):
         log.error("_open_trade error %s: %s", coin, e)
 
 
+async def run_market_data_update():
+    for coin in cfg.COINS:
+        try:
+            machine = state_manager.get(coin)
+            context = machine.context
+            cached  = cache.get_raw(f"signal_{coin}")
+            if not cached:
+                continue
+
+            try:
+                from trade.ws import get_mark_price
+                live = get_mark_price(coin)
+                if live and live > 0:
+                    cached["market"]["price"] = live
+            except Exception:
+                pass
+
+            try:
+                ticker = await get_ticker(coin)
+                if ticker:
+                    cached["market"]["change24"]   = float(ticker.get("percentage") or 0)
+                    cached["market"]["change_pos"] = float(ticker.get("percentage") or 0) >= 0
+            except Exception:
+                pass
+
+            try:
+                funding = await get_funding_rate(coin)
+                cached["market"]["funding"] = funding
+            except Exception:
+                pass
+
+            cache.set(f"signal_{coin}", cached, ttl=900)
+
+        except Exception as e:
+            log.error("Market data update failed %s: %s", coin, e)
+
+
 async def run_daily_bias_update():
     log.info("Daily bias update — %s coins", len(cfg.COINS))
 
@@ -353,6 +619,7 @@ async def run_daily_bias_update():
                     context       = {},
                     price         = price,
                     ttl           = 900,
+                    df_1d         = klines["1d"],
                 )
                 log.debug("%s no bias: %s", coin, bias["no_bias_reason"])
                 continue
@@ -390,6 +657,7 @@ async def run_daily_bias_update():
                 context       = machine.context,
                 price         = price,
                 ttl           = 900,
+                df_1d         = klines["1d"],
             )
 
         except Exception as e:
@@ -429,6 +697,8 @@ async def run_zone_update():
 
             zone = get_active_zone(d4h, direction)
 
+            df_1d_cached = load_candles(coin, "1d", limit=10)
+
             if machine.state == "zone_active" and not zone:
                 machine.zone_invalidated()
                 state_manager._persist(coin)
@@ -439,6 +709,7 @@ async def run_zone_update():
                     context       = machine.context,
                     price         = price,
                     ttl           = 300,
+                    df_1d         = df_1d_cached,
                 )
                 continue
 
@@ -450,6 +721,7 @@ async def run_zone_update():
                     context       = machine.context,
                     price         = price,
                     ttl           = 300,
+                    df_1d         = df_1d_cached,
                 )
                 continue
 
@@ -476,6 +748,7 @@ async def run_zone_update():
                 context       = machine.context,
                 price         = price,
                 ttl           = 300,
+                df_1d         = df_1d_cached,
             )
 
         except Exception as e:
@@ -576,6 +849,8 @@ async def run_trigger_check():
             session = get_session()
             signal["session_name"] = session["name"]
 
+            df_1d_cached = load_candles(coin, "1d", limit=10)
+
             _write_coin_cache(
                 coin          = coin,
                 machine_state = machine.state,
@@ -583,6 +858,7 @@ async def run_trigger_check():
                 signal        = signal,
                 price         = current_price,
                 ttl           = 1800,
+                df_1d         = df_1d_cached,
             )
 
             db_id = save_signal_to_db(signal, coin, session)
@@ -616,6 +892,7 @@ async def scan_all_coins() -> list:
     await run_daily_bias_update()
     await run_zone_update()
     await run_trigger_check()
+    await run_market_data_update()
 
     results = []
     for coin in cfg.COINS:
