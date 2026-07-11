@@ -243,7 +243,7 @@ class Config:
         "ema_period":                20,
         "ema_buffer_atr_mult":       0.3,
 
-        "sweep_max_age_hours":       8,
+        "sweep_max_age_hours":       16,
         "sweep_min_wick_atr":        0.2,
         "sweep_min_score":           0.5,
 
