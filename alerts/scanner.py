@@ -56,24 +56,84 @@ def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
         log.error("Redis signal write error %s: %s", coin, e)
 
 
+def _build_partial_score(machine_state: str, context: dict) -> float:
+    bias  = context.get("bias", {})
+    zone  = context.get("zone", {})
+
+    if machine_state == "no_bias":
+        return 0
+
+    score = 0.0
+
+    sweep_score = bias.get("sweep_score", 0) if bias else 0
+    strength    = bias.get("strength", "weak") if bias else "weak"
+
+    if strength == "strong":
+        score += 30
+    elif strength == "moderate":
+        score += 20
+    else:
+        score += 10
+
+    score += min(sweep_score * 2, 20)
+
+    if bias.get("displacement"):
+        if bias.get("displacement_strong"):
+            score += 15
+        else:
+            score += 8
+
+    if machine_state in ("zone_active", "signal_ready"):
+        dist = zone.get("distance_pct", 99) if zone else 99
+        max_dist = zone.get("max_distance", 3.0) if zone else 3.0
+        if max_dist > 0:
+            proximity = max(0, 1 - (dist / max_dist))
+            score += round(proximity * 20)
+
+        touches = zone.get("touch_count", 0) if zone else 0
+        if touches == 0:
+            score += 5
+        elif touches == 1:
+            score += 3
+
+    if machine_state == "signal_ready":
+        score += 10
+
+    return min(round(score), 99)
+
+
 def _write_coin_cache(
-    coin:      str,
+    coin:          str,
     machine_state: str,
-    context:   dict,
-    signal:    dict | None = None,
-    price:     float       = 0,
-    ttl:       int         = 900,
+    context:       dict,
+    signal:        dict | None = None,
+    price:         float       = 0,
+    ttl:           int         = 900,
 ):
     try:
         zone      = context.get("zone", {})
         bias      = context.get("bias", {})
         direction = context.get("direction", "--")
 
+        if signal:
+            display_score     = signal.get("score", 0)
+            display_grade     = signal.get("grade", "--")
+            display_direction = signal.get("direction", direction)
+        else:
+            display_score     = _build_partial_score(machine_state, context)
+            display_grade     = "--"
+            display_direction = direction if direction != "--" else "--"
+
+        if bias and bias.get("valid"):
+            regime_str = f"{bias.get('direction','--')} · {bias.get('strength','--')}"
+        else:
+            regime_str = machine_state.replace("_", " ") if machine_state != "no_bias" else "--"
+
         entry = {
             "coin":      coin,
-            "grade":     signal.get("grade",     "--") if signal else "--",
-            "direction": signal.get("direction", direction) if signal else direction,
-            "score":     signal.get("score",     0)   if signal else 0,
+            "grade":     display_grade,
+            "direction": display_direction,
+            "score":     display_score,
             "state":     machine_state,
             "signal":    signal or {},
             "market": {
@@ -81,14 +141,14 @@ def _write_coin_cache(
                 "change24": 0,
                 "funding":  0,
             },
-            "regime":    bias.get("strength", "--") if bias else "--",
+            "regime":    regime_str,
             "session":   get_session().get("name", "--"),
             "sweep": {
-                "detected":   bias.get("sweep_detected", False) if bias else False,
-                "confirmed":  bias.get("sweep_detected", False) if bias else False,
-                "score":      bias.get("sweep_score",    0)     if bias else 0,
-                "label":      bias.get("sweep_label",    "")    if bias else "",
-                "age_hours":  bias.get("sweep_age_hours", 0)    if bias else 0,
+                "detected":  bias.get("sweep_detected", False) if bias else False,
+                "confirmed": bias.get("sweep_detected", False) if bias else False,
+                "score":     bias.get("sweep_score",    0)     if bias else 0,
+                "label":     bias.get("sweep_label",    "")    if bias else "",
+                "age_hours": bias.get("sweep_age_hours", 0)    if bias else 0,
             },
             "displacement": {
                 "confirmed": bias.get("displacement",        False) if bias else False,

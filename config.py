@@ -240,7 +240,7 @@ class Config:
     RISK_PCT_PER_TRADE = 0.02
 
     SIGNAL_ENGINE = {
-    "sweep_max_age_hours":    48,
+    "sweep_max_age_hours":    96,
     "slope_flat_threshold":   0.10,
     "zone_distance_atr_mult": 2.0,
     "zone_distance_min_pct":  1.5,
@@ -252,8 +252,8 @@ class Config:
     "min_rr":                 1.8,
     "sl_buffer_atr_mult":     0.1,
     "cooldown_hours":         48,
-    "sweep_strong_score":     8,
-    "sweep_moderate_score":   5,
+    "sweep_strong_score":     5,
+    "sweep_moderate_score":   3,
     "displacement_strong_atr":1.5,
 }
 
