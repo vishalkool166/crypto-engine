@@ -31,7 +31,7 @@ async def run_health_checks():
 
 async def _check_single_trade_db(trade: dict):
     from trade.exchange import get_ticker_price
-    from engines.coin_state import state_manager
+    from engines.state import get as get_coin_state
 
     coin      = trade["coin"]
     open_rate = float(trade.get("entry_price") or 0)
@@ -44,27 +44,36 @@ async def _check_single_trade_db(trade: dict):
     if not current_price:
         return
 
-    machine = state_manager.get(coin)
-    context = machine.context
+    coin_state = get_coin_state(coin)
+    setup      = coin_state.get("setup") or {}
+    zone       = setup.get("zone",  {}) or {}
+    sweep_data = setup.get("sweep", {}) or {}
 
-    d1d      = context.get("d1d", {})
-    d4h      = context.get("d4h", {})
-    bias     = context.get("bias", {})
-    zone     = context.get("zone", {})
+    d1d = {}
+    d4h = {}
+
+    try:
+        from data.cache import cache
+        cached = cache.get_raw(f"signal_{coin}")
+        if cached:
+            d1d = cached.get("d1d", {}) or {}
+            d4h = cached.get("d4h", {}) or {}
+    except Exception:
+        pass
 
     retest = {
-        "confirmed": machine.state == "signal_ready",
+        "confirmed": False,
         "zone":      zone,
         "zone_type": zone.get("type", "") if zone else "",
         "score":     0,
-        "status":    "confirmed" if machine.state == "signal_ready" else "pending",
+        "status":    "pending",
     }
 
     sweep = {
-        "detected":  bias.get("sweep_detected", False) if bias else False,
-        "confirmed": bias.get("sweep_detected", False) if bias else False,
-        "score":     bias.get("sweep_score",    0)     if bias else 0,
-        "label":     bias.get("sweep_label",    "")    if bias else "",
+        "detected":  sweep_data.get("detected",  False),
+        "confirmed": sweep_data.get("confirmed", False),
+        "score":     sweep_data.get("score",     0),
+        "label":     sweep_data.get("label",     ""),
     }
 
     oi_matrix = {
@@ -73,17 +82,16 @@ async def _check_single_trade_db(trade: dict):
     }
 
     try:
-        from data.cache import cache
-        btc_data = cache.get_raw("btc_1d_data")
+        btc_data = cache.get_raw("btc_4h_data")
     except Exception:
         btc_data = None
 
-    thesis = context.get("trigger_pattern", "")
-    if context.get("entry_price"):
+    thesis = ""
+    if zone and zone.get("type"):
         thesis = (
-            f"Entry at {context['entry_price']:.4f} — "
-            f"{context.get('trigger_pattern', 'trigger')} in "
-            f"{zone.get('type', 'zone') if zone else 'zone'}"
+            f"Entry at {open_rate:.4f} — "
+            f"{setup.get('trigger_pattern', 'trigger')} in "
+            f"{zone.get('type', 'zone')}"
         )
 
     class _TradeMock:
