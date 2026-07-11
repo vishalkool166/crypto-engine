@@ -63,13 +63,37 @@ async def run(
 
         zone_result = zone.detect(d4h, df_4h, direction, atr_1h)
         if not zone_result["detected"]:
-            return {**no_signal, "reason": "no_zone"}
+            return {
+                **no_signal,
+                "reason":      "no_zone",
+                "sweep_found": True,
+                "sweep_score": sweep_result["score"],
+                "sweep":       sweep_result["sweep"],
+                "direction":   direction,
+            }
         if zone_result["score"] < SE["zone_min_score"]:
-            return {**no_signal, "reason": "zone_score_low"}
+            return {
+                **no_signal,
+                "reason":      "zone_score_low",
+                "sweep_found": True,
+                "sweep_score": sweep_result["score"],
+                "sweep":       sweep_result["sweep"],
+                "direction":   direction,
+            }
 
         trigger_result = trigger.detect(df_15m, zone_result["zone"], direction, atr_15m)
         if not trigger_result["confirmed"]:
-            return {**no_signal, "reason": trigger_result.get("reason", "no_trigger")}
+            return {
+                **no_signal,
+                "reason":      trigger_result.get("reason", "no_trigger"),
+                "sweep_found": True,
+                "zone_found":  True,
+                "sweep_score": sweep_result["score"],
+                "zone_score":  zone_result["score"],
+                "sweep":       sweep_result["sweep"],
+                "zone":        zone_result["zone"],
+                "direction":   direction,
+            }
 
         combined = _combined_score(
             sweep_result["score"],
@@ -147,6 +171,8 @@ async def run(
             "trigger_score": trigger_result["score"],
             "sweep":         sweep_result["sweep"],
             "zone":          zone_result["zone"],
+            "sweep_found":   True,
+            "zone_found":    True,
             "narrative":     narrative_text,
             "signal_type":   "FULL",
             "atr_4h":        atr_4h,

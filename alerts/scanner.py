@@ -117,15 +117,53 @@ def _write_redis(coin: str, signal: dict, db_id: int) -> None:
         log.error("_write_redis %s: %s", coin, e)
 
 
-def _write_cache(coin: str, result: dict) -> None:
-    ttl = 900
-    cache.set(f"signal_{coin}", result, ttl=ttl)
+def _write_cache(coin: str, result: dict, coin_status: str) -> None:
+    price   = get_mark_price(coin) or 0
+    sweep   = result.get("sweep") or {}
+    zone    = result.get("zone")  or {}
+
+    entry = {
+        "coin":      coin,
+        "grade":     result.get("grade",     "--"),
+        "direction": result.get("direction", "--"),
+        "score":     result.get("score",     0),
+        "state":     coin_status,
+        "signal":    result if result.get("signal") else {},
+        "market": {
+            "price":      price,
+            "change24":   0,
+            "funding":    0,
+            "change_pos": True,
+        },
+        "sweep": {
+            "detected":  bool(sweep),
+            "score":     result.get("sweep_score", 0),
+            "label":     sweep.get("level_label", "") if sweep else "",
+            "age_hours": sweep.get("age_hours",   0)  if sweep else 0,
+        },
+        "zone":      zone,
+        "narrative": result.get("narrative", ""),
+        "explanation": {
+            "thesis":           result.get("narrative", ""),
+            "confidence_label": result.get("grade", "--"),
+        },
+        "actual_rr":  result.get("rr1", 0),
+        "cached_at":  time.time(),
+        "wconf": {
+            "norm_score":   round(result.get("score", 0) * 100) if result.get("score") else 0,
+            "market_score": round(result.get("score", 0) * 100) if result.get("score") else 0,
+            "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
+            "btc_score":    0,
+            "factors":      [],
+        },
+    }
+
+    cache.set(f"signal_{coin}", entry, ttl=900)
 
 
 async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
     try:
         from trade.executor import open_position, has_open_trade_or_position
-        from engines.state import set_in_trade, get as get_state
 
         if await has_open_trade_or_position(coin):
             log.info("_execute_trade: %s already has position", coin)
@@ -147,8 +185,11 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         )
 
         if result.get("success"):
-            current_state = get_state(coin)
-            set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
+            state.set_in_trade(coin, result["trade_id"], {
+                "direction": signal["direction"],
+                "sweep":     signal.get("sweep", {}),
+                "zone":      signal.get("zone",  {}),
+            })
             log.info("Trade opened: %s %s grade:%s trade_id:%s",
                      coin, signal["direction"], signal["grade"], result["trade_id"])
         else:
@@ -161,8 +202,15 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
 async def _analyze_coin(coin: str, balance: float) -> dict | None:
     async with _scan_semaphore:
         try:
-            if not state.is_available(coin):
-                return None
+            current = state.get(coin)
+
+            if current["status"] == "in_trade":
+                cached = cache.get_raw(f"signal_{coin}")
+                return cached
+
+            if current["status"] == "cooldown":
+                if not state.is_available(coin):
+                    return None
 
             candles = await _load_candles(coin)
             if not candles:
@@ -176,15 +224,53 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 balance = balance,
             )
 
-            price   = get_mark_price(coin) or float(candles["4h"]["close"].iloc[-1])
-            funding = await get_funding_rate(coin)
+            current = state.get(coin)
+
+            if result.get("signal"):
+                state.set_watching(coin, {
+                    "direction": result["direction"],
+                    "sweep":     result.get("sweep", {}),
+                    "zone":      result.get("zone",  {}),
+                })
+                coin_status = "watching"
+
+            elif result.get("zone_found") and result.get("sweep_found"):
+                if current["status"] not in ("in_trade", "cooldown"):
+                    state.set_watching(coin, {
+                        "direction": result["direction"],
+                        "sweep":     result.get("sweep", {}),
+                        "zone":      result.get("zone",  {}),
+                    })
+                coin_status = "watching"
+
+            elif result.get("sweep_found"):
+                if current["status"] not in ("in_trade", "cooldown", "watching"):
+                    state.set_watching(coin, {
+                        "direction": result["direction"],
+                        "sweep":     result.get("sweep", {}),
+                        "zone":      {},
+                    })
+                coin_status = "watching"
+
+            else:
+                if current["status"] == "watching":
+                    state.set_idle(coin)
+                coin_status = "idle"
+
+            funding = 0.0
+            try:
+                funding = await get_funding_rate(coin)
+            except Exception:
+                pass
+
+            price = get_mark_price(coin) or 0
 
             cache_entry = {
                 "coin":      coin,
                 "grade":     result.get("grade",     "--"),
                 "direction": result.get("direction", "--"),
                 "score":     result.get("score",     0),
-                "state":     state.get(coin)["status"],
+                "state":     coin_status,
                 "signal":    result if result.get("signal") else {},
                 "market": {
                     "price":      price,
@@ -192,8 +278,13 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     "funding":    funding,
                     "change_pos": True,
                 },
-                "sweep":     result.get("sweep",   {}),
-                "zone":      result.get("zone",    {}),
+                "sweep": {
+                    "detected":  result.get("sweep_found", False),
+                    "score":     result.get("sweep_score", 0),
+                    "label":     result.get("sweep", {}).get("level_label", "") if result.get("sweep") else "",
+                    "age_hours": result.get("sweep", {}).get("age_hours",   0)  if result.get("sweep") else 0,
+                },
+                "zone":      result.get("zone", {}),
                 "narrative": result.get("narrative", ""),
                 "explanation": {
                     "thesis":           result.get("narrative", ""),
@@ -202,15 +293,15 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "actual_rr":  result.get("rr1", 0),
                 "cached_at":  time.time(),
                 "wconf": {
-                    "norm_score":   round(result.get("score", 0) * 100),
-                    "market_score": round(result.get("score", 0) * 100),
-                    "entry_score":  round(result.get("trigger_score", 0) * 100),
+                    "norm_score":   round(result.get("score",         0) * 100) if result.get("score")         else 0,
+                    "market_score": round(result.get("score",         0) * 100) if result.get("score")         else 0,
+                    "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
                     "btc_score":    0,
                     "factors":      [],
                 },
             }
 
-            _write_cache(coin, cache_entry)
+            cache.set(f"signal_{coin}", cache_entry, ttl=900)
 
             if not result.get("signal"):
                 return cache_entry
@@ -249,12 +340,11 @@ async def _run_content(db_id: int) -> None:
 
 async def _on_kline_closed(coin: str, kline: dict) -> None:
     try:
-        if not state.is_watching(coin):
+        current = state.get(coin)
+        if current["status"] not in ("watching", "idle"):
             return
 
-        from data.store import save_candles
         import pandas as pd
-
         df_row = pd.DataFrame([{
             "timestamp": pd.Timestamp(kline["timestamp"], unit="ms"),
             "open":      kline["open"],
@@ -327,7 +417,7 @@ def get_db_stats() -> dict:
             by_grade = {}
             for g in ("A+", "A", "B"):
                 gt = [s for s in closed if s.grade == g]
-                gw = [s for s in gt if s.outcome == "win"]
+                gw = [s for s in gt    if s.outcome == "win"]
                 by_grade[g] = {
                     "total":     len(gt),
                     "wins":      len(gw),
