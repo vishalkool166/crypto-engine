@@ -34,8 +34,8 @@ def _find_ob_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> dic
         if width < atr_1h * SE["zone_min_width_atr"]:
             return None
 
-        dist = abs(price - (top + bottom) / 2) / price
-        if dist > (atr_1h / price) * SE["zone_max_dist_atr"]:
+        dist_pct = abs(price - (top + bottom) / 2) / price * 100
+        if dist_pct > SE["zone_max_dist_pct"]:
             return None
 
         if direction == "LONG" and price < bottom:
@@ -96,8 +96,8 @@ def _find_fvg_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> di
             if width < atr_1h * SE["zone_min_width_atr"]:
                 continue
 
-            dist = abs(price - mid) / price
-            if dist > (atr_1h / price) * SE["zone_max_dist_atr"]:
+            dist_pct = abs(price - mid) / price * 100
+            if dist_pct > SE["zone_max_dist_pct"]:
                 continue
 
             width_score = min(width / atr_1h, 2.0) / 2.0
@@ -115,16 +115,16 @@ def _find_fvg_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> di
                 "in_zone":     bottom <= price <= top,
                 "strength":    round(width_score, 3),
                 "score":       score,
-                "dist":        dist,
+                "dist_pct":    dist_pct,
                 "origin_desc": f"Fair value gap {bottom:.4f}–{top:.4f}",
             })
 
         if not candidates:
             return None
 
-        candidates.sort(key=lambda x: x["dist"])
+        candidates.sort(key=lambda x: x["dist_pct"])
         best = candidates[0]
-        best.pop("dist", None)
+        best.pop("dist_pct", None)
         return best
 
     except Exception as e:
@@ -153,7 +153,7 @@ def detect(d4h: dict, df_4h: pd.DataFrame, direction: str, atr_1h: float) -> dic
             zone = ob_zone or fvg_zone
 
         distance_pct = abs(price - zone["mid"]) / price * 100
-        max_dist_pct = (atr_1h / price) * SE["zone_max_dist_atr"] * 100
+        max_dist_pct = SE["zone_max_dist_pct"]
 
         zone["distance_pct"] = round(distance_pct, 3)
         zone["max_dist_pct"] = round(max_dist_pct, 3)

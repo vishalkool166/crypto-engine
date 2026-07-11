@@ -251,6 +251,7 @@ class Config:
         "zone_max_dist_atr":         4.0,
         "zone_max_touches":          2,
         "zone_min_score":            0.3,
+        "zone_max_dist_pct":         4.0,
 
         "trigger_min_body_ratio":    0.55,
         "trigger_min_wick_ratio":    0.55,
