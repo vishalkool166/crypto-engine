@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from data.fetcher import fetch_and_store, get_funding_rate
+from data.fetcher import fetch_and_store
 from data.cache import cache
 from data.store import save_candles
 from engines.signal import run as run_signal
@@ -17,6 +17,92 @@ log = logging.getLogger(__name__)
 
 _scan_lock      = asyncio.Lock()
 _scan_semaphore = asyncio.Semaphore(3)
+
+
+def _get_ticker_from_redis(coin: str) -> dict:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return {"change24": 0.0, "change_pos": True}
+        raw = r.get(f"ticker:{coin}USDT")
+        if not raw:
+            return {"change24": 0.0, "change_pos": True}
+        data       = json.loads(raw)
+        change_pct = float(data.get("percentage", 0))
+        return {
+            "change24":   round(change_pct, 4),
+            "change_pos": change_pct >= 0,
+        }
+    except Exception:
+        return {"change24": 0.0, "change_pos": True}
+
+
+def _get_funding_from_redis(coin: str) -> float:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return 0.0
+        raw = r.get(f"funding:{coin}USDT")
+        if not raw:
+            return 0.0
+        return float(raw)
+    except Exception:
+        return 0.0
+
+
+def _derive_regime(result: dict, coin_status: str) -> str:
+    direction = result.get("direction", "")
+    sweep     = result.get("sweep") or {}
+    zone      = result.get("zone")  or {}
+
+    if coin_status == "in_trade":
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — In Trade"
+
+    if result.get("signal"):
+        strength = sweep.get("relevance", {}).get("label", "")
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {strength} Sweep"
+
+    if result.get("zone_found") and result.get("sweep_found"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Zone Active"
+
+    if result.get("sweep_found"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Sweep Detected"
+
+    if direction in ("LONG", "SHORT"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Scanning"
+
+    return "Scanning"
+
+
+def _derive_session() -> str:
+    from datetime import datetime, timezone
+    hour = datetime.now(timezone.utc).hour
+    if 8  <= hour < 13: return "London"
+    if 13 <= hour < 17: return "London/NY Overlap"
+    if 17 <= hour < 21: return "New York"
+    if 0  <= hour < 8:  return "Asia"
+    return "Off Hours"
+
+
+def _build_partial_score(result: dict) -> float:
+    sweep_score   = result.get("sweep_score", 0) or 0
+    zone_score    = result.get("zone_score",  0) or 0
+    trigger_score = result.get("trigger_score", 0) or 0
+
+    if result.get("signal"):
+        combined = result.get("score", 0) or 0
+        return round(combined * 100)
+
+    if result.get("zone_found") and result.get("sweep_found"):
+        partial = sweep_score * 0.40 + zone_score * 0.35
+        return round(partial * 100)
+
+    if result.get("sweep_found"):
+        return round(sweep_score * 0.40 * 100)
+
+    return 0
 
 
 async def _load_candles(coin: str) -> dict | None:
@@ -117,50 +203,6 @@ def _write_redis(coin: str, signal: dict, db_id: int) -> None:
         log.error("_write_redis %s: %s", coin, e)
 
 
-def _write_cache(coin: str, result: dict, coin_status: str) -> None:
-    price   = get_mark_price(coin) or 0
-    sweep   = result.get("sweep") or {}
-    zone    = result.get("zone")  or {}
-
-    entry = {
-        "coin":      coin,
-        "grade":     result.get("grade",     "--"),
-        "direction": result.get("direction", "--"),
-        "score":     result.get("score",     0),
-        "state":     coin_status,
-        "signal":    result if result.get("signal") else {},
-        "market": {
-            "price":      price,
-            "change24":   0,
-            "funding":    0,
-            "change_pos": True,
-        },
-        "sweep": {
-            "detected":  bool(sweep),
-            "score":     result.get("sweep_score", 0),
-            "label":     sweep.get("level_label", "") if sweep else "",
-            "age_hours": sweep.get("age_hours",   0)  if sweep else 0,
-        },
-        "zone":      zone,
-        "narrative": result.get("narrative", ""),
-        "explanation": {
-            "thesis":           result.get("narrative", ""),
-            "confidence_label": result.get("grade", "--"),
-        },
-        "actual_rr":  result.get("rr1", 0),
-        "cached_at":  time.time(),
-        "wconf": {
-            "norm_score":   round(result.get("score", 0) * 100) if result.get("score") else 0,
-            "market_score": round(result.get("score", 0) * 100) if result.get("score") else 0,
-            "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
-            "btc_score":    0,
-            "factors":      [],
-        },
-    }
-
-    cache.set(f"signal_{coin}", entry, ttl=900)
-
-
 async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
     try:
         from trade.executor import open_position, has_open_trade_or_position
@@ -182,14 +224,13 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
             regime    = "",
             session   = "",
             score     = float(signal["score"]),
+            tp2       = float(signal["tp2"]) if signal.get("tp2") else None,
+            atr_15m   = float(signal.get("atr_15m", 0)),
         )
 
         if result.get("success"):
-            state.set_in_trade(coin, result["trade_id"], {
-                "direction": signal["direction"],
-                "sweep":     signal.get("sweep", {}),
-                "zone":      signal.get("zone",  {}),
-            })
+            current_state = state.get(coin)
+            state.set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
             log.info("Trade opened: %s %s grade:%s trade_id:%s",
                      coin, signal["direction"], signal["grade"], result["trade_id"])
         else:
@@ -206,6 +247,12 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
 
             if current["status"] == "in_trade":
                 cached = cache.get_raw(f"signal_{coin}")
+                if cached:
+                    ticker = _get_ticker_from_redis(coin)
+                    cached["market"]["change24"]   = ticker["change24"]
+                    cached["market"]["change_pos"] = ticker["change_pos"]
+                    cached["market"]["price"]      = get_mark_price(coin) or cached["market"].get("price", 0)
+                    cache.set(f"signal_{coin}", cached, ttl=900)
                 return cached
 
             if current["status"] == "cooldown":
@@ -257,44 +304,50 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     state.set_idle(coin)
                 coin_status = "idle"
 
-            funding = 0.0
-            try:
-                funding = await get_funding_rate(coin)
-            except Exception:
-                pass
+            ticker  = _get_ticker_from_redis(coin)
+            funding = _get_funding_from_redis(coin)
+            price   = get_mark_price(coin) or 0
+            regime  = _derive_regime(result, coin_status)
+            session = _derive_session()
+            score   = _build_partial_score(result)
 
-            price = get_mark_price(coin) or 0
+            sweep_data = result.get("sweep") or {}
 
             cache_entry = {
                 "coin":      coin,
-                "grade":     result.get("grade",     "--"),
+                "grade":     result.get("grade", "--") if result.get("signal") else (
+                    "B" if score >= 50 else
+                    "C" if score >= 30 else "--"
+                ),
                 "direction": result.get("direction", "--"),
-                "score":     result.get("score",     0),
+                "score":     score,
                 "state":     coin_status,
                 "signal":    result if result.get("signal") else {},
                 "market": {
                     "price":      price,
-                    "change24":   0,
+                    "change24":   ticker["change24"],
+                    "change_pos": ticker["change_pos"],
                     "funding":    funding,
-                    "change_pos": True,
                 },
                 "sweep": {
                     "detected":  result.get("sweep_found", False),
                     "score":     result.get("sweep_score", 0),
-                    "label":     result.get("sweep", {}).get("level_label", "") if result.get("sweep") else "",
-                    "age_hours": result.get("sweep", {}).get("age_hours",   0)  if result.get("sweep") else 0,
+                    "label":     sweep_data.get("level_label", "") if sweep_data else "",
+                    "age_hours": sweep_data.get("age_hours",  0)   if sweep_data else 0,
                 },
                 "zone":      result.get("zone", {}),
                 "narrative": result.get("narrative", ""),
+                "regime":    regime,
+                "session":   session,
                 "explanation": {
                     "thesis":           result.get("narrative", ""),
-                    "confidence_label": result.get("grade", "--"),
+                    "confidence_label": result.get("grade", "--") if result.get("signal") else "",
                 },
                 "actual_rr":  result.get("rr1", 0),
                 "cached_at":  time.time(),
                 "wconf": {
-                    "norm_score":   round(result.get("score",         0) * 100) if result.get("score")         else 0,
-                    "market_score": round(result.get("score",         0) * 100) if result.get("score")         else 0,
+                    "norm_score":   score,
+                    "market_score": score,
                     "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
                     "btc_score":    0,
                     "factors":      [],
@@ -318,7 +371,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 await send_signal(
                     result, coin,
                     result.get("grade", ""),
-                    "",
+                    session,
                 )
 
                 await _execute_trade(coin, result, db_id)
@@ -345,6 +398,7 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
             return
 
         import pandas as pd
+
         df_row = pd.DataFrame([{
             "timestamp": pd.Timestamp(kline["timestamp"], unit="ms"),
             "open":      kline["open"],

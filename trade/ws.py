@@ -17,10 +17,12 @@ _mark_prices:           dict                = {}
 _ws_task:               asyncio.Task | None = None
 _user_ws_task:          asyncio.Task | None = None
 _kline_ws_task:         asyncio.Task | None = None
+_ticker_ws_task:        asyncio.Task | None = None
 _listen_key_task:       asyncio.Task | None = None
 _ws_connected:          bool                = False
 _user_ws_connected:     bool                = False
 _kline_ws_connected:    bool                = False
+_ticker_ws_connected:   bool                = False
 _pending_commissions:   dict                = {}
 _trade_event_callbacks: list                = []
 _kline_callbacks:       list                = []
@@ -57,6 +59,7 @@ def get_ws_status() -> dict:
         "mark_price_connected": _ws_connected,
         "user_data_connected":  _user_ws_connected,
         "kline_ws_connected":   _kline_ws_connected,
+        "ticker_ws_connected":  _ticker_ws_connected,
         "prices_cached":        len(_mark_prices),
         "mode":                 cfg.TRADING_MODE,
     }
@@ -103,6 +106,58 @@ async def _mark_price_stream() -> None:
         except Exception as e:
             _ws_connected = False
             log.warning("Mark price WS error: %s", e)
+        await asyncio.sleep(5)
+
+
+async def _ticker_stream() -> None:
+    global _ticker_ws_connected
+    while True:
+        try:
+            url = f"{get_ws_base_url()}/ws/!miniTicker@arr"
+            async with websockets.connect(url, ping_interval=20, ping_timeout=10, open_timeout=15) as ws:
+                _ticker_ws_connected = True
+                log.info("Ticker WS connected")
+                async for message in ws:
+                    try:
+                        data  = json.loads(message)
+                        items = data if isinstance(data, list) else [data]
+                        r = None
+                        try:
+                            from redis_client import get_redis
+                            r = get_redis()
+                        except Exception:
+                            pass
+                        for item in items:
+                            symbol = item.get("s", "")
+                            if not symbol.endswith("USDT"):
+                                continue
+                            close_price = float(item.get("c", 0))
+                            open_price  = float(item.get("o", 0))
+                            change_pct  = (
+                                (close_price - open_price) / open_price * 100
+                                if open_price > 0 else 0.0
+                            )
+                            if r:
+                                try:
+                                    r.setex(
+                                        f"ticker:{symbol}",
+                                        120,
+                                        json.dumps({
+                                            "last":       close_price,
+                                            "percentage": round(change_pct, 4),
+                                            "open":       open_price,
+                                        })
+                                    )
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+        except websockets.exceptions.ConnectionClosedError as e:
+            _ticker_ws_connected = False
+            log.warning("Ticker WS closed: %s", e)
+        except Exception as e:
+            _ticker_ws_connected = False
+            log.warning("Ticker WS error: %s", e)
         await asyncio.sleep(5)
 
 
@@ -287,23 +342,20 @@ async def _handle_reduce_order_filled(
                 log.debug("No active trade for %s order:%s", coin, order_id)
                 return
 
-            trade_id      = trade.id
-            direction     = trade.direction
-            entry         = float(trade.entry_price   or 0)
-            margin        = float(trade.margin_used   or 0)
-            leverage      = int(trade.leverage        or 1)
-            entry_fee     = float(trade.entry_commission or 0)
-            sl_oid        = str(trade.sl_order_id     or "")
-            tp1_oid       = str(trade.tp1_order_id    or "")
-            tp2_oid       = str(trade.tp2_order_id    or "")
-            tp1_hit       = bool(trade.tp1_hit)
-            tp2_price     = float(trade.tp2_price     or 0)
-            is_long       = direction == "LONG"
+            trade_id   = trade.id
+            direction  = trade.direction
+            entry      = float(trade.entry_price   or 0)
+            margin     = float(trade.margin_used   or 0)
+            leverage   = int(trade.leverage        or 1)
+            entry_fee  = float(trade.entry_commission or 0)
+            sl_oid     = str(trade.sl_order_id     or "")
+            tp1_oid    = str(trade.tp1_order_id    or "")
+            tp2_oid    = str(trade.tp2_order_id    or "")
+            tp1_hit    = bool(trade.tp1_hit)
+            is_long    = direction == "LONG"
 
         is_tp1 = (order_id == tp1_oid) and not tp1_hit
         is_tp2 = (order_id == tp2_oid) and tp1_hit
-        is_sl  = (order_id == sl_oid)
-        is_manual = order_type.upper() == "MARKET" and not is_tp1 and not is_tp2 and not is_sl
 
         await asyncio.sleep(1.0)
         try:
@@ -366,12 +418,10 @@ async def _handle_reduce_order_filled(
                 "partial_pnl": partial_pnl,
             })
 
-            log.info("TP1 hit: %s exit:%.6f partial_pnl:%.4f remaining:%.6f",
-                     coin, exit_price, partial_pnl, abs(remaining))
+            log.info("TP1 hit: %s exit:%.6f partial_pnl:%.4f", coin, exit_price, partial_pnl)
             return
 
-        reason = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit)
-
+        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit)
         total_fee = round(entry_fee + commission, 8)
 
         net_pnl = (
@@ -436,11 +486,11 @@ async def _handle_reduce_order_filled(
         )
 
         await _emit("trade_closed", {
-            "coin":      coin,
-            "direction": direction,
-            "exit_price":exit_price,
-            "net_pnl":   net_pnl,
-            "reason":    reason,
+            "coin":       coin,
+            "direction":  direction,
+            "exit_price": exit_price,
+            "net_pnl":    net_pnl,
+            "reason":     reason,
         })
 
         from events import emit
@@ -504,10 +554,11 @@ async def _listen_key_refresh_loop() -> None:
 
 
 async def start_ws() -> None:
-    global _ws_task, _user_ws_task, _kline_ws_task, _listen_key_task
+    global _ws_task, _user_ws_task, _kline_ws_task, _ticker_ws_task, _listen_key_task
     if _ws_task and not _ws_task.done():
         return
     _ws_task         = asyncio.create_task(_mark_price_stream())
+    _ticker_ws_task  = asyncio.create_task(_ticker_stream())
     _user_ws_task    = asyncio.create_task(_user_data_stream())
     _kline_ws_task   = asyncio.create_task(_kline_stream())
     _listen_key_task = asyncio.create_task(_listen_key_refresh_loop())
@@ -515,10 +566,10 @@ async def start_ws() -> None:
 
 
 async def stop_ws() -> None:
-    global _ws_task, _user_ws_task, _kline_ws_task, _listen_key_task
-    global _ws_connected, _user_ws_connected, _kline_ws_connected
+    global _ws_task, _user_ws_task, _kline_ws_task, _ticker_ws_task, _listen_key_task
+    global _ws_connected, _user_ws_connected, _kline_ws_connected, _ticker_ws_connected
 
-    for task in (_ws_task, _user_ws_task, _kline_ws_task, _listen_key_task):
+    for task in (_ws_task, _user_ws_task, _kline_ws_task, _ticker_ws_task, _listen_key_task):
         if task and not task.done():
             task.cancel()
             try:
@@ -526,8 +577,8 @@ async def stop_ws() -> None:
             except asyncio.CancelledError:
                 pass
 
-    _ws_task = _user_ws_task = _kline_ws_task = _listen_key_task = None
-    _ws_connected = _user_ws_connected = _kline_ws_connected = False
+    _ws_task = _user_ws_task = _kline_ws_task = _ticker_ws_task = _listen_key_task = None
+    _ws_connected = _user_ws_connected = _kline_ws_connected = _ticker_ws_connected = False
 
     try:
         await invalidate_listen_key()
