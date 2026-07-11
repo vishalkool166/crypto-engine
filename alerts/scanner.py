@@ -252,7 +252,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     cached["market"]["change24"]   = ticker["change24"]
                     cached["market"]["change_pos"] = ticker["change_pos"]
                     cached["market"]["price"]      = get_mark_price(coin) or cached["market"].get("price", 0)
-                    cache.set(f"signal_{coin}", cached, ttl=900)
+                    cache.set(f"signal_{coin}", cached, ttl=1800)
                 return cached
 
             if current["status"] == "cooldown":
@@ -354,7 +354,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 },
             }
 
-            cache.set(f"signal_{coin}", cache_entry, ttl=900)
+            cache.set(f"signal_{coin}", cache_entry, ttl=1800)
 
             if not result.get("signal"):
                 return cache_entry

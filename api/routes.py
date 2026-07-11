@@ -886,10 +886,8 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             result = {
                 "coin": coin, "date": date, "grade": "F",
                 "direction": direction, "score": 0,
-                "entry": None, "sl": None,                 "stoploss":  None,
-                "tp1":       None,
-                "signal_id": f"{coin}_{date}",
-                "reason":    "no_zone",
+                "entry": None, "sl": None, "stoploss": None, "tp1": None,
+                "signal_id": f"{coin}_{date}", "reason": "no_zone",
             }
             return JSONResponse(content=make_serializable(result))
 
@@ -912,17 +910,10 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
 
         if not risk_result["valid"]:
             result = {
-                "coin":      coin,
-                "date":      date,
-                "grade":     "F",
-                "direction": direction,
-                "score":     0,
-                "entry":     None,
-                "sl":        None,
-                "stoploss":  None,
-                "tp1":       None,
-                "signal_id": f"{coin}_{date}",
-                "reason":    risk_result["reason"],
+                "coin": coin, "date": date, "grade": "F",
+                "direction": direction, "score": 0,
+                "entry": None, "sl": None, "stoploss": None, "tp1": None,
+                "signal_id": f"{coin}_{date}", "reason": risk_result["reason"],
             }
             return JSONResponse(content=make_serializable(result))
 
@@ -986,7 +977,8 @@ async def coins_states(request: Request):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-    
+
+
 @router.post("/content/generate")
 async def generate_content(request: Request):
     from saas.middleware import get_current_user
@@ -999,11 +991,10 @@ async def generate_content(request: Request):
         raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
 
     try:
-        params     = dict(request.query_params)
-        coin       = params.get("coin", "")
-        post_type  = params.get("type", "market")
+        params    = dict(request.query_params)
+        coin      = params.get("coin", "")
+        post_type = params.get("type", "market")
 
-        from config import cfg
         if not cfg.GROQ_API_KEY:
             raise HTTPException(503, "Groq not configured")
 
@@ -1011,14 +1002,12 @@ async def generate_content(request: Request):
         client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
 
         if post_type == "signal" and coin:
-            cached = None
+            cached    = None
+            narrative = ""
             try:
-                from data.cache import cache
                 cached = cache.get_raw(f"signal_{coin}")
             except Exception:
                 pass
-
-            narrative = ""
             if cached:
                 narrative = cached.get("narrative", "") or cached.get("explanation", {}).get("thesis", "")
 
@@ -1041,14 +1030,11 @@ Write a tweet about this setup. Rules:
 Output only the tweet text. Nothing else."""
 
         else:
-            from data.cache import cache
-            from config import cfg as _cfg
-
             market_context = []
-            for c in _cfg.COINS[:5]:
+            for c in cfg.COINS[:5]:
                 cached = cache.get_raw(f"signal_{c}")
                 if cached:
-                    price  = cached.get("market", {}).get("price", 0)
+                    price  = cached.get("market", {}).get("price",    0)
                     change = cached.get("market", {}).get("change24", 0)
                     state  = cached.get("state", "idle")
                     if price:
@@ -1080,13 +1066,40 @@ Output only the tweet text. Nothing else."""
             temperature = 0.8,
         )
 
-        text = response.choices[0].message.content.strip()
-        text = text.strip('"').strip("'")
-
+        text = response.choices[0].message.content.strip().strip('"').strip("'")
         return JSONResponse(content={"text": text, "coin": coin, "type": post_type})
 
     except HTTPException:
         raise
     except Exception as e:
         log.error("Content generate error: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.post("/chat")
+async def chat_endpoint(request: Request):
+    try:
+        from saas.middleware import get_current_user
+        from config import tier_meets_minimum, TIER_ELITE
+
+        user = get_current_user(request)
+        if not user:
+            raise HTTPException(401, "Authentication required")
+        if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
+            raise HTTPException(403, {"code": "upgrade_required"})
+
+        body    = await request.json()
+        message = body.get("message", "").strip()
+
+        if not message:
+            raise HTTPException(400, "Message required")
+
+        from chatbot import chat
+        reply = await chat(message)
+        return JSONResponse(content={"reply": reply})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("Chat endpoint error: %s", e)
         raise HTTPException(500, str(e))
