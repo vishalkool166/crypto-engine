@@ -252,9 +252,6 @@ async def lifespan(app: FastAPI):
     from trade.ws import start_ws, on_trade_event
     on_trade_event(_on_trade_event)
 
-    from alerts.scanner import register_kline_handler
-    register_kline_handler()
-
     from auth import setup_status
     status = setup_status()
     if not status["setup_complete"]:
@@ -275,10 +272,11 @@ async def lifespan(app: FastAPI):
     from alerts.telegram import register_commands
     await register_commands()
 
+    from alerts.scanner import register_kline_handler
+    register_kline_handler()
+
     await start_ws()
     log.info("Binance WebSocket streams started")
-
-    from trade.scalp_manager import run_cycle as scalp_run_cycle
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
@@ -297,6 +295,9 @@ async def lifespan(app: FastAPI):
     rs.mark_clean_shutdown()
 
     yield
+
+    # ── Shutdown message fires FIRST before anything closes ──
+    await send("🔴 *Signal Engine v5 Stopped*")
 
     rs.mark_crash()
 
@@ -330,8 +331,6 @@ async def lifespan(app: FastAPI):
     stop_monitor()
 
     stop_scheduler()
-
-    await send("🔴 *Signal Engine v5 Stopped*")
 
     rs.mark_clean_shutdown()
     log.info("Signal Engine stopped")
@@ -524,10 +523,7 @@ async def auth_session(request: Request):
         from saas.users import get_user_by_id
         user = get_current_user(request)
         if not user:
-            return JSONResponse(
-                status_code = 401,
-                content     = {"authenticated": False}
-            )
+            return JSONResponse(status_code=401, content={"authenticated": False})
         user_id = int(user.get("sub", 0))
         if user_id:
             fresh = get_user_by_id(user_id)
@@ -552,10 +548,7 @@ async def auth_session(request: Request):
         })
     except Exception as e:
         log.error(f"Session check error: {e}")
-        return JSONResponse(
-            status_code = 401,
-            content     = {"authenticated": False}
-        )
+        return JSONResponse(status_code=401, content={"authenticated": False})
 
 
 @app.get("/auth/logout")
@@ -733,10 +726,7 @@ async def create_api_key(request: Request):
 
         tier = user.get("tier", "free")
         if not tier_has_feature(tier, "api_key_access"):
-            raise HTTPException(
-                403,
-                {"code": "upgrade_required", "required_tier": "elite"}
-            )
+            raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
 
         body    = await request.json()
         name    = body.get("name", "Default")
@@ -786,10 +776,7 @@ async def auth_setup(request: Request):
     status = setup_status()
 
     if status["setup_complete"]:
-        raise HTTPException(
-            status_code = 403,
-            detail      = "Setup already complete."
-        )
+        raise HTTPException(status_code=403, detail="Setup already complete.")
 
     qr_svg           = ""
     qr_png_available = False
@@ -873,23 +860,14 @@ async def request_totp_via_telegram(request: Request):
         password = body.get("password", "")
 
         if not password:
-            return JSONResponse(
-                status_code = 400,
-                content     = {"success": False, "reason": "Password required"}
-            )
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Password required"})
 
         from auth import verify_password
         if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
-            return JSONResponse(
-                status_code = 401,
-                content     = {"success": False, "reason": "Invalid password"}
-            )
+            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
 
         if not cfg.TOTP_SECRET:
-            return JSONResponse(
-                status_code = 400,
-                content     = {"success": False, "reason": "TOTP not configured"}
-            )
+            return JSONResponse(status_code=400, content={"success": False, "reason": "TOTP not configured"})
 
         import pyotp
         code = pyotp.TOTP(cfg.TOTP_SECRET).now()
@@ -903,10 +881,7 @@ async def request_totp_via_telegram(request: Request):
         return JSONResponse(content={"success": True})
     except Exception as e:
         log.error(f"Request TOTP error: {e}")
-        return JSONResponse(
-            status_code = 500,
-            content     = {"success": False, "reason": "Failed to send"}
-        )
+        return JSONResponse(status_code=500, content={"success": False, "reason": "Failed to send"})
 
 
 @app.post("/auth/reset-password")
@@ -970,17 +945,11 @@ async def auth_regenerate_totp(request: Request):
         password = body.get("password", "")
 
         if not password:
-            return JSONResponse(
-                status_code = 400,
-                content     = {"success": False, "reason": "Current password required to regenerate TOTP"}
-            )
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Current password required to regenerate TOTP"})
 
         from auth import verify_password, regenerate_totp
         if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
-            return JSONResponse(
-                status_code = 401,
-                content     = {"success": False, "reason": "Invalid password"}
-            )
+            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
 
         new_secret = regenerate_totp()
         return JSONResponse(content={"success": True, "secret": new_secret})
@@ -996,10 +965,7 @@ async def auth_generate_recovery_codes(request: Request):
 
         from auth import verify_totp, generate_recovery_codes, store_recovery_codes
         if not verify_totp(totp_code):
-            return JSONResponse(
-                status_code = 401,
-                content     = {"success": False, "reason": "Invalid authenticator code"}
-            )
+            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid authenticator code"})
 
         codes = generate_recovery_codes(8)
         store_recovery_codes(codes)
@@ -1062,7 +1028,7 @@ async def telegram_webhook(request: Request):
 
 app.include_router(router,         prefix="/api")
 app.include_router(trading_router, prefix="/api")
-app.include_router(admin_router,   prefix="/api")
+app.include_router(admin_router, prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os

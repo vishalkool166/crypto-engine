@@ -18,9 +18,9 @@ def _get_recent_performance() -> dict:
         if not closed:
             return {"total": 0, "win_rate": None, "streak": 0, "streak_type": None}
 
-        wins     = sum(1 for t in closed if t.outcome == "win")
-        win_rate = wins / len(closed)
-        streak   = 0
+        wins        = sum(1 for t in closed if t.outcome == "win")
+        win_rate    = wins / len(closed)
+        streak      = 0
         streak_type = None
 
         for t in closed:
@@ -188,7 +188,6 @@ def calculate(
 
     risk_amt      = balance * risk_pct
     leverage      = _leverage_from_sl(sl_pct)
-    position_size = risk_amt / (sl_dist / (sl_pct / 100 * balance / risk_amt))
     position_size = risk_amt / (sl_pct / 100)
     stake         = position_size / leverage
     max_stake     = balance * 0.20
