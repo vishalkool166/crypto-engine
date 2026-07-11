@@ -15,7 +15,7 @@ from database import (
     get_db, Signal as SignalModel,
     BacktestResult, CoinConfig, SessionLocal
 )
-from alerts.scanner import analyze_coin, scan_all_coins, get_db_stats
+from alerts.scanner import scan_all_coins, get_db_stats
 from data.cache import cache
 from data.fetcher import get_fear_greed, get_news_filter
 from backtest.engine import run_backtest
@@ -230,12 +230,45 @@ async def analyze(request: Request, coin: str):
     if coin not in cfg.COINS:
         raise HTTPException(400, f"{coin} not supported")
     try:
-        result = await analyze_coin(coin)
-        if "error" in result:
-            raise HTTPException(500, result["error"])
-        return JSONResponse(content=make_serializable(result))
-    except HTTPException:
-        raise
+        from engines.coin_state import state_manager
+        from trade.ws import get_mark_price
+
+        machine   = state_manager.get(coin)
+        context   = machine.context
+        zone      = context.get("zone", {})
+        bias      = context.get("bias", {})
+        live      = get_mark_price(coin) or 0
+
+        return JSONResponse(content=make_serializable({
+            "coin":      coin,
+            "state":     machine.state,
+            "direction": context.get("direction", "--"),
+            "grade":     context.get("grade",     "--"),
+            "score":     context.get("score",     0),
+            "price":     live,
+            "bias": {
+                "valid":           bias.get("valid",           False),
+                "strength":        bias.get("strength",        "none"),
+                "sweep_label":     bias.get("sweep_label",     "--"),
+                "sweep_age_hours": bias.get("sweep_age_hours", 0),
+                "displacement":    bias.get("displacement",    False),
+            },
+            "zone": {
+                "type":         zone.get("type",         "--"),
+                "top":          zone.get("top",          0),
+                "bottom":       zone.get("bottom",       0),
+                "distance_pct": zone.get("distance_pct", 0),
+                "touch_count":  zone.get("touch_count",  0),
+            } if zone else None,
+            "trigger": {
+                "pattern":     context.get("trigger_pattern"),
+                "entry_price": context.get("entry_price"),
+                "sl":          context.get("sl"),
+                "tp1":         context.get("tp1"),
+                "rr":          context.get("rr"),
+            } if machine.state == "signal_ready" else None,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -398,7 +431,7 @@ async def market(request: Request, coin: str):
     _auth(request)
     cached = cache.get_raw(f"signal_{coin.upper()}")
     if cached:
-        return JSONResponse(content=make_serializable(cached["market"]))
+        return JSONResponse(content=make_serializable(cached.get("market", {})))
     raise HTTPException(404, "Run scan first")
 
 
@@ -711,7 +744,7 @@ async def get_candles(request: Request, coin: str, tf: str):
     _auth(request)
     coin = coin.upper()
     if tf not in ["15m", "1h", "4h", "1d"]:
-        raise HTTPException(400, f"Invalid timeframe. Use: 15m, 1h, 4h, 1d")
+        raise HTTPException(400, "Invalid timeframe. Use: 15m, 1h, 4h, 1d")
     try:
         from database import Candle
         limit = {"15m": 200, "1h": 300, "4h": 500, "1d": 365}.get(tf, 300)
@@ -813,12 +846,9 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
     try:
         from data.store import load_candles
         from engines.indicators import calculate_all
-        from engines.regime import detect_regime, assess_btc_stability
-        from engines.sweep import detect_sweep
-        from engines.displacement import detect_displacement
-        from engines.retest import detect_retest
-        from engines.confluence import score_confluence
-        from engines.signal import run_no_trade_engine, generate_signal
+        from engines.bias import get_htf_bias
+        from engines.zone_finder import get_active_zone
+        from engines.signal_core import build_signal, validate_risk
         import pandas as pd
         import json
 
@@ -850,50 +880,112 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         if any(len(df) < 50 for df in [d1d_w, d4h_w, d1h_w]) or len(d1w_w) < 10:
             raise HTTPException(404, f"Not enough historical data for {coin} at {date}")
 
-        is_btc = coin == "BTC"
-        if is_btc:
-            btc_data    = calculate_all(d1d_w)
-            btc_4h_data = calculate_all(d4h_w)
-        else:
-            df_btc_1d   = load_candles("BTC", "1d", limit=1000)
-            df_btc_4h   = load_candles("BTC", "4h", limit=2000)
-            btc_1d_w    = df_btc_1d[df_btc_1d.index < target_ts].iloc[-window:] if df_btc_1d is not None else None
-            btc_4h_w    = df_btc_4h[df_btc_4h.index < target_ts].iloc[-window:] if df_btc_4h is not None else None
-            btc_data    = calculate_all(btc_1d_w) if btc_1d_w is not None and len(btc_1d_w) >= 50 else None
-            btc_4h_data = calculate_all(btc_4h_w) if btc_4h_w is not None and len(btc_4h_w) >= 50 else None
+        d1d = calculate_all(d1d_w, timeframe="1d")
+        d4h = calculate_all(d4h_w, timeframe="4h")
+        d1h = calculate_all(d1h_w, timeframe="1h")
+        d1w = calculate_all(d1w_w, timeframe="1w")
 
-        d1d      = calculate_all(d1d_w)
-        d4h      = calculate_all(d4h_w)
-        d1h      = calculate_all(d1h_w)
-        d1w      = calculate_all(d1w_w)
-        btc_inst = assess_btc_stability(btc_data) if btc_data else assess_btc_stability(d1d)
-
-        price      = d1d["price"]
-        prev_close = float(d1d_w.iloc[-2]["close"]) if len(d1d_w) >= 2 else price
-
-        market = {
-            "price": price, "change24": (price - prev_close) / prev_close * 100 if prev_close > 0 else 0,
-            "funding": 0.0, "oi": 0.0, "oi_change": 0.0, "long_ratio": 50.0, "short_ratio": 50.0,
-            "fear_greed": {"value": 50, "label": "Neutral"},
-        }
-        oi_matrix   = {"primary_score": 5, "primary_label": "Neutral", "funding_score": 6, "funding_warning": "", "crowding_warning": ""}
-        news_filter = {"clear": True, "blocked": False, "warning": False, "alerts": []}
-        key_levels  = {
+        key_levels = {
             "pdh": float(d1d_w.iloc[-2]["high"])  if len(d1d_w) >= 2 else 0,
             "pdl": float(d1d_w.iloc[-2]["low"])   if len(d1d_w) >= 2 else 0,
             "pdc": float(d1d_w.iloc[-2]["close"]) if len(d1d_w) >= 2 else 0,
             "pwh": float(d1w_w.iloc[-2]["high"])  if len(d1w_w) >= 2 else 0,
             "pwl": float(d1w_w.iloc[-2]["low"])   if len(d1w_w) >= 2 else 0,
         }
-        session = {"name": "London/NY Overlap", "quality": "BEST", "score": 9, "tradeable": True, "desc": "Backtest neutral"}
-        regime  = detect_regime(d1d, d4h)
-        sweep   = detect_sweep(d1d_w, key_levels, d1d.get("atr", 0), d1d["swings"])
-        disp    = detect_displacement(d4h_w, d4h.get("atr", 0))
-        retest  = detect_retest(d4h_w, d4h, sweep, disp, d1h=d1h, d1d=d1d)
 
-        wconf    = score_confluence(d1w, d1d, d4h, d1h, market, key_levels, session, btc_data, btc_inst, regime, sweep, disp, retest, oi_matrix, coin, btc_4h=btc_4h_data)
-        no_trade = run_no_trade_engine(regime, d1d, d4h, market, session, sweep, disp, retest, btc_data, btc_inst, oi_matrix, news_filter, wconf["norm_score"], coin=coin, d1w=d1w, wconf=wconf)
-        signal   = generate_signal(d1d, d4h, wconf, no_trade, market, key_levels, d1w=d1w, d1h=d1h)
+        bias = get_htf_bias(d1w, d1d, d1d_w, key_levels)
+
+        if not bias["valid"]:
+            result = {
+                "coin":      coin,
+                "date":      date,
+                "grade":     "F",
+                "direction": "NO BIAS",
+                "score":     0,
+                "entry":     None,
+                "sl":        None,
+                "stoploss":  None,
+                "tp1":       None,
+                "signal_id": f"{coin}_{date}",
+                "reason":    bias.get("no_bias_reason", "no_bias"),
+            }
+            return JSONResponse(content=make_serializable(result))
+
+        zone = get_active_zone(d4h, bias["direction"])
+
+        if not zone:
+            result = {
+                "coin":      coin,
+                "date":      date,
+                "grade":     "F",
+                "direction": bias["direction"],
+                "score":     0,
+                "entry":     None,
+                "sl":        None,
+                "stoploss":  None,
+                "tp1":       None,
+                "signal_id": f"{coin}_{date}",
+                "reason":    "no_zone",
+            }
+            return JSONResponse(content=make_serializable(result))
+
+        price = d1d["price"]
+
+        risk = validate_risk(
+            entry     = price,
+            zone      = zone,
+            direction = bias["direction"],
+            d4h       = d4h,
+            d1h       = d1h,
+        )
+
+        if not risk["valid"]:
+            result = {
+                "coin":      coin,
+                "date":      date,
+                "grade":     "F",
+                "direction": bias["direction"],
+                "score":     0,
+                "entry":     None,
+                "sl":        None,
+                "stoploss":  None,
+                "tp1":       None,
+                "signal_id": f"{coin}_{date}",
+                "reason":    risk["reason"],
+            }
+            return JSONResponse(content=make_serializable(result))
+
+        context = {
+            "direction":       bias["direction"],
+            "bias":            bias,
+            "zone":            zone,
+            "trigger_pattern": "backtest_bar",
+            "entry_price":     price,
+            "candle_low":      float(d1d_w.iloc[-1]["low"]),
+            "candle_high":     float(d1d_w.iloc[-1]["high"]),
+            "sl":              risk["sl"],
+            "tp1":             risk["tp1"],
+            "rr":              risk["rr"],
+            "rr_valid":        True,
+        }
+
+        signal = build_signal(coin, context, d1h, d4h)
+
+        if not signal:
+            result = {
+                "coin":      coin,
+                "date":      date,
+                "grade":     "F",
+                "direction": bias["direction"],
+                "score":     0,
+                "entry":     None,
+                "sl":        None,
+                "stoploss":  None,
+                "tp1":       None,
+                "signal_id": f"{coin}_{date}",
+                "reason":    "signal_build_failed",
+            }
+            return JSONResponse(content=make_serializable(result))
 
         result = {
             "coin":      coin,
@@ -906,6 +998,7 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             "stoploss":  signal.get("sl"),
             "tp1":       signal.get("tp1"),
             "signal_id": f"{coin}_{date}",
+            "narrative": signal.get("narrative", ""),
         }
 
         if r:
@@ -915,6 +1008,39 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
 
     except HTTPException:
         raise
+    except Exception as e:
+        log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.get("/coins/states")
+async def coins_states(request: Request):
+    _auth(request)
+    try:
+        from engines.coin_state import state_manager
+        result = []
+        for coin in cfg.COINS:
+            machine = state_manager.get(coin)
+            context = machine.context
+            zone    = context.get("zone", {})
+            bias    = context.get("bias", {})
+            result.append({
+                "coin":          coin,
+                "state":         machine.state,
+                "direction":     context.get("direction", "--"),
+                "strength":      bias.get("strength", "--") if bias else "--",
+                "sweep_age_h":   bias.get("sweep_age_hours") if bias else None,
+                "zone_type":     zone.get("type") if zone else None,
+                "zone_dist_pct": zone.get("distance_pct") if zone else None,
+                "rr":            context.get("rr"),
+            })
+        result.sort(key=lambda x: (
+            ["signal_ready", "zone_active", "bias_defined", "cooldown", "trade_active", "no_bias"]
+            .index(x["state"]) if x["state"] in
+            ["signal_ready", "zone_active", "bias_defined", "cooldown", "trade_active", "no_bias"]
+            else 99
+        ))
+        return JSONResponse(content=make_serializable(result))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))

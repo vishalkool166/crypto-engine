@@ -2,102 +2,37 @@ import asyncio
 import logging
 import time
 import json
-from datetime import datetime, timezone
 from config import cfg
 from data.cache import cache
+from data.store import load_candles
+from data.fetcher import get_15m_data
 from engines.validator import validate_all_timeframes
-from database import get_session, Signal as SignalModel
 from engines.indicators import calculate_all
-from engines.regime import detect_regime, assess_btc_stability
 from engines.sweep import detect_sweep
 from engines.displacement import detect_displacement
-from engines.retest import detect_retest
-from engines.confluence import score_confluence
-from engines.signal import get_session as get_trading_session, run_no_trade_engine, generate_signal
-from engines.capital import compute_allocation
+from engines.bias import get_htf_bias
+from engines.zone_finder import get_active_zone
+from engines.trigger import check_15m_trigger
+from engines.signal_core import build_signal, validate_risk
+from engines.coin_state import state_manager
+from engines.session import get_session
+from database import get_session as get_db_session, Signal as SignalModel
 from alerts.telegram import send_signal, send_scan_summary
-from alerts.utils import categorize_results
-from content.pipeline import run_content_pipeline, run_commentary_pipeline
 
 log = logging.getLogger(__name__)
 
-_scan_running   = False
-_scan_semaphore = asyncio.Semaphore(3)
 
-
-def _seconds_to_next_scan() -> int:
-    now     = datetime.now(timezone.utc)
-    minute  = now.minute
-    second  = now.second
-    buckets = [0, 15, 30, 45]
-    for b in buckets:
-        if minute < b:
-            return (b - minute) * 60 - second
-    return (60 - minute) * 60 - second
-
-
-def _interpret_oi(market: dict) -> dict:
-    fund = market["funding"] * 100
-    pu   = market["change24"] > 0
-    oiu  = market["oi_change"] > 1
-    flat = abs(market.get("oi_change", 0)) <= 1
-
-    if pu and oiu:
-        score, label = 7, "OI bullish confirm"
-    elif not pu and oiu:
-        score, label = 7, "OI bearish confirm"
-    elif flat:
-        score, label = 5, "OI neutral"
-    else:
-        score, label = 3, "OI exhaustion"
-
-    funding_score = 0 if abs(fund) > 0.08 else 3 if abs(fund) > 0.05 else 6
-
-    lr = market["long_ratio"]
-    sr = market["short_ratio"]
-    crowding = (
-        f"🚨 {lr:.1f}% longs — dangerous" if lr > 68 else
-        f"⚠️ {lr:.1f}% longs — elevated"  if lr > 62 else
-        f"🚨 {sr:.1f}% shorts — dangerous" if sr > 68 else
-        f"⚠️ {sr:.1f}% shorts — elevated"  if sr > 62 else ""
-    )
-
+def _extract_key_levels(df_1d, df_1w) -> dict:
     return {
-        "primary_score":    score,
-        "primary_label":    label,
-        "funding_score":    funding_score,
-        "funding_warning":  (
-            f"🚨 Extreme funding {fund:.4f}%" if abs(fund) > 0.08 else
-            f"⚠️ Elevated funding {fund:.4f}%" if abs(fund) > 0.05 else ""
-        ),
-        "crowding_warning": crowding,
+        "pdh": float(df_1d.iloc[-2]["high"])  if len(df_1d) >= 2 else 0,
+        "pdl": float(df_1d.iloc[-2]["low"])   if len(df_1d) >= 2 else 0,
+        "pdc": float(df_1d.iloc[-2]["close"]) if len(df_1d) >= 2 else 0,
+        "pwh": float(df_1w.iloc[-2]["high"])  if len(df_1w) >= 2 else 0,
+        "pwl": float(df_1w.iloc[-2]["low"])   if len(df_1w) >= 2 else 0,
     }
 
 
-def _extract_key_levels(d1d_df, d1w_df) -> dict:
-    return {
-        "pdh": float(d1d_df.iloc[-2]["high"])  if len(d1d_df) >= 2 else 0,
-        "pdl": float(d1d_df.iloc[-2]["low"])   if len(d1d_df) >= 2 else 0,
-        "pdc": float(d1d_df.iloc[-2]["close"]) if len(d1d_df) >= 2 else 0,
-        "pwh": float(d1w_df.iloc[-2]["high"])  if len(d1w_df) >= 2 else 0,
-        "pwl": float(d1w_df.iloc[-2]["low"])   if len(d1w_df) >= 2 else 0,
-    }
-
-
-def _check_ml_gate(signal: dict, wconf: dict) -> tuple[bool, float]:
-    if not cfg.ML_ENABLED:
-        return True, 1.0
-    try:
-        from ml.predictor import is_ml_approved
-        approved, prob = is_ml_approved(signal, wconf)
-        signal["ml_probability"] = prob
-        return approved, prob
-    except Exception as e:
-        log.error("ML gate error: %s", e)
-        return True, 1.0
-
-
-def _write_signal_to_redis(coin: str, signal: dict, db_id: int) -> None:
+def _write_signal_to_redis(coin: str, signal: dict, db_id: int):
     try:
         from redis_client import get_redis
         r = get_redis()
@@ -121,7 +56,70 @@ def _write_signal_to_redis(coin: str, signal: dict, db_id: int) -> None:
         log.error("Redis signal write error %s: %s", coin, e)
 
 
-def _write_active_pairs_to_redis() -> None:
+def _write_coin_cache(
+    coin:      str,
+    machine_state: str,
+    context:   dict,
+    signal:    dict | None = None,
+    price:     float       = 0,
+    ttl:       int         = 900,
+):
+    try:
+        zone      = context.get("zone", {})
+        bias      = context.get("bias", {})
+        direction = context.get("direction", "--")
+
+        entry = {
+            "coin":      coin,
+            "grade":     signal.get("grade",     "--") if signal else "--",
+            "direction": signal.get("direction", direction) if signal else direction,
+            "score":     signal.get("score",     0)   if signal else 0,
+            "state":     machine_state,
+            "signal":    signal or {},
+            "market": {
+                "price":    price,
+                "change24": 0,
+                "funding":  0,
+            },
+            "regime":    bias.get("strength", "--") if bias else "--",
+            "session":   get_session().get("name", "--"),
+            "sweep": {
+                "detected":   bias.get("sweep_detected", False) if bias else False,
+                "confirmed":  bias.get("sweep_detected", False) if bias else False,
+                "score":      bias.get("sweep_score",    0)     if bias else 0,
+                "label":      bias.get("sweep_label",    "")    if bias else "",
+                "age_hours":  bias.get("sweep_age_hours", 0)    if bias else 0,
+            },
+            "displacement": {
+                "confirmed": bias.get("displacement",        False) if bias else False,
+                "strong":    bias.get("displacement_strong", False) if bias else False,
+                "range_mult":bias.get("displacement_atr",    0)     if bias else 0,
+            },
+            "retest": {
+                "confirmed": machine_state == "signal_ready",
+                "zone_type": zone.get("type", "") if zone else "",
+                "score":     0,
+            },
+            "zone":      zone or {},
+            "bias":      bias or {},
+            "d1d":       context.get("d1d", {}),
+            "d4h":       context.get("d4h", {}),
+            "oi_matrix": {},
+            "explanation": {
+                "thesis":           signal.get("narrative", "") if signal else "",
+                "confidence_label": signal.get("grade",     "") if signal else "",
+            },
+            "actual_rr":      signal.get("actual_rr", 0) if signal else 0,
+            "ml_probability": None,
+            "cached_at":      time.time(),
+        }
+
+        cache.set(f"signal_{coin}", entry, ttl=ttl)
+    except Exception as e:
+        log.error("_write_coin_cache error %s: %s", coin, e)
+
+
+def _write_active_pairs_to_redis():
     try:
         from redis_client import get_redis
         r = get_redis()
@@ -129,33 +127,20 @@ def _write_active_pairs_to_redis() -> None:
             return
         pairs = [f"{coin}/USDT:USDT" for coin in cfg.COINS]
         r.setex("pairs:active", 1800, json.dumps({"pairs": pairs, "refresh_period": 1800}))
-        log.info("Active pairs written to Redis: %s pairs", len(pairs))
     except Exception as e:
         log.error("Redis active pairs write failed: %s", e)
 
 
-def save_signal_to_db(
-    signal: dict,
-    coin:   str,
-    regime: str,
-    session:str,
-    sweep:  dict,
-    retest: dict,
-    disp:   dict,
-    market: dict,
-    wconf:  dict | None = None,
-) -> int | None:
+def save_signal_to_db(signal: dict, coin: str, session: dict) -> int | None:
     if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
         return None
-    if signal.get("direction") in ["NO TRADE", "WATCH", "SKIP"]:
-        return None
-    if signal.get("signal_type") in ["SKIP", "WATCH", "HARD_BLOCK"]:
+    if signal.get("direction") not in ("LONG", "SHORT"):
         return None
     if not signal.get("entry"):
         return None
 
     try:
-        with get_session() as db:
+        with get_db_session() as db:
             existing = db.query(SignalModel).filter(
                 SignalModel.coin      == coin,
                 SignalModel.direction == signal["direction"],
@@ -165,434 +150,442 @@ def save_signal_to_db(
             if existing:
                 from trade.executor import has_open_trade
                 if has_open_trade(coin):
-                    log.debug("Trade open for %s — keeping signal ID:%s", coin, existing.id)
                     return None
                 existing.outcome = "expired"
-                log.info("Expired stale signal ID:%s %s — saving fresh", existing.id, coin)
-
-            factor_scores_json = None
-            if wconf and wconf.get("factors"):
-                factor_scores_json = json.dumps({f["key"]: f["earned"] for f in wconf["factors"]})
 
             row = SignalModel(
-                coin          = coin,
-                direction     = signal["direction"],
-                grade         = signal["grade"],
-                score         = signal["score"],
-                signal_type   = signal["signal_type"],
-                entry         = signal.get("entry", 0),
-                sl            = signal.get("sl", 0),
-                tp1           = signal.get("tp1", 0),
-                tp2           = None,
-                sl_pct        = signal.get("sl_pct", 0),
-                risk_amt      = signal.get("risk_amt", 0),
-                risk_pct      = signal.get("risk_pct", 0),
-                position      = signal.get("pos_size", 0),
-                leverage      = str(signal.get("leverage", 10)) + "x",
-                regime        = regime,
-                session       = session,
-                sweep_score   = sweep.get("score", 0),
-                retest_score  = retest.get("score", 0),
-                disp_score    = disp.get("score", 0),
-                funding       = market.get("funding", 0),
-                oi_signal     = _interpret_oi(market).get("primary_label", ""),
-                outcome       = "pending",
-                factor_scores = factor_scores_json,
-                market_score  = wconf.get("market_score") if wconf else None,
-                entry_score   = wconf.get("entry_score")  if wconf else None,
-                atr_at_entry  = signal.get("atr_used"),
-                btc_score     = wconf.get("btc_score")    if wconf else None,
+                coin         = coin,
+                direction    = signal["direction"],
+                grade        = signal["grade"],
+                score        = signal["score"],
+                signal_type  = signal["signal_type"],
+                entry        = signal.get("entry", 0),
+                sl           = signal.get("sl", 0),
+                tp1          = signal.get("tp1", 0),
+                tp2          = signal.get("tp2"),
+                sl_pct       = signal.get("sl_pct", 0),
+                risk_amt     = signal.get("risk_amt", 0),
+                risk_pct     = signal.get("risk_pct", 0),
+                position     = signal.get("pos_size", 0),
+                leverage     = str(signal.get("leverage", 10)) + "x",
+                regime       = signal.get("bias_strength", ""),
+                session      = session.get("name", ""),
+                sweep_score  = signal.get("sweep_score", 0),
+                retest_score = 0,
+                disp_score   = signal.get("displacement_atr", 0),
+                funding      = 0,
+                oi_signal    = "",
+                outcome      = "pending",
+                atr_at_entry = signal.get("atr_4h"),
             )
             db.add(row)
             db.flush()
             db.refresh(row)
-            log.info("Signal saved — ID:%s %s Grade:%s TP:%s", row.id, coin, signal["grade"], signal.get("tp1"))
+            log.info("Signal saved ID:%s %s %s", row.id, coin, signal["grade"])
             return row.id
-
     except Exception as e:
         log.error("DB save error: %s", e)
         return None
 
 
-async def _do_open_trade(item: dict) -> bool:
-    from trade.executor import open_position, has_open_trade_or_position
+async def _open_trade(coin: str, signal: dict, db_id: int):
+    try:
+        from trade.executor import has_open_trade_or_position, open_position
+        from engines.capital import compute_allocation
 
-    coin       = item["coin"]
-    signal     = item["signal"]
-    db_id      = item["db_id"]
-    allocation = item.get("allocation", {})
+        if await has_open_trade_or_position(coin):
+            log.info("%s already has open position — skipping", coin)
+            return
 
-    if not signal.get("entry") or not signal.get("sl") or not signal.get("tp1"):
-        log.error("Invalid signal levels for %s", coin)
-        return False
+        allocation = await compute_allocation(
+            signal      = signal,
+            wconf       = {},
+            regime      = {"type": signal.get("bias_strength", "moderate")},
+            vol_profile = {
+                "volatility_class": "normal",
+                "atr_pct":          signal.get("atr_4h", 0) / signal.get("entry", 1) * 100,
+                "adx":              20,
+            },
+            direction = signal.get("direction"),
+        )
 
-    if float(allocation.get("stake", 0)) <= 0:
-        log.error("Invalid stake for %s", coin)
-        return False
+        if allocation.get("skip"):
+            log.info("%s allocation skipped: %s", coin, allocation.get("reason"))
+            return
 
-    if await has_open_trade_or_position(coin):
-        log.info("Skipping %s — already has open trade or position on exchange", coin)
-        return False
+        signal.update({
+            "risk_amt": allocation["risk_amt"],
+            "pos_size": allocation["pos_size"],
+            "leverage": allocation["leverage"],
+            "stake":    allocation["stake"],
+        })
 
-    result = await open_position(
-        coin      = coin,
-        direction = signal.get("direction", ""),
-        entry     = float(signal.get("entry", 0)),
-        sl        = float(signal.get("sl", 0)),
-        tp        = float(signal.get("tp1", 0)),
-        stake     = float(allocation.get("stake", 0)),
-        leverage  = int(allocation.get("leverage", 10)),
-        signal_id = db_id,
-        grade     = signal.get("grade", ""),
-        regime    = item.get("regime", ""),
-        session   = item.get("session", ""),
-        score     = float(item.get("score", 0)),
-    )
+        result = await open_position(
+            coin      = coin,
+            direction = signal["direction"],
+            entry     = float(signal["entry"]),
+            sl        = float(signal["sl"]),
+            tp        = float(signal["tp1"]),
+            stake     = float(allocation["stake"]),
+            leverage  = int(allocation["leverage"]),
+            signal_id = db_id,
+            grade     = signal["grade"],
+            regime    = signal.get("bias_strength", ""),
+            session   = signal.get("session_name", ""),
+            score     = float(signal.get("score", 0)),
+        )
 
-    if result.get("success"):
-        log.info("Trade opened: %s %s Grade:%s stake:%.2f lev:%dx trade_id:%s",
-                 coin, signal.get("direction"), signal.get("grade"),
-                 allocation.get("stake", 0), allocation.get("leverage", 10),
-                 result.get("trade_id"))
-        return True
+        if result.get("success"):
+            machine = state_manager.get(coin)
+            machine.trade_opened()
+            state_manager._persist(coin)
+            log.info("Trade opened %s %s grade:%s", coin, signal["direction"], signal["grade"])
+        else:
+            log.error("Trade open failed %s: %s", coin, result.get("error"))
 
-    if result.get("deviation_rejected"):
-        log.info("Trade skipped — entry deviation: %s — %s", coin, result.get("error"))
-    else:
-        log.error("Trade open failed: %s — %s", coin, result.get("error"))
-    return False
+    except Exception as e:
+        log.error("_open_trade error %s: %s", coin, e)
 
 
-async def _execute_priority_entries(pending: list) -> None:
-    if not pending:
+async def run_daily_bias_update():
+    log.info("Daily bias update — %s coins", len(cfg.COINS))
+
+    for coin in cfg.COINS:
+        try:
+            machine = state_manager.get(coin)
+
+            if machine.state in ("trade_active", "cooldown"):
+                continue
+
+            df_1d = load_candles(coin, "1d", limit=500)
+            df_1w = load_candles(coin, "1w", limit=200)
+            df_4h = load_candles(coin, "4h", limit=500)
+
+            if df_1d is None or df_1w is None or df_4h is None:
+                log.warning("%s missing candle data — skipping", coin)
+                continue
+
+            validation = validate_all_timeframes(
+                {"1d": df_1d, "1w": df_1w, "4h": df_4h}, coin
+            )
+            if not validation["valid"]:
+                log.warning("%s data validation failed — skipping", coin)
+                continue
+
+            klines = validation["klines"]
+            d1d    = calculate_all(klines["1d"], timeframe="1d")
+            d1w    = calculate_all(klines["1w"], timeframe="1w")
+            d4h    = calculate_all(klines["4h"], timeframe="4h")
+
+            key_levels = _extract_key_levels(klines["1d"], klines["1w"])
+
+            bias = get_htf_bias(d1w, d1d, klines["1d"], key_levels)
+
+            price = d1d.get("price", 0)
+
+            if not bias["valid"]:
+                if machine.state != "no_bias":
+                    machine.bias_lost()
+                    state_manager._persist(coin)
+                _write_coin_cache(
+                    coin          = coin,
+                    machine_state = "no_bias",
+                    context       = {},
+                    price         = price,
+                    ttl           = 900,
+                )
+                log.debug("%s no bias: %s", coin, bias["no_bias_reason"])
+                continue
+
+            context_update = {
+                "direction":           bias["direction"],
+                "slope_defined":       bias["slope_defined"],
+                "sweep_detected":      bias["sweep_detected"],
+                "sweep_age_hours":     bias["sweep_age_hours"],
+                "sweep_label":         bias["sweep_label"],
+                "sweep_level":         bias["sweep_level"],
+                "sweep_score":         bias["sweep_score"],
+                "sweep_low":           bias["sweep_low"],
+                "sweep_high":          bias["sweep_high"],
+                "displacement":        bias["displacement"],
+                "displacement_strong": bias["displacement_strong"],
+                "displacement_atr":    bias["displacement_atr"],
+                "strength":            bias["strength"],
+                "atr":                 bias["atr"],
+                "bias":                bias,
+                "d1d":                 d1d,
+                "d4h":                 d4h,
+                "bias_updated_at":     time.time(),
+            }
+
+            state_manager.update_context(coin, context_update)
+
+            if machine.state == "no_bias":
+                machine.bias_detected()
+                state_manager._persist(coin)
+
+            _write_coin_cache(
+                coin          = coin,
+                machine_state = machine.state,
+                context       = machine.context,
+                price         = price,
+                ttl           = 900,
+            )
+
+        except Exception as e:
+            log.error("Daily bias update failed %s: %s", coin, e)
+
+    log.info("Daily bias update complete")
+
+
+async def run_zone_update():
+    log.info("Zone update started")
+
+    for coin in cfg.COINS:
+        try:
+            machine = state_manager.get(coin)
+
+            if machine.state not in ("bias_defined", "zone_active"):
+                continue
+
+            df_4h = load_candles(coin, "4h", limit=500)
+            df_1h = load_candles(coin, "1h", limit=300)
+
+            if df_4h is None:
+                continue
+
+            validation = validate_all_timeframes({"4h": df_4h}, coin)
+            if not validation["valid"]:
+                continue
+
+            d4h       = calculate_all(validation["klines"]["4h"], timeframe="4h")
+            direction = machine.context.get("direction")
+            price     = d4h.get("price", 0)
+
+            if not direction:
+                machine.bias_lost()
+                state_manager._persist(coin)
+                continue
+
+            zone = get_active_zone(d4h, direction)
+
+            if machine.state == "zone_active" and not zone:
+                machine.zone_invalidated()
+                state_manager._persist(coin)
+                log.info("%s zone no longer valid — back to bias_defined", coin)
+                _write_coin_cache(
+                    coin          = coin,
+                    machine_state = machine.state,
+                    context       = machine.context,
+                    price         = price,
+                    ttl           = 300,
+                )
+                continue
+
+            if not zone:
+                log.debug("%s no active zone found", coin)
+                _write_coin_cache(
+                    coin          = coin,
+                    machine_state = machine.state,
+                    context       = machine.context,
+                    price         = price,
+                    ttl           = 300,
+                )
+                continue
+
+            d1h = calculate_all(
+                load_candles(coin, "1h", limit=300), timeframe="1h"
+            ) if df_1h is not None else {}
+
+            state_manager.update_context(coin, {
+                "zone":            zone,
+                "d4h":             d4h,
+                "d4h_price":       price,
+                "atr_4h":          d4h.get("atr"),
+                "d1h":             d1h,
+                "zone_updated_at": time.time(),
+            })
+
+            if machine.state == "bias_defined":
+                machine.zone_found()
+                state_manager._persist(coin)
+
+            _write_coin_cache(
+                coin          = coin,
+                machine_state = machine.state,
+                context       = machine.context,
+                price         = price,
+                ttl           = 300,
+            )
+
+        except Exception as e:
+            log.error("Zone update failed %s: %s", coin, e)
+
+    log.info("Zone update complete")
+
+
+async def run_trigger_check():
+    active_coins = [
+        coin for coin in cfg.COINS
+        if state_manager.get_state(coin) == "zone_active"
+    ]
+
+    if not active_coins:
         return
 
-    from trade.executor import has_open_trade, get_open_trade_count
+    log.info("Trigger check — %s active coins", len(active_coins))
 
-    log.info("_execute_priority_entries — pending: %s", len(pending))
+    for coin in active_coins:
+        try:
+            machine   = state_manager.get(coin)
+            context   = machine.context
+            zone      = context.get("zone")
+            direction = context.get("direction")
+            atr_4h    = context.get("atr_4h") or 0
 
-    grade_order    = {"A+": 0, "A": 1, "B": 2}
-    sorted_signals = sorted(pending, key=lambda x: (grade_order.get(x["grade"], 99), -x["score"]))
-    open_count     = get_open_trade_count()
-    entered_coins: set = set()
+            if not zone or not direction or not atr_4h:
+                machine.zone_invalidated()
+                state_manager._persist(coin)
+                continue
 
-    for item in sorted_signals:
-        allocation = item.get("allocation", {})
-        if allocation.get("skip"):
-            log.info("Skipping %s — allocation: %s", item["coin"], allocation.get("reason"))
-            continue
-        if open_count >= allocation.get("max_trades_allowed", 3):
-            log.info("Max trades reached — stopping")
-            break
-        coin = item["coin"]
-        if coin in entered_coins:
-            continue
-        if await _do_open_trade(item):
-            open_count   += 1
-            entered_coins.add(coin)
+            df_15m = await get_15m_data(coin)
+            if df_15m is None or len(df_15m) < 10:
+                continue
 
-    log.info("Priority entries complete — %s trades opened", len(entered_coins))
+            current_price = float(df_15m["close"].iloc[-1])
+            distance_pct  = abs(current_price - zone["mid"]) / current_price * 100
+            max_distance  = zone.get("max_distance", 3.0)
+
+            if distance_pct > max_distance * 1.5:
+                machine.zone_invalidated()
+                state_manager._persist(coin)
+                log.info("%s price moved away from zone — invalidated", coin)
+                continue
+
+            trigger = check_15m_trigger(
+                df_15m    = df_15m,
+                zone      = zone,
+                direction = direction,
+                atr_4h    = atr_4h,
+            )
+
+            if not trigger["confirmed"]:
+                continue
+
+            df_4h = load_candles(coin, "4h", limit=500)
+            if df_4h is None:
+                continue
+
+            d4h = calculate_all(df_4h, timeframe="4h")
+            d1h = context.get("d1h") or {}
+
+            risk = validate_risk(
+                entry     = trigger["entry_price"],
+                zone      = zone,
+                direction = direction,
+                d4h       = d4h,
+                d1h       = d1h,
+            )
+
+            if not risk["valid"]:
+                log.info("%s trigger confirmed but risk invalid: %s", coin, risk["reason"])
+                continue
+
+            state_manager.update_context(coin, {
+                "trigger_pattern": trigger["pattern"],
+                "entry_price":     trigger["entry_price"],
+                "candle_low":      trigger.get("candle_low"),
+                "candle_high":     trigger.get("candle_high"),
+                "sl":              risk["sl"],
+                "tp1":             risk["tp1"],
+                "tp2":             risk.get("tp2"),
+                "rr":              risk["rr"],
+                "rr_valid":        risk["rr"] >= cfg.SIGNAL_ENGINE["min_rr"],
+                "triggered_at":    time.time(),
+            })
+
+            machine.trigger_confirmed()
+            state_manager._persist(coin)
+
+            signal = build_signal(coin, machine.context, d1h, d4h)
+            if not signal:
+                machine.zone_invalidated()
+                state_manager._persist(coin)
+                continue
+
+            session = get_session()
+            signal["session_name"] = session["name"]
+
+            _write_coin_cache(
+                coin          = coin,
+                machine_state = machine.state,
+                context       = machine.context,
+                signal        = signal,
+                price         = current_price,
+                ttl           = 1800,
+            )
+
+            db_id = save_signal_to_db(signal, coin, session)
+
+            if db_id:
+                signal["db_id"] = db_id
+                _write_signal_to_redis(coin, signal, db_id)
+
+                if cfg.CONTENT_ENABLED and signal.get("grade") in ("A+", "A"):
+                    asyncio.create_task(_run_content(db_id))
+
+                await send_signal(signal, coin, signal.get("bias_strength", ""), session["name"])
+                await _open_trade(coin, signal, db_id)
+
+        except Exception as e:
+            log.error("Trigger check failed %s: %s", coin, e)
+
+    _write_active_pairs_to_redis()
 
 
-async def analyze_coin(coin: str, capital: float = None, leverage: int = None) -> dict:
-    async with _scan_semaphore:
-        return await _analyze_coin_inner(coin)
-
-
-async def _analyze_coin_inner(coin: str) -> dict:
-    cached = cache.get_raw(f"signal_{coin}")
-    if cached:
-        return cached
-
+async def _run_content(db_id: int):
     try:
-        from data.fetcher import get_all_data
-        raw = await get_all_data(coin)
+        from content.pipeline import run_content_pipeline
+        await run_content_pipeline(db_id)
     except Exception as e:
-        log.error("Data fetch failed %s: %s", coin, e)
-        return {"coin": coin, "error": str(e)}
-
-    klines      = raw["klines"]
-    news_filter = raw["news_filter"]
-    df_15m      = raw.get("klines_15m")
-
-    validation = validate_all_timeframes(klines, coin)
-    if not validation["valid"]:
-        log.error("Data validation failed: %s — %s", coin, " | ".join(validation["errors"]))
-        return {"coin": coin, "error": f"Data quality failure: {' | '.join(validation['errors'])}"}
-
-    klines = validation["klines"]
-
-    d1w = calculate_all(klines["1w"], timeframe="1w")
-    d1d = calculate_all(klines["1d"], timeframe="1d")
-    d4h = calculate_all(klines["4h"], timeframe="4h")
-    d1h = calculate_all(klines["1h"], timeframe="1h")
-
-    if coin == "BTC":
-        btc_data    = d1d
-        btc_4h_data = d4h
-        btc_inst    = assess_btc_stability(d1d)
-        cache.set("btc_1d_data", d1d, ttl=900)
-        cache.set("btc_4h_data", d4h, ttl=900)
-    else:
-        btc_cached    = cache.get_raw("btc_1d_data")
-        btc_4h_cached = cache.get_raw("btc_4h_data")
-        if btc_cached:
-            btc_data, btc_4h_data = btc_cached, btc_4h_cached
-        else:
-            try:
-                from data.fetcher import get_all_data
-                btc_raw     = await get_all_data("BTC")
-                btc_klines  = validate_all_timeframes(btc_raw["klines"], "BTC")
-                if btc_klines["valid"]:
-                    btc_data    = calculate_all(btc_klines["klines"]["1d"], timeframe="1d")
-                    btc_4h_data = calculate_all(btc_klines["klines"]["4h"], timeframe="4h")
-                else:
-                    btc_data = btc_4h_data = None
-                cache.set("btc_1d_data", btc_data,    ttl=900)
-                cache.set("btc_4h_data", btc_4h_data, ttl=900)
-            except Exception:
-                btc_data = btc_4h_data = None
-        btc_inst = assess_btc_stability(btc_data)
-
-    vol_ratio = (
-        d4h["cur_vol"] / d4h["vol_ma10"]
-        if d4h.get("vol_ma10") and d4h["vol_ma10"] > 0 else 1.0
-    )
-
-    market = {
-        "price":       raw["price"],
-        "change24":    raw["change24"],
-        "funding":     raw["funding"],
-        "oi":          raw["oi"],
-        "oi_change":   raw["oi_change"],
-        "long_ratio":  raw["long_ratio"],
-        "short_ratio": raw["short_ratio"],
-        "fear_greed":  {"value": 50, "label": "Neutral"},
-    }
-
-    key_levels = _extract_key_levels(klines["1d"], klines["1w"])
-    session    = get_trading_session(vol_ratio=vol_ratio)
-    regime     = detect_regime(d1d, d4h)
-
-    sweep = detect_sweep(
-        klines["1d"],
-        key_levels,
-        d1d.get("atr", 0),
-        d1d["swings"],
-        timeframe="1d"
-    )
-
-    disp   = detect_displacement(klines["4h"], d4h.get("atr", 0))
-    retest = detect_retest(klines["4h"], d4h, sweep, disp, d1h=d1h, d1d=d1d)
-
-    oi_matrix = _interpret_oi(market)
-
-    wconf = score_confluence(
-        d1w, d1d, d4h, d1h, market, key_levels,
-        session, btc_data, btc_inst, regime,
-        sweep, disp, retest, oi_matrix, coin,
-        btc_4h=btc_4h_data,
-    )
-
-    no_trade = run_no_trade_engine(
-        regime, d1d, d4h, market, session, sweep, disp,
-        retest, btc_data, btc_inst, oi_matrix, news_filter,
-        wconf["norm_score"], coin=coin, d1w=d1w, wconf=wconf,
-    )
-
-    signal = generate_signal(
-        d1d=d1d, d4h=d4h, wconf=wconf, no_trade=no_trade,
-        market=market, key_levels=key_levels, df_15m=df_15m,
-        sweep=sweep, displacement=disp, retest=retest,
-        btc_data=btc_data, btc_inst=btc_inst, oi_matrix=oi_matrix,
-        regime=regime, session=session, d1w=d1w, d1h=d1h,
-    )
-
-    signal["sweep_score"] = sweep.get("score", 0)
-    signal["disp_score"]  = disp.get("score", 0)
-    signal["funding"]     = raw["funding"]
-    signal["coin"]        = coin
-
-    db_id         = save_signal_to_db(signal, coin, regime["label"], session["name"], sweep, retest, disp, market, wconf)
-    pending_entry = None
-
-    if db_id:
-        signal["db_id"] = db_id
-        _write_signal_to_redis(coin, signal, db_id)
-
-        if cfg.CONTENT_ENABLED and signal.get("grade") in ["A+", "A"]:
-            asyncio.create_task(run_content_pipeline(db_id))
-
-        if (signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and
-                signal.get("direction") in ["LONG", "SHORT"] and
-                signal.get("entry")):
-
-            from trade.executor import has_open_trade_or_position
-            if await has_open_trade_or_position(coin):
-                log.info("Skipping entry queue — %s already has open trade or position", coin)
-            else:
-                ml_passed, _ = _check_ml_gate(signal, wconf)
-                if ml_passed:
-                    allocation = await compute_allocation(
-                        signal      = signal,
-                        wconf       = wconf,
-                        regime      = regime,
-                        vol_profile = {
-                            "volatility_class": signal.get("vol_class",  "normal"),
-                            "atr_pct":          signal.get("atr_pct",    2.0),
-                            "adx":              signal.get("adx_used",   20),
-                        },
-                        direction = signal.get("direction"),
-                    )
-                    if not allocation.get("skip"):
-                        signal.update({
-                            "risk_amt": allocation["risk_amt"],
-                            "pos_size": allocation["pos_size"],
-                            "leverage": allocation["leverage"],
-                            "stake":    allocation["stake"],
-                        })
-                        pending_entry = {
-                            "coin":       coin,
-                            "grade":      signal.get("grade"),
-                            "score":      signal.get("score", 0),
-                            "signal":     signal,
-                            "db_id":      db_id,
-                            "allocation": allocation,
-                            "regime":     regime["label"],
-                            "session":    session["name"],
-                        }
-                    else:
-                        log.info("Signal %s skipped by allocation: %s", coin, allocation.get("reason"))
-
-    result = {
-        "coin":              coin,
-        "grade":             signal["grade"],
-        "score":             signal["score"],
-        "direction":         signal["direction"],
-        "signal":            signal,
-        "market":            market,
-        "regime":            regime["label"],
-        "session":           session["name"],
-        "d1d":               d1d,
-        "d4h":               d4h,
-        "d1h":               d1h,
-        "d1w":               d1w,
-        "key_levels":        key_levels,
-        "sweep":             sweep,
-        "retest":            retest,
-        "displacement":      disp,
-        "wconf":             wconf,
-        "oi_matrix":         oi_matrix,
-        "no_trade":          no_trade,
-        "news_filter":       news_filter,
-        "explanation":       signal.get("explanation", {}),
-        "market_score":      wconf.get("market_score", 0),
-        "entry_score":       wconf.get("entry_score",  0),
-        "market_blocked":    no_trade.get("market_blocked",    False),
-        "entry_blocked":     no_trade.get("entry_blocked",     False),
-        "portfolio_blocked": no_trade.get("portfolio_blocked", False),
-        "ml_probability":    signal.get("ml_probability"),
-        "actual_rr":         signal.get("actual_rr", 0),
-        "tp_mult":           signal.get("tp_mult", 2.0),
-        "cached_at":         time.time(),
-        "pending_entry":     pending_entry,
-        "data_quality": {
-            tf: {"valid": r["valid"], "clean": r["clean"], "issues": r["issues"], "removed": r["removed"]}
-            for tf, r in validation["reports"].items()
-        },
-    }
-
-    ttl = max(60, _seconds_to_next_scan() - 5)
-    cache.set(f"signal_{coin}", result, ttl=ttl)
-    log.debug("Cache set for %s ttl:%ds", coin, ttl)
-
-    if signal.get("grade") in cfg.MIN_GRADE_TO_TRADE and signal.get("direction") in ["LONG", "SHORT"]:
-        await send_signal(signal, coin, regime["label"], session["name"])
-
-    return result
+        log.error("Content pipeline error: %s", e)
 
 
 async def scan_all_coins() -> list:
-    global _scan_running
-    if _scan_running:
-        log.info("Scan already running — skipping")
-        return []
+    log.info("Manual scan triggered")
+    await run_daily_bias_update()
+    await run_zone_update()
+    await run_trigger_check()
 
-    _scan_running = True
-    results: list = []
-    pending: list = []
+    results = []
+    for coin in cfg.COINS:
+        machine = state_manager.get(coin)
+        results.append({
+            "coin":      coin,
+            "state":     machine.state,
+            "direction": machine.context.get("direction", ""),
+            "grade":     machine.context.get("grade",     ""),
+            "score":     machine.context.get("score",     0),
+        })
 
-    try:
-        log.info("Scan started — %s coins", len(cfg.COINS))
+    results.sort(key=lambda x: x.get("score", 0), reverse=True)
+    await send_scan_summary(results)
 
-        if not cache.get_raw("btc_1d_data"):
-            try:
-                from data.fetcher import get_all_data
-                btc_raw = await get_all_data("BTC")
-                btc_v   = validate_all_timeframes(btc_raw["klines"], "BTC")
-                if btc_v["valid"]:
-                    cache.set("btc_1d_data", calculate_all(btc_v["klines"]["1d"], timeframe="1d"), ttl=900)
-                    cache.set("btc_4h_data", calculate_all(btc_v["klines"]["4h"], timeframe="4h"), ttl=900)
-            except Exception as e:
-                log.warning("BTC pre-fetch failed: %s", e)
-
-        scan_results = await asyncio.gather(*[_scan_coin_safe(c) for c in cfg.COINS])
-
-        for r in scan_results:
-            if r and "error" not in r:
-                results.append(r)
-                if r.get("pending_entry"):
-                    pending.append(r["pending_entry"])
-
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        _write_active_pairs_to_redis()
-
-        seen: dict = {}
-        for item in pending:
-            coin = item["coin"]
-            if coin not in seen or item.get("score", 0) > seen[coin].get("score", 0):
-                seen[coin] = item
-        pending = list(seen.values())
-
-        log.info("Deduplicated pending signals: %s unique coins", len(pending))
-        await _execute_priority_entries(pending)
-
-        tradeable = [r for r in results if r.get("grade") in ["A+", "A"] and r.get("direction") in ["LONG", "SHORT"]]
-        if not tradeable and cfg.CONTENT_ENABLED and results:
-            asyncio.create_task(run_commentary_pipeline(results))
-
-        await send_scan_summary(results)
-
-        from events import emit
-        asyncio.create_task(emit("scan_complete"))
-        log.info("Scan complete — %s coins", len(results))
-
-    finally:
-        _scan_running = False
-
+    from events import emit
+    asyncio.create_task(emit("scan_complete"))
     return results
-
-
-async def _scan_coin_safe(coin: str) -> dict | None:
-    try:
-        r = await analyze_coin(coin)
-        await asyncio.sleep(0.5)
-        return r
-    except Exception as e:
-        log.error("Scan error %s: %s", coin, e)
-        return None
 
 
 def get_db_stats() -> dict:
     try:
-        with get_session() as db:
+        with get_db_session() as db:
             all_sigs = db.query(SignalModel).all()
-            closed   = [s for s in all_sigs if s.outcome in ["win", "loss"]]
+            closed   = [s for s in all_sigs if s.outcome in ("win", "loss")]
             wins     = [s for s in closed if s.outcome == "win"]
             by_grade = {}
-            for g in ["A+", "A", "B"]:
+            for g in ("A+", "A", "B"):
                 gt = [s for s in closed if s.grade == g]
-                gw = [s for s in gt if s.outcome == "win"]
+                gw = [s for s in gt    if s.outcome == "win"]
                 by_grade[g] = {
                     "total":     len(gt),
                     "wins":      len(gw),

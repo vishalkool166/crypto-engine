@@ -239,6 +239,24 @@ class Config:
 
     RISK_PCT_PER_TRADE = 0.02
 
+    SIGNAL_ENGINE = {
+    "sweep_max_age_hours":    48,
+    "slope_flat_threshold":   0.10,
+    "zone_distance_atr_mult": 2.0,
+    "zone_distance_min_pct":  1.5,
+    "zone_max_touches":       2,
+    "fvg_min_width_pct":      0.10,
+    "trigger_min_body_ratio": 0.55,
+    "trigger_min_wick_ratio": 0.55,
+    "trigger_lookback":       6,
+    "min_rr":                 1.8,
+    "sl_buffer_atr_mult":     0.1,
+    "cooldown_hours":         48,
+    "sweep_strong_score":     8,
+    "sweep_moderate_score":   5,
+    "displacement_strong_atr":1.5,
+}
+
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 

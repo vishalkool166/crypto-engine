@@ -29,28 +29,38 @@ def grade_accuracy_str(grade: str) -> str:
             wr    = round(wins / total * 100, 1)
             return f"Grade {grade} accuracy: `{wins}W {total - wins}L` — `{wr}% win rate`"
     except Exception as e:
-        log.error(f"Grade accuracy error: {e}")
+        log.error("Grade accuracy error: %s", e)
         return ""
 
 
 def categorize_results(results: list) -> dict:
+    tradeable = []
+    watching  = []
+    building  = []
+    skipped   = []
+
+    for r in results:
+        state     = r.get("state", "")
+        direction = r.get("direction", "")
+        grade     = r.get("grade", "")
+
+        if state in ("signal_ready", "zone_active") and direction in ("LONG", "SHORT"):
+            if grade in ("A+", "A"):
+                tradeable.append(r)
+            elif grade == "B":
+                watching.append(r)
+            else:
+                building.append(r)
+
+        elif state == "bias_defined":
+            building.append(r)
+
+        elif state in ("no_bias", "cooldown"):
+            skipped.append(r)
+
     return {
-        "tradeable": [
-            r for r in results
-            if r.get("grade") in ["A+", "A"] and
-            r.get("direction") in ["LONG", "SHORT"]
-        ],
-        "watching": [
-            r for r in results
-            if r.get("grade") == "B" and
-            r.get("direction") in ["LONG", "SHORT"]
-        ],
-        "skipped": [
-            r for r in results
-            if r.get("grade") == "B"
-        ],
-        "building": [
-            r for r in results
-            if r.get("grade") == "C"
-        ]
+        "tradeable": tradeable,
+        "watching":  watching,
+        "building":  building,
+        "skipped":   skipped,
     }

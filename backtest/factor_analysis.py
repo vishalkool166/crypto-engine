@@ -6,40 +6,18 @@ log = logging.getLogger(__name__)
 
 FACTOR_KEYS = [
     "liquidity_sweep",
-    "retest_confirmation",
     "displacement",
-    "market_regime",
-    "weekly_filter",
+    "order_blocks",
+    "retest_confirmation",
     "market_structure",
-    "session_timing",
-    "btc_alignment",
-    "oi_behavior",
-    "volume_expansion",
-    "funding_extreme",
-    "rsi_divergence",
-    "atr_volatility",
-    "rsi_context",
-    "macd_histogram",
-    "order_blocks"
 ]
 
 FACTOR_PASS_THRESHOLDS = {
-    "liquidity_sweep":     8,
-    "retest_confirmation": 9,
-    "displacement":        8,
-    "market_regime":       8,
-    "weekly_filter":       7,
-    "market_structure":    7,
-    "session_timing":      5,
-    "btc_alignment":       6,
-    "oi_behavior":         5,
-    "volume_expansion":    5,
-    "funding_extreme":     4,
-    "rsi_divergence":      3,
-    "atr_volatility":      2,
-    "rsi_context":         1,
-    "macd_histogram":      1,
-    "order_blocks":        2,
+    "liquidity_sweep":     6,
+    "displacement":        6,
+    "order_blocks":        3,
+    "retest_confirmation": 6,
+    "market_structure":    5,
 }
 
 
@@ -54,8 +32,6 @@ def run_factor_analysis() -> dict:
             Trade.is_active == False,
             Trade.outcome.in_(["win", "loss"])
         ).all()
-
-        trade_signal_ids = {t.signal_id for t in trade_records if t.signal_id}
 
         seen_ids  = set()
         all_items = []
@@ -81,21 +57,21 @@ def run_factor_analysis() -> dict:
             return {
                 "error":        "No closed trades yet",
                 "total":        0,
-                "min_required": 20
+                "min_required": 20,
             }
 
         total  = len(all_items)
         wins   = [x for x in all_items if x[1].outcome == "win"]
         losses = [x for x in all_items if x[1].outcome == "loss"]
 
-        log.info(f"Factor analysis: {total} items — {len(wins)}W {len(losses)}L")
+        log.info("Factor analysis: %s items — %sW %sL", total, len(wins), len(losses))
 
         factor_stats = {
             key: {
                 "win_present":  0,
                 "win_absent":   0,
                 "loss_present": 0,
-                "loss_absent":  0
+                "loss_absent":  0,
             }
             for key in FACTOR_KEYS
         }
@@ -120,11 +96,15 @@ def run_factor_analysis() -> dict:
             for key in FACTOR_KEYS:
                 present = factor_presence.get(key, False)
                 if record.outcome == "win":
-                    if present: factor_stats[key]["win_present"]  += 1
-                    else:       factor_stats[key]["win_absent"]   += 1
+                    if present:
+                        factor_stats[key]["win_present"]  += 1
+                    else:
+                        factor_stats[key]["win_absent"]   += 1
                 else:
-                    if present: factor_stats[key]["loss_present"] += 1
-                    else:       factor_stats[key]["loss_absent"]  += 1
+                    if present:
+                        factor_stats[key]["loss_present"] += 1
+                    else:
+                        factor_stats[key]["loss_absent"]  += 1
 
         table = []
         for key in FACTOR_KEYS:
@@ -152,7 +132,7 @@ def run_factor_analysis() -> dict:
                 "win_rate_present": win_rate_present,
                 "win_rate_absent":  win_rate_absent,
                 "edge":             edge,
-                "observation":      _observation(edge, present_total, total)
+                "observation":      _observation(edge, present_total, total),
             })
 
         table.sort(key=lambda x: x["edge"] or -999, reverse=True)
@@ -161,22 +141,22 @@ def run_factor_analysis() -> dict:
         reliability = _reliability_note(total)
 
         return {
-            "total":       total,
-            "wins":        len(wins),
-            "losses":      len(losses),
-            "overall_wr":  overall_wr,
+            "total":        total,
+            "wins":         len(wins),
+            "losses":       len(losses),
+            "overall_wr":   overall_wr,
             "min_required": 20,
-            "reliable":    total >= 20,
-            "reliability": reliability,
-            "data_source": "actual" if has_real_data else "proxy",
-            "table":       table,
-            "grade_stats": _build_grade_stats(grade_stats),
-            "top_factors": [r for r in table if r["edge"] and r["edge"] > 10][:5],
-            "weak_factors":[r for r in table if r["edge"] is not None and r["edge"] < 5][:5]
+            "reliable":     total >= 20,
+            "reliability":  reliability,
+            "data_source":  "actual" if has_real_data else "proxy",
+            "table":        table,
+            "grade_stats":  _build_grade_stats(grade_stats),
+            "top_factors":  [r for r in table if r["edge"] and r["edge"] > 10][:5],
+            "weak_factors": [r for r in table if r["edge"] is not None and r["edge"] < 5][:5],
         }
 
     except Exception as e:
-        log.error(f"Factor analysis error: {e}")
+        log.error("Factor analysis error: %s", e)
         return {"error": str(e)}
 
     finally:
@@ -196,12 +176,6 @@ def _get_factor_presence(sig, record) -> dict:
         except Exception:
             pass
 
-    score = 0
-    if sig:
-        score = sig.score or 0
-    elif hasattr(record, 'score_at_entry'):
-        score = record.score_at_entry or 0
-
     sweep_ok  = False
     retest_ok = False
     disp_ok   = False
@@ -211,24 +185,19 @@ def _get_factor_presence(sig, record) -> dict:
         retest_ok = (sig.retest_score or 0) >= 6
         disp_ok   = (sig.disp_score   or 0) >= 6
 
+    score = 0
+    if sig:
+        score = sig.score or 0
+    elif hasattr(record, "score_at_entry"):
+        score = record.score_at_entry or 0
+
     return {
         "_source":             "proxy",
         "liquidity_sweep":     sweep_ok,
-        "retest_confirmation": retest_ok,
         "displacement":        disp_ok,
-        "market_regime":       score >= 60,
-        "weekly_filter":       score >= 65,
+        "order_blocks":        score >= 60,
+        "retest_confirmation": retest_ok,
         "market_structure":    score >= 55,
-        "session_timing":      score >= 50,
-        "btc_alignment":       score >= 60,
-        "oi_behavior":         score >= 55,
-        "volume_expansion":    score >= 50,
-        "funding_extreme":     score >= 45,
-        "rsi_divergence":      score >= 70,
-        "atr_volatility":      score >= 45,
-        "rsi_context":         score >= 50,
-        "macd_histogram":      score >= 65,
-        "order_blocks":        score >= 60
     }
 
 
@@ -237,11 +206,15 @@ def _observation(edge, present_total, total) -> str:
         return "Insufficient data"
     if edge is None:
         return "No edge data"
-    if edge > 20:  return "Strong positive edge"
-    if edge > 10:  return "Positive edge"
-    if edge > 0:   return "Weak positive edge"
-    if edge > -10: return "Neutral — monitor"
-    return "Negative edge — review weight"
+    if edge > 20:
+        return "Strong positive edge"
+    if edge > 10:
+        return "Positive edge"
+    if edge > 0:
+        return "Weak positive edge"
+    if edge > -10:
+        return "Neutral — monitor"
+    return "Negative edge — review"
 
 
 def _reliability_note(total: int) -> str:
@@ -250,7 +223,7 @@ def _reliability_note(total: int) -> str:
     if total >= 100:
         return f"Developing — {200 - total} more trades for full reliability"
     if total >= 20:
-        return f"Early data — {200 - total} more trades needed — directional only"
+        return f"Early data — {200 - total} more trades needed"
     return f"Too early — {20 - total} more trades needed"
 
 
@@ -263,7 +236,7 @@ def _build_grade_stats(grade_stats: dict) -> list:
             "total":    total,
             "wins":     s["wins"],
             "losses":   s["losses"],
-            "win_rate": round(s["wins"] / total * 100, 1) if total > 0 else 0
+            "win_rate": round(s["wins"] / total * 100, 1) if total > 0 else 0,
         })
     result.sort(key=lambda x: x["grade"])
     return result
