@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from trade.exchange import (
     get_listen_key, refresh_listen_key,
     invalidate_listen_key, get_ws_base_url,
+    get_positions, get_symbol_precision,
 )
 from config import cfg
 
@@ -123,12 +124,9 @@ async def _kline_stream() -> None:
                 log.info("Kline WS connected — %s coins", len(coins))
                 async for message in ws:
                     try:
-                        data   = json.loads(message)
-                        stream = data.get("stream", "")
-                        kline  = data.get("data", {}).get("k", {})
-                        if not kline:
-                            continue
-                        if not kline.get("x"):
+                        data  = json.loads(message)
+                        kline = data.get("data", {}).get("k", {})
+                        if not kline or not kline.get("x"):
                             continue
                         symbol = kline.get("s", "")
                         coin   = symbol.replace("USDT", "")
@@ -227,11 +225,13 @@ async def _handle_order_update(data: dict) -> None:
         }
 
         if reduce_only or close_pos:
-            await _handle_position_closed(
+            await _handle_reduce_order_filled(
                 coin         = coin,
-                exit_price   = avg_price,
+                symbol       = symbol,
                 order_id     = order_id,
                 order_type   = order_type,
+                exit_price   = avg_price,
+                filled_qty   = filled_qty,
                 commission   = commission,
                 comm_asset   = comm_asset,
                 is_maker     = is_maker,
@@ -253,20 +253,13 @@ async def _handle_order_update(data: dict) -> None:
         log.error("_handle_order_update: %s", e)
 
 
-def _exit_reason(order_type: str, order_id: str, trade_sl: str, trade_tp: str) -> str:
-    ot = order_type.upper()
-    if "STOP"        in ot: return "sl_hit"
-    if ot == "LIMIT"       : return "tp_hit" if trade_tp and str(order_id) == str(trade_tp) else "tp_hit"
-    if ot == "MARKET"      : return "manual_close"
-    if "LIQUIDATION" in ot : return "liquidated"
-    return "exchange_closed"
-
-
-async def _handle_position_closed(
+async def _handle_reduce_order_filled(
     coin:         str,
-    exit_price:   float,
+    symbol:       str,
     order_id:     str,
     order_type:   str,
+    exit_price:   float,
+    filled_qty:   float,
     commission:   float = 0.0,
     comm_asset:   str   = "USDT",
     is_maker:     bool  = False,
@@ -276,8 +269,8 @@ async def _handle_position_closed(
         from database import get_session, Trade as TradeModel, Signal as SignalModel
         from trade.monitor import invalidate_position_cache
         from trade.health_monitor import clear_health_state
-        from trade.executor import _calc_pnl, _mark_closed
-        from engines.state import get as get_state, set_cooldown, set_idle
+        from trade.executor import _calc_pnl, _mark_closed, _mark_tp1_hit, move_sl_to_breakeven
+        from engines.state import get as get_coin_state, set_cooldown, set_idle
 
         with get_session() as db:
             trade = db.query(TradeModel).filter(
@@ -285,23 +278,100 @@ async def _handle_position_closed(
             ).filter(
                 (TradeModel.sl_order_id    == order_id) |
                 (TradeModel.tp1_order_id   == order_id) |
+                (TradeModel.tp2_order_id   == order_id) |
                 (TradeModel.entry_order_id == order_id) |
                 (TradeModel.coin           == coin)
             ).first()
 
             if not trade:
+                log.debug("No active trade for %s order:%s", coin, order_id)
                 return
 
-            trade_id   = trade.id
-            direction  = trade.direction
-            entry      = float(trade.entry_price or 0)
-            margin     = float(trade.margin_used  or 0)
-            leverage   = int(trade.leverage       or 1)
-            entry_fee  = float(trade.entry_commission or 0)
-            sl_oid     = str(trade.sl_order_id   or "")
-            tp_oid     = str(trade.tp1_order_id  or "")
+            trade_id      = trade.id
+            direction     = trade.direction
+            entry         = float(trade.entry_price   or 0)
+            margin        = float(trade.margin_used   or 0)
+            leverage      = int(trade.leverage        or 1)
+            entry_fee     = float(trade.entry_commission or 0)
+            sl_oid        = str(trade.sl_order_id     or "")
+            tp1_oid       = str(trade.tp1_order_id    or "")
+            tp2_oid       = str(trade.tp2_order_id    or "")
+            tp1_hit       = bool(trade.tp1_hit)
+            tp2_price     = float(trade.tp2_price     or 0)
+            is_long       = direction == "LONG"
 
-        reason    = _exit_reason(order_type, order_id, sl_oid, tp_oid)
+        is_tp1 = (order_id == tp1_oid) and not tp1_hit
+        is_tp2 = (order_id == tp2_oid) and tp1_hit
+        is_sl  = (order_id == sl_oid)
+        is_manual = order_type.upper() == "MARKET" and not is_tp1 and not is_tp2 and not is_sl
+
+        await asyncio.sleep(1.0)
+        try:
+            positions    = await get_positions()
+            remaining    = next(
+                (float(p.get("positionAmt", 0)) for p in positions if p.get("symbol") == symbol),
+                0.0
+            )
+            has_remaining = abs(remaining) > 0
+        except Exception:
+            has_remaining = False
+
+        if is_tp1 and has_remaining:
+            partial_pnl = (
+                round(realized_pnl - commission, 8) if realized_pnl != 0
+                else _calc_pnl(
+                    direction  = direction,
+                    entry      = entry,
+                    exit_price = exit_price,
+                    margin     = margin * cfg.SCALP_ENGINE["tp1_close_pct"],
+                    leverage   = leverage,
+                    commission = commission,
+                )
+            )
+
+            try:
+                prec    = await get_symbol_precision(symbol)
+                atr_15m = exit_price * 0.005
+                new_sl  = await move_sl_to_breakeven(
+                    symbol          = symbol,
+                    side            = "BUY" if not is_long else "SELL",
+                    entry_price     = entry,
+                    atr_15m         = atr_15m,
+                    price_precision = prec["price_precision"],
+                    tick_size       = prec["tick_size"],
+                    is_long         = is_long,
+                )
+            except Exception as e:
+                log.error("move_sl_to_breakeven failed %s: %s", coin, e)
+                new_sl = None
+
+            _mark_tp1_hit(trade_id, partial_pnl, new_sl)
+            invalidate_position_cache()
+
+            pnl_str = f"+${partial_pnl:.4f}" if partial_pnl >= 0 else f"-${abs(partial_pnl):.4f}"
+
+            from alerts.telegram import send
+            await send(
+                f"🎯 *{coin} {direction} — TP1 Hit*\n\n"
+                f"Closed:      `{cfg.SCALP_ENGINE['tp1_close_pct']*100:.0f}%` at `${exit_price:.6f}`\n"
+                f"Partial PnL: `{pnl_str}`\n"
+                f"SL moved to: `breakeven {'✅' if new_sl else '⚠️ failed'}`\n"
+                f"Remaining:   `{cfg.SCALP_ENGINE['tp2_close_pct']*100:.0f}%` running to TP2"
+            )
+
+            await _emit("order_filled", {
+                "coin":        coin,
+                "event":       "tp1_hit",
+                "exit_price":  exit_price,
+                "partial_pnl": partial_pnl,
+            })
+
+            log.info("TP1 hit: %s exit:%.6f partial_pnl:%.4f remaining:%.6f",
+                     coin, exit_price, partial_pnl, abs(remaining))
+            return
+
+        reason = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit)
+
         total_fee = round(entry_fee + commission, 8)
 
         net_pnl = (
@@ -316,12 +386,20 @@ async def _handle_position_closed(
             )
         )
 
+        if tp1_hit and reason in ("sl_hit", "tp1_be_stop"):
+            with get_session() as db:
+                trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+                if trade:
+                    partial = float(trade.partial_pnl or 0)
+                    net_pnl = round(partial + net_pnl, 4)
+
         slippage_exit = 0.0
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if trade:
-                if reason == "tp_hit" and trade.tp1_price:
-                    slippage_exit = abs(exit_price - float(trade.tp1_price)) / float(trade.tp1_price) * 100
+                if reason in ("tp2_hit", "tp1_hit") and trade.tp1_price:
+                    ref = float(trade.tp2_price or trade.tp1_price)
+                    slippage_exit = abs(exit_price - ref) / ref * 100
                 elif reason == "sl_hit" and trade.sl_price:
                     slippage_exit = abs(exit_price - float(trade.sl_price)) / float(trade.sl_price) * 100
 
@@ -351,10 +429,10 @@ async def _handle_position_closed(
         from alerts.telegram import send
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"
-            f"Reason:   `{reason}`\n"
-            f"Exit:     `${exit_price:.6f}`\n"
-            f"PnL:      `{pnl_str}`\n"
-            f"Fee:      `${total_fee:.4f}`"
+            f"Reason:  `{reason}`\n"
+            f"Exit:    `${exit_price:.6f}`\n"
+            f"PnL:     `{pnl_str}`\n"
+            f"Fee:     `${total_fee:.4f}`"
         )
 
         await _emit("trade_closed", {
@@ -373,8 +451,35 @@ async def _handle_position_closed(
             "reason":    reason,
         }))
 
+        log.info(
+            "Position closed: %s %s exit:%.6f pnl:%.4f fee:$%.6f reason:%s",
+            coin, direction, exit_price, net_pnl, total_fee, reason,
+        )
+
     except Exception as e:
-        log.error("_handle_position_closed %s: %s", coin, e, exc_info=True)
+        log.error("_handle_reduce_order_filled %s: %s", coin, e, exc_info=True)
+
+
+def _exit_reason(
+    order_type: str,
+    order_id:   str,
+    sl_oid:     str,
+    tp1_oid:    str,
+    tp2_oid:    str,
+    tp1_hit:    bool,
+) -> str:
+    if order_id == tp2_oid:
+        return "tp2_hit"
+    if order_id == tp1_oid and tp1_hit:
+        return "tp1_hit"
+    if order_id == sl_oid:
+        return "sl_hit" if not tp1_hit else "tp1_be_stop"
+    ot = order_type.upper()
+    if "STOP"        in ot: return "sl_hit" if not tp1_hit else "tp1_be_stop"
+    if "TAKE_PROFIT" in ot: return "tp2_hit" if tp1_hit else "tp1_hit"
+    if ot == "MARKET"      : return "manual_close"
+    if "LIQUIDATION" in ot : return "liquidated"
+    return "exchange_closed"
 
 
 async def _handle_account_update(data: dict) -> None:

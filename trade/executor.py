@@ -4,7 +4,7 @@ import math
 from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import httpx
-from config import cfg, TAKER_FEE, ORDER_FILL_TIMEOUT, ORDER_POLL_INTERVAL, MIN_STAKE_USDT, ENTRY_DEVIATION_MULT, ENTRY_FAVORABLE_MULT
+from config import cfg, TAKER_FEE, ORDER_FILL_TIMEOUT, ORDER_POLL_INTERVAL, MIN_STAKE_USDT, ENTRY_DEVIATION_MULT
 from trade.exchange import (
     get_balance, get_positions, get_ticker_price,
     set_leverage, set_margin_mode, place_order,
@@ -107,11 +107,10 @@ async def _place_sl(
     price_precision: int   = 8,
     tick_size:       float = 0.0,
 ) -> str | None:
-
     if tick_size and tick_size > 0:
         sl = _round_tick(sl, tick_size)
 
-    log.info("Placing SL: %s side:%s price:%s tick_size:%s", symbol, side, sl, tick_size)
+    log.info("Placing SL: %s side:%s price:%s", symbol, side, sl)
 
     if cfg.TRADING_MODE == "live":
         try:
@@ -128,7 +127,7 @@ async def _place_sl(
                 log.info("SL placed via algo: %s sl:%s algoId:%s", symbol, sl, algo_id)
                 return algo_id
         except Exception as e:
-            log.warning("Algo SL failed, trying regular order %s: %s", symbol, e)
+            log.warning("Algo SL failed, trying regular %s: %s", symbol, e)
 
     try:
         order    = await place_order(
@@ -141,80 +140,115 @@ async def _place_sl(
             working_type = "MARK_PRICE",
         )
         order_id = str(order.get("orderId", ""))
-        log.info("SL placed via regular order: %s sl:%s orderId:%s", symbol, sl, order_id)
+        log.info("SL placed: %s sl:%s orderId:%s", symbol, sl, order_id)
         return order_id
     except Exception as e:
-        log.error("SL failed completely %s: %s", symbol, e)
+        log.error("SL failed %s: %s", symbol, e)
         from alerts.telegram import send
         coin = symbol.replace("USDT", "")
         await send(
             f"⚠️ *SL Order Failed — {coin}*\n\n"
             f"Could not place SL at `{sl}`\n"
-            f"Tick size: `{tick_size}`\n"
             f"Position is unprotected — place SL manually immediately."
         )
         return None
 
 
-async def _place_tp(
+async def _place_tp_partial(
     symbol:          str,
     side:            str,
     tp:              float,
-    price_precision: int   = 8,
+    quantity:        float,
+    step_size:       float = 0.0,
     tick_size:       float = 0.0,
+    price_precision: int   = 8,
+    label:           str   = "TP",
 ) -> str | None:
+    if tick_size  and tick_size  > 0: tp       = _round_tick(tp,       tick_size)
+    if step_size  and step_size  > 0: quantity = _round_step(quantity, step_size)
 
-    if tick_size and tick_size > 0:
-        tp = _round_tick(tp, tick_size)
+    if quantity <= 0:
+        log.warning("_place_tp_partial: quantity rounded to zero for %s %s", symbol, label)
+        return None
 
-    log.info("Placing TP: %s side:%s price:%s tick_size:%s", symbol, side, tp, tick_size)
-
-    if cfg.TRADING_MODE == "live":
-        try:
-            order   = await place_algo_order(
-                symbol          = symbol,
-                side            = side,
-                order_type      = "TAKE_PROFIT_MARKET",
-                trigger_price   = tp,
-                price_precision = price_precision,
-                close_position  = True,
-            )
-            algo_id = str(order.get("algoId", ""))
-            if algo_id and algo_id != "0":
-                log.info("TP placed via algo: %s tp:%s algoId:%s", symbol, tp, algo_id)
-                return algo_id
-        except Exception as e:
-            log.warning("Algo TP failed, trying regular order %s: %s", symbol, e)
+    log.info("Placing %s: %s side:%s price:%s qty:%s", label, symbol, side, tp, quantity)
 
     try:
         order    = await place_order(
             symbol       = symbol,
             side         = side,
             order_type   = "TAKE_PROFIT_MARKET",
-            quantity     = 0,
+            quantity     = quantity,
             stop_price   = tp,
             reduce_only  = True,
             working_type = "MARK_PRICE",
         )
         order_id = str(order.get("orderId", ""))
-        log.info("TP placed via regular order: %s tp:%s orderId:%s", symbol, tp, order_id)
+        log.info("%s placed: %s tp:%s qty:%s orderId:%s", label, symbol, tp, quantity, order_id)
         return order_id
     except Exception as e:
-        log.error("TP failed completely %s: %s", symbol, e)
+        log.error("%s failed %s: %s", label, symbol, e)
         return None
 
 
-async def _cleanup_orders(symbol: str) -> None:
+async def move_sl_to_breakeven(
+    symbol:          str,
+    side:            str,
+    entry_price:     float,
+    atr_15m:         float,
+    price_precision: int   = 8,
+    tick_size:       float = 0.0,
+    is_long:         bool  = True,
+) -> str | None:
     try:
         await cancel_all_orders(symbol)
         await cancel_all_algo_orders(symbol)
         await asyncio.sleep(1.0)
-        for order in await get_open_orders(symbol):
-            oid = str(order.get("orderId", ""))
-            if oid:
-                await cancel_order(symbol, oid)
+
+        buffer = atr_15m * 0.1
+        if is_long:
+            be_price = entry_price + buffer
+        else:
+            be_price = entry_price - buffer
+
+        if tick_size and tick_size > 0:
+            be_price = _round_tick(be_price, tick_size)
+
+        log.info("Moving SL to breakeven: %s be_price:%s", symbol, be_price)
+
+        if cfg.TRADING_MODE == "live":
+            try:
+                order   = await place_algo_order(
+                    symbol          = symbol,
+                    side            = side,
+                    order_type      = "STOP_MARKET",
+                    trigger_price   = be_price,
+                    price_precision = price_precision,
+                    close_position  = True,
+                )
+                algo_id = str(order.get("algoId", ""))
+                if algo_id and algo_id != "0":
+                    log.info("BE SL placed via algo: %s be:%s algoId:%s", symbol, be_price, algo_id)
+                    return algo_id
+            except Exception as e:
+                log.warning("Algo BE SL failed %s: %s", symbol, e)
+
+        order    = await place_order(
+            symbol       = symbol,
+            side         = side,
+            order_type   = "STOP_MARKET",
+            quantity     = 0,
+            stop_price   = be_price,
+            reduce_only  = True,
+            working_type = "MARK_PRICE",
+        )
+        order_id = str(order.get("orderId", ""))
+        log.info("BE SL placed: %s be:%s orderId:%s", symbol, be_price, order_id)
+        return order_id
+
     except Exception as e:
-        log.warning("_cleanup_orders %s: %s", symbol, e)
+        log.error("move_sl_to_breakeven %s: %s", symbol, e)
+        return None
 
 
 def _calc_pnl(
@@ -252,11 +286,13 @@ def _save_trade(
     entry_price:        float,
     sl_price:           float,
     tp1_price:          float,
+    tp2_price:          float | None,
     position_size:      float,
     margin_used:        float,
     leverage:           int,
     sl_order_id:        str | None,
     tp1_order_id:       str | None,
+    tp2_order_id:       str | None,
     entry_order_id:     str,
     regime:             str   = "",
     session:            str   = "",
@@ -265,6 +301,8 @@ def _save_trade(
     slippage_entry_pct: float = 0.0,
     entry_commission:   float = 0.0,
     entry_role:         str   = "taker",
+    tp1_qty:            float = 0.0,
+    tp2_qty:            float = 0.0,
 ) -> int:
     try:
         with get_session() as db:
@@ -278,11 +316,13 @@ def _save_trade(
                 entry_price        = entry_price,
                 sl_price           = sl_price,
                 tp1_price          = tp1_price,
+                tp2_price          = tp2_price,
                 position_size      = position_size,
                 margin_used        = margin_used,
                 leverage           = leverage,
                 sl_order_id        = sl_order_id,
                 tp1_order_id       = tp1_order_id,
+                tp2_order_id       = tp2_order_id,
                 entry_order_id     = entry_order_id,
                 opened_at          = datetime.now(timezone.utc),
                 outcome            = "pending",
@@ -296,14 +336,15 @@ def _save_trade(
                 entry_role         = entry_role,
                 funding_fees_paid  = 0.0,
                 total_commission   = entry_commission,
+                notes              = f"tp1_qty:{tp1_qty:.6f} tp2_qty:{tp2_qty:.6f}",
             )
             db.add(trade)
             db.flush()
             db.refresh(trade)
             log.info(
-                "Trade saved: id:%s %s %s fill:%.10f slip:%.4f%% fee:$%.8f role:%s",
+                "Trade saved: id:%s %s %s fill:%.6f slip:%.4f%% fee:$%.8f tp1_qty:%s tp2_qty:%s",
                 trade.id, coin, direction, actual_fill_entry,
-                slippage_entry_pct, entry_commission, entry_role,
+                slippage_entry_pct, entry_commission, tp1_qty, tp2_qty,
             )
             return trade.id
     except Exception as e:
@@ -337,7 +378,7 @@ def _mark_closed(
             trade.close_reason          = reason
             trade.closed_at             = datetime.now(timezone.utc)
             trade.outcome               = "win" if pnl > 0 else "loss"
-            trade.tp1_hit               = reason == "tp_hit"
+            trade.tp1_hit               = reason in ("tp1_hit", "tp2_hit", "tp1_be_stop", "time_stop_after_tp1")
             trade.exit_commission       = round(exit_commission, 8)
             trade.exit_role             = exit_role
             trade.total_commission      = round(total_commission, 8)
@@ -361,11 +402,28 @@ def _mark_closed(
                     sig.pnl        = pnl
                     sig.exit_price = exit_price
             log.info(
-                "Trade closed: id:%s exit:%.10f pnl:%.4f fee:$%.8f reason:%s tp1:%s",
+                "Trade closed: id:%s exit:%.6f pnl:%.4f fee:$%.8f reason:%s tp1:%s",
                 trade_id, exit_price, pnl, total_commission, reason, trade.tp1_hit,
             )
     except Exception as e:
         log.error("_mark_closed error: %s", e)
+
+
+def _mark_tp1_hit(trade_id: int, partial_pnl: float, new_sl_order_id: str | None) -> None:
+    try:
+        with get_session() as db:
+            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if not trade:
+                return
+            trade.tp1_hit     = True
+            trade.partial_pnl = partial_pnl
+            trade.sl_price    = trade.entry_price
+            if new_sl_order_id:
+                trade.sl_order_id = new_sl_order_id
+            log.info("TP1 hit recorded: id:%s partial_pnl:%.4f new_sl:%s",
+                     trade_id, partial_pnl, new_sl_order_id)
+    except Exception as e:
+        log.error("_mark_tp1_hit error: %s", e)
 
 
 async def open_position(
@@ -381,12 +439,16 @@ async def open_position(
     regime:    str        = "",
     session:   str        = "",
     score:     float      = 0.0,
+    tp2:       float | None = None,
+    atr_15m:   float        = 0.0,
 ) -> dict:
     symbol   = f"{coin}USDT"
     is_short = direction == "SHORT"
     side     = "SELL" if is_short else "BUY"
     sl_side  = "BUY"  if is_short else "SELL"
     tp_side  = "BUY"  if is_short else "SELL"
+
+    SE = cfg.SCALP_ENGINE
 
     try:
         current = await get_ticker_price(symbol)
@@ -408,8 +470,7 @@ async def open_position(
             None,
         )
         if existing:
-            log.warning("Position already exists on exchange for %s — skipping", coin)
-            return {"success": False, "error": f"Position already exists on Binance for {coin}"}
+            return {"success": False, "error": f"Position already exists on exchange for {coin}"}
 
         await set_margin_mode(symbol, "ISOLATED")
         await set_leverage(symbol, leverage)
@@ -425,29 +486,43 @@ async def open_position(
             coin, tick_size, price_precision, qty_step
         )
 
-        quantity = _round_step((stake * leverage) / current, qty_step)
+        total_quantity = _round_step((stake * leverage) / current, qty_step)
 
-        if min_qty > 0 and quantity < min_qty:
-            return {"success": False, "error": f"Quantity {quantity} below minimum {min_qty}"}
+        if min_qty > 0 and total_quantity < min_qty:
+            return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
-        sl_rounded = _round_tick(sl, tick_size)
-        tp_rounded = _round_tick(tp, tick_size)
+        tp1_qty_raw = total_quantity * SE["tp1_close_pct"]
+        tp2_qty_raw = total_quantity * SE["tp2_close_pct"]
+        tp1_qty     = _round_step(tp1_qty_raw, qty_step)
+        tp2_qty     = _round_step(tp2_qty_raw, qty_step)
+
+        if tp1_qty <= 0:
+            tp1_qty = total_quantity
+            tp2_qty = 0.0
+
+        if tp2_qty > 0 and tp1_qty + tp2_qty > total_quantity:
+            tp2_qty = _round_step(total_quantity - tp1_qty, qty_step)
+
+        sl_rounded  = _round_tick(sl,  tick_size)
+        tp1_rounded = _round_tick(tp,  tick_size)
+        tp2_rounded = _round_tick(tp2, tick_size) if tp2 else None
 
         log.info(
-            "Opening: %s %s price:%.10f qty:%s stake:%.2f lev:%dx sl:%s tp:%s",
-            coin, direction, current, quantity, stake, leverage,
-            sl_rounded, tp_rounded
+            "Opening: %s %s price:%.6f qty:%s tp1_qty:%s tp2_qty:%s stake:%.2f lev:%dx sl:%s tp1:%s tp2:%s",
+            coin, direction, current, total_quantity, tp1_qty, tp2_qty,
+            stake, leverage, sl_rounded, tp1_rounded, tp2_rounded
         )
 
-        raw        = await _place_with_retry(symbol=symbol, side=side, order_type="MARKET", quantity=quantity)
+        raw        = await _place_with_retry(symbol=symbol, side=side, order_type="MARKET", quantity=total_quantity)
         filled     = await _wait_for_fill(symbol, raw["orderId"])
         fill_price = float(filled.get("avgPrice") or filled.get("price") or current)
-        filled_qty = _round_step(float(filled.get("executedQty", quantity)), qty_step)
+        filled_qty = _round_step(float(filled.get("executedQty", total_quantity)), qty_step)
         entry_oid  = str(filled.get("orderId", ""))
+
         actual_position_size = round(filled_qty * fill_price, 8)
         actual_margin        = round(actual_position_size / leverage, 8)
 
-        log.info("Entry filled: %s %.10f qty:%s", coin, fill_price, filled_qty)
+        log.info("Entry filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
 
         await asyncio.sleep(5.0)
 
@@ -456,8 +531,44 @@ async def open_position(
         entry_role   = comm.get("role", "taker")
         slippage_pct = abs(fill_price - entry) / entry * 100 if entry > 0 else 0.0
 
-        sl_oid = await _place_sl(symbol, sl_side, sl_rounded, price_precision, tick_size)
-        tp_oid = await _place_tp(symbol, tp_side, tp_rounded, price_precision, tick_size)
+        tp1_qty_final = _round_step(filled_qty * SE["tp1_close_pct"], qty_step)
+        tp2_qty_final = _round_step(filled_qty * SE["tp2_close_pct"], qty_step)
+
+        if tp1_qty_final <= 0:
+            tp1_qty_final = filled_qty
+            tp2_qty_final = 0.0
+
+        if tp2_qty_final > 0 and tp1_qty_final + tp2_qty_final > filled_qty:
+            tp2_qty_final = _round_step(filled_qty - tp1_qty_final, qty_step)
+
+        sl_oid  = await _place_sl(symbol, sl_side, sl_rounded, price_precision, tick_size)
+
+        tp1_oid = await _place_tp_partial(
+            symbol          = symbol,
+            side            = tp_side,
+            tp              = tp1_rounded,
+            quantity        = tp1_qty_final,
+            step_size       = qty_step,
+            tick_size       = tick_size,
+            price_precision = price_precision,
+            label           = "TP1",
+        )
+
+        tp2_oid = None
+        if tp2_rounded and tp2_qty_final > 0:
+            tp2_oid = await _place_tp_partial(
+                symbol          = symbol,
+                side            = tp_side,
+                tp              = tp2_rounded,
+                quantity        = tp2_qty_final,
+                step_size       = qty_step,
+                tick_size       = tick_size,
+                price_precision = price_precision,
+                label           = "TP2",
+            )
+
+        if not atr_15m or atr_15m <= 0:
+            atr_15m = fill_price * 0.005
 
         trade_id = _save_trade(
             coin               = coin,
@@ -466,12 +577,14 @@ async def open_position(
             grade              = grade,
             entry_price        = fill_price,
             sl_price           = sl_rounded,
-            tp1_price          = tp_rounded,
+            tp1_price          = tp1_rounded,
+            tp2_price          = tp2_rounded,
             position_size      = actual_position_size,
             margin_used        = actual_margin,
             leverage           = leverage,
             sl_order_id        = sl_oid,
-            tp1_order_id       = tp_oid,
+            tp1_order_id       = tp1_oid,
+            tp2_order_id       = tp2_oid,
             entry_order_id     = entry_oid,
             regime             = regime,
             session            = session,
@@ -480,24 +593,27 @@ async def open_position(
             slippage_entry_pct = round(slippage_pct, 4),
             entry_commission   = entry_fee,
             entry_role         = entry_role,
+            tp1_qty            = tp1_qty_final,
+            tp2_qty            = tp2_qty_final,
         )
 
         from alerts.telegram import send
         mode      = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
         emoji     = "📈" if direction == "LONG" else "📉"
-        sl_status = "✅" if sl_oid else "⚠️ FAILED — place manually"
-        tp_status = "✅" if tp_oid else "⚠️ Failed"
+        sl_status = "✅" if sl_oid  else "⚠️ FAILED"
+        t1_status = "✅" if tp1_oid else "⚠️ Failed"
+        t2_status = "✅" if tp2_oid else "—" if not tp2_rounded else "⚠️ Failed"
 
         await send(
             f"{emoji} *{coin} {direction} Opened — {mode}*\n\n"
             f"Entry:   `{fill_price}` (signal `{entry}` slip `{slippage_pct:.4f}%`)\n"
             f"SL:      `{sl_rounded}` {sl_status}\n"
-            f"TP:      `{tp_rounded}` {tp_status}\n"
+            f"TP1:     `{tp1_rounded}` qty:`{tp1_qty_final}` {t1_status}\n"
+            f"TP2:     `{tp2_rounded or 'none'}` qty:`{tp2_qty_final}` {t2_status}\n"
             f"Stake:   `${stake:.2f}` × `{leverage}x` = `${stake*leverage:.2f}`\n"
             f"Fee:     `${entry_fee:.8f}` ({entry_role})\n"
             f"Grade:   `{grade}` · Score `{score}`\n"
-            f"Regime:  `{regime}` · Session `{session}`\n"
-            f"Tick:    `{tick_size}` · Prec `{price_precision}`"
+            f"Tick:    `{tick_size}` · Step `{qty_step}` · Prec `{price_precision}`"
         )
 
         return {
@@ -505,10 +621,14 @@ async def open_position(
             "trade_id":   trade_id,
             "fill_price": fill_price,
             "quantity":   filled_qty,
+            "tp1_qty":    tp1_qty_final,
+            "tp2_qty":    tp2_qty_final,
             "sl_order":   sl_oid,
-            "tp_order":   tp_oid,
+            "tp1_order":  tp1_oid,
+            "tp2_order":  tp2_oid,
             "commission": entry_fee,
             "role":       entry_role,
+            "atr_15m":    atr_15m,
         }
 
     except Exception as e:
@@ -544,6 +664,7 @@ async def close_position(
 
         prec      = await get_symbol_precision(symbol)
         qty_step  = prec["step_size"]
+        tick_size = prec["tick_size"]
         qty       = _round_step(qty, qty_step)
 
         raw        = await _place_with_retry(symbol=symbol, side=close_side, order_type="MARKET", quantity=qty, reduce_only=True)
@@ -607,6 +728,19 @@ async def close_position(
     except Exception as e:
         log.error("close_position %s: %s", coin, e, exc_info=True)
         return {"success": False, "error": str(e)}
+
+
+async def _cleanup_orders(symbol: str) -> None:
+    try:
+        await cancel_all_orders(symbol)
+        await cancel_all_algo_orders(symbol)
+        await asyncio.sleep(1.0)
+        for order in await get_open_orders(symbol):
+            oid = str(order.get("orderId", ""))
+            if oid:
+                await cancel_order(symbol, oid)
+    except Exception as e:
+        log.warning("_cleanup_orders %s: %s", symbol, e)
 
 
 def has_open_trade(coin: str) -> bool:
