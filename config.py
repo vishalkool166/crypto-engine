@@ -248,7 +248,7 @@ class Config:
         "sweep_min_score":           0.5,
 
         "zone_min_width_atr":        0.15,
-        "zone_max_dist_atr":         3.0,
+        "zone_max_dist_atr":         4.0,
         "zone_max_touches":          2,
         "zone_min_score":            0.3,
 
