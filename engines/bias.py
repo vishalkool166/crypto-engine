@@ -7,6 +7,9 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
+_SWEEP_MAX_AGE_HOURS = 48
+_SLOPE_FLAT_THRESHOLD = 0.10
+
 
 def get_htf_bias(
     d1w:        dict,
@@ -20,7 +23,8 @@ def get_htf_bias(
     if direction == "NONE":
         return _no_bias("trend_undefined")
 
-    if not _slope_defined(d1d, se["slope_flat_threshold"]):
+    slope_ok = _slope_defined(d1d, se["slope_flat_threshold"])
+    if not slope_ok:
         return _no_bias("slope_flat")
 
     atr    = d1d.get("atr") or float(df_1d["close"].iloc[-1]) * 0.015
@@ -41,11 +45,6 @@ def get_htf_bias(
     if sweep_age > se["sweep_max_age_hours"]:
         return _no_bias("sweep_expired")
 
-    if direction == "LONG"  and sweep.get("type") != "bull":
-        return _no_bias("sweep_direction_mismatch")
-    if direction == "SHORT" and sweep.get("type") != "bear":
-        return _no_bias("sweep_direction_mismatch")
-
     disp = detect_displacement(df_1d.tail(10), atr)
 
     strength = _grade_strength(sweep, disp, d1w, d1d, direction, se)
@@ -61,6 +60,7 @@ def get_htf_bias(
         "sweep_score":          sweep.get("score", 0),
         "sweep_low":            sweep.get("sweep_low"),
         "sweep_high":           sweep.get("sweep_high"),
+        "sweep_type":           sweep.get("type", ""),
         "displacement":         disp.get("confirmed", False),
         "displacement_strong":  not disp.get("moderate", True),
         "displacement_atr":     disp.get("range_mult", 0),
@@ -155,6 +155,7 @@ def _no_bias(reason: str) -> dict:
         "sweep_score":          0,
         "sweep_low":            None,
         "sweep_high":           None,
+        "sweep_type":           None,
         "displacement":         False,
         "displacement_strong":  False,
         "displacement_atr":     0,
