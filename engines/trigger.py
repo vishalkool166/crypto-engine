@@ -5,170 +5,155 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
+SE = cfg.SCALP_ENGINE
 
-def check_15m_trigger(
-    df_15m:    pd.DataFrame,
-    zone:      dict,
-    direction: str,
-    atr_4h:    float
-) -> dict:
-    se = cfg.SIGNAL_ENGINE
 
-    if df_15m is None or len(df_15m) < 10:
-        return _no_trigger("insufficient_data")
-
-    price  = float(df_15m["close"].iloc[-1])
-    buffer = atr_4h * se["sl_buffer_atr_mult"]
-
-    if not _price_near_zone(price, zone, buffer):
-        return _no_trigger("price_outside_zone")
-
-    recent = df_15m.tail(se["trigger_lookback"])
-
-    result = (
-        _check_engulfing(recent, zone, direction, buffer, se) or
-        _check_pin_bar(recent, zone, direction, buffer, se)
+def _vol_score(df: pd.DataFrame) -> float:
+    vol_ma  = float(df["volume"].rolling(20).mean().iloc[-1]) or 1
+    cur_vol = float(df["volume"].iloc[-1])
+    ratio   = cur_vol / vol_ma
+    return (
+        1.2 if ratio >= 1.5 else
+        1.0 if ratio >= 1.1 else
+        0.85 if ratio >= 0.8 else
+        0.7
     )
 
-    if not result:
-        return _no_trigger("no_pattern")
 
-    return result
-
-
-def _price_near_zone(price: float, zone: dict, buffer: float) -> bool:
+def _near_zone(price: float, zone: dict, atr_15m: float) -> bool:
+    buffer = atr_15m * 1.5
     return (zone["bottom"] - buffer) <= price <= (zone["top"] + buffer)
 
 
-def _check_engulfing(
-    df:        pd.DataFrame,
-    zone:      dict,
-    direction: str,
-    buffer:    float,
-    se:        dict
-) -> dict | None:
+def _check_engulfing(df: pd.DataFrame, direction: str, zone: dict) -> dict | None:
     if len(df) < 2:
         return None
 
     curr = df.iloc[-1]
     prev = df.iloc[-2]
 
-    c_open  = float(curr["open"])
-    c_close = float(curr["close"])
-    c_high  = float(curr["high"])
-    c_low   = float(curr["low"])
-    c_body  = abs(c_close - c_open)
-    c_range = c_high - c_low
+    c_o = float(curr["open"])
+    c_c = float(curr["close"])
+    c_h = float(curr["high"])
+    c_l = float(curr["low"])
+    p_o = float(prev["open"])
+    p_c = float(prev["close"])
 
-    p_open  = float(prev["open"])
-    p_close = float(prev["close"])
+    c_body  = abs(c_c - c_o)
+    c_range = c_h - c_l
 
     if c_range == 0:
         return None
-    if c_body / c_range < se["trigger_min_body_ratio"]:
+    if c_body / c_range < SE["trigger_min_body_ratio"]:
         return None
-    if not _candle_touches_zone(c_high, c_low, zone, buffer):
+
+    touching = c_l <= zone["top"] and c_h >= zone["bottom"]
+    if not touching:
         return None
 
     if direction == "LONG":
-        if not (p_close < p_open):
+        if not (p_c < p_o and c_c > c_o):
             return None
-        if not (c_close > c_open):
+        if not (c_c > p_o and c_o < p_c):
             return None
-        if not (c_close > p_open and c_open < p_close):
-            return None
-        if not (c_close >= zone["bottom"]):
+        if c_c < zone["bottom"]:
             return None
     else:
-        if not (p_close > p_open):
+        if not (p_c > p_o and c_c < c_o):
             return None
-        if not (c_close < c_open):
+        if not (c_c < p_o and c_o > p_c):
             return None
-        if not (c_close < p_open and c_open > p_close):
-            return None
-        if not (c_close <= zone["top"]):
+        if c_c > zone["top"]:
             return None
 
     return {
-        "confirmed":    True,
         "pattern":      "engulfing",
-        "entry_price":  round(c_close, 6),
-        "candle_high":  round(c_high, 6),
-        "candle_low":   round(c_low, 6),
         "body_ratio":   round(c_body / c_range, 3),
-        "triggered_at": time.time(),
+        "entry_price":  round(c_c, 6),
+        "candle_high":  round(c_h, 6),
+        "candle_low":   round(c_l, 6),
+        "pattern_score": 1.0,
     }
 
 
-def _check_pin_bar(
-    df:        pd.DataFrame,
-    zone:      dict,
-    direction: str,
-    buffer:    float,
-    se:        dict
-) -> dict | None:
+def _check_pin_bar(df: pd.DataFrame, direction: str, zone: dict) -> dict | None:
     if len(df) < 1:
         return None
 
-    curr    = df.iloc[-1]
-    c_open  = float(curr["open"])
-    c_close = float(curr["close"])
-    c_high  = float(curr["high"])
-    c_low   = float(curr["low"])
-    c_range = c_high - c_low
+    curr = df.iloc[-1]
+    c_o  = float(curr["open"])
+    c_c  = float(curr["close"])
+    c_h  = float(curr["high"])
+    c_l  = float(curr["low"])
 
+    c_range = c_h - c_l
     if c_range == 0:
         return None
-    if not _candle_touches_zone(c_high, c_low, zone, buffer):
+
+    touching = c_l <= zone["top"] and c_h >= zone["bottom"]
+    if not touching:
         return None
 
     if direction == "LONG":
-        wick = min(c_open, c_close) - c_low
-        if wick / c_range < se["trigger_min_wick_ratio"]:
+        wick = min(c_o, c_c) - c_l
+        if wick / c_range < SE["trigger_min_wick_ratio"]:
             return None
-        if c_close < (c_high + c_low) / 2:
+        if c_c < (c_h + c_l) / 2:
             return None
-        if c_close < zone["bottom"] - buffer:
+        if c_c < zone["bottom"]:
             return None
     else:
-        wick = c_high - max(c_open, c_close)
-        if wick / c_range < se["trigger_min_wick_ratio"]:
+        wick = c_h - max(c_o, c_c)
+        if wick / c_range < SE["trigger_min_wick_ratio"]:
             return None
-        if c_close > (c_high + c_low) / 2:
+        if c_c > (c_h + c_l) / 2:
             return None
-        if c_close > zone["top"] + buffer:
+        if c_c > zone["top"]:
             return None
 
     return {
-        "confirmed":    True,
-        "pattern":      "pin_bar",
-        "entry_price":  round(c_close, 6),
-        "candle_high":  round(c_high, 6),
-        "candle_low":   round(c_low, 6),
-        "wick_ratio":   round(wick / c_range, 3),
-        "triggered_at": time.time(),
+        "pattern":       "pin_bar",
+        "wick_ratio":    round(wick / c_range, 3),
+        "entry_price":   round(c_c, 6),
+        "candle_high":   round(c_h, 6),
+        "candle_low":    round(c_l, 6),
+        "pattern_score": 0.85,
     }
 
 
-def _candle_touches_zone(
-    high:      float,
-    low:       float,
-    zone:      dict,
-    buffer:    float
-) -> bool:
-    return (
-        low  <= zone["top"]    + buffer and
-        high >= zone["bottom"] - buffer
+def detect(df_15m: pd.DataFrame, zone: dict, direction: str, atr_15m: float) -> dict:
+    if df_15m is None or len(df_15m) < SE["trigger_lookback"]:
+        return {"confirmed": False, "score": 0.0, "pattern": None, "reason": "insufficient_data"}
+
+    price = float(df_15m["close"].iloc[-1])
+
+    if not _near_zone(price, zone, atr_15m):
+        return {"confirmed": False, "score": 0.0, "pattern": None, "reason": "price_outside_zone"}
+
+    recent = df_15m.tail(SE["trigger_lookback"])
+
+    result = (
+        _check_engulfing(recent, direction, zone) or
+        _check_pin_bar(recent,   direction, zone)
     )
 
+    if not result:
+        return {"confirmed": False, "score": 0.0, "pattern": None, "reason": "no_pattern"}
 
-def _no_trigger(reason: str) -> dict:
+    vol_mult = _vol_score(df_15m)
+    score    = round(result["pattern_score"] * vol_mult, 3)
+
+    if score < SE["trigger_min_score"]:
+        return {"confirmed": False, "score": score, "pattern": result["pattern"], "reason": "score_too_low"}
+
     return {
-        "confirmed":    False,
-        "pattern":      None,
-        "entry_price":  None,
-        "candle_high":  None,
-        "candle_low":   None,
-        "reason":       reason,
-        "triggered_at": None,
+        "confirmed":    True,
+        "score":        score,
+        "pattern":      result["pattern"],
+        "entry_price":  result["entry_price"],
+        "candle_high":  result["candle_high"],
+        "candle_low":   result["candle_low"],
+        "vol_mult":     vol_mult,
+        "triggered_at": time.time(),
+        "reason":       "",
     }

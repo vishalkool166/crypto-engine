@@ -239,23 +239,57 @@ class Config:
 
     RISK_PCT_PER_TRADE = 0.02
 
-    SIGNAL_ENGINE = {
-    "sweep_max_age_hours":    96,
-    "slope_flat_threshold":   0.10,
-    "zone_distance_atr_mult": 2.0,
-    "zone_distance_min_pct":  1.5,
-    "zone_max_touches":       2,
-    "fvg_min_width_pct":      0.10,
-    "trigger_min_body_ratio": 0.55,
-    "trigger_min_wick_ratio": 0.55,
-    "trigger_lookback":       6,
-    "min_rr":                 1.8,
-    "sl_buffer_atr_mult":     0.1,
-    "cooldown_hours":         48,
-    "sweep_strong_score":     5,
-    "sweep_moderate_score":   3,
-    "displacement_strong_atr":1.5,
-}
+    SCALP_ENGINE = {
+        "ema_period":                20,
+        "ema_buffer_atr_mult":       0.3,
+
+        "sweep_max_age_hours":       8,
+        "sweep_min_wick_atr":        0.2,
+        "sweep_min_score":           0.5,
+
+        "zone_min_width_atr":        0.15,
+        "zone_max_dist_atr":         3.0,
+        "zone_max_touches":          2,
+        "zone_min_score":            0.3,
+
+        "trigger_min_body_ratio":    0.55,
+        "trigger_min_wick_ratio":    0.55,
+        "trigger_min_score":         0.6,
+        "trigger_lookback":          4,
+
+        "sl_buffer_atr_mult":        0.3,
+        "sl_min_pct":                0.25,
+        "sl_max_pct":                4.0,
+
+        "tp1_min_rr":                1.5,
+        "tp2_min_rr":                2.5,
+
+        "time_stop_hours":           8,
+        "close_before_asia":         True,
+        "tp1_close_pct":             0.65,
+        "tp2_close_pct":             0.35,
+        "time_stop_after_tp1_hours": 2,
+
+        "base_risk_pct":             0.01,
+        "max_risk_pct":              0.02,
+        "min_risk_pct":              0.005,
+        "daily_loss_limit_pct":      0.02,
+        "max_open_trades":           3,
+        "max_same_direction":        2,
+        "max_leverage":              15,
+
+        "coin_cooldown_hours":       2,
+
+        "grade_aplus_threshold":     0.80,
+        "grade_a_threshold":         0.65,
+        "grade_b_threshold":         0.50,
+
+        "grade_aplus_size_mult":     1.3,
+        "grade_a_size_mult":         1.0,
+        "grade_b_size_mult":         0.7,
+
+        "kline_trigger_tf":          "15m",
+    }
 
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")

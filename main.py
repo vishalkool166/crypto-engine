@@ -252,6 +252,9 @@ async def lifespan(app: FastAPI):
     from trade.ws import start_ws, on_trade_event
     on_trade_event(_on_trade_event)
 
+    from alerts.scanner import register_kline_handler
+    register_kline_handler()
+
     from auth import setup_status
     status = setup_status()
     if not status["setup_complete"]:
@@ -274,6 +277,8 @@ async def lifespan(app: FastAPI):
 
     await start_ws()
     log.info("Binance WebSocket streams started")
+
+    from trade.scalp_manager import run_cycle as scalp_run_cycle
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
