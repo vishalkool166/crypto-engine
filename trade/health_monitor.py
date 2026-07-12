@@ -32,6 +32,8 @@ async def run_health_checks():
 async def _check_single_trade_db(trade: dict):
     from trade.exchange import get_ticker_price
     from engines.state import get as get_coin_state
+    from data.store import load_candles
+    from engines.indicators import calculate_all
 
     coin      = trade["coin"]
     open_rate = float(trade.get("entry_price") or 0)
@@ -49,17 +51,21 @@ async def _check_single_trade_db(trade: dict):
     zone       = setup.get("zone",  {}) or {}
     sweep_data = setup.get("sweep", {}) or {}
 
-    d1d = {}
     d4h = {}
+    d1d = {}
 
     try:
-        from data.cache import cache
-        cached = cache.get_raw(f"signal_{coin}")
-        if cached:
-            d1d = cached.get("d1d", {}) or {}
-            d4h = cached.get("d4h", {}) or {}
-    except Exception:
-        pass
+        df_4h = load_candles(coin, "4h", limit=200)
+        df_1d = load_candles(coin, "1d", limit=200)
+
+        if df_4h is not None and len(df_4h) >= 50:
+            d4h = calculate_all(df_4h.iloc[-200:], timeframe="4h")
+
+        if df_1d is not None and len(df_1d) >= 50:
+            d1d = calculate_all(df_1d.iloc[-200:], timeframe="1d")
+
+    except Exception as e:
+        log.warning("Health monitor indicator load error %s: %s", coin, e)
 
     retest = {
         "confirmed": False,
@@ -82,6 +88,7 @@ async def _check_single_trade_db(trade: dict):
     }
 
     try:
+        from data.cache import cache
         btc_data = cache.get_raw("btc_4h_data")
     except Exception:
         btc_data = None

@@ -21,53 +21,78 @@ JWT_EXPIRY_H   = 24
 
 OAUTH_ALGORITHM = "HS256"
 
-_failed_attempts: dict = {}
-_lockout_until:   dict = {}
-
 MAX_ATTEMPTS     = 5
 LOCKOUT_MINUTES  = 15
 ATTEMPT_WINDOW   = 300
 
 
+def _get_redis_client():
+    try:
+        from redis_client import get_redis
+        return get_redis()
+    except Exception:
+        return None
+
+
 def _get_attempt_key(ip: str) -> str:
-    return hashlib.sha256(ip.encode()).hexdigest()[:16]
+    return f"auth:attempts:{hashlib.sha256(ip.encode()).hexdigest()[:16]}"
+
+
+def _get_lockout_key(ip: str) -> str:
+    return f"auth:lockout:{hashlib.sha256(ip.encode()).hexdigest()[:16]}"
 
 
 def _is_locked_out(ip: str) -> tuple[bool, int]:
-    key   = _get_attempt_key(ip)
-    until = _lockout_until.get(key, 0)
-    now   = time.time()
-    if until > now:
-        remaining = int((until - now) / 60) + 1
-        return True, remaining
+    r = _get_redis_client()
+    if r:
+        try:
+            val = r.get(_get_lockout_key(ip))
+            if val:
+                remaining = int(float(val))
+                if remaining > 0:
+                    return True, remaining
+            return False, 0
+        except Exception:
+            pass
     return False, 0
 
 
 def _record_failure(ip: str):
-    key      = _get_attempt_key(ip)
-    now      = time.time()
-    attempts = _failed_attempts.get(key, [])
-    attempts = [t for t in attempts if now - t < ATTEMPT_WINDOW]
-    attempts.append(now)
-    _failed_attempts[key] = attempts
-    if len(attempts) >= MAX_ATTEMPTS:
-        _lockout_until[key] = now + LOCKOUT_MINUTES * 60
-        log.warning(f"IP locked out after {MAX_ATTEMPTS} failed attempts: {ip[:8]}***")
-    return len(attempts)
+    r = _get_redis_client()
+    if r:
+        try:
+            attempts_key = _get_attempt_key(ip)
+            lockout_key  = _get_lockout_key(ip)
+            count        = r.incr(attempts_key)
+            r.expire(attempts_key, ATTEMPT_WINDOW)
+            if count >= MAX_ATTEMPTS:
+                r.setex(lockout_key, LOCKOUT_MINUTES * 60, str(LOCKOUT_MINUTES))
+                log.warning("IP locked out after %s failed attempts: %s***", MAX_ATTEMPTS, ip[:8])
+            return count
+        except Exception:
+            pass
+    return 0
 
 
 def _clear_attempts(ip: str):
-    key = _get_attempt_key(ip)
-    _failed_attempts.pop(key, None)
-    _lockout_until.pop(key, None)
+    r = _get_redis_client()
+    if r:
+        try:
+            r.delete(_get_attempt_key(ip))
+            r.delete(_get_lockout_key(ip))
+        except Exception:
+            pass
 
 
 def _attempts_remaining(ip: str) -> int:
-    key      = _get_attempt_key(ip)
-    now      = time.time()
-    attempts = _failed_attempts.get(key, [])
-    attempts = [t for t in attempts if now - t < ATTEMPT_WINDOW]
-    return max(0, MAX_ATTEMPTS - len(attempts))
+    r = _get_redis_client()
+    if r:
+        try:
+            count = r.get(_get_attempt_key(ip))
+            return max(0, MAX_ATTEMPTS - int(count or 0))
+        except Exception:
+            pass
+    return MAX_ATTEMPTS
 
 
 def hash_password(plain: str) -> str:
@@ -99,7 +124,7 @@ def verify_username(username: str) -> bool:
 def set_username(username: str):
     _ensure("DASHBOARD_USERNAME", username.strip())
     cfg.DASHBOARD_USERNAME = username.strip()
-    log.info(f"Dashboard username set: {username}")
+    log.info("Dashboard username set: %s", username)
 
 
 def get_totp() -> pyotp.TOTP:
@@ -149,7 +174,7 @@ def get_qr_svg() -> str:
         svg = svg.replace('xmlns:svg="http://www.w3.org/2000/svg"', '')
         return svg
     except Exception as e:
-        log.error(f"QR SVG generation error: {e}")
+        log.error("QR SVG generation error: %s", e)
         return ""
 
 
@@ -169,7 +194,7 @@ def get_qr_png_bytes() -> bytes:
         img.save(buf, format="PNG")
         return buf.getvalue()
     except Exception as e:
-        log.error(f"QR PNG generation error: {e}")
+        log.error("QR PNG generation error: %s", e)
         return b""
 
 
@@ -189,7 +214,7 @@ def store_recovery_codes(codes: list[str]):
     hashed = hash_recovery_codes(codes)
     _ensure("RECOVERY_CODES", json.dumps(hashed))
     cfg.RECOVERY_CODES = json.dumps(hashed)
-    log.info(f"Recovery codes stored: {len(codes)} codes")
+    log.info("Recovery codes stored: %s codes", len(codes))
 
 
 def verify_recovery_code(code: str) -> bool:
@@ -207,7 +232,7 @@ def verify_recovery_code(code: str) -> bool:
             return True
         return False
     except Exception as e:
-        log.error(f"Recovery code verify error: {e}")
+        log.error("Recovery code verify error: %s", e)
         return False
 
 
@@ -376,7 +401,7 @@ def _audit(action: str, source: str, detail: str = "", ip: str = "", success: bo
                 success = success
             ))
     except Exception as e:
-        log.error(f"Audit log error: {e}")
+        log.error("Audit log error: %s", e)
 
 
 def audit(action: str, source: str, detail: str = "", ip: str = "", success: bool = True):
@@ -455,7 +480,7 @@ def verify_oauth_api_key(key: str) -> dict | None:
                 "type":     "api_key",
             }
     except Exception as e:
-        log.error(f"API key verify error: {e}")
+        log.error("API key verify error: %s", e)
         return None
 
 

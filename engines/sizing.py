@@ -6,6 +6,17 @@ log = logging.getLogger(__name__)
 
 SE = cfg.SCALP_ENGINE
 
+MIN_STAKE          = 5.0
+MAX_RISK_PCT       = 0.02
+MIN_RISK_PCT       = 0.005
+PAPER_LEVERAGE_CAP = 10
+LIVE_LEVERAGE_CAP  = 15
+PAPER_BASE_RISK    = 0.015
+LIVE_BASE_RISK     = 0.01
+ML_MIN_TRADES      = 100
+DAILY_LOSS_LIMIT   = 0.02
+CHOP_RISK_MULT     = 0.5
+
 
 def _get_recent_performance() -> dict:
     try:
@@ -103,7 +114,29 @@ def _get_open_trade_counts() -> dict:
         return {"total": 0, "long": 0, "short": 0}
 
 
-def _leverage_from_sl(sl_pct: float) -> int:
+def _get_total_closed_trades() -> int:
+    try:
+        from database import SessionLocal, Trade as TradeModel
+        with SessionLocal() as db:
+            return db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).count()
+    except Exception:
+        return 0
+
+
+def _get_portfolio_exposure() -> float:
+    try:
+        from database import SessionLocal, Trade as TradeModel
+        with SessionLocal() as db:
+            trades = db.query(TradeModel).filter(TradeModel.is_active == True).all()
+        return sum(float(t.position_size or 0) for t in trades)
+    except Exception:
+        return 0.0
+
+
+def _leverage_from_sl(sl_pct: float, is_paper: bool) -> int:
+    cap = PAPER_LEVERAGE_CAP if is_paper else LIVE_LEVERAGE_CAP
     if sl_pct < 0.5:
         lev = 15
     elif sl_pct < 1.0:
@@ -114,7 +147,7 @@ def _leverage_from_sl(sl_pct: float) -> int:
         lev = 7
     else:
         lev = 5
-    return min(lev, SE["max_leverage"])
+    return min(lev, cap)
 
 
 def _grade_mult(grade: str) -> float:
@@ -125,19 +158,97 @@ def _grade_mult(grade: str) -> float:
     }.get(grade, SE["grade_b_size_mult"])
 
 
-def calculate(
-    balance:   float,
-    sl_pct:    float,
-    sl_dist:   float,
-    grade:     str,
-    direction: str,
-) -> dict:
+def _ml_mult(total_trades: int, ml_probability: float | None) -> float:
+    if total_trades < ML_MIN_TRADES:
+        return 1.0
+    if ml_probability is None:
+        return 1.0
+    if ml_probability >= 0.75:
+        return 1.10
+    if ml_probability >= 0.65:
+        return 1.00
+    if ml_probability >= 0.55:
+        return 0.85
+    return 0.70
 
-    today_pnl = _get_today_pnl()
-    if today_pnl < -(balance * SE["daily_loss_limit_pct"]):
-        return {"skip": True, "reason": "daily_loss_limit"}
+
+def _dynamic_risk(
+    base:        float,
+    perf:        dict,
+    drawdown:    float,
+    is_paper:    bool,
+) -> float:
+    win_rate    = perf.get("win_rate")
+    streak      = perf.get("streak", 0)
+    streak_type = perf.get("streak_type")
+    total       = perf.get("total", 0)
+
+    if win_rate is None or total < 10:
+        wr_mult = 0.8
+    elif win_rate > 0.60:
+        wr_mult = 1.20
+    elif win_rate > 0.50:
+        wr_mult = 1.00
+    elif win_rate > 0.40:
+        wr_mult = 0.85
+    elif win_rate > 0.30:
+        wr_mult = 0.70
+    else:
+        wr_mult = 0.50
+
+    if streak_type == "win":
+        if streak >= 5:
+            streak_mult = 1.15
+        elif streak >= 3:
+            streak_mult = 1.08
+        else:
+            streak_mult = 1.0
+    elif streak_type == "loss":
+        if streak >= 3:
+            streak_mult = 0.70
+        elif streak >= 2:
+            streak_mult = 0.85
+        else:
+            streak_mult = 1.0
+    else:
+        streak_mult = 1.0
+
+    if drawdown > 0.20:
+        dd_mult = 0.40
+    elif drawdown > 0.15:
+        dd_mult = 0.60
+    elif drawdown > 0.10:
+        dd_mult = 0.75
+    elif drawdown > 0.05:
+        dd_mult = 0.90
+    else:
+        dd_mult = 1.00
+
+    risk = base * wr_mult * streak_mult * dd_mult
+    return max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk))
+
+
+def calculate(
+    balance:        float,
+    sl_pct:         float,
+    sl_dist:        float,
+    grade:          str,
+    direction:      str,
+    ml_probability: float | None = None,
+) -> dict:
+    is_paper = cfg.PAPER_TRADING
+
+    today_pnl   = _get_today_pnl()
+    daily_limit = balance * DAILY_LOSS_LIMIT
+
+    if today_pnl < -daily_limit:
+        return {
+            "skip":   True,
+            "reason": f"Daily loss limit hit: ${abs(today_pnl):.2f} of ${daily_limit:.2f} — no more trades today"
+        }
 
     open_counts = _get_open_trade_counts()
+
     if open_counts["total"] >= SE["max_open_trades"]:
         return {"skip": True, "reason": "max_open_trades"}
 
@@ -145,56 +256,36 @@ def calculate(
     if same_dir >= SE["max_same_direction"]:
         return {"skip": True, "reason": "max_same_direction"}
 
-    perf     = _get_recent_performance()
-    drawdown = _get_drawdown(balance)
+    if not balance or balance < MIN_STAKE:
+        return {"skip": True, "reason": f"Insufficient balance: ${balance:.2f}"}
 
-    win_rate    = perf["win_rate"]
-    streak      = perf["streak"]
-    streak_type = perf["streak_type"]
-    total       = perf["total"]
+    if not sl_pct or sl_pct <= 0:
+        return {"skip": True, "reason": "Invalid SL percentage"}
 
-    if win_rate is None or total < 10:
-        wr_mult = 0.8
-    elif win_rate > 0.60:
-        wr_mult = 1.2
-    elif win_rate > 0.50:
-        wr_mult = 1.0
-    elif win_rate > 0.40:
-        wr_mult = 0.85
-    else:
-        wr_mult = 0.65
+    perf         = _get_recent_performance()
+    drawdown     = _get_drawdown(balance)
+    total_trades = _get_total_closed_trades()
 
-    if drawdown > 0.15:
-        dd_mult = 0.40
-    elif drawdown > 0.10:
-        dd_mult = 0.65
-    elif drawdown > 0.05:
-        dd_mult = 0.85
-    else:
-        dd_mult = 1.0
+    base_risk = PAPER_BASE_RISK if is_paper else LIVE_BASE_RISK
 
-    if streak_type == "loss" and streak >= 3:
-        streak_mult = 0.70
-    elif streak_type == "loss" and streak == 2:
-        streak_mult = 0.85
-    elif streak_type == "win" and streak >= 4:
-        streak_mult = 1.10
-    else:
-        streak_mult = 1.0
+    risk_pct = _dynamic_risk(base_risk, perf, drawdown, is_paper)
+    risk_pct = risk_pct * _grade_mult(grade)
+    risk_pct = risk_pct * _ml_mult(total_trades, ml_probability)
+    risk_pct = max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk_pct))
 
-    base_risk = SE["base_risk_pct"]
-    risk_pct  = base_risk * wr_mult * dd_mult * streak_mult * _grade_mult(grade)
-    risk_pct  = max(SE["min_risk_pct"], min(SE["max_risk_pct"], risk_pct))
-
+    leverage      = _leverage_from_sl(sl_pct, is_paper)
     risk_amt      = balance * risk_pct
-    leverage      = _leverage_from_sl(sl_pct)
     position_size = risk_amt / (sl_pct / 100)
     stake         = position_size / leverage
     max_stake     = balance * 0.20
     stake         = min(stake, max_stake)
-    stake         = max(stake, 5.0)
+    stake         = max(stake, MIN_STAKE)
     position_size = stake * leverage
     actual_risk   = position_size * (sl_pct / 100)
+
+    win_rate    = perf.get("win_rate")
+    streak      = perf.get("streak", 0)
+    streak_type = perf.get("streak_type")
 
     return {
         "skip":          False,
@@ -203,12 +294,15 @@ def calculate(
         "position_size": round(position_size, 4),
         "stake":         round(stake, 4),
         "leverage":      leverage,
-        "wr_mult":       round(wr_mult, 2),
-        "dd_mult":       round(dd_mult, 2),
-        "streak_mult":   round(streak_mult, 2),
-        "grade_mult":    round(_grade_mult(grade), 2),
         "drawdown_pct":  round(drawdown * 100, 2),
         "win_rate":      round(win_rate * 100, 1) if win_rate is not None else None,
+        "streak":        streak,
+        "streak_type":   streak_type,
         "today_pnl":     round(today_pnl, 4),
+        "daily_limit":   round(daily_limit, 4),
         "open_trades":   open_counts["total"],
+        "total_trades":  total_trades,
+        "is_paper":      is_paper,
+        "grade_mult":    round(_grade_mult(grade), 2),
+        "ml_mult":       round(_ml_mult(total_trades, ml_probability), 2),
     }

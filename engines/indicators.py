@@ -44,7 +44,7 @@ def calculate_all(df: pd.DataFrame, timeframe: str = "4h") -> dict:
     swing_lookback = _get_swing_lookback(timeframe)
     trend          = _get_trend(price, e20, e50, e200)
     swings         = _find_swings(df, lookback=50, pivot_bars=swing_lookback)
-    structure      = _detect_structure(df, swings, price)
+    structure      = _detect_structure(df, swings)
     fvgs           = _detect_fvg(df)
     ob_data        = detect_order_blocks(df, atr or price * 0.015, lookback=50)
     vp             = _volume_profile(df, bins=50)
@@ -227,40 +227,48 @@ def _find_swings(
     }
 
 
-def _detect_structure(df, swings, price) -> dict:
+def _detect_structure(df: pd.DataFrame, swings: dict) -> dict:
     events = []
     lh = swings["last_high"]
     ll = swings["last_low"]
     ph = swings["prev_high"]
     pl = swings["prev_low"]
 
-    if lh and price > lh["price"]:
+    close = df["close"]
+
+    last_close  = float(close.iloc[-1])
+    prev_close  = float(close.iloc[-2]) if len(close) >= 2 else last_close
+
+    if lh and prev_close <= lh["price"] and last_close > lh["price"]:
         events.append({
             "type":  "BOS",
             "bias":  "bull",
             "label": "BOS Bullish",
-            "desc":  f"Broke swing high {lh['price']:.2f}"
+            "desc":  f"Closed above swing high {lh['price']:.2f}"
         })
-    if ll and price < ll["price"]:
+
+    if ll and prev_close >= ll["price"] and last_close < ll["price"]:
         events.append({
             "type":  "BOS",
             "bias":  "bear",
             "label": "BOS Bearish",
-            "desc":  f"Broke swing low {ll['price']:.2f}"
+            "desc":  f"Closed below swing low {ll['price']:.2f}"
         })
-    if ph and lh and lh["price"] < ph["price"] and price > lh["price"]:
+
+    if ph and lh and lh["price"] < ph["price"] and prev_close <= lh["price"] and last_close > lh["price"]:
         events.append({
             "type":  "CHoCH",
             "bias":  "bull",
             "label": "CHoCH Bullish",
-            "desc":  "Lower high broken — reversal up"
+            "desc":  "Lower high broken on close — reversal up"
         })
-    if pl and ll and ll["price"] > pl["price"] and price < ll["price"]:
+
+    if pl and ll and ll["price"] > pl["price"] and prev_close >= ll["price"] and last_close < ll["price"]:
         events.append({
             "type":  "CHoCH",
             "bias":  "bear",
             "label": "CHoCH Bearish",
-            "desc":  "Higher low broken — reversal down"
+            "desc":  "Higher low broken on close — reversal down"
         })
 
     bias = "neutral"

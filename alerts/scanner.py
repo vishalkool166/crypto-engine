@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.store import save_candles
@@ -129,6 +130,31 @@ async def _get_cached_balance() -> float:
     return balance
 
 
+def _build_factor_scores(result: dict) -> dict:
+    factor_scores = {}
+    sweep  = result.get("sweep") or {}
+    zone   = result.get("zone")  or {}
+
+    factor_scores["liquidity_sweep"]     = round(result.get("sweep_score",   0) * 12, 2)
+    factor_scores["displacement"]        = round(result.get("trigger_score", 0) * 11, 2)
+    factor_scores["retest_confirmation"] = round(result.get("zone_score",    0) * 12, 2)
+    factor_scores["order_blocks"]        = round(zone.get("score", 0) * 4,            2) if zone.get("type") == "OB"  else 0
+    factor_scores["market_structure"]    = round(result.get("sweep_score",   0) * 9,  2)
+    factor_scores["volume_expansion"]    = round(result.get("trigger_score", 0) * 7,  2)
+    factor_scores["market_regime"]       = 8 if result.get("direction") in ("LONG", "SHORT") else 0
+    factor_scores["session_timing"]      = 6 if _derive_session() in ("London", "London/NY Overlap", "New York") else 2
+    factor_scores["btc_alignment"]       = 6
+    factor_scores["oi_behavior"]         = 4
+    factor_scores["funding_extreme"]     = 0
+    factor_scores["rsi_divergence"]      = 0
+    factor_scores["atr_volatility"]      = 2
+    factor_scores["rsi_context"]         = 1
+    factor_scores["macd_histogram"]      = 1
+    factor_scores["weekly_filter"]       = 8
+
+    return factor_scores
+
+
 def _save_signal(signal: dict) -> int | None:
     if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
         return None
@@ -138,6 +164,8 @@ def _save_signal(signal: dict) -> int | None:
         return None
 
     try:
+        factor_scores = _build_factor_scores(signal)
+
         with get_session() as db:
             existing = db.query(SignalModel).filter(
                 SignalModel.coin      == signal["coin"],
@@ -152,27 +180,31 @@ def _save_signal(signal: dict) -> int | None:
                 existing.outcome = "expired"
 
             row = SignalModel(
-                coin         = signal["coin"],
-                direction    = signal["direction"],
-                grade        = signal["grade"],
-                score        = signal["score"],
-                signal_type  = signal["signal_type"],
-                entry        = signal["entry"],
-                sl           = signal["sl"],
-                tp1          = signal["tp1"],
-                tp2          = signal.get("tp2"),
-                sl_pct       = signal["sl_pct"],
-                risk_amt     = signal["risk_amt"],
-                risk_pct     = signal["risk_pct"],
-                position     = signal["pos_size"],
-                leverage     = str(signal["leverage"]) + "x",
-                sweep_score  = signal["sweep_score"],
-                retest_score = 0,
-                disp_score   = signal["trigger_score"],
-                funding      = 0,
-                oi_signal    = "",
-                outcome      = "pending",
-                atr_at_entry = signal.get("atr_4h"),
+                coin          = signal["coin"],
+                direction     = signal["direction"],
+                grade         = signal["grade"],
+                score         = signal["score"],
+                signal_type   = signal["signal_type"],
+                entry         = signal["entry"],
+                sl            = signal["sl"],
+                tp1           = signal["tp1"],
+                tp2           = signal.get("tp2"),
+                sl_pct        = signal["sl_pct"],
+                risk_amt      = signal["risk_amt"],
+                risk_pct      = signal["risk_pct"],
+                position      = signal["pos_size"],
+                leverage      = str(signal["leverage"]) + "x",
+                sweep_score   = signal["sweep_score"],
+                retest_score  = 0,
+                disp_score    = signal["trigger_score"],
+                funding       = 0,
+                oi_signal     = "",
+                outcome       = "pending",
+                atr_at_entry  = signal.get("atr_4h"),
+                factor_scores = json.dumps(factor_scores),
+                market_score  = round(signal.get("sweep_score",   0) * 100, 2),
+                entry_score   = round(signal.get("trigger_score", 0) * 100, 2),
+                btc_score     = 6.0,
             )
             db.add(row)
             db.flush()

@@ -246,78 +246,92 @@ def _get_field(trade_id: int, field: str) -> float:
         return 0.0
 
 
-def _save_trade(
-    coin:               str,
-    direction:          str,
-    signal_id:          int | None,
-    grade:              str,
+def _create_pending_trade(
+    coin:          str,
+    direction:     str,
+    signal_id:     int | None,
+    grade:         str,
+    sl_price:      float,
+    tp1_price:     float,
+    tp2_price:     float | None,
+    leverage:      int,
+    regime:        str   = "",
+    session:       str   = "",
+    score:         float = 0.0,
+) -> int:
+    try:
+        with get_session() as db:
+            trade = TradeModel(
+                signal_id    = signal_id,
+                coin         = coin,
+                direction    = direction,
+                grade        = grade,
+                state        = "pending",
+                is_active    = False,
+                sl_price     = sl_price,
+                tp1_price    = tp1_price,
+                tp2_price    = tp2_price,
+                leverage     = leverage,
+                opened_at    = datetime.now(timezone.utc),
+                outcome      = "pending",
+                regime_at_entry  = regime,
+                session_at_entry = session,
+                score_at_entry   = score,
+            )
+            db.add(trade)
+            db.flush()
+            db.refresh(trade)
+            log.info("Pending trade created: id:%s %s %s", trade.id, coin, direction)
+            return trade.id
+    except Exception as e:
+        log.error("_create_pending_trade error: %s", e)
+        return 0
+
+
+def _activate_trade(
+    trade_id:           int,
     entry_price:        float,
-    sl_price:           float,
-    tp1_price:          float,
-    tp2_price:          float | None,
     position_size:      float,
     margin_used:        float,
-    leverage:           int,
     sl_order_id:        str | None,
     tp1_order_id:       str | None,
     tp2_order_id:       str | None,
     entry_order_id:     str,
-    regime:             str   = "",
-    session:            str   = "",
-    score:              float = 0.0,
     actual_fill_entry:  float = 0.0,
     slippage_entry_pct: float = 0.0,
     entry_commission:   float = 0.0,
     entry_role:         str   = "taker",
     tp1_qty:            float = 0.0,
     tp2_qty:            float = 0.0,
-) -> int:
+) -> None:
     try:
         with get_session() as db:
-            trade = TradeModel(
-                signal_id          = signal_id,
-                coin               = coin,
-                direction          = direction,
-                grade              = grade,
-                state              = "open",
-                is_active          = True,
-                entry_price        = entry_price,
-                sl_price           = sl_price,
-                tp1_price          = tp1_price,
-                tp2_price          = tp2_price,
-                position_size      = position_size,
-                margin_used        = margin_used,
-                leverage           = leverage,
-                sl_order_id        = sl_order_id,
-                tp1_order_id       = tp1_order_id,
-                tp2_order_id       = tp2_order_id,
-                entry_order_id     = entry_order_id,
-                opened_at          = datetime.now(timezone.utc),
-                outcome            = "pending",
-                balance_at_open    = margin_used,
-                regime_at_entry    = regime,
-                session_at_entry   = session,
-                score_at_entry     = score,
-                actual_fill_entry  = actual_fill_entry or entry_price,
-                slippage_entry_pct = slippage_entry_pct,
-                entry_commission   = entry_commission,
-                entry_role         = entry_role,
-                funding_fees_paid  = 0.0,
-                total_commission   = entry_commission,
-                notes              = f"tp1_qty:{tp1_qty:.6f} tp2_qty:{tp2_qty:.6f}",
-            )
-            db.add(trade)
-            db.flush()
-            db.refresh(trade)
+            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if not trade:
+                return
+            trade.state              = "open"
+            trade.is_active          = True
+            trade.entry_price        = entry_price
+            trade.position_size      = position_size
+            trade.margin_used        = margin_used
+            trade.sl_order_id        = sl_order_id
+            trade.tp1_order_id       = tp1_order_id
+            trade.tp2_order_id       = tp2_order_id
+            trade.entry_order_id     = entry_order_id
+            trade.balance_at_open    = margin_used
+            trade.actual_fill_entry  = actual_fill_entry or entry_price
+            trade.slippage_entry_pct = slippage_entry_pct
+            trade.entry_commission   = entry_commission
+            trade.entry_role         = entry_role
+            trade.funding_fees_paid  = 0.0
+            trade.total_commission   = entry_commission
+            trade.notes              = f"tp1_qty:{tp1_qty:.6f} tp2_qty:{tp2_qty:.6f}"
             log.info(
-                "Trade saved: id:%s %s %s fill:%.6f slip:%.4f%% fee:$%.8f",
-                trade.id, coin, direction, actual_fill_entry,
-                slippage_entry_pct, entry_commission,
+                "Trade activated: id:%s fill:%.6f slip:%.4f%% fee:$%.8f",
+                trade_id, actual_fill_entry, slippage_entry_pct, entry_commission,
             )
-            return trade.id
     except Exception as e:
-        log.error("_save_trade error: %s", e)
-        return 0
+        log.error("_activate_trade error: %s", e)
 
 
 def _mark_closed(
@@ -417,6 +431,8 @@ async def open_position(
 
     SE = cfg.SCALP_ENGINE
 
+    trade_id = 0
+
     try:
         current = await get_ticker_price(symbol)
         if not current:
@@ -439,6 +455,23 @@ async def open_position(
         if existing:
             return {"success": False, "error": f"Position already exists on exchange for {coin}"}
 
+        trade_id = _create_pending_trade(
+            coin      = coin,
+            direction = direction,
+            signal_id = signal_id,
+            grade     = grade,
+            sl_price  = sl,
+            tp1_price = tp,
+            tp2_price = tp2,
+            leverage  = leverage,
+            regime    = regime,
+            session   = session,
+            score     = score,
+        )
+
+        if not trade_id:
+            return {"success": False, "error": "Failed to create trade record"}
+
         await set_margin_mode(symbol, "ISOLATED")
         await set_leverage(symbol, leverage)
 
@@ -456,6 +489,7 @@ async def open_position(
         total_quantity = _round_step((stake * leverage) / current, qty_step)
 
         if min_qty > 0 and total_quantity < min_qty:
+            _cancel_pending_trade(trade_id)
             return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
         tp1_qty_final = _round_step(total_quantity * SE["tp1_close_pct"], qty_step)
@@ -535,25 +569,15 @@ async def open_position(
         if not atr_15m or atr_15m <= 0:
             atr_15m = fill_price * 0.005
 
-        trade_id = _save_trade(
-            coin               = coin,
-            direction          = direction,
-            signal_id          = signal_id,
-            grade              = grade,
+        _activate_trade(
+            trade_id           = trade_id,
             entry_price        = fill_price,
-            sl_price           = sl_rounded,
-            tp1_price          = tp1_rounded,
-            tp2_price          = tp2_rounded,
             position_size      = actual_position_size,
             margin_used        = actual_margin,
-            leverage           = leverage,
             sl_order_id        = sl_oid,
             tp1_order_id       = tp1_oid,
             tp2_order_id       = tp2_oid,
             entry_order_id     = entry_oid,
-            regime             = regime,
-            session            = session,
-            score              = score,
             actual_fill_entry  = fill_price,
             slippage_entry_pct = round(slippage_pct, 4),
             entry_commission   = entry_fee,
@@ -597,7 +621,21 @@ async def open_position(
 
     except Exception as e:
         log.error("open_position %s: %s", coin, e, exc_info=True)
+        if trade_id:
+            _cancel_pending_trade(trade_id)
         return {"success": False, "error": str(e)}
+
+
+def _cancel_pending_trade(trade_id: int) -> None:
+    try:
+        with get_session() as db:
+            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if trade and trade.state == "pending":
+                trade.state   = "cancelled"
+                trade.outcome = "cancelled"
+                log.info("Pending trade cancelled: id:%s", trade_id)
+    except Exception as e:
+        log.error("_cancel_pending_trade error: %s", e)
 
 
 async def close_position(
@@ -710,7 +748,8 @@ def has_open_trade(coin: str) -> bool:
     try:
         with get_session() as db:
             return db.query(TradeModel).filter(
-                TradeModel.coin == coin, TradeModel.is_active == True
+                TradeModel.coin      == coin,
+                TradeModel.is_active == True
             ).first() is not None
     except Exception:
         return False
