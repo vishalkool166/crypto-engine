@@ -15,6 +15,19 @@ def _count_touches(df: pd.DataFrame, top: float, bottom: float) -> int:
     return touches
 
 
+def _width_score(width: float, atr_1h: float) -> float:
+    if atr_1h <= 0:
+        return 0.5
+    ratio = width / atr_1h
+    if ratio <= 0:
+        return 0.0
+    if ratio <= 1.0:
+        return ratio * 0.5
+    if ratio <= 3.0:
+        return 0.5 + (ratio - 1.0) / 4.0
+    return max(0.5, 1.0 - (ratio - 3.0) * 0.1)
+
+
 def _find_ob_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> dict | None:
     try:
         ob_data = d4h.get("order_blocks", {})
@@ -48,8 +61,8 @@ def _find_ob_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> dic
             0.75 if ob.get("touch_count", 0) == 1 else
             0.40
         )
-        width_score = min(width / atr_1h, 2.0) / 2.0
-        score       = round(width_score * touch_mult, 3)
+
+        score = round(_width_score(width, atr_1h) * touch_mult, 3)
 
         if score < SE["zone_min_score"]:
             return None
@@ -100,8 +113,7 @@ def _find_fvg_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> di
             if dist_pct > SE["zone_max_dist_pct"]:
                 continue
 
-            width_score = min(width / atr_1h, 2.0) / 2.0
-            score       = round(width_score, 3)
+            score = round(_width_score(width, atr_1h), 3)
 
             if score < SE["zone_min_score"]:
                 continue
@@ -113,7 +125,7 @@ def _find_fvg_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> di
                 "mid":         round(mid, 6),
                 "touch_count": 0,
                 "in_zone":     bottom <= price <= top,
-                "strength":    round(width_score, 3),
+                "strength":    round(_width_score(width, atr_1h), 3),
                 "score":       score,
                 "dist_pct":    dist_pct,
                 "origin_desc": f"Fair value gap {bottom:.4f}–{top:.4f}",

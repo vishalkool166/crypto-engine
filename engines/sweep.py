@@ -49,12 +49,12 @@ def detect(
         for i in range(len(sl) - 1):
             c = sl.iloc[i]
             if float(c["low"]) < level and float(c["close"]) > level:
+                wick = level - float(c["low"])
+                if wick < atr * min_wick_atr:
+                    continue
                 candles_ago = len(sl) - 1 - i
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
-                    continue
-                wick = level - float(c["low"])
-                if wick < atr * min_wick_atr:
                     continue
                 vs         = float(c["volume"]) / vol_ma
                 body_below = min(float(c["open"]), float(c["close"])) < level
@@ -64,8 +64,9 @@ def detect(
                     2 +
                     (2 if not body_below else 0)
                 )
-                confirmed   = bool(float(c["close"]) > level and price > level)
-                adj_score   = round(rel["pts"] * (intensity / 10))
+                confirmed  = bool(float(c["close"]) > level and price > level)
+                raw_score  = rel["pts"] * (intensity / 10)
+                adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
                 return {
                     "type":        "bull",
                     "label":       label,
@@ -82,7 +83,7 @@ def detect(
                     "candles_ago": candles_ago,
                     "age_hours":   round(candles_ago * hours_per_candle, 1),
                     "relevance":   rel,
-                    "score":       adj_score if confirmed else round(adj_score * 0.4),
+                    "score":       adj_score,
                     "level_type":  label.lower().replace(" sweep", "").replace(" ", "_"),
                     "level_label": label,
                     "priority":    1 if "weekly" in label.lower() else 2,
@@ -96,12 +97,12 @@ def detect(
         for i in range(len(sl) - 1):
             c = sl.iloc[i]
             if float(c["high"]) > level and float(c["close"]) < level:
+                wick = float(c["high"]) - level
+                if wick < atr * min_wick_atr:
+                    continue
                 candles_ago = len(sl) - 1 - i
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
-                    continue
-                wick = float(c["high"]) - level
-                if wick < atr * min_wick_atr:
                     continue
                 vs         = float(c["volume"]) / vol_ma
                 body_above = max(float(c["open"]), float(c["close"])) > level
@@ -111,8 +112,9 @@ def detect(
                     2 +
                     (2 if not body_above else 0)
                 )
-                confirmed   = bool(float(c["close"]) < level and price < level)
-                adj_score   = round(rel["pts"] * (intensity / 10))
+                confirmed  = bool(float(c["close"]) < level and price < level)
+                raw_score  = rel["pts"] * (intensity / 10)
+                adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
                 return {
                     "type":        "bear",
                     "label":       label,
@@ -129,7 +131,7 @@ def detect(
                     "candles_ago": candles_ago,
                     "age_hours":   round(candles_ago * hours_per_candle, 1),
                     "relevance":   rel,
-                    "score":       adj_score if confirmed else round(adj_score * 0.4),
+                    "score":       adj_score,
                     "level_type":  label.lower().replace(" sweep", "").replace(" ", "_"),
                     "level_label": label,
                     "priority":    1 if "weekly" in label.lower() else 2,
@@ -184,25 +186,25 @@ def detect(
     base_score = min(base_score, 1.0)
 
     return {
-        "detected":   True,
-        "confirmed":  confirmed,
-        "score":      round(base_score, 3),
-        "type":       best["type"],
-        "label":      best["label"],
-        "level":      best["level"],
-        "intensity":  best["intensity"],
-        "magnitude":  best["magnitude"],
-        "vol_spike":  best["vol_spike"],
-        "vol_ratio":  best["vol_ratio"],
-        "candles_ago":best["candles_ago"],
-        "age_hours":  best["age_hours"],
-        "relevance":  best["relevance"],
-        "items":      results,
-        "sweep_low":  best.get("sweep_low"),
-        "sweep_high": best.get("sweep_high"),
-        "sweep":      best,
-        "desc":       f"Level: {best['level']:.4f} — {best['relevance']['label']} ({best['age_hours']:.1f}h ago)",
-        "all_sweeps": results,
+        "detected":    True,
+        "confirmed":   confirmed,
+        "score":       round(base_score, 3),
+        "type":        best["type"],
+        "label":       best["label"],
+        "level":       best["level"],
+        "intensity":   best["intensity"],
+        "magnitude":   best["magnitude"],
+        "vol_spike":   best["vol_spike"],
+        "vol_ratio":   best["vol_ratio"],
+        "candles_ago": best["candles_ago"],
+        "age_hours":   best["age_hours"],
+        "relevance":   best["relevance"],
+        "items":       results,
+        "sweep_low":   best.get("sweep_low"),
+        "sweep_high":  best.get("sweep_high"),
+        "sweep":       best,
+        "desc":        f"Level: {best['level']:.4f} — {best['relevance']['label']} ({best['age_hours']:.1f}h ago)",
+        "all_sweeps":  results,
     }
 
 
