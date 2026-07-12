@@ -18,7 +18,7 @@ from api.trading      import router as trading_router
 from saas.admin       import router as admin_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
-from alerts.telegram  import send, register_webhook, handle_webhook
+from alerts.telegram  import send, register_webhook, handle_webhook, register_commands
 from config           import cfg, _bootstrap_secrets
 from events           import on_event, emit
 import runtime_state  as rs
@@ -268,8 +268,6 @@ async def lifespan(app: FastAPI):
 
     start_scheduler()
     await register_webhook()
-
-    from alerts.telegram import register_commands
     await register_commands()
 
     from alerts.scanner import register_kline_handler
@@ -296,7 +294,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # ── Shutdown message fires FIRST before anything closes ──
     await send("🔴 *Signal Engine v5 Stopped*")
 
     rs.mark_crash()
@@ -377,20 +374,15 @@ app.add_middleware(
 async def cache_headers(request: Request, call_next):
     response = await call_next(request)
     path     = request.url.path
-
     if any(path.endswith(f) for f in [
-        'preact.min.js',
-        'preact-hooks.min.js',
-        'htm.min.js',
-        'chartjs.min.js',
-        'alpine.min.js',
+        'preact.min.js', 'preact-hooks.min.js',
+        'htm.min.js', 'chartjs.min.js', 'alpine.min.js',
     ]):
         response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif path.endswith(('.js', '.css')):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         response.headers["Pragma"]        = "no-cache"
         response.headers["Expires"]       = "0"
-
     return response
 
 
@@ -404,17 +396,14 @@ async def auth_google(request: Request):
             "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
             "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
         })
-
         oauth = OAuth(config)
         oauth.register(
             name                = "google",
             server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration",
             client_kwargs       = {"scope": "openid email profile"},
         )
-
         redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/google"
         return await oauth.google.authorize_redirect(request, redirect_uri)
-
     except Exception as e:
         log.error(f"Google auth error: {e}")
         raise HTTPException(500, "OAuth configuration error")
@@ -433,7 +422,6 @@ async def auth_callback_google(request: Request):
             "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
             "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
         })
-
         oauth = OAuth(config)
         oauth.register(
             name                = "google",
@@ -485,10 +473,7 @@ async def auth_callback_google(request: Request):
         }
         final_token = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
 
-        is_new   = user.get("is_new", False)
-        redirect = f"{cfg.DOMAIN}/"
-
-        response = RedirectResponse(url=redirect)
+        response = RedirectResponse(url=f"{cfg.DOMAIN}/")
         response.set_cookie(
             key      = cfg.SESSION_COOKIE_NAME,
             value    = final_token,
@@ -502,7 +487,7 @@ async def auth_callback_google(request: Request):
         audit(
             action  = "oauth_login",
             source  = "google",
-            detail  = f"user:{email} tier:{user['tier']} new:{is_new}",
+            detail  = f"user:{email} tier:{user['tier']} new:{user.get('is_new', False)}",
             ip      = ip,
             success = True,
         )
@@ -556,13 +541,11 @@ async def auth_logout(request: Request):
     try:
         from saas.middleware import get_current_user
         from saas.sessions  import revoke_session
-
         user = get_current_user(request)
         if user and user.get("session_id"):
             revoke_session(user["session_id"])
     except Exception:
         pass
-
     response = RedirectResponse(url="/")
     response.delete_cookie(cfg.SESSION_COOKIE_NAME)
     response.delete_cookie("se_token")
@@ -574,16 +557,12 @@ async def get_my_sessions(request: Request):
     try:
         from saas.middleware import get_current_user
         from saas.sessions  import get_user_sessions
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id  = int(user.get("sub", 0))
         sessions = get_user_sessions(user_id)
-
         return JSONResponse(content={"sessions": sessions})
-
     except HTTPException:
         raise
     except Exception as e:
@@ -596,19 +575,14 @@ async def revoke_my_session(request: Request, session_id: str):
     try:
         from saas.middleware import get_current_user
         from saas.sessions  import revoke_session
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id = int(user.get("sub", 0))
         result  = revoke_session(session_id, user_id)
-
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Failed"))
-
         return JSONResponse(content=result)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -620,17 +594,13 @@ async def revoke_all_my_sessions(request: Request):
     try:
         from saas.middleware import get_current_user
         from saas.sessions  import revoke_all_sessions
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id     = int(user.get("sub", 0))
         current_sid = user.get("session_id")
         result      = revoke_all_sessions(user_id, except_session=current_sid)
-
         return JSONResponse(content=result)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -642,15 +612,12 @@ async def complete_onboarding(request: Request):
     try:
         from saas.middleware import get_current_user
         from saas.users     import mark_user_onboarded
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id = int(user.get("sub", 0))
         if user_id:
             mark_user_onboarded(user_id)
-
         return JSONResponse(content={"success": True})
     except HTTPException:
         raise
@@ -674,14 +641,11 @@ async def get_me(request: Request):
         from saas.middleware import get_current_user
         from saas.users     import get_user_by_id, list_api_keys
         from saas.sessions  import get_user_sessions
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id   = int(user.get("sub", 0))
         user_data = get_user_by_id(user_id) if user_id else None
-
         if not user_data:
             return JSONResponse(content={
                 "id":       user.get("sub"),
@@ -689,23 +653,18 @@ async def get_me(request: Request):
                 "tier":     user.get("tier"),
                 "is_admin": user.get("is_admin", False),
             })
-
         from config import get_tier_features
         features = get_tier_features(user_data["tier"])
-
         api_keys = []
         if features.get("api_key_access"):
             api_keys = list_api_keys(user_id)
-
         sessions = get_user_sessions(user_id)
-
         return JSONResponse(content={
             **user_data,
             "features": features,
             "api_keys": api_keys,
             "sessions": sessions,
         })
-
     except HTTPException:
         raise
     except Exception as e:
@@ -719,25 +678,19 @@ async def create_api_key(request: Request):
         from saas.middleware import get_current_user
         from saas.users     import create_api_key_for_user
         from config         import tier_has_feature
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         tier = user.get("tier", "free")
         if not tier_has_feature(tier, "api_key_access"):
             raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
-
         body    = await request.json()
         name    = body.get("name", "Default")
         user_id = int(user.get("sub", 0))
         result  = create_api_key_for_user(user_id, name)
-
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Failed"))
-
         return JSONResponse(content=result)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -750,19 +703,14 @@ async def delete_api_key(request: Request, key_id: int):
     try:
         from saas.middleware import get_current_user
         from saas.users     import revoke_api_key
-
         user = get_current_user(request)
         if not user:
             raise HTTPException(401, "Authentication required")
-
         user_id = int(user.get("sub", 0))
         result  = revoke_api_key(key_id, user_id)
-
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Failed"))
-
         return JSONResponse(content=result)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -772,20 +720,15 @@ async def delete_api_key(request: Request, key_id: int):
 @app.get("/auth/setup")
 async def auth_setup(request: Request):
     from auth import setup_status, get_qr_svg, get_qr_png_bytes
-
     status = setup_status()
-
     if status["setup_complete"]:
         raise HTTPException(status_code=403, detail="Setup already complete.")
-
     qr_svg           = ""
     qr_png_available = False
-
     if cfg.TOTP_SECRET:
         qr_svg = get_qr_svg()
         if not qr_svg:
             qr_png_available = bool(get_qr_png_bytes())
-
     return templates.TemplateResponse("setup.html", {
         "request":          request,
         "status":           status,
@@ -815,10 +758,8 @@ async def auth_login(request: Request):
         password = body.get("password", "")
         totp     = body.get("totp_code", "")
         ip       = request.client.host if request.client else ""
-
         from auth import validate_login
         result = validate_login(username, password, totp, ip)
-
         if result["success"]:
             response = JSONResponse(content={
                 "success":  True,
@@ -858,17 +799,13 @@ async def request_totp_via_telegram(request: Request):
     try:
         body     = await request.json()
         password = body.get("password", "")
-
         if not password:
             return JSONResponse(status_code=400, content={"success": False, "reason": "Password required"})
-
         from auth import verify_password
         if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
             return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
-
         if not cfg.TOTP_SECRET:
             return JSONResponse(status_code=400, content={"success": False, "reason": "TOTP not configured"})
-
         import pyotp
         code = pyotp.TOTP(cfg.TOTP_SECRET).now()
         await send(
@@ -893,14 +830,11 @@ async def auth_reset_password(request: Request):
         recovery_code = body.get("recovery_code", "")
         new_password  = body.get("new_password", "")
         ip            = request.client.host if request.client else ""
-
         from auth import reset_password_with_totp, reset_password_with_recovery
-
         if recovery_code:
             result = reset_password_with_recovery(recovery_code, new_password, ip)
         else:
             result = reset_password_with_totp(totp_code, new_password, ip)
-
         return JSONResponse(content=result)
     except Exception as e:
         log.error(f"Reset password error: {e}")
@@ -914,12 +848,10 @@ async def auth_set_credentials(request: Request):
         password = body.get("password")
         username = body.get("username")
         messages = []
-
         if username:
             from auth import set_username
             set_username(username)
             messages.append(f"Username updated to '{username}'")
-
         if password:
             if len(password) < 8:
                 return JSONResponse(
@@ -929,10 +861,8 @@ async def auth_set_credentials(request: Request):
             from auth import set_password
             set_password(password)
             messages.append("Password updated")
-
         if not messages:
             return JSONResponse(content={"success": False, "reason": "Nothing to update"})
-
         return JSONResponse(content={"success": True, "message": " · ".join(messages)})
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -943,14 +873,11 @@ async def auth_regenerate_totp(request: Request):
     try:
         body     = await request.json()
         password = body.get("password", "")
-
         if not password:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Current password required to regenerate TOTP"})
-
+            return JSONResponse(status_code=400, content={"success": False, "reason": "Current password required"})
         from auth import verify_password, regenerate_totp
         if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
             return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
-
         new_secret = regenerate_totp()
         return JSONResponse(content={"success": True, "secret": new_secret})
     except Exception as e:
@@ -962,18 +889,14 @@ async def auth_generate_recovery_codes(request: Request):
     try:
         body      = await request.json()
         totp_code = body.get("totp_code", "")
-
         from auth import verify_totp, generate_recovery_codes, store_recovery_codes
         if not verify_totp(totp_code):
             return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid authenticator code"})
-
         codes = generate_recovery_codes(8)
         store_recovery_codes(codes)
-
         ip = request.client.host if request.client else ""
         from auth import audit
         audit("recovery_codes_generated", "web", "New recovery codes generated", ip=ip)
-
         return JSONResponse(content={"success": True, "codes": codes})
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1000,17 +923,14 @@ async def ws_status(request: Request):
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
-
     tier  = _get_client_tier(websocket)
     ws_id = id(websocket)
     _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier}
-
     try:
         initial = await _build_ws_payload(tier)
         await websocket.send_text(json.dumps(initial))
     except Exception as e:
         log.error(f"Dashboard WS initial push error: {e}")
-
     try:
         while True:
             await websocket.receive_text()
@@ -1028,7 +948,7 @@ async def telegram_webhook(request: Request):
 
 app.include_router(router,         prefix="/api")
 app.include_router(trading_router, prefix="/api")
-app.include_router(admin_router, prefix="/api")
+app.include_router(admin_router,   prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os

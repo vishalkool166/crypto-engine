@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime, timezone, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron      import CronTrigger
+from apscheduler.triggers.interval  import IntervalTrigger
 
 log       = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone="UTC")
@@ -151,7 +151,11 @@ async def job_performance_summary():
         t_trend = trend.get("trend",         "unknown")
         r_wr    = trend.get("recent_win_rate", 0)
 
-        trend_emoji = "📈" if t_trend == "improving" else "📉" if t_trend == "degrading" else "➡️"
+        trend_emoji = (
+            "📈" if t_trend == "improving"
+            else "📉" if t_trend == "degrading"
+            else "➡️"
+        )
 
         await send(
             f"📊 *Daily Performance Summary*\n\n"
@@ -167,6 +171,22 @@ async def job_performance_summary():
 
     except Exception as e:
         log.error("job_performance_summary: %s", e)
+
+
+async def job_morning_briefing():
+    try:
+        from alerts.briefing import send_morning_briefing
+        await send_morning_briefing()
+    except Exception as e:
+        log.error("job_morning_briefing: %s", e)
+
+
+async def job_evening_briefing():
+    try:
+        from alerts.briefing import send_evening_briefing
+        await send_evening_briefing()
+    except Exception as e:
+        log.error("job_evening_briefing: %s", e)
 
 
 def get_next_scan_time() -> str:
@@ -187,8 +207,15 @@ def get_next_scan_epoch() -> int:
     buckets = [0, 15, 30, 45]
     for b in buckets:
         if minute < b:
-            return int(now.replace(minute=b, second=0, microsecond=0).timestamp() * 1000)
-    next_hour = now.replace(hour=(now.hour + 1) % 24, minute=0, second=0, microsecond=0)
+            return int(
+                now.replace(minute=b, second=0, microsecond=0).timestamp() * 1000
+            )
+    next_hour = now.replace(
+        hour   = (now.hour + 1) % 24,
+        minute = 0,
+        second = 0,
+        microsecond = 0,
+    )
     return int(next_hour.timestamp() * 1000)
 
 
@@ -199,88 +226,88 @@ def start_scheduler():
         id               = "scan",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_btc_cache,
         trigger          = IntervalTrigger(minutes=30),
         id               = "btc_cache",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_monitor,
         trigger          = IntervalTrigger(seconds=30),
         id               = "monitor",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_scalp_manager,
         trigger          = IntervalTrigger(minutes=30),
         id               = "scalp_manager",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_ml_check,
         trigger          = IntervalTrigger(hours=1),
         id               = "ml_check",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_cooldown_tick,
         trigger          = IntervalTrigger(minutes=30),
         id               = "cooldown_tick",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_purge_content,
         trigger          = CronTrigger(hour=3, minute=0, timezone="UTC"),
         id               = "purge_content",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_session_cleanup,
         trigger          = IntervalTrigger(hours=1),
         id               = "session_cleanup",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_analyzer,
         trigger          = CronTrigger(day_of_week="sun", hour=0, minute=0, timezone="UTC"),
         id               = "analyzer",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_adapter,
         trigger          = CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
         id               = "adapter",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_rollback_checker,
         trigger          = CronTrigger(hour=6, minute=0, timezone="UTC"),
         id               = "rollback_checker",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_version_ensure,
         trigger          = IntervalTrigger(hours=6),
         id               = "version_ensure",
         replace_existing = True,
     )
-
     scheduler.add_job(
         job_performance_summary,
         trigger          = CronTrigger(hour=8, minute=0, timezone="UTC"),
         id               = "performance_summary",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_morning_briefing,
+        trigger          = CronTrigger(hour=2, minute=30, timezone="UTC"),
+        id               = "morning_briefing",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_evening_briefing,
+        trigger          = CronTrigger(hour=14, minute=30, timezone="UTC"),
+        id               = "evening_briefing",
         replace_existing = True,
     )
 
@@ -292,7 +319,8 @@ def start_scheduler():
         "purge:03:00 UTC — sessions:1h — "
         "analyzer:Sun 00:00 UTC — adapter:Sun 01:00 UTC — "
         "rollback:daily 06:00 UTC — version:6h — "
-        "performance:daily 08:00 UTC"
+        "performance:daily 08:00 UTC — "
+        "morning_brief:08:00 IST — evening_brief:20:00 IST"
     )
 
 
