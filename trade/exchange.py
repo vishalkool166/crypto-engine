@@ -357,9 +357,23 @@ async def cancel_algo_order(symbol: str, algo_id: int) -> dict:
 
 async def cancel_all_algo_orders(symbol: str) -> dict:
     try:
-        return await _delete("/fapi/v1/algoOrder/all", {
-            "symbol": _clean(symbol),
+        clean = _clean(symbol)
+        data  = await _get("/fapi/v1/algoOrder/openOrders", {
+            "symbol": clean
         }, signed=True)
+        orders = data.get("orders", []) if isinstance(data, dict) else []
+        for order in orders:
+            algo_id = order.get("algoId")
+            if algo_id:
+                try:
+                    await _delete("/fapi/v1/algoOrder", {
+                        "symbol":  clean,
+                        "algoId":  algo_id,
+                    }, signed=True)
+                    log.info("Cancelled algo order %s for %s", algo_id, symbol)
+                except Exception as e:
+                    log.warning("Cancel algo order %s failed: %s", algo_id, e)
+        return {"cancelled": len(orders)}
     except Exception as e:
         log.warning("cancel_all_algo_orders %s: %s", symbol, e)
         return {}
