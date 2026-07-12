@@ -132,31 +132,38 @@ async def register_webhook() -> None:
 
 async def register_commands() -> None:
     commands = [
-        {"command": "status",   "description": "Bot status overview"},
-        {"command": "queue",    "description": "Active zones and signals"},
-        {"command": "scan",     "description": "Trigger manual scan"},
-        {"command": "health",   "description": "All open trades health"},
-        {"command": "trades",   "description": "Open trades with live PnL"},
-        {"command": "position", "description": "Deep dive on trade — /position ETH"},
-        {"command": "balance",  "description": "Account balance"},
-        {"command": "profit",   "description": "Profit summary"},
-        {"command": "btc",      "description": "BTC analysis"},
-        {"command": "coin",     "description": "Any coin analysis — /coin ETH"},
-        {"command": "funding",  "description": "Funding rates"},
-        {"command": "fear",     "description": "Fear and greed index"},
-        {"command": "pending",  "description": "Posts waiting"},
-        {"command": "brief",    "description": "Generate market brief post"},
-        {"command": "discard",  "description": "Delete a post — /discard 5"},
-        {"command": "pnl",      "description": "All time PnL"},
-        {"command": "daily",    "description": "Today summary"},
-        {"command": "stats",    "description": "Full all time stats"},
-        {"command": "grade",    "description": "Grade accuracy"},
-        {"command": "history",  "description": "Last 5 signals"},
-        {"command": "backtest", "description": "Backtest a coin — /backtest BTC"},
-        {"command": "backfill", "description": "Backfill historical candle data"},
-        {"command": "ml",       "description": "ML model status"},
-        {"command": "mode",     "description": "Current bot config"},
-        {"command": "help",     "description": "Full command list"},
+        {"command": "status",       "description": "Bot status overview"},
+        {"command": "queue",        "description": "Active zones and signals"},
+        {"command": "scan",         "description": "Trigger manual scan"},
+        {"command": "health",       "description": "All open trades health"},
+        {"command": "trades",       "description": "Open trades with live PnL"},
+        {"command": "position",     "description": "Deep dive on trade — /position ETH"},
+        {"command": "balance",      "description": "Account balance"},
+        {"command": "profit",       "description": "Profit summary"},
+        {"command": "btc",          "description": "BTC analysis"},
+        {"command": "coin",         "description": "Any coin analysis — /coin ETH"},
+        {"command": "funding",      "description": "Funding rates"},
+        {"command": "fear",         "description": "Fear and greed index"},
+        {"command": "pending",      "description": "Posts waiting"},
+        {"command": "brief",        "description": "Generate market brief post"},
+        {"command": "discard",      "description": "Delete a post — /discard 5"},
+        {"command": "pnl",          "description": "All time PnL"},
+        {"command": "daily",        "description": "Today summary"},
+        {"command": "stats",        "description": "Full all time stats"},
+        {"command": "grade",        "description": "Grade accuracy"},
+        {"command": "history",      "description": "Last 5 signals"},
+        {"command": "backtest",     "description": "Backtest a coin — /backtest BTC"},
+        {"command": "backfill",     "description": "Backfill historical candle data"},
+        {"command": "ml",           "description": "ML model status"},
+        {"command": "mode",         "description": "Current bot config"},
+        {"command": "adaptations",  "description": "View and manage auto-adaptations"},
+        {"command": "freeze",       "description": "Pause all automatic adaptations"},
+        {"command": "unfreeze",     "description": "Resume automatic adaptations"},
+        {"command": "rollback",     "description": "Rollback a parameter — /rollback sweep_min_score"},
+        {"command": "version",      "description": "Current system version and parameters"},
+        {"command": "performance",  "description": "Performance by version and session"},
+        {"command": "analysis",     "description": "Trigger manual analysis run"},
+        {"command": "help",         "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
@@ -231,6 +238,24 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
             await send("⚠️ Usage: `/discard 5`")
         return
 
+    if t.startswith("/rollback"):
+        parts = t.split()
+        param = parts[1] if len(parts) > 1 else ""
+        await (_cmd_rollback(param) if param else send("⚠️ Usage: `/rollback sweep_min_score`"))
+        return
+
+    if t.startswith("/approve"):
+        parts  = t.split()
+        rec_id = parts[1] if len(parts) > 1 else ""
+        await (_cmd_approve(rec_id) if rec_id else send("⚠️ Usage: `/approve 5`"))
+        return
+
+    if t.startswith("/reject"):
+        parts  = t.split()
+        rec_id = parts[1] if len(parts) > 1 else ""
+        await (_cmd_reject(rec_id) if rec_id else send("⚠️ Usage: `/reject 5`"))
+        return
+
     if t.startswith("#") and len(t) > 1:
         try:
             await _cmd_show_post(int(t.replace("#", "").strip()))
@@ -239,26 +264,32 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         return
 
     handlers = {
-        "/status":  _cmd_status,
-        "/pnl":     _cmd_pnl,
-        "/queue":   _cmd_queue,
-        "/daily":   _cmd_daily,
-        "/scan":    _cmd_scan,
-        "/help":    _cmd_help,
-        "/btc":     _cmd_btc,
-        "/funding": _cmd_funding,
-        "/fear":    _cmd_fear,
-        "/history": _cmd_history,
-        "/stats":   _cmd_stats,
-        "/grade":   _cmd_grade,
-        "/mode":    _cmd_mode,
-        "/brief":   _cmd_brief,
-        "/ml":      _cmd_ml,
-        "/trades":  _cmd_trades,
-        "/balance": _cmd_balance,
-        "/profit":  _cmd_profit,
-        "/health":  _cmd_health,
-        "/pending": _cmd_pending,
+        "/status":       _cmd_status,
+        "/pnl":          _cmd_pnl,
+        "/queue":        _cmd_queue,
+        "/daily":        _cmd_daily,
+        "/scan":         _cmd_scan,
+        "/help":         _cmd_help,
+        "/btc":          _cmd_btc,
+        "/funding":      _cmd_funding,
+        "/fear":         _cmd_fear,
+        "/history":      _cmd_history,
+        "/stats":        _cmd_stats,
+        "/grade":        _cmd_grade,
+        "/mode":         _cmd_mode,
+        "/brief":        _cmd_brief,
+        "/ml":           _cmd_ml,
+        "/trades":       _cmd_trades,
+        "/balance":      _cmd_balance,
+        "/profit":       _cmd_profit,
+        "/health":       _cmd_health,
+        "/pending":      _cmd_pending,
+        "/adaptations":  _cmd_adaptations,
+        "/freeze":       _cmd_freeze,
+        "/unfreeze":     _cmd_unfreeze,
+        "/version":      _cmd_version,
+        "/performance":  _cmd_performance,
+        "/analysis":     _cmd_analysis,
     }
 
     if t.startswith("/"):
@@ -272,6 +303,267 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     except Exception as e:
         log.error("Chatbot error: %s", e)
         await send("AI unavailable. Try /help for commands.")
+
+
+async def _cmd_adaptations() -> None:
+    try:
+        from ml.adapter import get_adaptation_history
+        from ml.analyzer import get_pending_recommendations
+        from ml.rollback_manager import get_pending_checkpoints
+        from ml.safety_checks import get_safety_summary
+
+        history     = get_adaptation_history(limit=5)
+        pending     = get_pending_recommendations()
+        checkpoints = get_pending_checkpoints()
+        safety      = get_safety_summary()
+
+        lines = [f"🧠 *Adaptation Status*\n_{_now_ist()}_\n"]
+
+        frozen_str = "🔴 FROZEN" if cfg.ADAPTATION_FROZEN else "🟢 Active"
+        lines.append(f"Status: `{frozen_str}`")
+        lines.append(f"Changes this month: `{safety.get('changes_this_month', 0)}/{safety.get('max_changes_month', 3)}`")
+        lines.append(f"Total trades: `{safety.get('total_trades', 0)}/{safety.get('min_trades_required', 50)}`")
+        lines.append(f"Approval required: `{'Yes' if safety.get('require_approval') else 'No'}`\n")
+
+        if pending:
+            lines.append(f"*{len(pending)} Pending Recommendations:*")
+            for r in pending[:3]:
+                direction = "📈" if r["direction"] == "increase" else "📉"
+                lines.append(
+                    f"{direction} `{r['parameter']}`: "
+                    f"`{r['current_value']}` → `{r['recommended_value']}` "
+                    f"(+{r.get('expected_improvement', 0):.1f}% WR) "
+                    f"[{r.get('confidence', 'low')}]"
+                )
+            lines.append(f"\n_Use `/approve ID` or `/reject ID` to action._\n")
+
+        if checkpoints:
+            lines.append(f"*{len(checkpoints)} Active Checkpoints:*")
+            for c in checkpoints[:3]:
+                lines.append(
+                    f"• `{c['parameter']}`: "
+                    f"{c['trades_remaining']} trades until review"
+                )
+            lines.append("")
+
+        if history:
+            lines.append(f"*Recent Changes:*")
+            for h in history[:3]:
+                rolled = " ↩️ rolled back" if h.get("rolled_back") else ""
+                lines.append(
+                    f"• `{h['parameter']}`: `{h['old_value']}` → `{h['new_value']}`{rolled}"
+                )
+
+        await send("\n".join(lines))
+
+    except Exception as e:
+        log.error("_cmd_adaptations: %s", e)
+        await send("❌ Could not fetch adaptation status.")
+
+
+async def _cmd_freeze() -> None:
+    try:
+        cfg.freeze_adaptations()
+        await send(
+            f"🔴 *Adaptations Frozen*\n\n"
+            f"All automatic parameter changes are paused.\n"
+            f"Use /unfreeze to resume."
+        )
+    except Exception as e:
+        log.error("_cmd_freeze: %s", e)
+        await send("❌ Could not freeze adaptations.")
+
+
+async def _cmd_unfreeze() -> None:
+    try:
+        cfg.unfreeze_adaptations()
+        await send(
+            f"🟢 *Adaptations Resumed*\n\n"
+            f"Automatic parameter changes are now active.\n"
+            f"Next analysis: Sunday 00:00 UTC"
+        )
+    except Exception as e:
+        log.error("_cmd_unfreeze: %s", e)
+        await send("❌ Could not unfreeze adaptations.")
+
+
+async def _cmd_rollback(parameter: str) -> None:
+    try:
+        from ml.rollback_manager import manual_rollback
+        result = manual_rollback(parameter, reason="manual_telegram")
+
+        if result.get("success"):
+            await send(
+                f"↩️ *Rollback Applied*\n\n"
+                f"Parameter: `{parameter}`\n"
+                f"Restored to: `{result.get('restored')}`\n"
+                f"From: `{result.get('from')}`\n\n"
+                f"System version updated."
+            )
+        else:
+            await send(
+                f"❌ *Rollback Failed*\n\n"
+                f"Parameter: `{parameter}`\n"
+                f"Reason: `{result.get('reason', 'Unknown error')}`"
+            )
+    except Exception as e:
+        log.error("_cmd_rollback %s: %s", parameter, e)
+        await send(f"❌ Rollback failed: `{e}`")
+
+
+async def _cmd_approve(rec_id_str: str) -> None:
+    try:
+        rec_id = int(rec_id_str)
+        from ml.analyzer import approve_recommendation
+        success = approve_recommendation(rec_id, approved_by="telegram")
+        if success:
+            await send(
+                f"✅ *Recommendation #{rec_id} Approved*\n\n"
+                f"Will be applied in next adapter run (Sunday 01:00 UTC)\n"
+                f"or use /analysis to trigger now."
+            )
+        else:
+            await send(f"❌ Recommendation #{rec_id} not found.")
+    except ValueError:
+        await send("⚠️ Usage: `/approve 5`")
+    except Exception as e:
+        log.error("_cmd_approve: %s", e)
+        await send(f"❌ Approve failed: `{e}`")
+
+
+async def _cmd_reject(rec_id_str: str) -> None:
+    try:
+        rec_id = int(rec_id_str)
+        from ml.analyzer import reject_recommendation
+        success = reject_recommendation(rec_id, reason="rejected_via_telegram")
+        if success:
+            await send(f"🚫 *Recommendation #{rec_id} Rejected*")
+        else:
+            await send(f"❌ Recommendation #{rec_id} not found.")
+    except ValueError:
+        await send("⚠️ Usage: `/reject 5`")
+    except Exception as e:
+        log.error("_cmd_reject: %s", e)
+        await send(f"❌ Reject failed: `{e}`")
+
+
+async def _cmd_version() -> None:
+    try:
+        from ml.version_registry import get_current_version_record, get_version_history
+        current = get_current_version_record()
+        history = get_version_history(limit=5)
+
+        SE = cfg.SCALP_ENGINE
+        lines = [
+            f"⚙️ *System Version*\n",
+            f"Current: `{cfg.SYSTEM_VERSION}`\n",
+            f"*Active Parameters:*",
+            f"sweep_min_score:       `{SE.get('sweep_min_score', 0.30)}`",
+            f"zone_min_score:        `{SE.get('zone_min_score', 0.40)}`",
+            f"grade_a_threshold:     `{SE.get('grade_a_threshold', 0.65)}`",
+            f"grade_aplus_threshold: `{SE.get('grade_aplus_threshold', 0.80)}`",
+            f"sweep_max_age_hours:   `{SE.get('sweep_max_age_hours', 12)}`",
+            f"base_risk_pct:         `{SE.get('base_risk_pct', 0.01)}`",
+            f"",
+        ]
+
+        if history and len(history) > 1:
+            lines.append(f"*Version History (last {min(5, len(history))}):*")
+            for v in history[:5]:
+                current_marker = " ← current" if v.get("is_current") else ""
+                lines.append(
+                    f"• `{v['version']}`{current_marker} — "
+                    f"_{v.get('change_reason', '')[:50]}_"
+                )
+
+        await send("\n".join(lines))
+
+    except Exception as e:
+        log.error("_cmd_version: %s", e)
+        await send("❌ Could not fetch version info.")
+
+
+async def _cmd_performance() -> None:
+    try:
+        from ml.performance_tracker import (
+            get_overall_stats, get_stats_by_session,
+            get_stats_by_version, get_recent_trend
+        )
+
+        overall  = get_overall_stats(min_trades=1)
+        sessions = get_stats_by_session(min_trades=3)
+        versions = get_stats_by_version()
+        trend    = get_recent_trend(window=20)
+
+        if overall.get("error"):
+            await send(f"📊 *Performance*\n\n{overall['error']}")
+            return
+
+        lines = [
+            f"📊 *Performance Report*\n_{_now_ist()}_\n",
+            f"*Overall:*",
+            f"Trades: `{overall.get('total', 0)}` · WR: `{overall.get('win_rate', 0):.1f}%`",
+            f"PnL: `${overall.get('total_pnl', 0):.2f}` · PF: `{overall.get('profit_factor', 0)}`",
+            f"Max DD: `{overall.get('max_drawdown', 0):.1f}%`",
+            f"",
+        ]
+
+        t_trend = trend.get("trend", "unknown")
+        trend_emoji = "📈" if t_trend == "improving" else "📉" if t_trend == "degrading" else "➡️"
+        lines.append(f"{trend_emoji} Recent trend: `{t_trend}` (last 20 trades: `{trend.get('recent_win_rate', 0):.1f}%`)\n")
+
+        if sessions:
+            lines.append(f"*By Session:*")
+            for session, stats in sessions.items():
+                lines.append(
+                    f"  {session}: `{stats.get('win_rate', 0):.1f}%` WR "
+                    f"({stats.get('total', 0)} trades)"
+                )
+            lines.append("")
+
+        if len(versions) > 1:
+            lines.append(f"*By Version:*")
+            for v in versions[-3:]:
+                lines.append(
+                    f"  `{v.get('version', '--')}`: "
+                    f"`{v.get('win_rate', 0):.1f}%` WR "
+                    f"({v.get('total', 0)} trades)"
+                )
+
+        await send("\n".join(lines))
+
+    except Exception as e:
+        log.error("_cmd_performance: %s", e)
+        await send("❌ Could not fetch performance data.")
+
+
+async def _cmd_analysis() -> None:
+    await send("⏳ *Running analysis...*\n\nThis may take a moment.")
+    try:
+        from ml.analyzer import run
+        result = run()
+
+        status = result.get("status", "unknown")
+        if status == "insufficient_data":
+            await send(
+                f"📊 *Analysis Complete*\n\n"
+                f"Status: `Insufficient data`\n"
+                f"Trades: `{result.get('total_trades', 0)}/{result.get('min_required', 50)}`\n\n"
+                f"_Keep trading — analysis activates at {result.get('min_required', 50)} closed trades._"
+            )
+            return
+
+        recs = result.get("recommendations", [])
+        await send(
+            f"✅ *Analysis Complete*\n\n"
+            f"Trades analyzed: `{result.get('total_trades', 0)}`\n"
+            f"Recommendations: `{len(recs)}`\n\n"
+            f"_Use /adaptations to review recommendations._"
+        )
+
+    except Exception as e:
+        log.error("_cmd_analysis: %s", e)
+        await send(f"❌ Analysis failed: `{e}`")
 
 
 async def _cmd_backfill(coin: str | None = None) -> None:
@@ -305,10 +597,12 @@ async def _cmd_status() -> None:
 
     mode     = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
     ws_emoji = "✅" if ws["mark_price_connected"] else "❌"
+    frozen   = " 🔴 FROZEN" if cfg.ADAPTATION_FROZEN else ""
 
     await send(
         f"📊 *Bot Status*\n_{_now_ist_full()}_\n\n"
         f"Mode:        `{mode}`\n"
+        f"Version:     `{cfg.SYSTEM_VERSION}`{frozen}\n"
         f"Coins:       `{len(cfg.COINS)} scanned`\n"
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Open trades: `{len(open_trades)}`\n"
@@ -411,7 +705,8 @@ async def _cmd_position(coin: str) -> None:
             f"{side} *{coin}USDT — Position Detail*\n_{_now_ist()}_\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Grade:   `{trade.get('grade', '--')}` · Score `{trade.get('score_at_entry', 0)}`\n"
-            f"Session: `{trade.get('session_at_entry', '--')}`\n\n"
+            f"Session: `{trade.get('session_at_entry', '--')}`\n"
+            f"Version: `{trade.get('system_version', '--')}`\n\n"
             f"Entry:   `${entry:.6f}`\n"
             f"Live:    `${live:.6f}`\n"
             f"PnL:     {pnl_emoji} `{pnl_str}` ({pnl_pct:.2f}%)\n\n"
@@ -684,6 +979,8 @@ async def _cmd_mode() -> None:
     await send(
         f"⚙️ *Bot Configuration*\n\n"
         f"Mode:        `{'🔴 LIVE' if not cfg.PAPER_TRADING else '🔵 PAPER'}`\n"
+        f"Version:     `{cfg.SYSTEM_VERSION}`\n"
+        f"Adaptation:  `{'🔴 Frozen' if cfg.ADAPTATION_FROZEN else '🟢 Active'}`\n"
         f"Coins:       `{len(cfg.COINS)} coins`\n"
         f"Grades:      `{', '.join(cfg.MIN_GRADE_TO_TRADE)}`\n"
         f"Scan:        `every :00/:15/:30/:45 UTC`\n"
@@ -707,8 +1004,8 @@ async def _cmd_brief() -> None:
         except Exception:
             pass
 
-        hour        = datetime.now(timezone.utc).hour
-        watching    = [
+        hour     = datetime.now(timezone.utc).hour
+        watching = [
             coin for coin in cfg.COINS
             if get_coin_state(coin)["status"] == "watching"
         ]
@@ -913,7 +1210,16 @@ async def _cmd_help() -> None:
         "/pending · /brief · #N · /discard N\n\n"
         "*PERFORMANCE*\n"
         "/pnl · /daily · /stats · /grade · /history\n"
-        "/backtest BTC\n\n"
+        "/backtest BTC · /performance\n\n"
+        "*ADAPTATION*\n"
+        "/adaptations — view all changes\n"
+        "/freeze      — pause adaptations\n"
+        "/unfreeze    — resume adaptations\n"
+        "/rollback X  — revert parameter X\n"
+        "/approve N   — approve recommendation N\n"
+        "/reject N    — reject recommendation N\n"
+        "/version     — current parameters\n"
+        "/analysis    — run analysis now\n\n"
         "*OTHER*\n"
         "/ml · /mode · /help\n"
     )
@@ -958,6 +1264,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*{coin}USDT — {dir_emoji} {direction}*\n"
         f"Score:   `{score:.2f}`\n"
+        f"Version: `{cfg.SYSTEM_VERSION}`\n"
         f"Time:    `{_now_ist()}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"Entry:   `{entry:.4f}`\n"

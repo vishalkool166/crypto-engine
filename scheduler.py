@@ -80,6 +80,95 @@ async def job_btc_cache():
         log.error("job_btc_cache: %s", e)
 
 
+async def job_analyzer():
+    try:
+        from ml.analyzer import run
+        result = run()
+        log.info(
+            "Analyzer complete — status:%s recommendations:%s",
+            result.get("status"),
+            len(result.get("recommendations", []))
+        )
+    except Exception as e:
+        log.error("job_analyzer: %s", e)
+
+
+async def job_adapter():
+    try:
+        from ml.adapter import run
+        result = run()
+        log.info(
+            "Adapter complete — status:%s applied:%s",
+            result.get("status"),
+            result.get("applied", 0)
+        )
+    except Exception as e:
+        log.error("job_adapter: %s", e)
+
+
+async def job_rollback_checker():
+    try:
+        from ml.rollback_manager import check_all_pending
+        results = check_all_pending()
+        for r in results:
+            log.info(
+                "Rollback check: param=%s action=%s post_wr=%s",
+                r.get("parameter"),
+                r.get("action"),
+                r.get("post_change_wr")
+            )
+    except Exception as e:
+        log.error("job_rollback_checker: %s", e)
+
+
+async def job_version_ensure():
+    try:
+        from ml.version_registry import ensure_version_exists
+        ensure_version_exists()
+    except Exception as e:
+        log.error("job_version_ensure: %s", e)
+
+
+async def job_performance_summary():
+    try:
+        from ml.performance_tracker import get_overall_stats, get_recent_trend
+        from alerts.telegram import send
+
+        stats = get_overall_stats(min_trades=1)
+        trend = get_recent_trend(window=20)
+
+        if not stats or stats.get("error"):
+            return
+
+        total = stats.get("total", 0)
+        if total == 0:
+            return
+
+        wr      = stats.get("win_rate",      0)
+        pnl     = stats.get("total_pnl",     0)
+        pf      = stats.get("profit_factor", 0)
+        dd      = stats.get("max_drawdown",  0)
+        t_trend = trend.get("trend",         "unknown")
+        r_wr    = trend.get("recent_win_rate", 0)
+
+        trend_emoji = "📈" if t_trend == "improving" else "📉" if t_trend == "degrading" else "➡️"
+
+        await send(
+            f"📊 *Daily Performance Summary*\n\n"
+            f"Total trades:   `{total}`\n"
+            f"Win rate:       `{wr:.1f}%`\n"
+            f"Total PnL:      `${pnl:.2f}`\n"
+            f"Profit factor:  `{pf}`\n"
+            f"Max drawdown:   `{dd:.1f}%`\n\n"
+            f"{trend_emoji} Recent trend: `{t_trend}`\n"
+            f"Recent WR (20): `{r_wr:.1f}%`\n\n"
+            f"System version: `{__import__('config').cfg.SYSTEM_VERSION}`"
+        )
+
+    except Exception as e:
+        log.error("job_performance_summary: %s", e)
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -160,12 +249,50 @@ def start_scheduler():
         replace_existing = True,
     )
 
+    scheduler.add_job(
+        job_analyzer,
+        trigger          = CronTrigger(day_of_week="sun", hour=0, minute=0, timezone="UTC"),
+        id               = "analyzer",
+        replace_existing = True,
+    )
+
+    scheduler.add_job(
+        job_adapter,
+        trigger          = CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
+        id               = "adapter",
+        replace_existing = True,
+    )
+
+    scheduler.add_job(
+        job_rollback_checker,
+        trigger          = CronTrigger(hour=6, minute=0, timezone="UTC"),
+        id               = "rollback_checker",
+        replace_existing = True,
+    )
+
+    scheduler.add_job(
+        job_version_ensure,
+        trigger          = IntervalTrigger(hours=6),
+        id               = "version_ensure",
+        replace_existing = True,
+    )
+
+    scheduler.add_job(
+        job_performance_summary,
+        trigger          = CronTrigger(hour=8, minute=0, timezone="UTC"),
+        id               = "performance_summary",
+        replace_existing = True,
+    )
+
     scheduler.start()
     log.info(
         "Scheduler started — "
         "scan:15m — btc:30m — monitor:30s — "
         "scalp_mgr:30m — ml:1h — cooldown:30m — "
-        "purge:03:00 UTC — sessions:1h"
+        "purge:03:00 UTC — sessions:1h — "
+        "analyzer:Sun 00:00 UTC — adapter:Sun 01:00 UTC — "
+        "rollback:daily 06:00 UTC — version:6h — "
+        "performance:daily 08:00 UTC"
     )
 
 

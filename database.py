@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     create_engine, Column, Integer,
     String, Float, DateTime, Text, Boolean, BigInteger, event,
-    UniqueConstraint
+    UniqueConstraint, JSON
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -84,6 +84,13 @@ class Signal(Base):
     entry_score    = Column(Float, nullable=True)
     atr_at_entry   = Column(Float, nullable=True)
     btc_score      = Column(Float, nullable=True)
+    btc_adx        = Column(Float, nullable=True)
+    coin_adx       = Column(Float, nullable=True)
+    fear_greed     = Column(Integer, nullable=True)
+    day_of_week    = Column(Integer, nullable=True)
+    hour_of_day    = Column(Integer, nullable=True)
+    volatility_regime = Column(String, nullable=True)
+    system_version = Column(String, nullable=True)
 
 
 class Trade(Base):
@@ -138,6 +145,16 @@ class Trade(Base):
     realized_pnl_exchange  = Column(Float, nullable=True)
     funding_fees_paid      = Column(Float, nullable=True)
     net_pnl                = Column(Float, nullable=True)
+    system_version         = Column(String, nullable=True)
+    drawdown_at_entry      = Column(Float, nullable=True)
+    win_rate_at_entry      = Column(Float, nullable=True)
+    streak_at_entry        = Column(Integer, nullable=True)
+    streak_type_at_entry   = Column(String, nullable=True)
+    daily_pnl_at_entry     = Column(Float, nullable=True)
+    open_trades_at_entry   = Column(Integer, nullable=True)
+    mae                    = Column(Float, nullable=True)
+    mfe                    = Column(Float, nullable=True)
+    duration_hours         = Column(Float, nullable=True)
 
 
 class Candle(Base):
@@ -315,6 +332,189 @@ class UserSession(Base):
     expires_at  = Column(DateTime, nullable=True)
     is_active   = Column(Boolean, default=True)
     revoked_at  = Column(DateTime, nullable=True)
+
+
+class SignalSnapshot(Base):
+    __tablename__ = "signal_snapshots"
+
+    id                   = Column(Integer, primary_key=True)
+    signal_id            = Column(Integer, nullable=False, index=True)
+    captured_at          = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    system_version       = Column(String, nullable=False)
+    coin                 = Column(String, nullable=False)
+    direction            = Column(String, nullable=False)
+    grade                = Column(String, nullable=False)
+    combined_score       = Column(Float, nullable=True)
+    sweep_score          = Column(Float, nullable=True)
+    zone_score           = Column(Float, nullable=True)
+    trigger_score        = Column(Float, nullable=True)
+    sweep_age_hours      = Column(Float, nullable=True)
+    sweep_confirmed      = Column(Boolean, nullable=True)
+    sweep_intensity      = Column(Integer, nullable=True)
+    sweep_wick_atr       = Column(Float, nullable=True)
+    sweep_vol_ratio      = Column(Float, nullable=True)
+    sweep_label          = Column(String, nullable=True)
+    zone_type            = Column(String, nullable=True)
+    zone_touch_count     = Column(Integer, nullable=True)
+    zone_width_atr       = Column(Float, nullable=True)
+    zone_distance_pct    = Column(Float, nullable=True)
+    trigger_pattern      = Column(String, nullable=True)
+    trigger_vol_mult     = Column(Float, nullable=True)
+    entry_price          = Column(Float, nullable=True)
+    sl_price             = Column(Float, nullable=True)
+    tp1_price            = Column(Float, nullable=True)
+    sl_pct               = Column(Float, nullable=True)
+    rr1                  = Column(Float, nullable=True)
+    session              = Column(String, nullable=True)
+    regime               = Column(String, nullable=True)
+    day_of_week          = Column(Integer, nullable=True)
+    hour_of_day          = Column(Integer, nullable=True)
+    btc_direction        = Column(String, nullable=True)
+    btc_adx              = Column(Float, nullable=True)
+    btc_ema_aligned      = Column(Boolean, nullable=True)
+    coin_adx             = Column(Float, nullable=True)
+    coin_ema20           = Column(Float, nullable=True)
+    coin_ema50           = Column(Float, nullable=True)
+    funding_rate         = Column(Float, nullable=True)
+    fear_greed_value     = Column(Integer, nullable=True)
+    volatility_regime    = Column(String, nullable=True)
+    atr_4h               = Column(Float, nullable=True)
+    atr_1h               = Column(Float, nullable=True)
+    atr_15m              = Column(Float, nullable=True)
+    factor_scores_json   = Column(Text, nullable=True)
+    ml_probability       = Column(Float, nullable=True)
+    drawdown_at_signal   = Column(Float, nullable=True)
+    win_rate_at_signal   = Column(Float, nullable=True)
+    streak_at_signal     = Column(Integer, nullable=True)
+    streak_type_at_signal= Column(String, nullable=True)
+    daily_pnl_at_signal  = Column(Float, nullable=True)
+    open_trades_at_signal= Column(Integer, nullable=True)
+    balance_at_signal    = Column(Float, nullable=True)
+    thresholds_json      = Column(Text, nullable=True)
+
+
+class TradeOutcome(Base):
+    __tablename__ = "trade_outcomes"
+
+    id                    = Column(Integer, primary_key=True)
+    trade_id              = Column(Integer, nullable=False, index=True)
+    signal_id             = Column(Integer, nullable=True, index=True)
+    recorded_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    system_version        = Column(String, nullable=True)
+    coin                  = Column(String, nullable=False)
+    direction             = Column(String, nullable=False)
+    grade                 = Column(String, nullable=True)
+    outcome               = Column(String, nullable=False)
+    close_reason          = Column(String, nullable=True)
+    entry_price           = Column(Float, nullable=True)
+    exit_price            = Column(Float, nullable=True)
+    sl_price              = Column(Float, nullable=True)
+    tp1_price             = Column(Float, nullable=True)
+    pnl                   = Column(Float, nullable=True)
+    pnl_r                 = Column(Float, nullable=True)
+    net_pnl               = Column(Float, nullable=True)
+    total_commission      = Column(Float, nullable=True)
+    funding_fees          = Column(Float, nullable=True)
+    slippage_entry_pct    = Column(Float, nullable=True)
+    slippage_exit_pct     = Column(Float, nullable=True)
+    mae                   = Column(Float, nullable=True)
+    mfe                   = Column(Float, nullable=True)
+    duration_hours        = Column(Float, nullable=True)
+    tp1_hit               = Column(Boolean, default=False)
+    tp2_hit               = Column(Boolean, default=False)
+    signal_direction_correct = Column(Boolean, nullable=True)
+    price_1h_after        = Column(Float, nullable=True)
+    price_4h_after        = Column(Float, nullable=True)
+    price_8h_after        = Column(Float, nullable=True)
+    price_24h_after       = Column(Float, nullable=True)
+    max_move_pct          = Column(Float, nullable=True)
+    session               = Column(String, nullable=True)
+    regime                = Column(String, nullable=True)
+    day_of_week           = Column(Integer, nullable=True)
+    hour_of_day           = Column(Integer, nullable=True)
+    sweep_score           = Column(Float, nullable=True)
+    zone_score            = Column(Float, nullable=True)
+    trigger_score         = Column(Float, nullable=True)
+    combined_score        = Column(Float, nullable=True)
+    ml_probability        = Column(Float, nullable=True)
+    drawdown_at_entry     = Column(Float, nullable=True)
+    win_rate_at_entry     = Column(Float, nullable=True)
+    balance_at_open       = Column(Float, nullable=True)
+
+
+class SystemVersion(Base):
+    __tablename__ = "system_versions"
+
+    id              = Column(Integer, primary_key=True)
+    version         = Column(String, nullable=False, unique=True)
+    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    parameters_json = Column(Text, nullable=False)
+    change_reason   = Column(Text, nullable=True)
+    changed_by      = Column(String, default="system")
+    trade_count_at  = Column(Integer, default=0)
+    is_current      = Column(Boolean, default=True)
+
+
+class AdaptationRecommendation(Base):
+    __tablename__ = "adaptation_recommendations"
+
+    id                  = Column(Integer, primary_key=True)
+    created_at          = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    parameter           = Column(String, nullable=False)
+    current_value       = Column(Float, nullable=False)
+    recommended_value   = Column(Float, nullable=False)
+    direction           = Column(String, nullable=False)
+    expected_wr_improvement = Column(Float, nullable=True)
+    data_basis          = Column(Integer, nullable=True)
+    confidence          = Column(String, nullable=True)
+    reasoning           = Column(Text, nullable=True)
+    status              = Column(String, default="pending")
+    approved_at         = Column(DateTime, nullable=True)
+    approved_by         = Column(String, nullable=True)
+    rejected_at         = Column(DateTime, nullable=True)
+    rejection_reason    = Column(Text, nullable=True)
+    applied_at          = Column(DateTime, nullable=True)
+    rolled_back_at      = Column(DateTime, nullable=True)
+
+
+class AdaptationLog(Base):
+    __tablename__ = "adaptation_log"
+
+    id                  = Column(Integer, primary_key=True)
+    applied_at          = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    parameter           = Column(String, nullable=False)
+    old_value           = Column(Float, nullable=False)
+    new_value           = Column(Float, nullable=False)
+    direction           = Column(String, nullable=False)
+    reasoning           = Column(Text, nullable=True)
+    data_basis          = Column(Integer, nullable=True)
+    expected_improvement= Column(Float, nullable=True)
+    system_version_before = Column(String, nullable=True)
+    system_version_after  = Column(String, nullable=True)
+    recommendation_id   = Column(Integer, nullable=True)
+    rolled_back         = Column(Boolean, default=False)
+    rolled_back_at      = Column(DateTime, nullable=True)
+    rollback_reason     = Column(Text, nullable=True)
+
+
+class RollbackCheckpoint(Base):
+    __tablename__ = "rollback_checkpoints"
+
+    id                    = Column(Integer, primary_key=True)
+    created_at            = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    adaptation_log_id     = Column(Integer, nullable=False)
+    parameter             = Column(String, nullable=False)
+    old_value             = Column(Float, nullable=False)
+    new_value             = Column(Float, nullable=False)
+    baseline_win_rate     = Column(Float, nullable=False)
+    baseline_trade_count  = Column(Integer, nullable=False)
+    review_at_trade_count = Column(Integer, nullable=False)
+    rollback_trigger_wr   = Column(Float, nullable=False)
+    status                = Column(String, default="pending")
+    reviewed_at           = Column(DateTime, nullable=True)
+    post_change_win_rate  = Column(Float, nullable=True)
+    post_change_trades    = Column(Integer, nullable=True)
+    rolled_back           = Column(Boolean, default=False)
 
 
 def init_db():

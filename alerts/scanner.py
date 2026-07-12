@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
 from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.store import save_candles
@@ -131,28 +130,25 @@ async def _get_cached_balance() -> float:
 
 
 def _build_factor_scores(result: dict) -> dict:
-    factor_scores = {}
-    sweep  = result.get("sweep") or {}
-    zone   = result.get("zone")  or {}
-
-    factor_scores["liquidity_sweep"]     = round(result.get("sweep_score",   0) * 12, 2)
-    factor_scores["displacement"]        = round(result.get("trigger_score", 0) * 11, 2)
-    factor_scores["retest_confirmation"] = round(result.get("zone_score",    0) * 12, 2)
-    factor_scores["order_blocks"]        = round(zone.get("score", 0) * 4,            2) if zone.get("type") == "OB"  else 0
-    factor_scores["market_structure"]    = round(result.get("sweep_score",   0) * 9,  2)
-    factor_scores["volume_expansion"]    = round(result.get("trigger_score", 0) * 7,  2)
-    factor_scores["market_regime"]       = 8 if result.get("direction") in ("LONG", "SHORT") else 0
-    factor_scores["session_timing"]      = 6 if _derive_session() in ("London", "London/NY Overlap", "New York") else 2
-    factor_scores["btc_alignment"]       = 6
-    factor_scores["oi_behavior"]         = 4
-    factor_scores["funding_extreme"]     = 0
-    factor_scores["rsi_divergence"]      = 0
-    factor_scores["atr_volatility"]      = 2
-    factor_scores["rsi_context"]         = 1
-    factor_scores["macd_histogram"]      = 1
-    factor_scores["weekly_filter"]       = 8
-
-    return factor_scores
+    zone = result.get("zone") or {}
+    return {
+        "liquidity_sweep":     round(result.get("sweep_score",   0) * 12, 2),
+        "displacement":        round(result.get("trigger_score", 0) * 11, 2),
+        "retest_confirmation": round(result.get("zone_score",    0) * 12, 2),
+        "order_blocks":        round(zone.get("score", 0) * 4,            2) if zone.get("type") == "OB" else 0,
+        "market_structure":    round(result.get("sweep_score",   0) * 9,  2),
+        "volume_expansion":    round(result.get("trigger_score", 0) * 7,  2),
+        "market_regime":       8 if result.get("direction") in ("LONG", "SHORT") else 0,
+        "session_timing":      6 if _derive_session() in ("London", "London/NY Overlap", "New York") else 2,
+        "btc_alignment":       6,
+        "oi_behavior":         4,
+        "funding_extreme":     0,
+        "rsi_divergence":      0,
+        "atr_volatility":      2,
+        "rsi_context":         1,
+        "macd_histogram":      1,
+        "weekly_filter":       8,
+    }
 
 
 def _save_signal(signal: dict) -> int | None:
@@ -179,32 +175,38 @@ def _save_signal(signal: dict) -> int | None:
                     return None
                 existing.outcome = "expired"
 
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+
             row = SignalModel(
-                coin          = signal["coin"],
-                direction     = signal["direction"],
-                grade         = signal["grade"],
-                score         = signal["score"],
-                signal_type   = signal["signal_type"],
-                entry         = signal["entry"],
-                sl            = signal["sl"],
-                tp1           = signal["tp1"],
-                tp2           = signal.get("tp2"),
-                sl_pct        = signal["sl_pct"],
-                risk_amt      = signal["risk_amt"],
-                risk_pct      = signal["risk_pct"],
-                position      = signal["pos_size"],
-                leverage      = str(signal["leverage"]) + "x",
-                sweep_score   = signal["sweep_score"],
-                retest_score  = 0,
-                disp_score    = signal["trigger_score"],
-                funding       = 0,
-                oi_signal     = "",
-                outcome       = "pending",
-                atr_at_entry  = signal.get("atr_4h"),
-                factor_scores = json.dumps(factor_scores),
-                market_score  = round(signal.get("sweep_score",   0) * 100, 2),
-                entry_score   = round(signal.get("trigger_score", 0) * 100, 2),
-                btc_score     = 6.0,
+                coin              = signal["coin"],
+                direction         = signal["direction"],
+                grade             = signal["grade"],
+                score             = signal["score"],
+                signal_type       = signal["signal_type"],
+                entry             = signal["entry"],
+                sl                = signal["sl"],
+                tp1               = signal["tp1"],
+                tp2               = signal.get("tp2"),
+                sl_pct            = signal["sl_pct"],
+                risk_amt          = signal["risk_amt"],
+                risk_pct          = signal["risk_pct"],
+                position          = signal["pos_size"],
+                leverage          = str(signal["leverage"]) + "x",
+                sweep_score       = signal["sweep_score"],
+                retest_score      = 0,
+                disp_score        = signal["trigger_score"],
+                funding           = 0,
+                oi_signal         = "",
+                outcome           = "pending",
+                atr_at_entry      = signal.get("atr_4h"),
+                factor_scores     = json.dumps(factor_scores),
+                market_score      = round(signal.get("sweep_score",   0) * 100, 2),
+                entry_score       = round(signal.get("trigger_score", 0) * 100, 2),
+                btc_score         = 6.0,
+                day_of_week       = now.weekday(),
+                hour_of_day       = now.hour,
+                system_version    = cfg.SYSTEM_VERSION,
             )
             db.add(row)
             db.flush()
@@ -237,6 +239,37 @@ def _write_redis(coin: str, signal: dict, db_id: int) -> None:
         }))
     except Exception as e:
         log.error("_write_redis %s: %s", coin, e)
+
+
+async def _capture_signal_snapshot(
+    signal_id: int,
+    signal:    dict,
+    candles:   dict,
+    balance:   float,
+    sizing:    dict,
+) -> None:
+    try:
+        from ml.observer import capture
+        from engines.indicators import calculate_all
+
+        d4h  = calculate_all(candles["4h"].iloc[-200:],  timeframe="4h")
+        d1h  = calculate_all(candles["1h"].iloc[-300:],  timeframe="1h")
+        d15m = calculate_all(candles["15m"].iloc[-200:], timeframe="15m")
+
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: capture(
+                signal_id     = signal_id,
+                signal        = signal,
+                d4h           = d4h,
+                d1h           = d1h,
+                d15m          = d15m,
+                balance       = balance,
+                sizing_result = sizing,
+            )
+        )
+    except Exception as e:
+        log.error("_capture_signal_snapshot signal_id=%s: %s", signal_id, e)
 
 
 async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
@@ -410,6 +443,25 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
             if db_id:
                 result["db_id"] = db_id
                 _write_redis(coin, result, db_id)
+
+                from ml.version_registry import tag_signal
+                tag_signal(db_id)
+
+                sizing_result = {
+                    "risk_pct":      result.get("risk_pct",  0),
+                    "risk_amt":      result.get("risk_amt",  0),
+                    "position_size": result.get("pos_size",  0),
+                    "stake":         result.get("stake",     0),
+                    "leverage":      result.get("leverage",  0),
+                }
+
+                asyncio.create_task(_capture_signal_snapshot(
+                    signal_id = db_id,
+                    signal    = result,
+                    candles   = candles,
+                    balance   = balance,
+                    sizing    = sizing_result,
+                ))
 
                 if cfg.CONTENT_ENABLED and result.get("grade") in ("A+", "A"):
                     asyncio.create_task(_run_content(db_id))

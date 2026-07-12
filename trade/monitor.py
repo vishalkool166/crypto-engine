@@ -42,6 +42,7 @@ def _get_open_trades_from_db() -> list:
                 "total_commission":   t.total_commission,
                 "slippage_entry_pct": t.slippage_entry_pct,
                 "actual_fill_entry":  t.actual_fill_entry,
+                "system_version":     t.system_version,
             } for t in trades]
     except Exception as e:
         log.error("_get_open_trades_from_db error: %s", e)
@@ -161,6 +162,7 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "regime_at_entry":    trade.get("regime_at_entry",  "--"),
         "session_at_entry":   trade.get("session_at_entry", "--"),
         "score_at_entry":     trade.get("score_at_entry",   0),
+        "system_version":     trade.get("system_version"),
     }
 
 
@@ -265,6 +267,14 @@ async def _get_exit_price(coin: str, trade: dict) -> float:
     return float(trade.get("entry_price") or 0)
 
 
+async def _record_trade_outcome(trade_id: int) -> None:
+    try:
+        from ml.outcome_recorder import record
+        await record(trade_id)
+    except Exception as e:
+        log.error("_record_trade_outcome trade_id=%s: %s", trade_id, e)
+
+
 async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> None:
     active_coins = {
         p.get("symbol", "").replace("USDT", "")
@@ -293,6 +303,8 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
 
         _mark_closed(trade_id, exit_price, pnl, exit_reason)
         invalidate_position_cache()
+
+        asyncio.create_task(_record_trade_outcome(trade_id))
 
         from trade.health_monitor import clear_health_state
         clear_health_state(coin)
@@ -493,6 +505,10 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "regime_at_entry":      t.regime_at_entry,
             "session_at_entry":     t.session_at_entry,
             "score_at_entry":       t.score_at_entry,
+            "system_version":       t.system_version,
+            "mae":                  t.mae,
+            "mfe":                  t.mfe,
+            "duration_hours":       t.duration_hours,
             "opened_at": t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
             "closed_at": t.closed_at.replace(tzinfo=timezone.utc).isoformat() if t.closed_at else None,
             "duration":             _duration_str(
