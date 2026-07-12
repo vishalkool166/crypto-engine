@@ -11,8 +11,9 @@ from config import cfg, TAKER_FEE
 
 log = logging.getLogger(__name__)
 
-WINDOW_4H = 200
-WINDOW_1H = 300
+WINDOW_4H  = 200
+WINDOW_1H  = 300
+WINDOW_15M = 200
 
 
 def _align_window(
@@ -167,28 +168,42 @@ def run_backtest(
 ) -> dict:
     log.info("Backtest started: %s", coin)
 
-    df_4h = load_candles(coin, "4h", limit=2000)
-    df_1h = load_candles(coin, "1h", limit=5000)
+    df_4h  = load_candles(coin, "4h",  limit=2000)
+    df_1h  = load_candles(coin, "1h",  limit=5000)
+    df_15m = load_candles(coin, "15m", limit=20000)
 
     if df_4h is None or len(df_4h) < WINDOW_4H + 50:
         return {"error": f"Insufficient 4H data: {coin}"}
     if df_1h is None or len(df_1h) < WINDOW_1H + 50:
         return {"error": f"Insufficient 1H data: {coin}"}
+    if df_15m is None or len(df_15m) < WINDOW_15M + 20:
+        return {"error": f"Insufficient 15M data: {coin}"}
 
     trades      = []
     signals_log = []
     equity      = capital
     peak_equity = capital
+    open_trades = 0
     skipped     = 0
     SE          = cfg.SCALP_ENGINE
+    max_trades  = SE["max_open_trades"]
 
     for i in range(WINDOW_4H, len(df_4h) - 1):
         current_ts = df_4h.index[i]
 
-        d4h_w = df_4h.iloc[i - WINDOW_4H:i].copy()
-        d1h_w = _align_window(df_1h, current_ts, WINDOW_1H)
+        d4h_w  = df_4h.iloc[i - WINDOW_4H:i].copy()
+        d1h_w  = _align_window(df_1h,  current_ts, WINDOW_1H)
+        d15m_w = _align_window(df_15m, current_ts, WINDOW_15M)
 
         if len(d1h_w) < 100:
+            skipped += 1
+            continue
+
+        if len(d15m_w) < 20:
+            skipped += 1
+            continue
+
+        if open_trades >= max_trades:
             skipped += 1
             continue
 
@@ -217,12 +232,11 @@ def run_backtest(
             if not zone_result["detected"]:
                 continue
 
-            df_15m_sim = d4h_w.tail(20)
-            atr_15m    = d4h.get("atr", price * 0.005) * 0.3
+            atr_15m = d4h.get("atr", price * 0.005) * 0.3
 
             trigger_result = detect_trigger(
-                df_15m = df_15m_sim,
-                zone   = zone_result["zone"],
+                df_15m    = d15m_w,
+                zone      = zone_result["zone"],
                 direction = direction,
                 atr_15m   = atr_15m,
             )
@@ -247,11 +261,11 @@ def run_backtest(
             if not risk_result["valid"]:
                 continue
 
-            entry = price
-            sl    = risk_result["sl"]
-            tp1   = risk_result["tp1"]
-            tp2   = risk_result["tp2"]
-            sl_pct= risk_result["sl_pct"]
+            entry  = price
+            sl     = risk_result["sl"]
+            tp1    = risk_result["tp1"]
+            tp2    = risk_result["tp2"]
+            sl_pct = risk_result["sl_pct"]
 
             combined = round(
                 sweep_result["score"] * 0.40 +
