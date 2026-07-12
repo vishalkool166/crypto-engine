@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from data.fetcher import fetch_and_store
+from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.store import save_candles
 from engines.signal import run as run_signal
@@ -17,6 +17,10 @@ log = logging.getLogger(__name__)
 
 _scan_lock      = asyncio.Lock()
 _scan_semaphore = asyncio.Semaphore(3)
+
+_cached_balance:    float = 0.0
+_balance_cached_at: float = 0.0
+_BALANCE_CACHE_TTL: float = 60.0
 
 
 def _get_ticker_from_redis(coin: str) -> dict:
@@ -55,24 +59,18 @@ def _get_funding_from_redis(coin: str) -> float:
 def _derive_regime(result: dict, coin_status: str) -> str:
     direction = result.get("direction", "")
     sweep     = result.get("sweep") or {}
-    zone      = result.get("zone")  or {}
+    relevance = sweep.get("relevance", {}).get("label", "") if sweep else ""
 
     if coin_status == "in_trade":
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — In Trade"
-
     if result.get("signal"):
-        strength = sweep.get("relevance", {}).get("label", "")
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {strength} Sweep"
-
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {relevance} Sweep" if relevance else f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Signal"
     if result.get("zone_found") and result.get("sweep_found"):
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Zone Active"
-
     if result.get("sweep_found"):
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Sweep Detected"
-
     if direction in ("LONG", "SHORT"):
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Scanning"
-
     return "Scanning"
 
 
@@ -87,21 +85,16 @@ def _derive_session() -> str:
 
 
 def _build_partial_score(result: dict) -> float:
-    sweep_score   = result.get("sweep_score", 0) or 0
-    zone_score    = result.get("zone_score",  0) or 0
+    sweep_score   = result.get("sweep_score",   0) or 0
+    zone_score    = result.get("zone_score",    0) or 0
     trigger_score = result.get("trigger_score", 0) or 0
 
     if result.get("signal"):
-        combined = result.get("score", 0) or 0
-        return round(combined * 100)
-
+        return round((result.get("score", 0) or 0) * 100)
     if result.get("zone_found") and result.get("sweep_found"):
-        partial = sweep_score * 0.40 + zone_score * 0.35
-        return round(partial * 100)
-
+        return round((sweep_score * 0.40 + zone_score * 0.35) * 100)
     if result.get("sweep_found"):
         return round(sweep_score * 0.40 * 100)
-
     return 0
 
 
@@ -123,6 +116,17 @@ async def _get_balance() -> float:
     except Exception as e:
         log.error("_get_balance: %s", e)
         return 0.0
+
+
+async def _get_cached_balance() -> float:
+    global _cached_balance, _balance_cached_at
+    if _cached_balance > 0 and (time.time() - _balance_cached_at) < _BALANCE_CACHE_TTL:
+        return _cached_balance
+    balance = await _get_balance()
+    if balance > 0:
+        _cached_balance    = balance
+        _balance_cached_at = time.time()
+    return balance
 
 
 def _save_signal(signal: dict) -> int | None:
@@ -312,6 +316,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
             score   = _build_partial_score(result)
 
             sweep_data = result.get("sweep") or {}
+            zone_data  = result.get("zone")  or {}
 
             cache_entry = {
                 "coin":      coin,
@@ -335,7 +340,16 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     "label":     sweep_data.get("level_label", "") if sweep_data else "",
                     "age_hours": sweep_data.get("age_hours",  0)   if sweep_data else 0,
                 },
-                "zone":      result.get("zone", {}),
+                "zone": {
+                    "type":         zone_data.get("type",         "—"),
+                    "top":          zone_data.get("top",           0),
+                    "bottom":       zone_data.get("bottom",        0),
+                    "mid":          zone_data.get("mid",           0),
+                    "distance_pct": zone_data.get("distance_pct", None),
+                    "touch_count":  zone_data.get("touch_count",  0),
+                    "score":        zone_data.get("score",         0),
+                    "origin_desc":  zone_data.get("origin_desc",  ""),
+                },
                 "narrative": result.get("narrative", ""),
                 "regime":    regime,
                 "session":   session,
@@ -347,7 +361,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "cached_at":  time.time(),
                 "wconf": {
                     "norm_score":   score,
-                    "market_score": score,
+                    "market_score": round(result.get("sweep_score",   0) * 100) if result.get("sweep_score")   else 0,
                     "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
                     "btc_score":    0,
                     "factors":      [],
@@ -410,7 +424,7 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
 
         save_candles(coin, kline["tf"], df_row)
 
-        balance = await _get_balance()
+        balance = await _get_cached_balance()
         if balance <= 0:
             return
 
@@ -424,7 +438,7 @@ async def scan_all_coins() -> list:
     async with _scan_lock:
         log.info("Scan started — %s coins", len(cfg.COINS))
 
-        balance = await _get_balance()
+        balance = await _get_cached_balance()
         if balance <= 0:
             log.warning("Scan aborted — zero balance")
             return []
