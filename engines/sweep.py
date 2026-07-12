@@ -10,6 +10,67 @@ TF_CANDLE_HOURS = {
 }
 
 
+def detect_displacement(
+    df:        pd.DataFrame,
+    atr:       float,
+    direction: str,
+    after_idx: int,
+    lookforward: int = 3,
+) -> dict:
+    if df is None or len(df) <= after_idx:
+        return {"found": False, "score": 0.0}
+
+    is_long  = direction == "LONG"
+    vol_ma   = float(df["volume"].rolling(20).mean().iloc[-1]) or 1
+    best     = {"found": False, "score": 0.0, "idx": -1}
+
+    end_idx = min(after_idx + lookforward, len(df))
+
+    for i in range(after_idx, end_idx):
+        c     = df.iloc[i]
+        body  = abs(float(c["close"]) - float(c["open"]))
+        rng   = float(c["high"]) - float(c["low"])
+        bull  = float(c["close"]) > float(c["open"])
+        vs    = float(c["volume"]) / vol_ma
+
+        if rng == 0:
+            continue
+
+        body_ratio = body / rng
+        range_mult = rng / atr if atr > 0 else 0
+
+        direction_match = (is_long and bull) or (not is_long and not bull)
+        if not direction_match:
+            continue
+
+        strong_body  = body_ratio >= 0.60
+        strong_range = range_mult >= 1.5
+        vol_confirm  = vs >= 1.2
+
+        if not strong_body:
+            continue
+
+        score = 0.0
+        score += body_ratio * 0.4
+        score += min(range_mult / 3.0, 0.4)
+        score += 0.2 if vol_confirm else 0.0
+
+        score = round(min(score, 1.0), 3)
+
+        if score > best["score"]:
+            best = {
+                "found":      True,
+                "score":      score,
+                "idx":        i,
+                "body_ratio": round(body_ratio, 3),
+                "range_mult": round(range_mult, 3),
+                "vol_spike":  round(vs, 2),
+                "strong":     strong_body and strong_range,
+            }
+
+    return best
+
+
 def detect(
     df_1h:     pd.DataFrame,
     d1h:       dict,
@@ -67,26 +128,39 @@ def detect(
                 confirmed  = bool(float(c["close"]) > level and price > level)
                 raw_score  = rel["pts"] * (intensity / 10)
                 adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
+
+                abs_idx    = len(df_1h) - len(sl) + i
+                disp       = detect_displacement(
+                    df        = df_1h,
+                    atr       = atr,
+                    direction = direction,
+                    after_idx = abs_idx + 1,
+                    lookforward = 3,
+                )
+                if disp["found"]:
+                    adj_score = round(adj_score * 1.3, 2)
+
                 return {
-                    "type":        "bull",
-                    "label":       label,
-                    "level":       float(level),
-                    "sweep_low":   float(c["low"]),
-                    "sweep_high":  None,
-                    "wick":        round(wick, 6),
-                    "wick_atr":    round(wick / atr, 2),
-                    "magnitude":   round(wick / atr, 2),
-                    "vol_ratio":   round(vs, 2),
-                    "vol_spike":   round(vs, 2),
-                    "intensity":   intensity,
-                    "confirmed":   confirmed,
-                    "candles_ago": candles_ago,
-                    "age_hours":   round(candles_ago * hours_per_candle, 1),
-                    "relevance":   rel,
-                    "score":       adj_score,
-                    "level_type":  label.lower().replace(" sweep", "").replace(" ", "_"),
-                    "level_label": label,
-                    "priority":    1 if "weekly" in label.lower() else 2,
+                    "type":             "bull",
+                    "label":            label,
+                    "level":            float(level),
+                    "sweep_low":        float(c["low"]),
+                    "sweep_high":       None,
+                    "wick":             round(wick, 6),
+                    "wick_atr":         round(wick / atr, 2),
+                    "magnitude":        round(wick / atr, 2),
+                    "vol_ratio":        round(vs, 2),
+                    "vol_spike":        round(vs, 2),
+                    "intensity":        intensity,
+                    "confirmed":        confirmed,
+                    "candles_ago":      candles_ago,
+                    "age_hours":        round(candles_ago * hours_per_candle, 1),
+                    "relevance":        rel,
+                    "score":            adj_score,
+                    "level_type":       label.lower().replace(" sweep", "").replace(" ", "_"),
+                    "level_label":      label,
+                    "priority":         1 if "weekly" in label.lower() else 2,
+                    "displacement":     disp,
                 }
         return None
 
@@ -115,26 +189,39 @@ def detect(
                 confirmed  = bool(float(c["close"]) < level and price < level)
                 raw_score  = rel["pts"] * (intensity / 10)
                 adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
+
+                abs_idx    = len(df_1h) - len(sl) + i
+                disp       = detect_displacement(
+                    df          = df_1h,
+                    atr         = atr,
+                    direction   = direction,
+                    after_idx   = abs_idx + 1,
+                    lookforward = 3,
+                )
+                if disp["found"]:
+                    adj_score = round(adj_score * 1.3, 2)
+
                 return {
-                    "type":        "bear",
-                    "label":       label,
-                    "level":       float(level),
-                    "sweep_low":   None,
-                    "sweep_high":  float(c["high"]),
-                    "wick":        round(wick, 6),
-                    "wick_atr":    round(wick / atr, 2),
-                    "magnitude":   round(wick / atr, 2),
-                    "vol_ratio":   round(vs, 2),
-                    "vol_spike":   round(vs, 2),
-                    "intensity":   intensity,
-                    "confirmed":   confirmed,
-                    "candles_ago": candles_ago,
-                    "age_hours":   round(candles_ago * hours_per_candle, 1),
-                    "relevance":   rel,
-                    "score":       adj_score,
-                    "level_type":  label.lower().replace(" sweep", "").replace(" ", "_"),
-                    "level_label": label,
-                    "priority":    1 if "weekly" in label.lower() else 2,
+                    "type":             "bear",
+                    "label":            label,
+                    "level":            float(level),
+                    "sweep_low":        None,
+                    "sweep_high":       float(c["high"]),
+                    "wick":             round(wick, 6),
+                    "wick_atr":         round(wick / atr, 2),
+                    "magnitude":        round(wick / atr, 2),
+                    "vol_ratio":        round(vs, 2),
+                    "vol_spike":        round(vs, 2),
+                    "intensity":        intensity,
+                    "confirmed":        confirmed,
+                    "candles_ago":      candles_ago,
+                    "age_hours":        round(candles_ago * hours_per_candle, 1),
+                    "relevance":        rel,
+                    "score":            adj_score,
+                    "level_type":       label.lower().replace(" sweep", "").replace(" ", "_"),
+                    "level_label":      label,
+                    "priority":         1 if "weekly" in label.lower() else 2,
+                    "displacement":     disp,
                 }
         return None
 
@@ -203,7 +290,12 @@ def detect(
         "sweep_low":   best.get("sweep_low"),
         "sweep_high":  best.get("sweep_high"),
         "sweep":       best,
-        "desc":        f"Level: {best['level']:.4f} — {best['relevance']['label']} ({best['age_hours']:.1f}h ago)",
+        "displacement":best.get("displacement", {"found": False, "score": 0.0}),
+        "desc":        (
+            f"Level: {best['level']:.4f} — "
+            f"{best['relevance']['label']} ({best['age_hours']:.1f}h ago)"
+            + (" + displacement" if best.get("displacement", {}).get("found") else "")
+        ),
         "all_sweeps":  results,
     }
 

@@ -19,7 +19,11 @@ def _grade(combined: float) -> str:
     return "F"
 
 
-def _combined_score(sweep_score: float, zone_score: float, trigger_score: float) -> float:
+def _combined_score(
+    sweep_score:   float,
+    zone_score:    float,
+    trigger_score: float,
+) -> float:
     return round(
         sweep_score   * 0.40 +
         zone_score    * 0.35 +
@@ -34,6 +38,8 @@ async def run(
     df_1h:   object,
     df_15m:  object,
     balance: float,
+    df_1d:   object = None,
+    df_1w:   object = None,
 ) -> dict:
 
     no_signal = {"coin": coin, "signal": False}
@@ -49,11 +55,12 @@ async def run(
             or float(df_15m["close"].iloc[-1]) * 0.005
         )
 
-        ctx = context.check(d4h, coin)
+        ctx = context.check(d4h, coin, df_1d=df_1d, df_1w=df_1w)
         if not ctx["pass"]:
             return {**no_signal, "reason": ctx["reason"]}
 
         direction = ctx["direction"]
+        alignment = ctx.get("alignment")
 
         sweep_result = sweep.detect(df_1h, d1h, direction)
         if not sweep_result["detected"]:
@@ -122,11 +129,12 @@ async def run(
             return {**no_signal, "reason": risk_result["reason"]}
 
         sizing_result = sizing.calculate(
-            balance   = balance,
-            sl_pct    = risk_result["sl_pct"],
-            sl_dist   = risk_result["sl_dist"],
-            grade     = grade,
-            direction = direction,
+            balance        = balance,
+            sl_pct         = risk_result["sl_pct"],
+            sl_dist        = risk_result["sl_dist"],
+            grade          = grade,
+            direction      = direction,
+            alignment      = alignment,
         )
 
         if sizing_result.get("skip"):
@@ -143,6 +151,8 @@ async def run(
             risk      = risk_result,
             sizing    = sizing_result,
         )
+
+        displacement = sweep_result.get("displacement", {})
 
         return {
             "signal":        True,
@@ -161,11 +171,14 @@ async def run(
             "tp1_label":     risk_result["tp1_label"],
             "tp2_label":     risk_result["tp2_label"],
             "sl_reason":     risk_result["sl_reason"],
+            "poc_used":      risk_result.get("poc_used", False),
             "risk_amt":      sizing_result["risk_amt"],
             "pos_size":      sizing_result["position_size"],
             "stake":         sizing_result["stake"],
             "leverage":      sizing_result["leverage"],
             "risk_pct":      sizing_result["risk_pct"],
+            "tp1_pct":       sizing_result.get("tp1_pct", 0.65),
+            "tp2_pct":       sizing_result.get("tp2_pct", 0.35),
             "sweep_score":   sweep_result["score"],
             "zone_score":    zone_result["score"],
             "trigger_score": trigger_result["score"],
@@ -179,6 +192,11 @@ async def run(
             "atr_1h":        atr_1h,
             "atr_15m":       atr_15m,
             "generated_at":  time.time(),
+            "alignment":     alignment,
+            "displacement":  displacement,
+            "daily_bias":    alignment.get("daily",   "NEUTRAL") if alignment else "NEUTRAL",
+            "weekly_bias":   alignment.get("weekly",  "NEUTRAL") if alignment else "NEUTRAL",
+            "alignment_str": alignment.get("alignment", "none")  if alignment else "none",
         }
 
     except Exception as e:

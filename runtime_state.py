@@ -10,14 +10,15 @@ STATE_FILE = "runtime_state.json"
 _lock      = Lock()
 
 _defaults = {
-    "trading_mode":    "paper",
+    "trading_mode":     "paper",
     "last_signal_time": 0,
-    "balance_cache":   {"balance": 0.0, "updated_at": 0},
-    "tier_config":     {"tier": 1, "risk_pct": 0.05, "max_trades": 1, "leverage": 5},
-    "totp_pending":    {},
-    "crash_detected":  False,
-    "last_shutdown":   "clean",
-    "paper_balance":   0.0,
+    "balance_cache":    {"balance": 0.0, "updated_at": 0},
+    "tier_config":      {"tier": 1, "risk_pct": 0.05, "max_trades": 1, "leverage": 5},
+    "totp_pending":     {},
+    "crash_detected":   False,
+    "last_shutdown":    "clean",
+    "paper_balance":    0.0,
+    "loss_pause_until": 0,
 }
 
 _state: dict = {}
@@ -30,12 +31,17 @@ def load():
             with open(STATE_FILE, "r") as f:
                 loaded = json.load(f)
             _state = {**_defaults, **loaded}
-            log.info(f"Runtime state loaded: mode={_state['trading_mode']} crash={_state['crash_detected']}")
+            log.info(
+                "Runtime state loaded: mode=%s crash=%s loss_pause=%s",
+                _state["trading_mode"],
+                _state["crash_detected"],
+                _state.get("loss_pause_until", 0) > time.time(),
+            )
         else:
             _state = dict(_defaults)
             log.info("No runtime state found — using defaults")
     except Exception as e:
-        log.error(f"Runtime state load error: {e} — using defaults")
+        log.error("Runtime state load error: %s — using defaults", e)
         _state = dict(_defaults)
     return _state
 
@@ -48,7 +54,7 @@ def save():
                 json.dump(_state, f, indent=2)
             os.replace(tmp, STATE_FILE)
         except Exception as e:
-            log.error(f"Runtime state save error: {e}")
+            log.error("Runtime state save error: %s", e)
 
 
 def get(key: str, default=None):
@@ -67,7 +73,7 @@ def get_trading_mode() -> str:
 def set_trading_mode(mode: str):
     _state["trading_mode"] = mode
     save()
-    log.info(f"Trading mode set: {mode}")
+    log.info("Trading mode set: %s", mode)
 
 
 def get_balance_cache() -> dict:
@@ -101,7 +107,7 @@ def set_totp_pending(chat_id: str, action: str, expires_at: float):
     _state.setdefault("totp_pending", {})
     _state["totp_pending"][str(chat_id)] = {
         "action":     action,
-        "expires_at": expires_at
+        "expires_at": expires_at,
     }
     save()
 
@@ -138,6 +144,7 @@ def mark_clean_shutdown():
 def was_crash() -> bool:
     return _state.get("crash_detected", False)
 
+
 def get_paper_balance() -> float:
     return _state.get("paper_balance", 0.0)
 
@@ -147,5 +154,41 @@ def set_paper_balance(balance: float):
     save()
 
 
-# Load on import
+def get_loss_pause_until() -> float:
+    return _state.get("loss_pause_until", 0)
+
+
+def set_loss_pause_until(until: float):
+    _state["loss_pause_until"] = until
+    save()
+    log.info(
+        "Loss pause set until: %s",
+        time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(until))
+    )
+
+
+def clear_loss_pause():
+    _state["loss_pause_until"] = 0
+    save()
+    log.info("Loss pause cleared")
+
+
+def is_loss_paused() -> bool:
+    until = _state.get("loss_pause_until", 0)
+    if not until:
+        return False
+    if time.time() >= until:
+        clear_loss_pause()
+        return False
+    return True
+
+
+def loss_pause_remaining_hours() -> float:
+    until = _state.get("loss_pause_until", 0)
+    if not until:
+        return 0.0
+    remaining = until - time.time()
+    return max(0.0, round(remaining / 3600, 1))
+
+
 load()

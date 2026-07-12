@@ -22,10 +22,16 @@ _cached_balance:    float = 0.0
 _balance_cached_at: float = 0.0
 _BALANCE_CACHE_TTL: float = 60.0
 
+_cached_1d: dict = {}
+_cached_1w: dict = {}
+_HTF_CACHE_TTL   = 3600.0
+_htf_cached_at:  float = 0.0
+
 
 def _get_ticker_from_redis(coin: str) -> dict:
     try:
         from redis_client import get_redis
+        import json
         r = get_redis()
         if not r:
             return {"change24": 0.0, "change_pos": True}
@@ -64,7 +70,11 @@ def _derive_regime(result: dict, coin_status: str) -> str:
     if coin_status == "in_trade":
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — In Trade"
     if result.get("signal"):
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {relevance} Sweep" if relevance else f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Signal"
+        return (
+            f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {relevance} Sweep"
+            if relevance
+            else f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Signal"
+        )
     if result.get("zone_found") and result.get("sweep_found"):
         return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Zone Active"
     if result.get("sweep_found"):
@@ -107,6 +117,41 @@ async def _load_candles(coin: str) -> dict | None:
     except Exception as e:
         log.error("_load_candles %s: %s", coin, e)
         return None
+
+
+async def _load_htf_candles() -> dict:
+    global _cached_1d, _cached_1w, _htf_cached_at
+
+    now = time.time()
+    if _cached_1d and (now - _htf_cached_at) < _HTF_CACHE_TTL:
+        return {"1d": _cached_1d, "1w": _cached_1w}
+
+    log.info("Loading higher timeframe candles for all coins")
+    new_1d = {}
+    new_1w = {}
+
+    for coin in cfg.COINS:
+        try:
+            df_1d = await fetch_and_store(coin, "1d", limit=200)
+            new_1d[coin] = df_1d
+        except Exception as e:
+            log.warning("HTF 1D load failed %s: %s", coin, e)
+            new_1d[coin] = None
+
+        try:
+            df_1w = await fetch_and_store(coin, "1w", limit=100)
+            new_1w[coin] = df_1w
+        except Exception as e:
+            log.warning("HTF 1W load failed %s: %s", coin, e)
+            new_1w[coin] = None
+
+        await asyncio.sleep(0.2)
+
+    _cached_1d      = new_1d
+    _cached_1w      = new_1w
+    _htf_cached_at  = now
+    log.info("Higher timeframe candles loaded for %s coins", len(cfg.COINS))
+    return {"1d": new_1d, "1w": new_1w}
 
 
 async def _get_balance() -> float:
@@ -211,7 +256,11 @@ def _save_signal(signal: dict) -> int | None:
             db.add(row)
             db.flush()
             db.refresh(row)
-            log.info("Signal saved ID:%s %s %s grade:%s", row.id, signal["coin"], signal["direction"], signal["grade"])
+            log.info(
+                "Signal saved ID:%s %s %s grade:%s alignment:%s",
+                row.id, signal["coin"], signal["direction"],
+                signal["grade"], signal.get("alignment_str", "none")
+            )
             return row.id
     except Exception as e:
         log.error("_save_signal: %s", e)
@@ -300,8 +349,11 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         if result.get("success"):
             current_state = state.get(coin)
             state.set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
-            log.info("Trade opened: %s %s grade:%s trade_id:%s",
-                     coin, signal["direction"], signal["grade"], result["trade_id"])
+            log.info(
+                "Trade opened: %s %s grade:%s trade_id:%s alignment:%s",
+                coin, signal["direction"], signal["grade"],
+                result["trade_id"], signal.get("alignment_str", "none")
+            )
         else:
             log.error("Trade open failed %s: %s", coin, result.get("error"))
 
@@ -309,7 +361,11 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         log.error("_execute_trade %s: %s", coin, e, exc_info=True)
 
 
-async def _analyze_coin(coin: str, balance: float) -> dict | None:
+async def _analyze_coin(
+    coin:    str,
+    balance: float,
+    htf:     dict,
+) -> dict | None:
     async with _scan_semaphore:
         try:
             current = state.get(coin)
@@ -332,12 +388,17 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
             if not candles:
                 return None
 
+            df_1d = htf.get("1d", {}).get(coin)
+            df_1w = htf.get("1w", {}).get(coin)
+
             result = await run_signal(
                 coin    = coin,
                 df_4h   = candles["4h"],
                 df_1h   = candles["1h"],
                 df_15m  = candles["15m"],
                 balance = balance,
+                df_1d   = df_1d,
+                df_1w   = df_1w,
             )
 
             current = state.get(coin)
@@ -382,6 +443,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
 
             sweep_data = result.get("sweep") or {}
             zone_data  = result.get("zone")  or {}
+            alignment  = result.get("alignment") or {}
 
             cache_entry = {
                 "coin":      coin,
@@ -414,6 +476,12 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     "touch_count":  zone_data.get("touch_count",  0),
                     "score":        zone_data.get("score",         0),
                     "origin_desc":  zone_data.get("origin_desc",  ""),
+                },
+                "alignment": {
+                    "daily":     alignment.get("daily",     "NEUTRAL"),
+                    "weekly":    alignment.get("weekly",    "NEUTRAL"),
+                    "alignment": alignment.get("alignment", "none"),
+                    "size_mult": alignment.get("size_mult", 1.0),
                 },
                 "narrative": result.get("narrative", ""),
                 "regime":    regime,
@@ -512,7 +580,8 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
         if balance <= 0:
             return
 
-        await _analyze_coin(coin, balance)
+        htf = {"1d": _cached_1d, "1w": _cached_1w}
+        await _analyze_coin(coin, balance, htf)
 
     except Exception as e:
         log.error("_on_kline_closed %s: %s", coin, e)
@@ -529,8 +598,10 @@ async def scan_all_coins() -> list:
 
         state.tick_cooldowns()
 
+        htf = await _load_htf_candles()
+
         results = await asyncio.gather(
-            *[_analyze_coin(c, balance) for c in cfg.COINS],
+            *[_analyze_coin(c, balance, htf) for c in cfg.COINS],
             return_exceptions=True
         )
 
@@ -555,7 +626,10 @@ def _write_active_pairs() -> None:
         if not r:
             return
         pairs = [f"{c}/USDT:USDT" for c in cfg.COINS]
-        r.setex("pairs:active", 1800, json.dumps({"pairs": pairs, "refresh_period": 1800}))
+        r.setex("pairs:active", 1800, json.dumps({
+            "pairs":          pairs,
+            "refresh_period": 1800,
+        }))
     except Exception as e:
         log.error("_write_active_pairs: %s", e)
 
