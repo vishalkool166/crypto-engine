@@ -39,14 +39,31 @@ def _get_open_scalp_trades() -> list:
 def _hours_since(dt) -> float:
     if not dt:
         return 0.0
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+    try:
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 3600)
+    except Exception:
+        return 0.0
+
+
+def _was_opened_during_asia(opened_at) -> bool:
+    try:
+        if not opened_at:
+            return False
+        if isinstance(opened_at, str):
+            opened_at = datetime.fromisoformat(opened_at)
+        if opened_at.tzinfo is None:
+            opened_at = opened_at.replace(tzinfo=timezone.utc)
+        return 0 <= opened_at.hour < 8
+    except Exception:
+        return False
 
 
 def _is_asia_session() -> bool:
-    hour = datetime.now(timezone.utc).hour
-    return 0 <= hour < 8
+    return 0 <= datetime.now(timezone.utc).hour < 8
 
 
 async def _partial_close(trade: dict, reason: str) -> bool:
@@ -56,8 +73,6 @@ async def _partial_close(trade: dict, reason: str) -> bool:
             cancel_all_orders, cancel_all_algo_orders
         )
         from trade.executor import _round_step, _mark_closed
-        from database import get_session, Trade as TradeModel
-        import math
 
         coin     = trade["coin"]
         symbol   = f"{coin}USDT"
@@ -96,10 +111,8 @@ async def _partial_close(trade: dict, reason: str) -> bool:
         exit_price = get_mark_price(coin) or trade["entry_price"]
 
         entry      = trade["entry_price"]
-        partial_pos= close_qty * exit_price
-        partial_margin = partial_pos / leverage
         ratio      = (entry - exit_price) / entry if is_short else (exit_price - entry) / entry
-        partial_pnl= round(ratio * partial_margin * leverage, 4)
+        partial_pnl= round(ratio * (close_qty * exit_price), 4)
 
         with get_session() as db:
             t = db.query(TradeModel).filter(TradeModel.id == trade["id"]).first()
@@ -137,41 +150,24 @@ async def _update_sl_to_breakeven(
     prec:     dict,
 ) -> None:
     try:
-        from trade.exchange import (
-            cancel_all_orders, cancel_all_algo_orders,
-            place_order, place_algo_order
-        )
-        from trade.executor import _round_tick
+        from trade.exchange import cancel_all_orders, cancel_all_algo_orders
+        from trade.executor import _round_tick, move_sl_to_breakeven
 
         await cancel_all_orders(symbol)
         await cancel_all_algo_orders(symbol)
         await asyncio.sleep(1.0)
 
-        be_price    = _round_tick(entry, prec["tick_size"])
-        sl_side     = "BUY" if is_short else "SELL"
-        price_prec  = prec["price_precision"]
+        atr_15m  = entry * 0.005
+        sl_side  = "BUY" if not is_short else "SELL"
 
-        if cfg.TRADING_MODE == "live":
-            try:
-                await place_algo_order(
-                    symbol          = symbol,
-                    side            = sl_side,
-                    order_type      = "STOP_MARKET",
-                    trigger_price   = be_price,
-                    price_precision = price_prec,
-                    close_position  = True,
-                )
-                return
-            except Exception:
-                pass
-
-        await place_order(
-            symbol      = symbol,
-            side        = sl_side,
-            order_type  = "STOP_MARKET",
-            quantity    = 0,
-            stop_price  = be_price,
-            reduce_only = True,
+        await move_sl_to_breakeven(
+            symbol          = symbol,
+            side            = sl_side,
+            entry_price     = entry,
+            atr_15m         = atr_15m,
+            price_precision = prec["price_precision"],
+            tick_size       = prec["tick_size"],
+            is_long         = not is_short,
         )
 
     except Exception as e:
@@ -180,6 +176,15 @@ async def _update_sl_to_breakeven(
 
 async def _time_stop_close(trade: dict, reason: str) -> None:
     try:
+        with get_session() as db:
+            t = db.query(TradeModel).filter(
+                TradeModel.id        == trade["id"],
+                TradeModel.is_active == True
+            ).first()
+            if not t:
+                log.info("_time_stop_close: trade %s already closed", trade["id"])
+                return
+
         from trade.executor import close_position
         await close_position(
             coin      = trade["coin"],
@@ -202,13 +207,13 @@ async def run_cycle() -> None:
         return
 
     for trade in trades:
-        coin        = trade["coin"]
-        entry       = trade["entry_price"]
-        is_short    = trade["direction"] == "SHORT"
-        tp1_hit     = trade["tp1_hit"]
-        opened_at   = trade["opened_at"]
-        tp1_hit_at  = trade["tp1_hit_at"]
-        live_price  = get_mark_price(coin) or entry
+        coin       = trade["coin"]
+        entry      = trade["entry_price"]
+        is_short   = trade["direction"] == "SHORT"
+        tp1_hit    = trade["tp1_hit"]
+        opened_at  = trade["opened_at"]
+        tp1_hit_at = trade["tp1_hit_at"]
+        live_price = get_mark_price(coin) or entry
 
         move_pct = (
             (entry - live_price) / entry
@@ -225,11 +230,13 @@ async def run_cycle() -> None:
 
         hours_open = _hours_since(opened_at)
 
-        if SE["close_before_asia"] and _is_asia_session() and move_pct <= 0:
-            log.info("Close before Asia: %s move:%.3f%%", coin, move_pct * 100)
-            reason = "time_stop_loss" if move_pct < -0.002 else "time_stop_breakeven"
-            await _time_stop_close(trade, reason)
-            continue
+        if SE["close_before_asia"] and _is_asia_session():
+            opened_during_asia = _was_opened_during_asia(opened_at)
+            if not opened_during_asia and move_pct <= 0:
+                log.info("Close before Asia: %s move:%.3f%%", coin, move_pct * 100)
+                reason = "time_stop_loss" if move_pct < -0.002 else "time_stop_breakeven"
+                await _time_stop_close(trade, reason)
+                continue
 
         if hours_open >= SE["time_stop_hours"]:
             if move_pct > 0.002:
@@ -237,7 +244,7 @@ async def run_cycle() -> None:
             elif abs(move_pct) <= 0.002:
                 reason = "time_stop_breakeven"
             else:
-                sl_dist = abs(entry - trade["sl_price"]) / entry
+                sl_dist = abs(entry - trade["sl_price"]) / entry if trade["sl_price"] else 0.02
                 if abs(move_pct) < sl_dist * 0.7:
                     reason = "time_stop_loss"
                 else:

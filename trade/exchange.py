@@ -361,7 +361,7 @@ async def cancel_all_algo_orders(symbol: str) -> dict:
             "symbol": _clean(symbol),
         }, signed=True)
     except Exception as e:
-        log.error("cancel_all_algo_orders %s: %s", symbol, e)
+        log.warning("cancel_all_algo_orders %s: %s", symbol, e)
         return {}
 
 
