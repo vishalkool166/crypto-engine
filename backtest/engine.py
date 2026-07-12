@@ -5,13 +5,21 @@ from engines.indicators import calculate_all
 from engines.context import check as context_check
 from engines.sweep import detect as detect_sweep
 from engines.zone import detect as detect_zone
+from engines.trigger import detect as detect_trigger
 from engines.risk import calculate as calculate_risk
 from config import cfg, TAKER_FEE
 
 log = logging.getLogger(__name__)
 
+WINDOW_4H = 200
+WINDOW_1H = 500
 
-def _align_window(df: pd.DataFrame, current_ts: pd.Timestamp, window: int) -> pd.DataFrame:
+
+def _align_window(
+    df:         pd.DataFrame,
+    current_ts: pd.Timestamp,
+    window:     int
+) -> pd.DataFrame:
     aligned = df[df.index < current_ts].copy()
     if len(aligned) < window:
         return aligned
@@ -20,7 +28,6 @@ def _align_window(df: pd.DataFrame, current_ts: pd.Timestamp, window: int) -> pd
 
 def _simulate_trade(
     df_4h:      pd.DataFrame,
-    df_1h:      pd.DataFrame,
     current_ts: pd.Timestamp,
     direction:  str,
     entry:      float,
@@ -45,11 +52,10 @@ def _simulate_trade(
     for j, (ts, c) in enumerate(future.iterrows()):
         h = float(c["high"])
         l = float(c["low"])
-        o = float(c["open"])
 
         sl_hit  = (l <= sl)  if is_long else (h >= sl)
         tp1_now = (h >= tp1) if is_long else (l <= tp1)
-        tp2_now = (tp2 and ((h >= tp2) if is_long else (l <= tp2)))
+        tp2_now = tp2 and ((h >= tp2) if is_long else (l <= tp2))
 
         if not tp1_hit:
             if sl_hit and tp1_now:
@@ -130,43 +136,43 @@ def _calculate_pnl(
     fee_mult = TAKER_FEE * 2
 
     if tp2_hit and tp2:
-        gross = (
-            ((tp1 - entry) / entry * pos_size * tp1_pct) +
-            ((tp2 - entry) / entry * pos_size * tp2_pct)
-            if direction == "LONG" else
-            ((entry - tp1) / entry * pos_size * tp1_pct) +
-            ((entry - tp2) / entry * pos_size * tp2_pct)
-        )
+        if direction == "LONG":
+            gross = (
+                (tp1 - entry) / entry * pos_size * tp1_pct +
+                (tp2 - entry) / entry * pos_size * tp2_pct
+            )
+        else:
+            gross = (
+                (entry - tp1) / entry * pos_size * tp1_pct +
+                (entry - tp2) / entry * pos_size * tp2_pct
+            )
     elif tp1_hit:
-        gross = (
-            (tp1 - entry) / entry * pos_size * tp1_pct
-            if direction == "LONG" else
-            (entry - tp1) / entry * pos_size * tp1_pct
-        )
+        if direction == "LONG":
+            gross = (tp1 - entry) / entry * pos_size * tp1_pct
+        else:
+            gross = (entry - tp1) / entry * pos_size * tp1_pct
     else:
-        gross = (
-            (exit_price - entry) / entry * pos_size
-            if direction == "LONG" else
-            (entry - exit_price) / entry * pos_size
-        )
+        if direction == "LONG":
+            gross = (exit_price - entry) / entry * pos_size
+        else:
+            gross = (entry - exit_price) / entry * pos_size
 
     return round(gross - pos_size * fee_mult, 4)
 
 
 def run_backtest(
-    coin:    str,
-    capital: float = 1000.0,
-    leverage:int   = 10,
-    window:  int   = 200,
+    coin:     str,
+    capital:  float = 1000.0,
+    leverage: int   = 10,
 ) -> dict:
     log.info("Backtest started: %s", coin)
 
     df_4h = load_candles(coin, "4h", limit=2000)
-    df_1h = load_candles(coin, "1h", limit=2000)
+    df_1h = load_candles(coin, "1h", limit=5000)
 
-    if df_4h is None or len(df_4h) < window + 50:
+    if df_4h is None or len(df_4h) < WINDOW_4H + 50:
         return {"error": f"Insufficient 4H data: {coin}"}
-    if df_1h is None or len(df_1h) < 100:
+    if df_1h is None or len(df_1h) < WINDOW_1H + 50:
         return {"error": f"Insufficient 1H data: {coin}"}
 
     trades      = []
@@ -176,19 +182,19 @@ def run_backtest(
     skipped     = 0
     SE          = cfg.SCALP_ENGINE
 
-    for i in range(window, len(df_4h) - 1):
+    for i in range(WINDOW_4H, len(df_4h) - 1):
         current_ts = df_4h.index[i]
 
-        d4h_window = df_4h.iloc[i - window:i].copy()
-        d1h_window = _align_window(df_1h, current_ts, window)
+        d4h_w = df_4h.iloc[i - WINDOW_4H:i].copy()
+        d1h_w = _align_window(df_1h, current_ts, WINDOW_1H)
 
-        if len(d1h_window) < 50:
+        if len(d1h_w) < 100:
             skipped += 1
             continue
 
         try:
-            d4h = calculate_all(d4h_window, timeframe="4h")
-            d1h = calculate_all(d1h_window, timeframe="1h")
+            d4h = calculate_all(d4h_w, timeframe="4h")
+            d1h = calculate_all(d1h_w, timeframe="1h")
 
             price = d4h.get("price", 0)
             if not price or price <= 0:
@@ -199,30 +205,39 @@ def run_backtest(
                 continue
 
             direction = ctx["direction"]
+            atr_1h    = d1h.get("atr") or price * 0.01
 
-            atr_1h = d1h.get("atr") or price * 0.01
-
-            sweep_result = detect_sweep(d1h_window, d1h, direction)
+            sweep_result = detect_sweep(d1h_w, d1h, direction)
             if not sweep_result["detected"]:
                 continue
             if sweep_result["score"] < SE["sweep_min_score"]:
                 continue
 
-            zone_result = detect_zone(d4h, d4h_window, direction, atr_1h)
+            zone_result = detect_zone(d4h, d4h_w, direction, atr_1h)
             if not zone_result["detected"]:
                 continue
 
-            sweep_data = sweep_result["sweep"]
+            df_15m_sim = d4h_w.tail(20)
             atr_15m    = d4h.get("atr", price * 0.005) * 0.3
+
+            trigger_result = detect_trigger(
+                df_15m = df_15m_sim,
+                zone   = zone_result["zone"],
+                direction = direction,
+                atr_15m   = atr_15m,
+            )
+
+            if not trigger_result["confirmed"]:
+                continue
 
             risk_result = calculate_risk(
                 direction = direction,
                 entry     = price,
-                sweep     = sweep_data,
+                sweep     = sweep_result["sweep"],
                 zone      = zone_result["zone"],
                 trigger   = {
-                    "candle_low":  float(d4h_window.iloc[-1]["low"]),
-                    "candle_high": float(d4h_window.iloc[-1]["high"]),
+                    "candle_low":  float(d4h_w.iloc[-1]["low"]),
+                    "candle_high": float(d4h_w.iloc[-1]["high"]),
                 },
                 atr_15m   = atr_15m,
                 d1h       = d1h,
@@ -241,7 +256,7 @@ def run_backtest(
             combined = round(
                 sweep_result["score"] * 0.40 +
                 zone_result["score"]  * 0.35 +
-                0.7                   * 0.25,
+                trigger_result["score"] * 0.25,
                 3
             )
 
@@ -267,7 +282,6 @@ def run_backtest(
 
             sim = _simulate_trade(
                 df_4h      = df_4h,
-                df_1h      = df_1h,
                 current_ts = current_ts,
                 direction  = direction,
                 entry      = entry,
@@ -317,7 +331,7 @@ def run_backtest(
                 "sweep_score": sweep_result["score"],
                 "zone_score":  zone_result["score"],
                 "zone_type":   zone_result["zone"].get("type", ""),
-                "sweep_age_h": sweep_data.get("age_hours", 0) if sweep_data else 0,
+                "sweep_age_h": sweep_result["sweep"].get("age_hours", 0) if sweep_result.get("sweep") else 0,
                 "combined":    combined,
             })
 
