@@ -12,7 +12,7 @@ from config import cfg, TAKER_FEE
 log = logging.getLogger(__name__)
 
 WINDOW_4H = 200
-WINDOW_1H = 500
+WINDOW_1H = 300
 
 
 def _align_window(
