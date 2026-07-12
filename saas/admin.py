@@ -117,11 +117,7 @@ async def admin_users(
 ):
     _auth(request)
     try:
-        result = list_all_users(
-            limit  = limit,
-            offset = offset,
-            tier   = tier,
-        )
+        result = list_all_users(limit=limit, offset=offset, tier=tier)
         return JSONResponse(content=result)
     except Exception as e:
         log.error(f"admin_users error: {e}")
@@ -174,10 +170,7 @@ async def admin_update_tier(request: Request, user_id: int):
 
         valid_tiers = [TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN]
         if new_tier not in valid_tiers:
-            raise HTTPException(
-                400,
-                f"Invalid tier. Must be one of: {valid_tiers}"
-            )
+            raise HTTPException(400, f"Invalid tier. Must be one of: {valid_tiers}")
 
         result = update_user_tier(user_id, new_tier)
 
@@ -264,10 +257,7 @@ async def admin_get_sessions(
 ):
     _auth(request)
     try:
-        sessions = get_all_sessions_admin(
-            user_id = user_id,
-            limit   = limit,
-        )
+        sessions = get_all_sessions_admin(user_id=user_id, limit=limit)
         return JSONResponse(content={"sessions": sessions})
     except Exception as e:
         log.error(f"admin_get_sessions error: {e}")
@@ -327,10 +317,7 @@ async def admin_cleanup_sessions(request: Request):
     _auth(request)
     try:
         count = cleanup_expired_sessions()
-        return JSONResponse(content={
-            "success": True,
-            "cleaned": count,
-        })
+        return JSONResponse(content={"success": True, "cleaned": count})
     except Exception as e:
         log.error(f"admin_cleanup_sessions error: {e}")
         raise HTTPException(500, str(e))
@@ -343,8 +330,6 @@ async def admin_stats(request: Request):
         user_stats = get_user_stats()
 
         with get_session() as db:
-            from sqlalchemy import func
-
             now   = datetime.now(timezone.utc)
             week  = now - timedelta(days=7)
             month = now - timedelta(days=30)
@@ -417,10 +402,7 @@ async def admin_audit(
                 "timestamp": a.timestamp.isoformat() if a.timestamp else None,
             } for a in logs]
 
-        return JSONResponse(content={
-            "total": total,
-            "logs":  result,
-        })
+        return JSONResponse(content={"total": total, "logs": result})
 
     except Exception as e:
         log.error(f"admin_audit error: {e}")
@@ -441,11 +423,219 @@ async def admin_get_pricing(request: Request):
 async def admin_system(request: Request):
     _auth(request)
     try:
-        from api.routes import _get_system_stats
+        from api.routes import _system_stats
         import asyncio
         loop   = asyncio.get_running_loop()
-        system = await loop.run_in_executor(None, _get_system_stats)
+        system = await loop.run_in_executor(None, _system_stats)
         return JSONResponse(content=system)
     except Exception as e:
         log.error(f"admin_system error: {e}")
+        raise HTTPException(500, str(e))
+
+
+# ─── ML / Adaptation Routes ──────────────────────────────────────────────────
+
+@router.get("/admin/adaptations/history")
+async def adaptation_history(request: Request, limit: int = 20):
+    _auth(request)
+    try:
+        from ml.adapter import get_adaptation_history
+        return JSONResponse(content=get_adaptation_history(limit=limit))
+    except Exception as e:
+        log.error(f"adaptation_history error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/pending")
+async def adaptation_pending(request: Request):
+    _auth(request)
+    try:
+        from ml.analyzer import get_pending_recommendations
+        return JSONResponse(content=get_pending_recommendations())
+    except Exception as e:
+        log.error(f"adaptation_pending error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/adaptations/{rec_id}/approve")
+async def adaptation_approve(request: Request, rec_id: int):
+    _auth(request)
+    try:
+        from ml.analyzer import approve_recommendation
+        success = approve_recommendation(rec_id, approved_by="dashboard")
+        if not success:
+            raise HTTPException(404, f"Recommendation {rec_id} not found")
+
+        from auth import audit
+        audit(
+            action  = "adaptation_approve",
+            source  = "dashboard",
+            detail  = f"rec_id:{rec_id}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return JSONResponse(content={"success": True, "rec_id": rec_id})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"adaptation_approve error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/adaptations/{rec_id}/reject")
+async def adaptation_reject(request: Request, rec_id: int):
+    _auth(request)
+    try:
+        body   = await request.json()
+        reason = body.get("reason", "rejected_via_dashboard")
+
+        from ml.analyzer import reject_recommendation
+        success = reject_recommendation(rec_id, reason=reason)
+        if not success:
+            raise HTTPException(404, f"Recommendation {rec_id} not found")
+
+        from auth import audit
+        audit(
+            action  = "adaptation_reject",
+            source  = "dashboard",
+            detail  = f"rec_id:{rec_id} reason:{reason}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return JSONResponse(content={"success": True, "rec_id": rec_id})
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"adaptation_reject error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.post("/admin/adaptations/rollback")
+async def adaptation_rollback(request: Request):
+    _auth(request)
+    try:
+        body      = await request.json()
+        parameter = body.get("parameter", "")
+
+        if not parameter:
+            raise HTTPException(400, "parameter required")
+
+        from ml.rollback_manager import manual_rollback
+        result = manual_rollback(parameter, reason="manual_dashboard")
+
+        if not result.get("success"):
+            raise HTTPException(400, result.get("reason", "Rollback failed"))
+
+        from auth import audit
+        audit(
+            action  = "adaptation_rollback",
+            source  = "dashboard",
+            detail  = f"parameter:{parameter}",
+            ip      = request.client.host if request.client else "",
+            success = True,
+        )
+
+        return JSONResponse(content=result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"adaptation_rollback error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/checkpoints")
+async def adaptation_checkpoints(request: Request):
+    _auth(request)
+    try:
+        from ml.rollback_manager import get_pending_checkpoints
+        return JSONResponse(content=get_pending_checkpoints())
+    except Exception as e:
+        log.error(f"adaptation_checkpoints error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/versions")
+async def adaptation_versions(request: Request, limit: int = 10):
+    _auth(request)
+    try:
+        from ml.version_registry import get_version_history
+        return JSONResponse(content=get_version_history(limit=limit))
+    except Exception as e:
+        log.error(f"adaptation_versions error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/performance/version")
+async def adaptation_perf_version(request: Request):
+    _auth(request)
+    try:
+        from ml.version_registry import get_performance_by_version
+        return JSONResponse(content=get_performance_by_version())
+    except Exception as e:
+        log.error(f"adaptation_perf_version error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/performance/regime")
+async def adaptation_perf_regime(request: Request):
+    _auth(request)
+    try:
+        from ml.regime_classifier import get_regime_performance
+        data = get_regime_performance(min_trades=1)
+        result = []
+        for regime, stats in data.items():
+            result.append({
+                "regime":   regime,
+                "total":    stats.get("total",    0),
+                "wins":     stats.get("wins",     0),
+                "losses":   stats.get("losses",   0),
+                "win_rate": stats.get("win_rate", 0),
+                "pnl":      stats.get("pnl",      0),
+                "action":   stats.get("action",   "normal"),
+            })
+        result.sort(key=lambda x: x["win_rate"], reverse=True)
+        return JSONResponse(content=result)
+    except Exception as e:
+        log.error(f"adaptation_perf_regime error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/admin/adaptations/parameters")
+async def adaptation_parameters(request: Request):
+    _auth(request)
+    try:
+        from config import cfg
+        SE = cfg.SCALP_ENGINE
+        return JSONResponse(content={
+            "sweep_min_score":       SE.get("sweep_min_score",       0.30),
+            "zone_min_score":        SE.get("zone_min_score",        0.40),
+            "grade_a_threshold":     SE.get("grade_a_threshold",     0.65),
+            "grade_aplus_threshold": SE.get("grade_aplus_threshold", 0.80),
+            "grade_b_threshold":     SE.get("grade_b_threshold",     0.50),
+            "sweep_max_age_hours":   SE.get("sweep_max_age_hours",   12),
+            "sweep_min_wick_atr":    SE.get("sweep_min_wick_atr",    0.2),
+            "zone_min_width_atr":    SE.get("zone_min_width_atr",    0.15),
+            "zone_max_dist_pct":     SE.get("zone_max_dist_pct",     4.0),
+            "zone_max_touches":      SE.get("zone_max_touches",      2),
+            "trigger_min_score":     SE.get("trigger_min_score",     0.6),
+            "base_risk_pct":         SE.get("base_risk_pct",         0.01),
+            "max_risk_pct":          SE.get("max_risk_pct",          0.02),
+            "min_risk_pct":          SE.get("min_risk_pct",          0.005),
+            "daily_loss_limit_pct":  SE.get("daily_loss_limit_pct",  0.02),
+            "max_open_trades":       SE.get("max_open_trades",       3),
+            "max_leverage":          SE.get("max_leverage",          15),
+            "tp1_min_rr":            SE.get("tp1_min_rr",            1.5),
+            "tp2_min_rr":            SE.get("tp2_min_rr",            2.5),
+            "system_version":        cfg.SYSTEM_VERSION,
+            "adaptation_frozen":     cfg.ADAPTATION_FROZEN,
+            "ml_enabled":            cfg.ML_ENABLED,
+            "trading_mode":          cfg.TRADING_MODE,
+        })
+    except Exception as e:
+        log.error(f"adaptation_parameters error: {e}")
         raise HTTPException(500, str(e))
