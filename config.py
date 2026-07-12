@@ -243,14 +243,14 @@ class Config:
         "ema_period":                20,
         "ema_buffer_atr_mult":       0.3,
 
-        "sweep_max_age_hours":       16,
+        "sweep_max_age_hours":       12,
         "sweep_min_wick_atr":        0.2,
         "sweep_min_score":           0.5,
 
         "zone_min_width_atr":        0.15,
         "zone_max_dist_atr":         4.0,
         "zone_max_touches":          2,
-        "zone_min_score":            0.3,
+        "zone_min_score":            0.5,
         "zone_max_dist_pct":         4.0,
 
         "trigger_min_body_ratio":    0.55,
