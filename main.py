@@ -107,7 +107,7 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
                         pnl = (entry - live_price) / entry * margin * leverage
                     else:
                         pnl = (live_price - entry) / entry * margin * leverage
-                    trade["profit_abs"]   = round(pnl - margin * leverage * 0.001, 4)
+                    trade["profit_abs"]   = round(pnl, 4)
                     trade["profit_ratio"] = round(
                         (live_price - entry) / entry * leverage if not is_short
                         else (entry - live_price) / entry * leverage,
