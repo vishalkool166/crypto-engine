@@ -229,23 +229,236 @@ async def analyze(request: Request, coin: str):
     coin = coin.upper()
     if coin not in cfg.COINS:
         raise HTTPException(400, f"{coin} not supported")
+
     try:
-        from engines.state import get as get_coin_state
-        from trade.ws import get_mark_price
+        from data.store       import load_candles
+        from engines.indicators import calculate_all
+        from engines.context  import check as context_check
+        from engines.sweep    import detect as detect_sweep
+        from engines.zone     import detect as detect_zone
+        from engines.trigger  import detect as detect_trigger
+        from engines.risk     import calculate as calculate_risk
+        from engines.state    import get as get_coin_state
+        from trade.ws         import get_mark_price
+        from data.cache       import cache
 
-        coin_state = get_coin_state(coin)
-        status     = coin_state["status"]
-        setup      = coin_state.get("setup") or {}
-        live       = get_mark_price(coin) or 0
-
-        return JSONResponse(content=make_serializable({
+        result = {
             "coin":      coin,
-            "state":     status,
-            "direction": setup.get("direction", "--"),
-            "price":     live,
-            "setup":     setup,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        }))
+        }
+
+        df_4h  = load_candles(coin, "4h",  limit=200)
+        df_1h  = load_candles(coin, "1h",  limit=300)
+        df_15m = load_candles(coin, "15m", limit=200)
+
+        result["candles"] = {
+            "4h":  len(df_4h)  if df_4h  is not None else 0,
+            "1h":  len(df_1h)  if df_1h  is not None else 0,
+            "15m": len(df_15m) if df_15m is not None else 0,
+        }
+
+        if df_4h is None or len(df_4h) < 50:
+            result["error"] = "Insufficient 4H candles"
+            return JSONResponse(content=make_serializable(result))
+        if df_1h is None or len(df_1h) < 50:
+            result["error"] = "Insufficient 1H candles"
+            return JSONResponse(content=make_serializable(result))
+        if df_15m is None or len(df_15m) < 20:
+            result["error"] = "Insufficient 15M candles"
+            return JSONResponse(content=make_serializable(result))
+
+        d4h = calculate_all(df_4h, timeframe="4h")
+        d1h = calculate_all(df_1h, timeframe="1h")
+        d15m_indicators = calculate_all(df_15m, timeframe="15m")
+
+        atr_1h  = d1h.get("atr")  or float(df_1h["close"].iloc[-1])  * 0.01
+        atr_15m = d15m_indicators.get("atr") or float(df_15m["close"].iloc[-1]) * 0.005
+
+        result["indicators"] = {
+            "price":   d4h.get("price",  0),
+            "ema20":   d4h.get("ema20",  0),
+            "ema50":   d4h.get("ema50",  0),
+            "ema200":  d4h.get("ema200", 0),
+            "atr_4h":  d4h.get("atr",   0),
+            "atr_1h":  atr_1h,
+            "atr_15m": atr_15m,
+            "adx":     d4h.get("adx",   0),
+            "rsi":     d4h.get("rsi",   0),
+            "trend":   d4h.get("trend", {}).get("label", "Unknown"),
+            "slope20": d4h.get("slope20", 0),
+            "slope50": d4h.get("slope50", 0),
+        }
+
+        ctx = context_check(d4h, coin)
+        result["context"] = {
+            "pass":      ctx["pass"],
+            "direction": ctx.get("direction", "NEUTRAL"),
+            "reason":    ctx.get("reason", ""),
+        }
+
+        if not ctx["pass"]:
+            result["pipeline_stopped_at"] = "context"
+            result["state"] = get_coin_state(coin)["status"]
+            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+            return JSONResponse(content=make_serializable(result))
+
+        direction = ctx["direction"]
+
+        sweep_result = detect_sweep(df_1h, d1h, direction)
+        sweep_data   = sweep_result.get("sweep") or {}
+        result["sweep"] = {
+            "detected":   sweep_result["detected"],
+            "score":      sweep_result.get("score", 0),
+            "age_hours":  sweep_data.get("age_hours", 0),
+            "label":      sweep_data.get("level_label", sweep_result.get("label", "--")),
+            "intensity":  sweep_data.get("intensity", 0),
+            "wick_atr":   sweep_data.get("wick_atr", 0),
+            "vol_ratio":  sweep_data.get("vol_ratio", 0),
+            "confirmed":  sweep_result.get("confirmed", False),
+            "gate_pass":  sweep_result.get("score", 0) >= cfg.SCALP_ENGINE["sweep_min_score"],
+            "gate_min":   cfg.SCALP_ENGINE["sweep_min_score"],
+        }
+
+        if not sweep_result["detected"] or not result["sweep"]["gate_pass"]:
+            result["pipeline_stopped_at"] = "sweep"
+            result["state"] = get_coin_state(coin)["status"]
+            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+            return JSONResponse(content=make_serializable(result))
+
+        zone_result = detect_zone(d4h, df_4h, direction, atr_1h)
+        zone_data   = zone_result.get("zone") or {}
+        result["zone"] = {
+            "detected":     zone_result["detected"],
+            "score":        zone_result.get("score", 0),
+            "type":         zone_data.get("type", "--"),
+            "top":          zone_data.get("top", 0),
+            "bottom":       zone_data.get("bottom", 0),
+            "mid":          zone_data.get("mid", 0),
+            "distance_pct": zone_data.get("distance_pct", 0),
+            "touch_count":  zone_data.get("touch_count", 0),
+            "strength":     zone_data.get("strength", 0),
+            "origin_desc":  zone_data.get("origin_desc", ""),
+            "gate_pass":    zone_result.get("score", 0) >= cfg.SCALP_ENGINE["zone_min_score"],
+            "gate_min":     cfg.SCALP_ENGINE["zone_min_score"],
+        }
+
+        if not zone_result["detected"] or not result["zone"]["gate_pass"]:
+            result["pipeline_stopped_at"] = "zone"
+            result["state"] = get_coin_state(coin)["status"]
+            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+            return JSONResponse(content=make_serializable(result))
+
+        trigger_result = detect_trigger(
+            df_15m    = df_15m,
+            zone      = zone_data,
+            direction = direction,
+            atr_15m   = atr_15m,
+        )
+        result["trigger"] = {
+            "confirmed":   trigger_result["confirmed"],
+            "pattern":     trigger_result.get("pattern"),
+            "score":       trigger_result.get("score", 0),
+            "reason":      trigger_result.get("reason", ""),
+            "entry_price": trigger_result.get("entry_price"),
+            "vol_mult":    trigger_result.get("vol_mult", 0),
+            "gate_pass":   trigger_result["confirmed"],
+            "gate_min":    cfg.SCALP_ENGINE["trigger_min_score"],
+        }
+
+        if not trigger_result["confirmed"]:
+            result["pipeline_stopped_at"] = "trigger"
+            result["state"] = get_coin_state(coin)["status"]
+            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+
+            sweep_s  = sweep_result.get("score", 0)
+            zone_s   = zone_result.get("score",  0)
+            combined = round(sweep_s * 0.40 + zone_s * 0.35, 3)
+            result["partial_score"] = combined
+            return JSONResponse(content=make_serializable(result))
+
+        entry = trigger_result.get("entry_price") or d4h.get("price", 0)
+
+        risk_result = calculate_risk(
+            direction = direction,
+            entry     = entry,
+            sweep     = sweep_data,
+            zone      = zone_data,
+            trigger   = trigger_result,
+            atr_15m   = atr_15m,
+            d1h       = d1h,
+            d4h       = d4h,
+        )
+        result["risk"] = {
+            "valid":      risk_result["valid"],
+            "reason":     risk_result.get("reason", ""),
+            "sl":         risk_result.get("sl"),
+            "tp1":        risk_result.get("tp1"),
+            "tp2":        risk_result.get("tp2"),
+            "sl_pct":     risk_result.get("sl_pct"),
+            "sl_dist":    risk_result.get("sl_dist"),
+            "rr1":        risk_result.get("rr1"),
+            "rr2":        risk_result.get("rr2"),
+            "tp1_label":  risk_result.get("tp1_label"),
+            "tp2_label":  risk_result.get("tp2_label"),
+            "sl_reason":  risk_result.get("sl_reason"),
+        }
+
+        if not risk_result["valid"]:
+            result["pipeline_stopped_at"] = "risk"
+            result["state"] = get_coin_state(coin)["status"]
+            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+            return JSONResponse(content=make_serializable(result))
+
+        sweep_s   = sweep_result.get("score", 0)
+        zone_s    = zone_result.get("score",  0)
+        trigger_s = trigger_result.get("score", 0)
+        combined  = round(
+            sweep_s   * 0.40 +
+            zone_s    * 0.35 +
+            trigger_s * 0.25,
+            3
+        )
+        SE    = cfg.SCALP_ENGINE
+        grade = (
+            "A+" if combined >= SE["grade_aplus_threshold"] else
+            "A"  if combined >= SE["grade_a_threshold"]     else
+            "B"  if combined >= SE["grade_b_threshold"]     else
+            "F"
+        )
+
+        result["signal"] = {
+            "confirmed":  True,
+            "grade":      grade,
+            "combined":   combined,
+            "sweep_score":   sweep_s,
+            "zone_score":    zone_s,
+            "trigger_score": trigger_s,
+            "entry":      entry,
+            "sl":         risk_result["sl"],
+            "tp1":        risk_result["tp1"],
+            "tp2":        risk_result.get("tp2"),
+            "sl_pct":     risk_result["sl_pct"],
+            "rr1":        risk_result["rr1"],
+            "rr2":        risk_result.get("rr2"),
+        }
+
+        result["pipeline_stopped_at"] = None
+        result["state"]      = "signal_ready"
+        result["live_price"] = get_mark_price(coin) or entry
+
+        cached = cache.get_raw(f"signal_{coin}")
+        if cached:
+            result["cache"] = {
+                "grade":     cached.get("grade"),
+                "score":     cached.get("score"),
+                "direction": cached.get("direction"),
+                "state":     cached.get("state"),
+                "regime":    cached.get("regime"),
+                "session":   cached.get("session"),
+            }
+
+        return JSONResponse(content=make_serializable(result))
+
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
