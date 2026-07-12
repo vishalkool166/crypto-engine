@@ -45,6 +45,7 @@ def _simulate_trade(
             "outcome":    "timeout",
             "exit_price": entry,
             "candles":    0,
+            "close_ts":   current_ts,
             "reason":     "insufficient_future_data",
             "tp1_hit":    False,
             "tp2_hit":    False,
@@ -64,6 +65,7 @@ def _simulate_trade(
                     "outcome":    "loss",
                     "exit_price": sl,
                     "candles":    j + 1,
+                    "close_ts":   ts,
                     "reason":     "sl_gap",
                     "tp1_hit":    False,
                     "tp2_hit":    False,
@@ -73,6 +75,7 @@ def _simulate_trade(
                     "outcome":    "loss",
                     "exit_price": sl,
                     "candles":    j + 1,
+                    "close_ts":   ts,
                     "reason":     "sl_hit",
                     "tp1_hit":    False,
                     "tp2_hit":    False,
@@ -85,6 +88,7 @@ def _simulate_trade(
                         "outcome":    "win",
                         "exit_price": tp1,
                         "candles":    j + 1,
+                        "close_ts":   ts,
                         "reason":     "tp1_hit",
                         "tp1_hit":    True,
                         "tp2_hit":    False,
@@ -96,6 +100,7 @@ def _simulate_trade(
                     "outcome":    "win",
                     "exit_price": tp2,
                     "candles":    j + 1,
+                    "close_ts":   ts,
                     "reason":     "tp2_hit",
                     "tp1_hit":    True,
                     "tp2_hit":    True,
@@ -105,17 +110,20 @@ def _simulate_trade(
                     "outcome":    "win",
                     "exit_price": entry,
                     "candles":    j + 1,
+                    "close_ts":   ts,
                     "reason":     "tp1_be_stop",
                     "tp1_hit":    True,
                     "tp2_hit":    False,
                 }
 
     last_close = float(future.iloc[-1]["close"])
+    close_ts   = future.index[-1]
     outcome    = "win" if tp1_hit else "timeout"
     return {
         "outcome":    outcome,
         "exit_price": last_close,
         "candles":    len(future),
+        "close_ts":   close_ts,
         "reason":     f"timeout_{len(future)}_candles",
         "tp1_hit":    tp1_hit,
         "tp2_hit":    False,
@@ -135,6 +143,19 @@ def _calculate_pnl(
     tp1_pct  = cfg.SCALP_ENGINE["tp1_close_pct"]
     tp2_pct  = cfg.SCALP_ENGINE["tp2_close_pct"]
     fee_mult = TAKER_FEE * 2
+
+    # Add slippage model — 0.05% per side
+    slippage = 0.0005
+    if direction == "LONG":
+        entry      = entry      * (1 + slippage)
+        exit_price = exit_price * (1 - slippage)
+        if tp1: tp1 = tp1 * (1 - slippage)
+        if tp2: tp2 = tp2 * (1 - slippage)
+    else:
+        entry      = entry      * (1 - slippage)
+        exit_price = exit_price * (1 + slippage)
+        if tp1: tp1 = tp1 * (1 + slippage)
+        if tp2: tp2 = tp2 * (1 + slippage)
 
     if tp2_hit and tp2:
         if direction == "LONG":
@@ -179,17 +200,28 @@ def run_backtest(
     if df_15m is None or len(df_15m) < WINDOW_15M + 20:
         return {"error": f"Insufficient 15M data: {coin}"}
 
-    trades      = []
-    signals_log = []
-    equity      = capital
-    peak_equity = capital
-    open_trades = 0
-    skipped     = 0
-    SE          = cfg.SCALP_ENGINE
-    max_trades  = SE["max_open_trades"]
+    trades           = []
+    signals_log      = []
+    equity           = capital
+    peak_equity      = capital
+    open_trades_list = []   # tracks (open_ts, close_ts) for concurrent limit
+    skipped          = 0
+    SE               = cfg.SCALP_ENGINE
+    max_trades       = SE["max_open_trades"]
 
     for i in range(WINDOW_4H, len(df_4h) - 1):
         current_ts = df_4h.index[i]
+
+        # Remove trades that closed before current candle
+        open_trades_list = [
+            t for t in open_trades_list
+            if t["close_ts"] > current_ts
+        ]
+
+        # Enforce concurrent trade limit
+        if len(open_trades_list) >= max_trades:
+            skipped += 1
+            continue
 
         d4h_w  = df_4h.iloc[i - WINDOW_4H:i].copy()
         d1h_w  = _align_window(df_1h,  current_ts, WINDOW_1H)
@@ -203,13 +235,10 @@ def run_backtest(
             skipped += 1
             continue
 
-        if open_trades >= max_trades:
-            skipped += 1
-            continue
-
         try:
             d4h = calculate_all(d4h_w, timeframe="4h")
             d1h = calculate_all(d1h_w, timeframe="1h")
+            d15m = calculate_all(d15m_w, timeframe="15m")
 
             price = d4h.get("price", 0)
             if not price or price <= 0:
@@ -222,6 +251,9 @@ def run_backtest(
             direction = ctx["direction"]
             atr_1h    = d1h.get("atr") or price * 0.01
 
+            # Use actual 15M ATR now that we have real data
+            atr_15m = d15m.get("atr") or price * 0.005
+
             sweep_result = detect_sweep(d1h_w, d1h, direction)
             if not sweep_result["detected"]:
                 continue
@@ -231,8 +263,6 @@ def run_backtest(
             zone_result = detect_zone(d4h, d4h_w, direction, atr_1h)
             if not zone_result["detected"]:
                 continue
-
-            atr_15m = d4h.get("atr", price * 0.005) * 0.3
 
             trigger_result = detect_trigger(
                 df_15m    = d15m_w,
@@ -244,14 +274,17 @@ def run_backtest(
             if not trigger_result["confirmed"]:
                 continue
 
+            # Use actual trigger entry price not 4H close
+            entry  = trigger_result.get("entry_price") or price
+
             risk_result = calculate_risk(
                 direction = direction,
-                entry     = price,
+                entry     = entry,
                 sweep     = sweep_result["sweep"],
                 zone      = zone_result["zone"],
                 trigger   = {
-                    "candle_low":  float(d4h_w.iloc[-1]["low"]),
-                    "candle_high": float(d4h_w.iloc[-1]["high"]),
+                    "candle_low":  float(d15m_w.iloc[-1]["low"]),
+                    "candle_high": float(d15m_w.iloc[-1]["high"]),
                 },
                 atr_15m   = atr_15m,
                 d1h       = d1h,
@@ -261,15 +294,14 @@ def run_backtest(
             if not risk_result["valid"]:
                 continue
 
-            entry  = price
             sl     = risk_result["sl"]
             tp1    = risk_result["tp1"]
             tp2    = risk_result["tp2"]
             sl_pct = risk_result["sl_pct"]
 
             combined = round(
-                sweep_result["score"] * 0.40 +
-                zone_result["score"]  * 0.35 +
+                sweep_result["score"]   * 0.40 +
+                zone_result["score"]    * 0.35 +
                 trigger_result["score"] * 0.25,
                 3
             )
@@ -303,6 +335,12 @@ def run_backtest(
                 tp1        = tp1,
                 tp2        = tp2,
             )
+
+            # Register open trade for concurrent limit tracking
+            open_trades_list.append({
+                "open_ts":  current_ts,
+                "close_ts": sim.get("close_ts", current_ts),
+            })
 
             risk_amt = equity * SE["base_risk_pct"]
             pos_size = risk_amt / (sl_pct / 100)
