@@ -95,6 +95,34 @@ async def record(trade_id: int) -> bool:
             dow        = trade.opened_at.weekday() if trade.opened_at else None
             hod        = trade.opened_at.hour     if trade.opened_at else None
 
+            net_pnl    = float(trade.net_pnl or trade.pnl or 0)
+            gross_pnl  = net_pnl + float(trade.total_commission or 0)
+
+            capital_efficiency = round(net_pnl / margin, 4) if margin > 0 else 0.0
+
+            risk_multiple = 0.0
+            if entry and sl and margin and leverage:
+                sl_dist = abs(entry - sl)
+                if sl_dist > 0:
+                    position_size = margin * leverage
+                    risk_amt      = position_size * (sl_dist / entry)
+                    risk_multiple = round(net_pnl / risk_amt, 3) if risk_amt > 0 else 0.0
+
+            fee_pct_of_profit = 0.0
+            if gross_pnl > 0:
+                fee_pct_of_profit = round(
+                    float(trade.total_commission or 0) / gross_pnl * 100, 2
+                )
+
+            captured_move_pct = 0.0
+            move_left_pct     = 0.0
+            if mfe > 0 and gross_pnl > 0 and margin > 0 and leverage > 0:
+                max_possible = (mfe / 100) * margin * leverage
+                if max_possible > 0:
+                    captured_move_pct = round(gross_pnl / max_possible * 100, 1)
+                    captured_move_pct = min(captured_move_pct, 100.0)
+                    move_left_pct     = round(100.0 - captured_move_pct, 1)
+
             outcome = TradeOutcome(
                 trade_id                 = trade_id,
                 signal_id                = trade.signal_id,
@@ -110,7 +138,7 @@ async def record(trade_id: int) -> bool:
                 tp1_price                = tp1,
                 pnl                      = float(trade.pnl or 0),
                 pnl_r                    = pnl_r,
-                net_pnl                  = float(trade.net_pnl or 0),
+                net_pnl                  = net_pnl,
                 total_commission         = float(trade.total_commission  or 0),
                 funding_fees             = float(trade.funding_fees_paid or 0),
                 slippage_entry_pct       = float(trade.slippage_entry_pct or 0),
@@ -138,6 +166,11 @@ async def record(trade_id: int) -> bool:
                 drawdown_at_entry        = trade.drawdown_at_entry,
                 win_rate_at_entry        = trade.win_rate_at_entry,
                 balance_at_open          = trade.balance_at_open,
+                capital_efficiency       = capital_efficiency,
+                risk_multiple            = risk_multiple,
+                fee_pct_of_profit        = fee_pct_of_profit,
+                captured_move_pct        = captured_move_pct if captured_move_pct > 0 else None,
+                move_left_pct            = move_left_pct     if captured_move_pct > 0 else None,
             )
 
             with get_session() as db2:
@@ -146,8 +179,11 @@ async def record(trade_id: int) -> bool:
         _update_trade_mae_mfe(trade_id, mae, mfe, duration_hours)
 
         log.info(
-            "Outcome recorded: trade_id=%s coin=%s outcome=%s pnl_r=%.2f dur=%.1fh",
-            trade_id, trade.coin, trade.outcome, pnl_r, duration_hours
+            "Outcome recorded: trade_id=%s coin=%s outcome=%s pnl_r=%.2f "
+            "dur=%.1fh cap_eff=%.4f risk_mult=%.3f captured=%.1f%%",
+            trade_id, trade.coin, trade.outcome, pnl_r,
+            duration_hours, capital_efficiency, risk_multiple,
+            captured_move_pct if captured_move_pct else 0.0
         )
         return True
 
@@ -188,9 +224,9 @@ async def _calculate_mae_mfe(
         if not candles:
             return 0.0, 0.0
 
-        is_long  = direction == "LONG"
-        mae      = 0.0
-        mfe      = 0.0
+        is_long = direction == "LONG"
+        mae     = 0.0
+        mfe     = 0.0
 
         for c in candles:
             if is_long:
@@ -218,7 +254,6 @@ async def _get_prices_after(
         if not closed_at:
             return {}
 
-        from trade.ws import get_mark_price
         from database import SessionLocal, Candle
 
         if closed_at.tzinfo is None:
@@ -348,4 +383,9 @@ def _row_to_dict(row: TradeOutcome) -> dict:
         "drawdown_at_entry":        row.drawdown_at_entry,
         "win_rate_at_entry":        row.win_rate_at_entry,
         "balance_at_open":          row.balance_at_open,
+        "capital_efficiency":       row.capital_efficiency,
+        "risk_multiple":            row.risk_multiple,
+        "fee_pct_of_profit":        row.fee_pct_of_profit,
+        "captured_move_pct":        row.captured_move_pct,
+        "move_left_pct":            row.move_left_pct,
     }

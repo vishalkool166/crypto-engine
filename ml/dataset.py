@@ -25,6 +25,42 @@ FEATURE_KEYS = [
     "order_blocks",
 ]
 
+RAW_FEATURE_KEYS = [
+    "c1_body_pct",
+    "c1_upper_wick_pct",
+    "c1_lower_wick_pct",
+    "c1_close_position",
+    "c1_body_atr_ratio",
+    "c2_body_pct",
+    "c2_upper_wick_pct",
+    "c2_lower_wick_pct",
+    "atr_pct",
+    "volume_ratio",
+    "dist_to_swing_high_pct",
+    "dist_to_swing_low_pct",
+    "pullback_depth_pct",
+    "higher_highs",
+    "higher_lows",
+    "sweep_wick_atr",
+    "sweep_vol_ratio",
+    "sweep_age_hours",
+    "sweep_intensity",
+    "ob_touch_count",
+    "ob_distance_pct",
+    "ob_score",
+    "ob_width_atr",
+    "ema20_distance_pct",
+    "ema50_distance_pct",
+    "ema20_slope",
+    "ema50_slope",
+    "adx",
+    "rsi",
+    "btc_atr_pct",
+    "btc_adx",
+    "btc_rsi",
+    "funding_rate",
+]
+
 REGIME_MAP = {
     "TRENDING BULLISH":  2,
     "TRENDING BEARISH":  1,
@@ -76,7 +112,10 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
             log.warning("No closed signals with factor scores found")
             return None, None
 
-        log.info(f"Building dataset from {len(signals)} closed signals")
+        snapshot_map = _load_snapshots(signal_ids)
+
+        log.info("Building dataset from %s closed signals (%s with snapshots)",
+                 len(signals), len(snapshot_map))
 
         rows   = []
         labels = []
@@ -106,6 +145,15 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
             row["session_encoded"]   = SESSION_MAP.get(s.session or "", 0)
             row["direction_encoded"] = 1 if s.direction == "LONG" else -1
 
+            snapshot = snapshot_map.get(s.id)
+            if snapshot:
+                raw = snapshot.get("raw_features", {})
+                for key in RAW_FEATURE_KEYS:
+                    row[key] = float(raw.get(key, 0) or 0)
+            else:
+                for key in RAW_FEATURE_KEYS:
+                    row[key] = 0.0
+
             trade = trades_map.get(s.id)
             if trade:
                 row["entry_role_encoded"]   = ROLE_MAP.get(trade.entry_role or "taker", 1)
@@ -116,11 +164,11 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
                     float(trade.total_commission or 0) /
                     float(trade.margin_used or 1) * 100
                 )
-                row["funding_fees_pct"]     = (
+                row["funding_fees_pct"] = (
                     float(trade.funding_fees_paid or 0) /
                     float(trade.margin_used or 1) * 100
                 )
-                row["tp1_hit"]              = 1 if trade.tp1_hit else 0
+                row["tp1_hit"] = 1 if trade.tp1_hit else 0
 
                 if trade.opened_at and trade.closed_at:
                     try:
@@ -158,7 +206,7 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
             labels.append(1 if s.outcome == "win" else 0)
 
         if len(rows) < 10:
-            log.warning(f"Not enough data: {len(rows)} samples (need 10+)")
+            log.warning("Not enough data: %s samples (need 10+)", len(rows))
             return None, None
 
         X = pd.DataFrame(rows)
@@ -166,32 +214,66 @@ def build_dataset() -> tuple[pd.DataFrame, pd.Series] | tuple[None, None]:
 
         X = X.fillna(0)
 
+        raw_present = sum(
+            1 for r in rows
+            if any(r.get(k, 0) != 0 for k in RAW_FEATURE_KEYS)
+        )
+
         log.info(
-            f"Dataset built: {len(X)} samples · "
-            f"{X.shape[1]} features · "
-            f"wins:{y.sum()} losses:{(y==0).sum()} · "
-            f"win_rate:{y.mean()*100:.1f}%"
+            "Dataset built: %s samples · %s features · wins:%s losses:%s · "
+            "win_rate:%.1f%% · samples_with_raw_features:%s",
+            len(X), X.shape[1], y.sum(), (y == 0).sum(),
+            y.mean() * 100, raw_present
         )
 
         return X, y
 
     except Exception as e:
-        log.error(f"Dataset build error: {e}")
+        log.error("Dataset build error: %s", e)
         return None, None
 
 
+def _load_snapshots(signal_ids: list) -> dict:
+    try:
+        from database import SessionLocal, SignalSnapshot
+        with SessionLocal() as db:
+            snapshots = db.query(SignalSnapshot).filter(
+                SignalSnapshot.signal_id.in_(signal_ids)
+            ).all()
+
+        result = {}
+        for snap in snapshots:
+            raw = {}
+            if snap.raw_features_json:
+                try:
+                    raw = json.loads(snap.raw_features_json)
+                except Exception:
+                    raw = {}
+            result[snap.signal_id] = {"raw_features": raw}
+
+        return result
+
+    except Exception as e:
+        log.error("_load_snapshots error: %s", e)
+        return {}
+
+
 def get_feature_names() -> list:
-    return FEATURE_KEYS + [
-        "sweep_score", "retest_score", "disp_score",
-        "btc_score", "market_score", "entry_score",
-        "score", "funding",
-        "grade_encoded", "regime_encoded",
-        "session_encoded", "direction_encoded",
-        "entry_role_encoded", "exit_role_encoded",
-        "slippage_entry_pct", "slippage_exit_pct",
-        "total_commission_pct", "funding_fees_pct",
-        "tp1_hit", "hold_duration_hours", "net_pnl_pct",
-    ]
+    return (
+        FEATURE_KEYS
+        + RAW_FEATURE_KEYS
+        + [
+            "sweep_score", "retest_score", "disp_score",
+            "btc_score", "market_score", "entry_score",
+            "score", "funding",
+            "grade_encoded", "regime_encoded",
+            "session_encoded", "direction_encoded",
+            "entry_role_encoded", "exit_role_encoded",
+            "slippage_entry_pct", "slippage_exit_pct",
+            "total_commission_pct", "funding_fees_pct",
+            "tp1_hit", "hold_duration_hours", "net_pnl_pct",
+        ]
+    )
 
 
 def get_signal_features(signal: dict, wconf: dict) -> dict | None:
@@ -218,6 +300,9 @@ def get_signal_features(signal: dict, wconf: dict) -> dict | None:
         row["session_encoded"]   = 0
         row["direction_encoded"] = 1 if signal.get("direction") == "LONG" else -1
 
+        for key in RAW_FEATURE_KEYS:
+            row[key] = 0.0
+
         row["entry_role_encoded"]   = 1
         row["exit_role_encoded"]    = 1
         row["slippage_entry_pct"]   = 0.0
@@ -231,5 +316,5 @@ def get_signal_features(signal: dict, wconf: dict) -> dict | None:
         return row
 
     except Exception as e:
-        log.error(f"Feature extraction error: {e}")
+        log.error("Feature extraction error: %s", e)
         return None

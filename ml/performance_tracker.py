@@ -42,7 +42,7 @@ def get_stats_by_version() -> list:
 
         result = []
         for version, trades in by_version.items():
-            stats          = _build_stats(trades)
+            stats            = _build_stats(trades)
             stats["version"] = version
             result.append(stats)
 
@@ -275,21 +275,94 @@ def get_recent_trend(window: int = 20) -> dict:
         recent_wr   = recent_stats.get("win_rate", 0)
         all_time_wr = all_time_stats.get("win_rate", 0)
 
-        trend = "improving" if recent_wr > all_time_wr + 5 else \
-                "degrading"  if recent_wr < all_time_wr - 5 else \
-                "stable"
+        trend = (
+            "improving" if recent_wr > all_time_wr + 5 else
+            "degrading"  if recent_wr < all_time_wr - 5 else
+            "stable"
+        )
 
         return {
-            "recent_window":   window,
-            "recent_win_rate": recent_wr,
-            "alltime_win_rate":all_time_wr,
-            "trend":           trend,
-            "recent_pnl":      recent_stats.get("total_pnl", 0),
-            "recent_trades":   len(recent),
+            "recent_window":    window,
+            "recent_win_rate":  recent_wr,
+            "alltime_win_rate": all_time_wr,
+            "trend":            trend,
+            "recent_pnl":       recent_stats.get("total_pnl", 0),
+            "recent_trades":    len(recent),
         }
 
     except Exception as e:
         log.error("get_recent_trend: %s", e)
+        return {}
+
+
+def get_expectancy_stats() -> dict:
+    try:
+        from database import Trade as TradeModel
+        with SessionLocal() as db:
+            closed = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).all()
+
+        if not closed:
+            return {"error": "No closed trades"}
+
+        wins   = [float(t.net_pnl or t.pnl or 0) for t in closed if t.outcome == "win"]
+        losses = [abs(float(t.net_pnl or t.pnl or 0)) for t in closed if t.outcome == "loss"]
+
+        total     = len(closed)
+        win_rate  = len(wins)  / total
+        loss_rate = len(losses) / total
+        avg_win   = sum(wins)   / len(wins)   if wins   else 0.0
+        avg_loss  = sum(losses) / len(losses) if losses else 0.0
+
+        expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
+
+        payoff = avg_win / avg_loss if avg_loss > 0 else 0.0
+
+        kelly = win_rate - (loss_rate / payoff) if payoff > 0 else 0.0
+
+        return {
+            "expectancy":   round(expectancy, 4),
+            "win_rate":     round(win_rate  * 100, 1),
+            "loss_rate":    round(loss_rate * 100, 1),
+            "avg_win":      round(avg_win,  4),
+            "avg_loss":     round(avg_loss, 4),
+            "payoff_ratio": round(payoff,   2),
+            "kelly_pct":    round(kelly * 100, 1),
+            "total_trades": total,
+        }
+
+    except Exception as e:
+        log.error("get_expectancy_stats: %s", e)
+        return {}
+
+
+def get_efficiency_stats(min_trades: int = 10) -> dict:
+    try:
+        from database import SessionLocal, TradeOutcome
+        with SessionLocal() as db:
+            outcomes = db.query(TradeOutcome).filter(
+                TradeOutcome.capital_efficiency.isnot(None)
+            ).all()
+
+        if len(outcomes) < min_trades:
+            return {"error": f"Need {min_trades} outcomes with efficiency data, have {len(outcomes)}"}
+
+        cap_eff   = [float(o.capital_efficiency) for o in outcomes if o.capital_efficiency is not None]
+        risk_mult = [float(o.risk_multiple)       for o in outcomes if o.risk_multiple       is not None]
+        fee_pct   = [float(o.fee_pct_of_profit)   for o in outcomes if o.fee_pct_of_profit   is not None and o.fee_pct_of_profit > 0]
+        captured  = [float(o.captured_move_pct)   for o in outcomes if o.captured_move_pct   is not None and o.captured_move_pct > 0]
+
+        return {
+            "avg_capital_efficiency": round(sum(cap_eff)   / len(cap_eff),   4) if cap_eff   else 0.0,
+            "avg_risk_multiple":      round(sum(risk_mult) / len(risk_mult),  4) if risk_mult else 0.0,
+            "avg_fee_pct_of_profit":  round(sum(fee_pct)   / len(fee_pct),    2) if fee_pct   else 0.0,
+            "avg_captured_move_pct":  round(sum(captured)  / len(captured),   1) if captured  else 0.0,
+            "samples":                len(outcomes),
+        }
+
+    except Exception as e:
+        log.error("get_efficiency_stats: %s", e)
         return {}
 
 
@@ -305,10 +378,10 @@ def get_drawdown_history() -> dict:
         if not closed:
             return {"current_drawdown": 0.0, "max_drawdown": 0.0, "peak_equity": 0.0}
 
-        equity      = 0.0
-        peak        = 0.0
-        max_dd      = 0.0
-        equity_curve= []
+        equity       = 0.0
+        peak         = 0.0
+        max_dd       = 0.0
+        equity_curve = []
 
         for t in closed:
             equity += float(t.net_pnl or t.pnl or 0)
@@ -327,9 +400,9 @@ def get_drawdown_history() -> dict:
 
         return {
             "current_drawdown": round(current_dd, 2),
-            "max_drawdown":     round(max_dd, 2),
-            "peak_equity":      round(peak, 4),
-            "current_equity":   round(equity, 4),
+            "max_drawdown":     round(max_dd,     2),
+            "peak_equity":      round(peak,        4),
+            "current_equity":   round(equity,      4),
             "equity_curve":     equity_curve[-100:],
         }
 
@@ -384,11 +457,11 @@ def get_win_rate_at_threshold(
                 wins = sum(1 for t in qualifying if t.outcome == "win")
                 wr   = round(wins / len(qualifying) * 100, 1)
                 results.append({
-                    "threshold":   threshold,
-                    "trades":      len(qualifying),
-                    "wins":        wins,
-                    "win_rate":    wr,
-                    "win_rate_raw":wins / len(qualifying),
+                    "threshold":    threshold,
+                    "trades":       len(qualifying),
+                    "wins":         wins,
+                    "win_rate":     wr,
+                    "win_rate_raw": wins / len(qualifying),
                 })
 
         return results
@@ -401,17 +474,19 @@ def get_win_rate_at_threshold(
 def get_full_report() -> dict:
     try:
         return {
-            "overall":          get_overall_stats(),
-            "by_version":       get_stats_by_version(),
-            "by_session":       get_stats_by_session(),
-            "by_regime":        get_stats_by_regime(),
-            "by_grade":         get_stats_by_grade(),
-            "by_direction":     get_stats_by_direction(),
-            "by_day":           get_stats_by_day_of_week(),
-            "by_sweep_bucket":  get_stats_by_sweep_score_bucket(),
-            "recent_trend":     get_recent_trend(),
-            "drawdown":         get_drawdown_history(),
-            "generated_at":     datetime.now(timezone.utc).isoformat(),
+            "overall":         get_overall_stats(),
+            "by_version":      get_stats_by_version(),
+            "by_session":      get_stats_by_session(),
+            "by_regime":       get_stats_by_regime(),
+            "by_grade":        get_stats_by_grade(),
+            "by_direction":    get_stats_by_direction(),
+            "by_day":          get_stats_by_day_of_week(),
+            "by_sweep_bucket": get_stats_by_sweep_score_bucket(),
+            "recent_trend":    get_recent_trend(),
+            "drawdown":        get_drawdown_history(),
+            "expectancy":      get_expectancy_stats(),
+            "efficiency":      get_efficiency_stats(),
+            "generated_at":    datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
         log.error("get_full_report: %s", e)
@@ -421,31 +496,31 @@ def get_full_report() -> dict:
 def _build_stats(trades: list) -> dict:
     if not trades:
         return {
-            "total":          0,
-            "wins":           0,
-            "losses":         0,
-            "win_rate":       0.0,
-            "total_pnl":      0.0,
-            "avg_pnl":        0.0,
-            "profit_factor":  0.0,
-            "max_drawdown":   0.0,
-            "avg_duration":   0.0,
-            "tp1_hit_rate":   0.0,
+            "total":         0,
+            "wins":          0,
+            "losses":        0,
+            "win_rate":      0.0,
+            "total_pnl":     0.0,
+            "avg_pnl":       0.0,
+            "profit_factor": 0.0,
+            "max_drawdown":  0.0,
+            "avg_duration":  0.0,
+            "tp1_hit_rate":  0.0,
         }
 
-    wins    = [t for t in trades if t.outcome == "win"]
-    losses  = [t for t in trades if t.outcome == "loss"]
-    pnls    = [float(t.net_pnl or t.pnl or 0) for t in trades]
-    total   = len(trades)
-    wr      = round(len(wins) / total * 100, 1) if total > 0 else 0.0
+    wins   = [t for t in trades if t.outcome == "win"]
+    losses = [t for t in trades if t.outcome == "loss"]
+    pnls   = [float(t.net_pnl or t.pnl or 0) for t in trades]
+    total  = len(trades)
+    wr     = round(len(wins) / total * 100, 1) if total > 0 else 0.0
 
     gross_p = sum(p for p in pnls if p > 0)
     gross_l = abs(sum(p for p in pnls if p < 0))
     pf      = round(gross_p / gross_l, 2) if gross_l > 0 else 0.0
 
-    equity  = 0.0
-    peak    = 0.0
-    max_dd  = 0.0
+    equity = 0.0
+    peak   = 0.0
+    max_dd = 0.0
     for t in sorted(trades, key=lambda x: x.opened_at or datetime.min):
         equity += float(t.net_pnl or t.pnl or 0)
         if equity > peak:
@@ -455,13 +530,14 @@ def _build_stats(trades: list) -> dict:
             max_dd = dd
 
     durations = [
-        float(t.duration_hours) for t in trades
+        float(t.duration_hours)
+        for t in trades
         if hasattr(t, "duration_hours") and t.duration_hours
     ]
     avg_dur = round(sum(durations) / len(durations), 1) if durations else 0.0
 
-    tp1_hits    = sum(1 for t in trades if t.tp1_hit)
-    tp1_hit_rate= round(tp1_hits / total * 100, 1) if total > 0 else 0.0
+    tp1_hits     = sum(1 for t in trades if t.tp1_hit)
+    tp1_hit_rate = round(tp1_hits / total * 100, 1) if total > 0 else 0.0
 
     return {
         "total":         total,

@@ -110,9 +110,9 @@ async def _partial_close(trade: dict, reason: str) -> bool:
 
         exit_price = get_mark_price(coin) or trade["entry_price"]
 
-        entry      = trade["entry_price"]
-        ratio      = (entry - exit_price) / entry if is_short else (exit_price - entry) / entry
-        partial_pnl= round(ratio * (close_qty * exit_price), 4)
+        entry       = trade["entry_price"]
+        ratio       = (entry - exit_price) / entry if is_short else (exit_price - entry) / entry
+        partial_pnl = round(ratio * (close_qty * exit_price), 4)
 
         with get_session() as db:
             t = db.query(TradeModel).filter(TradeModel.id == trade["id"]).first()
@@ -127,14 +127,16 @@ async def _partial_close(trade: dict, reason: str) -> bool:
         from alerts.telegram import send
         await send(
             f"🎯 *{coin} TP1 Hit — Partial Close*\n\n"
-            f"Closed:   `{SE['tp1_close_pct']*100:.0f}%` at `${exit_price:.6f}`\n"
+            f"Closed:      `{SE['tp1_close_pct']*100:.0f}%` at `${exit_price:.6f}`\n"
             f"Partial PnL: `${partial_pnl:.4f}`\n"
             f"SL moved to breakeven: `${entry:.6f}`\n"
             f"Remaining `{SE['tp2_close_pct']*100:.0f}%` running to TP2"
         )
 
-        log.info("Partial close: %s %.0f%% at %.6f pnl:%.4f",
-                 coin, SE["tp1_close_pct"] * 100, exit_price, partial_pnl)
+        log.info(
+            "Partial close: %s %.0f%% at %.6f pnl:%.4f",
+            coin, SE["tp1_close_pct"] * 100, exit_price, partial_pnl
+        )
         return True
 
     except Exception as e:
@@ -157,8 +159,8 @@ async def _update_sl_to_breakeven(
         await cancel_all_algo_orders(symbol)
         await asyncio.sleep(1.0)
 
-        atr_15m  = entry * 0.005
-        sl_side  = "BUY" if not is_short else "SELL"
+        atr_15m = entry * 0.005
+        sl_side = "BUY" if not is_short else "SELL"
 
         await move_sl_to_breakeven(
             symbol          = symbol,
@@ -193,7 +195,7 @@ async def _time_stop_close(trade: dict, reason: str) -> None:
             reason    = reason,
         )
         from engines.state import set_idle, set_cooldown
-        if "loss" in reason:
+        if reason == "time_stop_loss":
             set_cooldown(trade["coin"])
         else:
             set_idle(trade["coin"])
@@ -233,8 +235,11 @@ async def run_cycle() -> None:
         if SE["close_before_asia"] and _is_asia_session():
             opened_during_asia = _was_opened_during_asia(opened_at)
             if not opened_during_asia and move_pct <= 0:
-                log.info("Close before Asia: %s move:%.3f%%", coin, move_pct * 100)
-                reason = "time_stop_loss" if move_pct < -0.002 else "time_stop_breakeven"
+                log.info(
+                    "Close before Asia: %s move:%.3f%%",
+                    coin, move_pct * 100
+                )
+                reason = "close_before_asia"
                 await _time_stop_close(trade, reason)
                 continue
 
@@ -250,7 +255,10 @@ async def run_cycle() -> None:
                 else:
                     continue
 
-            log.info("Time stop: %s reason:%s move:%.3f%%", coin, reason, move_pct * 100)
+            log.info(
+                "Time stop: %s reason:%s move:%.3f%%",
+                coin, reason, move_pct * 100
+            )
             await _time_stop_close(trade, reason)
 
 

@@ -324,7 +324,7 @@ async def _handle_reduce_order_filled(
         from database import get_session, Trade as TradeModel, Signal as SignalModel
         from trade.monitor import invalidate_position_cache
         from trade.health_monitor import clear_health_state
-        from trade.executor import _calc_pnl, _mark_closed, _mark_tp1_hit, move_sl_to_breakeven
+        from trade.executor import _calc_pnl, _mark_closed, _mark_tp1_hit, move_sl_to_breakeven, CLOSE_REASONS
         from engines.state import get as get_coin_state, set_cooldown, set_idle
 
         with get_session() as db:
@@ -473,13 +473,14 @@ async def _handle_reduce_order_filled(
         else:
             set_idle(coin)
 
-        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
-        emoji   = "✅" if net_pnl >= 0 else "❌"
+        pnl_str      = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+        emoji        = "✅" if net_pnl >= 0 else "❌"
+        reason_label = CLOSE_REASONS.get(reason, reason)
 
         from alerts.telegram import send
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"
-            f"Reason:  `{reason}`\n"
+            f"Reason:  `{reason_label}`\n"
             f"Exit:    `${exit_price:.6f}`\n"
             f"PnL:     `{pnl_str}`\n"
             f"Fee:     `${total_fee:.4f}`"
@@ -527,7 +528,7 @@ def _exit_reason(
     ot = order_type.upper()
     if "STOP"        in ot: return "sl_hit" if not tp1_hit else "tp1_be_stop"
     if "TAKE_PROFIT" in ot: return "tp2_hit" if tp1_hit else "tp1_hit"
-    if ot == "MARKET"      : return "manual_close"
+    if ot == "MARKET"      : return "manual_dashboard_close"
     if "LIQUIDATION" in ot : return "liquidated"
     return "exchange_closed"
 

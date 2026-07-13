@@ -17,6 +17,22 @@ from database import get_session, Trade as TradeModel, Signal as SignalModel
 
 log = logging.getLogger(__name__)
 
+CLOSE_REASONS = {
+    "tp1_hit":                 "Take profit 1 reached",
+    "tp2_hit":                 "Take profit 2 reached",
+    "sl_hit":                  "Stop loss triggered",
+    "tp1_be_stop":             "Breakeven stop triggered after TP1",
+    "time_stop_profit":        "Time stop — position profitable at expiry",
+    "time_stop_breakeven":     "Time stop — position at breakeven at expiry",
+    "time_stop_loss":          "Time stop — position adverse within SL tolerance",
+    "time_stop_after_tp1":     "Time stop — TP1 hit, TP2 not reached in window",
+    "close_before_asia":       "Session close — avoiding Asia session with adverse position",
+    "manual_dashboard_close":  "Dashboard force close by operator",
+    "exchange_closed":         "Position closed on exchange — reason unknown",
+    "liquidated":              "Liquidation triggered",
+    "deviation_rejected":      "Entry rejected — price moved too far from signal",
+}
+
 
 def _round_tick(price: float, tick_size: float) -> float:
     if not tick_size or tick_size <= 0:
@@ -262,18 +278,18 @@ def _create_pending_trade(
     try:
         with get_session() as db:
             trade = TradeModel(
-                signal_id    = signal_id,
-                coin         = coin,
-                direction    = direction,
-                grade        = grade,
-                state        = "pending",
-                is_active    = False,
-                sl_price     = sl_price,
-                tp1_price    = tp1_price,
-                tp2_price    = tp2_price,
-                leverage     = leverage,
-                opened_at    = datetime.now(timezone.utc),
-                outcome      = "pending",
+                signal_id        = signal_id,
+                coin             = coin,
+                direction        = direction,
+                grade            = grade,
+                state            = "pending",
+                is_active        = False,
+                sl_price         = sl_price,
+                tp1_price        = tp1_price,
+                tp2_price        = tp2_price,
+                leverage         = leverage,
+                opened_at        = datetime.now(timezone.utc),
+                outcome          = "pending",
                 regime_at_entry  = regime,
                 session_at_entry = session,
                 score_at_entry   = score,
@@ -360,7 +376,9 @@ def _mark_closed(
             trade.close_reason          = reason
             trade.closed_at             = datetime.now(timezone.utc)
             trade.outcome               = "win" if pnl > 0 else "loss"
-            trade.tp1_hit               = reason in ("tp1_hit", "tp2_hit", "tp1_be_stop", "time_stop_after_tp1")
+            trade.tp1_hit               = reason in (
+                "tp1_hit", "tp2_hit", "tp1_be_stop", "time_stop_after_tp1"
+            )
             trade.exit_commission       = round(exit_commission, 8)
             trade.exit_role             = exit_role
             trade.total_commission      = round(total_commission, 8)
@@ -507,7 +525,8 @@ async def open_position(
         tp2_rounded = _round_tick(tp2, tick_size) if tp2 else None
 
         log.info(
-            "Opening: %s %s price:%.6f qty:%s tp1_qty:%s tp2_qty:%s stake:%.2f lev:%dx sl:%s tp1:%s tp2:%s",
+            "Opening: %s %s price:%.6f qty:%s tp1_qty:%s tp2_qty:%s "
+            "stake:%.2f lev:%dx sl:%s tp1:%s tp2:%s",
             coin, direction, current, total_quantity, tp1_qty_final, tp2_qty_final,
             stake, leverage, sl_rounded, tp1_rounded, tp2_rounded
         )
@@ -642,7 +661,7 @@ async def close_position(
     coin:      str,
     direction: str,
     trade_id:  int,
-    reason:    str = "manual",
+    reason:    str = "manual_dashboard_close",
 ) -> dict:
     symbol   = f"{coin}USDT"
     is_short = direction == "SHORT"
@@ -650,7 +669,8 @@ async def close_position(
     try:
         positions = await get_positions()
         position  = next(
-            (p for p in positions if p.get("symbol") == symbol and float(p.get("positionAmt", 0)) != 0),
+            (p for p in positions
+             if p.get("symbol") == symbol and float(p.get("positionAmt", 0)) != 0),
             None,
         )
 
@@ -668,7 +688,13 @@ async def close_position(
         qty_step  = prec["step_size"]
         qty       = _round_step(qty, qty_step)
 
-        raw        = await _place_with_retry(symbol=symbol, side=close_side, order_type="MARKET", quantity=qty, reduce_only=True)
+        raw        = await _place_with_retry(
+            symbol      = symbol,
+            side        = close_side,
+            order_type  = "MARKET",
+            quantity    = qty,
+            reduce_only = True,
+        )
         filled     = await _wait_for_fill(symbol, raw["orderId"])
         close_oid  = str(filled.get("orderId", ""))
         exit_price = float(filled.get("avgPrice") or filled.get("price") or 0)
@@ -716,12 +742,13 @@ async def close_position(
         from alerts.telegram import send
         emoji   = "✅" if net_pnl >= 0 else "❌"
         pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+        reason_label = CLOSE_REASONS.get(reason, reason)
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"
             f"Exit:   `{exit_price}`\n"
             f"PnL:    `{pnl_str}`\n"
             f"Fee:    `${total_fee:.8f}` ({exit_role})\n"
-            f"Reason: `{reason}`"
+            f"Reason: `{reason_label}`"
         )
 
         return {"success": True, "exit_price": exit_price, "pnl": net_pnl}
