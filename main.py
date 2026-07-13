@@ -270,6 +270,13 @@ async def lifespan(app: FastAPI):
     await register_webhook()
     await register_commands()
 
+    try:
+        from scheduler import job_btc_cache
+        await job_btc_cache()
+        log.info("BTC cache populated on startup")
+    except Exception as e:
+        log.warning("BTC cache startup failed: %s", e)
+
     from alerts.scanner import register_kline_handler
     register_kline_handler()
 

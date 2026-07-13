@@ -9,7 +9,7 @@ SE = cfg.SCALP_ENGINE
 
 
 def _vol_score(df: pd.DataFrame) -> float:
-    vol_ma  = float(df["volume"].rolling(20).mean().iloc[-1]) or 1
+    vol_ma  = float(df["volume"].rolling(50).mean().iloc[-1]) or 1
     cur_vol = float(df["volume"].iloc[-1])
     ratio   = cur_vol / vol_ma
     return (
