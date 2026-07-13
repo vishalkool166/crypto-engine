@@ -340,7 +340,7 @@ class Config:
         "trigger_lookback":          4,
 
         "sl_buffer_atr_mult":        0.3,
-        "sl_min_pct":                0.25,
+        "sl_min_pct":                0.50,
         "sl_max_pct":                4.0,
 
         "tp1_min_rr":                1.5,
@@ -364,7 +364,7 @@ class Config:
 
         "grade_aplus_threshold":     0.80,
         "grade_a_threshold":         0.65,
-        "grade_b_threshold":         0.50,
+        "grade_b_threshold":         0.58,
 
         "grade_aplus_size_mult":     1.3,
         "grade_a_size_mult":         1.0,

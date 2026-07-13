@@ -542,15 +542,16 @@ async def _evaluate_regime_pillar(thesis: ThesisState) -> None:
 
 
 def _determine_action(thesis: ThesisState) -> tuple[str, str]:
-    strength     = thesis.thesis_strength
-    hours_open   = thesis.hours_open
-    move_pct     = thesis.move_pct
-    grade        = thesis.grade
-    stalled      = thesis.velocity_stalled
-    stall_hours  = thesis.stall_hours
-    captured     = thesis.captured_move_pct
+    strength      = thesis.thesis_strength
+    hours_open    = thesis.hours_open
+    move_pct      = thesis.move_pct
+    grade         = thesis.grade
+    stalled       = thesis.velocity_stalled
+    stall_hours   = thesis.stall_hours
+    captured      = thesis.captured_move_pct
 
     time_limit    = GRADE_TIME_LIMITS.get(grade, 32.0)
+    time_used_pct = hours_open / time_limit if time_limit > 0 else 1.0
 
     if hours_open >= time_limit:
         if move_pct > 0.1:
@@ -580,6 +581,8 @@ def _determine_action(thesis: ThesisState) -> tuple[str, str]:
         return "tighten", f"Thesis {strength:.2f} — tighten SL"
 
     if strength < 0.80:
+        if time_used_pct >= 0.75:
+            return "tighten", f"Thesis {strength:.2f} — late in trade ({time_used_pct*100:.0f}% of time used), tightening"
         return "monitor", f"Thesis {strength:.2f} — monitoring"
 
     return "hold", f"Thesis {strength:.2f} — intact"
