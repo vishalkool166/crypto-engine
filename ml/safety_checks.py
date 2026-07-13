@@ -4,6 +4,12 @@ from config import cfg, ADAPTATION_CONFIG
 
 log = logging.getLogger(__name__)
 
+PILLAR_MIN_WEIGHT = 0.05
+PILLAR_MAX_WEIGHT = 0.50
+PILLAR_MAX_CHANGE = 0.05
+PILLAR_MIN_TRADES = 200
+PILLAR_MIN_FAILURES = 20
+
 
 def check_all(parameter: str, current_value: float, proposed_value: float) -> dict:
     checks = [
@@ -27,9 +33,39 @@ def check_all(parameter: str, current_value: float, proposed_value: float) -> di
     }
 
 
+def check_pillar_weight_change(
+    pillar:         str,
+    current_weight: float,
+    new_weight:     float,
+) -> dict:
+    checks = [
+        _check_frozen(),
+        _check_pillar_weight_bounds(pillar, new_weight),
+        _check_pillar_weight_magnitude(pillar, current_weight, new_weight),
+        _check_pillar_min_trades(),
+        _check_pillar_min_failures(pillar),
+        _check_monthly_change_count(),
+        _check_drawdown_state(),
+        _check_pillar_weight_sum(pillar, new_weight, current_weight),
+    ]
+
+    failures = [c for c in checks if not c["pass"]]
+    passed   = len(failures) == 0
+
+    return {
+        "pass":     passed,
+        "failures": [f["reason"] for f in failures],
+        "checks":   checks,
+    }
+
+
 def _check_frozen() -> dict:
     if cfg.ADAPTATION_FROZEN:
-        return {"pass": False, "name": "frozen_check", "reason": "Adaptations are frozen — use /unfreeze to resume"}
+        return {
+            "pass":   False,
+            "name":   "frozen_check",
+            "reason": "Adaptations are frozen — use /unfreeze to resume"
+        }
     return {"pass": True, "name": "frozen_check", "reason": ""}
 
 
@@ -253,6 +289,142 @@ def _check_drawdown_state() -> dict:
         return {"pass": True, "name": "drawdown_check", "reason": ""}
 
 
+def _check_pillar_weight_bounds(pillar: str, new_weight: float) -> dict:
+    if new_weight < PILLAR_MIN_WEIGHT:
+        return {
+            "pass":   False,
+            "name":   "pillar_bounds_check",
+            "reason": f"Pillar {pillar} weight {new_weight:.3f} below minimum {PILLAR_MIN_WEIGHT}"
+        }
+    if new_weight > PILLAR_MAX_WEIGHT:
+        return {
+            "pass":   False,
+            "name":   "pillar_bounds_check",
+            "reason": f"Pillar {pillar} weight {new_weight:.3f} above maximum {PILLAR_MAX_WEIGHT}"
+        }
+    return {"pass": True, "name": "pillar_bounds_check", "reason": ""}
+
+
+def _check_pillar_weight_magnitude(
+    pillar:         str,
+    current_weight: float,
+    new_weight:     float,
+) -> dict:
+    change = abs(new_weight - current_weight)
+    if change > PILLAR_MAX_CHANGE:
+        return {
+            "pass":   False,
+            "name":   "pillar_magnitude_check",
+            "reason": (
+                f"Pillar {pillar} weight change {change:.3f} exceeds "
+                f"max {PILLAR_MAX_CHANGE:.3f} per cycle"
+            )
+        }
+    return {"pass": True, "name": "pillar_magnitude_check", "reason": ""}
+
+
+def _check_pillar_min_trades() -> dict:
+    try:
+        from database import SessionLocal, Trade as TradeModel
+        with SessionLocal() as db:
+            count = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).count()
+
+        if count < PILLAR_MIN_TRADES:
+            return {
+                "pass":   False,
+                "name":   "pillar_min_trades_check",
+                "reason": (
+                    f"Only {count} closed trades — need {PILLAR_MIN_TRADES} "
+                    f"before changing pillar weights"
+                )
+            }
+
+        return {"pass": True, "name": "pillar_min_trades_check", "reason": ""}
+
+    except Exception as e:
+        log.error("_check_pillar_min_trades: %s", e)
+        return {"pass": True, "name": "pillar_min_trades_check", "reason": ""}
+
+
+def _check_pillar_min_failures(pillar: str) -> dict:
+    try:
+        from database import SessionLocal, ThesisSnapshot
+
+        valid_key = f"{pillar}_valid"
+
+        with SessionLocal() as db:
+            total = db.query(ThesisSnapshot).filter(
+                ThesisSnapshot.outcome.isnot(None)
+            ).count()
+
+            if total == 0:
+                return {
+                    "pass":   False,
+                    "name":   "pillar_failures_check",
+                    "reason": f"No thesis snapshots with outcomes yet"
+                }
+
+        from database import SessionLocal as SL
+        with SL() as db:
+            all_snaps = db.query(ThesisSnapshot).filter(
+                ThesisSnapshot.outcome.isnot(None)
+            ).all()
+
+        failure_count = sum(
+            1 for s in all_snaps
+            if not getattr(s, f"{pillar}_valid", True)
+        )
+
+        if failure_count < PILLAR_MIN_FAILURES:
+            return {
+                "pass":   False,
+                "name":   "pillar_failures_check",
+                "reason": (
+                    f"Pillar {pillar} only has {failure_count} failure events — "
+                    f"need {PILLAR_MIN_FAILURES} for reliable analysis"
+                )
+            }
+
+        return {"pass": True, "name": "pillar_failures_check", "reason": ""}
+
+    except Exception as e:
+        log.error("_check_pillar_min_failures: %s", e)
+        return {"pass": True, "name": "pillar_failures_check", "reason": ""}
+
+
+def _check_pillar_weight_sum(
+    pillar:         str,
+    new_weight:     float,
+    current_weight: float,
+) -> dict:
+    try:
+        from ml.pillar_analyzer import get_current_weights, PILLAR_NAMES
+
+        current_weights = get_current_weights()
+        simulated       = dict(current_weights)
+        simulated[pillar] = new_weight
+
+        total = sum(simulated.values())
+
+        if total < 0.80 or total > 1.20:
+            return {
+                "pass":   False,
+                "name":   "pillar_sum_check",
+                "reason": (
+                    f"Pillar weights would sum to {total:.3f} — "
+                    f"must be between 0.80 and 1.20 (auto-normalized)"
+                )
+            }
+
+        return {"pass": True, "name": "pillar_sum_check", "reason": ""}
+
+    except Exception as e:
+        log.error("_check_pillar_weight_sum: %s", e)
+        return {"pass": True, "name": "pillar_sum_check", "reason": ""}
+
+
 def check_win_rate_improvement(
     parameter:        str,
     current_value:    float,
@@ -318,14 +490,18 @@ def get_safety_summary() -> dict:
 
         rules = ADAPTATION_CONFIG["change_rules"]
 
+        pillar_ready = total_trades >= PILLAR_MIN_TRADES
+
         return {
-            "frozen":              cfg.ADAPTATION_FROZEN,
-            "changes_this_month":  changes_this_month,
-            "max_changes_month":   rules["max_parameter_changes_per_month"],
-            "total_trades":        total_trades,
-            "min_trades_required": rules["min_trades_before_change"],
-            "ready_to_adapt":      total_trades >= rules["min_trades_before_change"],
-            "require_approval":    rules["require_human_approval"],
+            "frozen":                cfg.ADAPTATION_FROZEN,
+            "changes_this_month":    changes_this_month,
+            "max_changes_month":     rules["max_parameter_changes_per_month"],
+            "total_trades":          total_trades,
+            "min_trades_required":   rules["min_trades_before_change"],
+            "ready_to_adapt":        total_trades >= rules["min_trades_before_change"],
+            "pillar_min_trades":     PILLAR_MIN_TRADES,
+            "pillar_ready":          pillar_ready,
+            "require_approval":      rules["require_human_approval"],
         }
 
     except Exception as e:

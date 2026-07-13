@@ -27,6 +27,15 @@ _pending_commissions:   dict                = {}
 _trade_event_callbacks: list                = []
 _kline_callbacks:       list                = []
 
+# Binance exact account state — updated from ACCOUNT_UPDATE WS
+_binance_account: dict = {
+    "wallet_balance":       0.0,
+    "available_balance":    0.0,
+    "total_unrealized_pnl": 0.0,
+    "positions":            {},
+    "updated_at":           0.0,
+}
+
 
 def on_trade_event(callback) -> None:
     if callback not in _trade_event_callbacks:
@@ -54,6 +63,21 @@ def clear_pending_commission(order_id: str) -> None:
     _pending_commissions.pop(str(order_id), None)
 
 
+def get_binance_account() -> dict:
+    return dict(_binance_account)
+
+
+def get_binance_position(coin: str) -> dict | None:
+    return _binance_account["positions"].get(f"{coin}USDT")
+
+
+def get_binance_unrealized_pnl(coin: str) -> float | None:
+    pos = get_binance_position(coin)
+    if pos:
+        return float(pos.get("unrealizedProfit", 0) or 0)
+    return None
+
+
 def get_ws_status() -> dict:
     return {
         "mark_price_connected": _ws_connected,
@@ -62,6 +86,7 @@ def get_ws_status() -> dict:
         "ticker_ws_connected":  _ticker_ws_connected,
         "prices_cached":        len(_mark_prices),
         "mode":                 cfg.TRADING_MODE,
+        "binance_account_age":  round(time.time() - _binance_account["updated_at"], 0),
     }
 
 
@@ -277,6 +302,7 @@ async def _handle_order_update(data: dict) -> None:
             "order_type":       order_type,
             "side":             side,
             "timestamp":        time.time(),
+            "raw":              order,
         }
 
         if reduce_only or close_pos:
@@ -291,21 +317,123 @@ async def _handle_order_update(data: dict) -> None:
                 comm_asset   = comm_asset,
                 is_maker     = is_maker,
                 realized_pnl = realized_pnl,
+                raw_order    = order,
             )
         else:
-            await _emit("order_filled", {
-                "coin":         coin,
-                "order_id":     order_id,
-                "side":         side,
-                "price":        avg_price,
-                "quantity":     filled_qty,
-                "commission":   commission,
-                "role":         "maker" if is_maker else "taker",
-                "realized_pnl": realized_pnl,
-            })
+            await _handle_entry_order_filled(
+                coin         = coin,
+                symbol       = symbol,
+                order_id     = order_id,
+                fill_price   = avg_price,
+                filled_qty   = filled_qty,
+                commission   = commission,
+                comm_asset   = comm_asset,
+                is_maker     = is_maker,
+                realized_pnl = realized_pnl,
+                raw_order    = order,
+                side         = side,
+            )
 
     except Exception as e:
         log.error("_handle_order_update: %s", e)
+
+
+async def _handle_entry_order_filled(
+    coin:         str,
+    symbol:       str,
+    order_id:     str,
+    fill_price:   float,
+    filled_qty:   float,
+    commission:   float,
+    comm_asset:   str,
+    is_maker:     bool,
+    realized_pnl: float,
+    raw_order:    dict,
+    side:         str,
+) -> None:
+    try:
+        from database import SessionLocal, Trade as TradeModel
+
+        with SessionLocal() as db:
+            trade = db.query(TradeModel).filter(
+                TradeModel.entry_order_id == order_id,
+                TradeModel.is_active      == True,
+            ).first()
+
+            if not trade:
+                trade = db.query(TradeModel).filter(
+                    TradeModel.coin      == coin,
+                    TradeModel.is_active == True,
+                ).order_by(TradeModel.opened_at.desc()).first()
+
+            if not trade:
+                return
+
+            trade_id  = trade.id
+            direction = trade.direction
+
+        asyncio.create_task(
+            _sync_entry_async(
+                trade_id     = trade_id,
+                coin         = coin,
+                direction    = direction,
+                order_id     = order_id,
+                fill_price   = fill_price,
+                filled_qty   = filled_qty,
+                commission   = commission,
+                comm_asset   = comm_asset,
+                is_maker     = is_maker,
+                realized_pnl = realized_pnl,
+                raw_order    = raw_order,
+            )
+        )
+
+        await _emit("order_filled", {
+            "coin":         coin,
+            "order_id":     order_id,
+            "side":         side,
+            "price":        fill_price,
+            "quantity":     filled_qty,
+            "commission":   commission,
+            "role":         "maker" if is_maker else "taker",
+            "realized_pnl": realized_pnl,
+        })
+
+    except Exception as e:
+        log.error("_handle_entry_order_filled %s: %s", coin, e)
+
+
+async def _sync_entry_async(
+    trade_id:     int,
+    coin:         str,
+    direction:    str,
+    order_id:     str,
+    fill_price:   float,
+    filled_qty:   float,
+    commission:   float,
+    comm_asset:   str,
+    is_maker:     bool,
+    realized_pnl: float,
+    raw_order:    dict,
+) -> None:
+    try:
+        await asyncio.sleep(3.0)
+        from trade.binance_sync import sync_trade_open
+        await sync_trade_open(
+            trade_id         = trade_id,
+            coin             = coin,
+            direction        = direction,
+            entry_order_id   = order_id,
+            fill_price       = fill_price,
+            filled_qty       = filled_qty,
+            commission       = commission,
+            commission_asset = comm_asset,
+            entry_role       = "maker" if is_maker else "taker",
+            realized_pnl     = realized_pnl,
+            raw_order_json   = raw_order,
+        )
+    except Exception as e:
+        log.error("_sync_entry_async trade_id=%s: %s", trade_id, e)
 
 
 async def _handle_reduce_order_filled(
@@ -319,6 +447,7 @@ async def _handle_reduce_order_filled(
     comm_asset:   str   = "USDT",
     is_maker:     bool  = False,
     realized_pnl: float = 0.0,
+    raw_order:    dict  = None,
 ) -> None:
     try:
         from database import get_session, Trade as TradeModel, Signal as SignalModel
@@ -359,8 +488,8 @@ async def _handle_reduce_order_filled(
 
         await asyncio.sleep(1.0)
         try:
-            positions    = await get_positions()
-            remaining    = next(
+            positions     = await get_positions()
+            remaining     = next(
                 (float(p.get("positionAmt", 0)) for p in positions if p.get("symbol") == symbol),
                 0.0
             )
@@ -394,7 +523,7 @@ async def _handle_reduce_order_filled(
                     is_long         = is_long,
                 )
             except Exception as e:
-                log.error("move_sl_to_breakeven failed %s: %s", coin, e)
+                log.error("move_sl_to_breakeven failed %s: %s", symbol, e)
                 new_sl = None
 
             _mark_tp1_hit(trade_id, partial_pnl, new_sl)
@@ -421,7 +550,7 @@ async def _handle_reduce_order_filled(
             log.info("TP1 hit: %s exit:%.6f partial_pnl:%.4f", coin, exit_price, partial_pnl)
             return
 
-        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit)
+        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit, entry, exit_price, is_long)
         total_fee = round(entry_fee + commission, 8)
 
         net_pnl = (
@@ -468,6 +597,30 @@ async def _handle_reduce_order_filled(
         invalidate_position_cache()
         clear_health_state(coin)
 
+        asyncio.create_task(
+            _sync_close_async(
+                trade_id     = trade_id,
+                coin         = coin,
+                direction    = direction,
+                order_id     = order_id,
+                exit_price   = exit_price,
+                exit_qty     = filled_qty,
+                commission   = commission,
+                exit_role    = "maker" if is_maker else "taker",
+                realized_pnl = realized_pnl,
+                raw_order    = raw_order or {},
+            )
+        )
+
+        try:
+            from ml.outcome_recorder import record
+            asyncio.create_task(record(trade_id))
+        except Exception as _oe:
+            log.error("outcome_recorder failed trade_id=%s: %s", trade_id, _oe)
+
+        from trade.thesis_tracker import remove_thesis
+        remove_thesis(trade_id)
+
         if reason == "sl_hit":
             set_cooldown(coin)
         else:
@@ -511,6 +664,37 @@ async def _handle_reduce_order_filled(
         log.error("_handle_reduce_order_filled %s: %s", coin, e, exc_info=True)
 
 
+async def _sync_close_async(
+    trade_id:     int,
+    coin:         str,
+    direction:    str,
+    order_id:     str,
+    exit_price:   float,
+    exit_qty:     float,
+    commission:   float,
+    exit_role:    str,
+    realized_pnl: float,
+    raw_order:    dict,
+) -> None:
+    try:
+        await asyncio.sleep(2.0)
+        from trade.binance_sync import sync_trade_close
+        await sync_trade_close(
+            trade_id        = trade_id,
+            coin            = coin,
+            direction       = direction,
+            exit_order_id   = order_id,
+            exit_price      = exit_price,
+            exit_qty        = exit_qty,
+            exit_commission = commission,
+            exit_role       = exit_role,
+            realized_pnl    = realized_pnl,
+            raw_order_json  = raw_order,
+        )
+    except Exception as e:
+        log.error("_sync_close_async trade_id=%s: %s", trade_id, e)
+
+
 def _exit_reason(
     order_type: str,
     order_id:   str,
@@ -518,6 +702,9 @@ def _exit_reason(
     tp1_oid:    str,
     tp2_oid:    str,
     tp1_hit:    bool,
+    entry:      float = 0.0,
+    exit_price: float = 0.0,
+    is_long:    bool  = True,
 ) -> str:
     if order_id == tp2_oid:
         return "tp2_hit"
@@ -525,21 +712,82 @@ def _exit_reason(
         return "tp1_hit"
     if order_id == sl_oid:
         return "sl_hit" if not tp1_hit else "tp1_be_stop"
+
     ot = order_type.upper()
+
     if "STOP"        in ot: return "sl_hit" if not tp1_hit else "tp1_be_stop"
     if "TAKE_PROFIT" in ot: return "tp2_hit" if tp1_hit else "tp1_hit"
-    if ot == "MARKET"      : return "manual_dashboard_close"
-    if "LIQUIDATION" in ot : return "liquidated"
+    if "LIQUIDATION" in ot: return "liquidated"
+
+    if entry > 0 and exit_price > 0:
+        if is_long:
+            if exit_price < entry:
+                return "sl_hit" if not tp1_hit else "tp1_be_stop"
+            else:
+                return "tp2_hit" if tp1_hit else "tp1_hit"
+        else:
+            if exit_price > entry:
+                return "sl_hit" if not tp1_hit else "tp1_be_stop"
+            else:
+                return "tp2_hit" if tp1_hit else "tp1_hit"
+
     return "exchange_closed"
 
 
 async def _handle_account_update(data: dict) -> None:
     try:
-        account = data.get("a", {})
+        account  = data.get("a", {})
+        balances = account.get("B", [])
+        positions= account.get("P", [])
+
+        for b in balances:
+            if b.get("a") == "USDT":
+                _binance_account["wallet_balance"]    = float(b.get("wb", 0) or 0)
+                _binance_account["available_balance"] = float(b.get("cw", 0) or 0)
+                break
+
+        total_unrealized = 0.0
+        for p in positions:
+            symbol = p.get("s", "")
+            if not symbol:
+                continue
+            unrealized = float(p.get("up", 0) or 0)
+            total_unrealized += unrealized
+            _binance_account["positions"][symbol] = {
+                "symbol":           symbol,
+                "positionAmt":      float(p.get("pa", 0) or 0),
+                "entryPrice":       float(p.get("ep", 0) or 0),
+                "unrealizedProfit": unrealized,
+                "marginType":       p.get("mt", "isolated"),
+                "isolatedMargin":   float(p.get("iw", 0) or 0),
+                "updated_at":       time.time(),
+            }
+
+        _binance_account["total_unrealized_pnl"] = total_unrealized
+        _binance_account["updated_at"]           = time.time()
+
+        try:
+            from redis_client import get_redis
+            r = get_redis()
+            if r:
+                r.setex("binance:account", 60, json.dumps({
+                    "wallet_balance":       _binance_account["wallet_balance"],
+                    "available_balance":    _binance_account["available_balance"],
+                    "total_unrealized_pnl": total_unrealized,
+                    "updated_at":           _binance_account["updated_at"],
+                }))
+                for symbol, pos_data in _binance_account["positions"].items():
+                    r.setex(f"binance:position:{symbol}", 60, json.dumps(pos_data))
+        except Exception:
+            pass
+
         await _emit("account_update", {
-            "balances":  account.get("B", []),
-            "positions": account.get("P", []),
+            "balances":              balances,
+            "positions":             positions,
+            "wallet_balance":        _binance_account["wallet_balance"],
+            "total_unrealized_pnl":  total_unrealized,
         })
+
     except Exception as e:
         log.error("_handle_account_update: %s", e)
 

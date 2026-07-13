@@ -93,6 +93,19 @@ async def job_analyzer():
         log.error("job_analyzer: %s", e)
 
 
+async def job_pillar_analyzer():
+    try:
+        from ml.pillar_analyzer import run
+        result = run()
+        log.info(
+            "Pillar analyzer complete — status:%s recommendations:%s",
+            result.get("status"),
+            len(result.get("recommendations", []))
+        )
+    except Exception as e:
+        log.error("job_pillar_analyzer: %s", e)
+
+
 async def job_adapter():
     try:
         from ml.adapter import run
@@ -189,6 +202,53 @@ async def job_evening_briefing():
         log.error("job_evening_briefing: %s", e)
 
 
+async def job_binance_account_snapshot():
+    try:
+        from trade.binance_sync import periodic_account_snapshot
+        await periodic_account_snapshot()
+    except Exception as e:
+        log.error("job_binance_account_snapshot: %s", e)
+
+
+async def job_binance_sync_unsynced():
+    try:
+        from trade.binance_sync import sync_unsynced_trades
+        count = await sync_unsynced_trades()
+        if count:
+            log.info("Binance sync: %s unsynced trades processed", count)
+    except Exception as e:
+        log.error("job_binance_sync_unsynced: %s", e)
+
+
+async def job_thesis_snapshot_cleanup():
+    try:
+        from ml.pillar_analyzer import cleanup_old_snapshots
+        count = cleanup_old_snapshots(keep_per_trade=200)
+        if count:
+            log.info("ThesisSnapshot cleanup: %s deleted", count)
+    except Exception as e:
+        log.error("job_thesis_snapshot_cleanup: %s", e)
+
+
+async def job_update_thesis_outcomes():
+    try:
+        from database import SessionLocal, Trade as TradeModel
+        from trade.thesis_tracker import update_snapshot_outcome
+
+        with SessionLocal() as db:
+            recently_closed = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"]),
+                TradeModel.closed_at.isnot(None),
+            ).order_by(TradeModel.closed_at.desc()).limit(50).all()
+
+        for trade in recently_closed:
+            pnl = float(trade.binance_net_pnl or trade.net_pnl or trade.pnl or 0)
+            update_snapshot_outcome(trade.id, trade.outcome, pnl)
+
+    except Exception as e:
+        log.error("job_update_thesis_outcomes: %s", e)
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -211,9 +271,9 @@ def get_next_scan_epoch() -> int:
                 now.replace(minute=b, second=0, microsecond=0).timestamp() * 1000
             )
     next_hour = now.replace(
-        hour   = (now.hour + 1) % 24,
-        minute = 0,
-        second = 0,
+        hour        = (now.hour + 1) % 24,
+        minute      = 0,
+        second      = 0,
         microsecond = 0,
     )
     return int(next_hour.timestamp() * 1000)
@@ -275,6 +335,12 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
+        job_pillar_analyzer,
+        trigger          = CronTrigger(day_of_week="sun", hour=0, minute=30, timezone="UTC"),
+        id               = "pillar_analyzer",
+        replace_existing = True,
+    )
+    scheduler.add_job(
         job_adapter,
         trigger          = CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
         id               = "adapter",
@@ -310,17 +376,42 @@ def start_scheduler():
         id               = "evening_briefing",
         replace_existing = True,
     )
+    scheduler.add_job(
+        job_binance_account_snapshot,
+        trigger          = IntervalTrigger(minutes=15),
+        id               = "binance_account_snapshot",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_binance_sync_unsynced,
+        trigger          = IntervalTrigger(hours=1),
+        id               = "binance_sync_unsynced",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_thesis_snapshot_cleanup,
+        trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id               = "thesis_snapshot_cleanup",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_update_thesis_outcomes,
+        trigger          = IntervalTrigger(minutes=30),
+        id               = "update_thesis_outcomes",
+        replace_existing = True,
+    )
 
     scheduler.start()
     log.info(
         "Scheduler started — "
-        "scan:15m — btc:30m — monitor:30s — "
-        "scalp_mgr:30m — ml:1h — cooldown:30m — "
-        "purge:03:00 UTC — sessions:1h — "
-        "analyzer:Sun 00:00 UTC — adapter:Sun 01:00 UTC — "
-        "rollback:daily 06:00 UTC — version:6h — "
-        "performance:daily 08:00 UTC — "
-        "morning_brief:08:00 IST — evening_brief:20:00 IST"
+        "scan:15m — btc:30m — monitor:30s — scalp_mgr:30m — "
+        "ml:1h — cooldown:30m — purge:03:00 UTC — sessions:1h — "
+        "analyzer:Sun 00:00 UTC — pillar_analyzer:Sun 00:30 UTC — "
+        "adapter:Sun 01:00 UTC — rollback:daily 06:00 UTC — "
+        "version:6h — performance:daily 08:00 UTC — "
+        "morning_brief:08:00 IST — evening_brief:20:00 IST — "
+        "binance_snapshot:15m — binance_sync:1h — "
+        "thesis_cleanup:04:00 UTC — thesis_outcomes:30m"
     )
 
 

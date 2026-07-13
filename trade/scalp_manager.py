@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import time
 from datetime import datetime, timezone
 from database import get_session, Trade as TradeModel
 from config import cfg
@@ -18,19 +17,23 @@ def _get_open_scalp_trades() -> list:
                 TradeModel.is_active == True
             ).all()
             return [{
-                "id":           t.id,
-                "coin":         t.coin,
-                "direction":    t.direction,
-                "entry_price":  float(t.entry_price  or 0),
-                "sl_price":     float(t.sl_price     or 0),
-                "tp1_price":    float(t.tp1_price     or 0),
-                "tp2_price":    float(t.tp2_price     or 0),
-                "margin_used":  float(t.margin_used   or 0),
-                "leverage":     int(t.leverage        or 1),
-                "tp1_hit":      bool(t.tp1_hit),
-                "opened_at":    t.opened_at,
-                "tp1_hit_at":   getattr(t, "tp1_hit_at", None),
-            } for t in trades]
+                "id":                trade.id,
+                "coin":              trade.coin,
+                "direction":         trade.direction,
+                "grade":             trade.grade or "A",
+                "entry_price":       float(trade.entry_price  or 0),
+                "sl_price":          float(trade.sl_price     or 0),
+                "tp1_price":         float(trade.tp1_price    or 0),
+                "tp2_price":         float(trade.tp2_price    or 0),
+                "margin_used":       float(trade.margin_used  or 0),
+                "leverage":          int(trade.leverage       or 1),
+                "tp1_hit":           bool(trade.tp1_hit),
+                "opened_at":         trade.opened_at,
+                "tp1_hit_at":        getattr(trade, "tp1_hit_at", None),
+                "signal_id":         trade.signal_id,
+                "regime_at_entry":   trade.regime_at_entry  or "",
+                "session_at_entry":  trade.session_at_entry or "",
+            } for trade in trades]
     except Exception as e:
         log.error("_get_open_scalp_trades: %s", e)
         return []
@@ -64,6 +67,27 @@ def _was_opened_during_asia(opened_at) -> bool:
 
 def _is_asia_session() -> bool:
     return 0 <= datetime.now(timezone.utc).hour < 8
+
+
+async def _ensure_thesis(trade: dict) -> None:
+    try:
+        from trade.exit_manager import initialize_thesis_for_trade, load_signal_data_for_trade
+        from trade.thesis_tracker import get_thesis
+
+        trade_id  = trade["id"]
+        signal_id = trade.get("signal_id")
+
+        if get_thesis(trade_id):
+            return
+
+        signal_data = {}
+        if signal_id:
+            signal_data = await load_signal_data_for_trade(trade_id, signal_id)
+
+        await initialize_thesis_for_trade(trade, signal_data)
+
+    except Exception as e:
+        log.error("_ensure_thesis trade_id=%s: %s", trade.get("id"), e)
 
 
 async def _partial_close(trade: dict, reason: str) -> bool:
@@ -100,7 +124,7 @@ async def _partial_close(trade: dict, reason: str) -> bool:
         if close_qty <= 0:
             return False
 
-        order      = await place_order(
+        await place_order(
             symbol      = symbol,
             side        = close_side,
             order_type  = "MARKET",
@@ -108,8 +132,7 @@ async def _partial_close(trade: dict, reason: str) -> bool:
             reduce_only = True,
         )
 
-        exit_price = get_mark_price(coin) or trade["entry_price"]
-
+        exit_price  = get_mark_price(coin) or trade["entry_price"]
         entry       = trade["entry_price"]
         ratio       = (entry - exit_price) / entry if is_short else (exit_price - entry) / entry
         partial_pnl = round(ratio * (close_qty * exit_price), 4)
@@ -120,7 +143,6 @@ async def _partial_close(trade: dict, reason: str) -> bool:
                 t.tp1_hit     = True
                 t.partial_pnl = partial_pnl
                 t.sl_price    = entry
-                db.commit()
 
         await _update_sl_to_breakeven(coin, symbol, entry, is_short, prec)
 
@@ -153,7 +175,7 @@ async def _update_sl_to_breakeven(
 ) -> None:
     try:
         from trade.exchange import cancel_all_orders, cancel_all_algo_orders
-        from trade.executor import _round_tick, move_sl_to_breakeven
+        from trade.executor import move_sl_to_breakeven
 
         await cancel_all_orders(symbol)
         await cancel_all_algo_orders(symbol)
@@ -194,11 +216,16 @@ async def _time_stop_close(trade: dict, reason: str) -> None:
             trade_id  = trade["id"],
             reason    = reason,
         )
+
+        from trade.thesis_tracker import remove_thesis
+        remove_thesis(trade["id"])
+
         from engines.state import set_idle, set_cooldown
-        if reason == "time_stop_loss":
+        if reason in ("time_stop_loss", "thesis_invalidated", "thesis_degraded"):
             set_cooldown(trade["coin"])
         else:
             set_idle(trade["coin"])
+
     except Exception as e:
         log.error("_time_stop_close %s: %s", trade["coin"], e)
 
@@ -209,12 +236,12 @@ async def run_cycle() -> None:
         return
 
     for trade in trades:
-        coin       = trade["coin"]
-        entry      = trade["entry_price"]
-        is_short   = trade["direction"] == "SHORT"
-        tp1_hit    = trade["tp1_hit"]
-        opened_at  = trade["opened_at"]
-        tp1_hit_at = trade["tp1_hit_at"]
+        coin      = trade["coin"]
+        entry     = trade["entry_price"]
+        is_short  = trade["direction"] == "SHORT"
+        tp1_hit   = trade["tp1_hit"]
+        opened_at = trade["opened_at"]
+
         live_price = get_mark_price(coin) or entry
 
         move_pct = (
@@ -223,11 +250,25 @@ async def run_cycle() -> None:
             else (live_price - entry) / entry
         )
 
+        await _ensure_thesis(trade)
+
         if tp1_hit:
-            hours_since_tp1 = _hours_since(tp1_hit_at)
+            hours_since_tp1 = _hours_since(trade.get("tp1_hit_at"))
             if hours_since_tp1 >= SE["time_stop_after_tp1_hours"]:
                 log.info("Time stop after TP1: %s", coin)
                 await _time_stop_close(trade, "time_stop_after_tp1")
+            else:
+                from trade.exit_manager import run_exit_cycle
+                await run_exit_cycle(trade)
+            continue
+
+        from trade.exit_manager import run_exit_cycle
+        exit_decision = await run_exit_cycle(trade)
+
+        from trade.thesis_tracker import get_thesis
+        thesis = get_thesis(trade["id"])
+
+        if thesis and thesis.action == "exit":
             continue
 
         hours_open = _hours_since(opened_at)
@@ -235,31 +276,9 @@ async def run_cycle() -> None:
         if SE["close_before_asia"] and _is_asia_session():
             opened_during_asia = _was_opened_during_asia(opened_at)
             if not opened_during_asia and move_pct <= 0:
-                log.info(
-                    "Close before Asia: %s move:%.3f%%",
-                    coin, move_pct * 100
-                )
-                reason = "close_before_asia"
-                await _time_stop_close(trade, reason)
+                log.info("Close before Asia: %s move:%.3f%%", coin, move_pct * 100)
+                await _time_stop_close(trade, "close_before_asia")
                 continue
-
-        if hours_open >= SE["time_stop_hours"]:
-            if move_pct > 0.002:
-                reason = "time_stop_profit"
-            elif abs(move_pct) <= 0.002:
-                reason = "time_stop_breakeven"
-            else:
-                sl_dist = abs(entry - trade["sl_price"]) / entry if trade["sl_price"] else 0.02
-                if abs(move_pct) < sl_dist * 0.7:
-                    reason = "time_stop_loss"
-                else:
-                    continue
-
-            log.info(
-                "Time stop: %s reason:%s move:%.3f%%",
-                coin, reason, move_pct * 100
-            )
-            await _time_stop_close(trade, reason)
 
 
 async def handle_tp1_hit(coin: str) -> None:

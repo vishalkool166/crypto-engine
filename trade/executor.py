@@ -31,6 +31,8 @@ CLOSE_REASONS = {
     "exchange_closed":         "Position closed on exchange — reason unknown",
     "liquidated":              "Liquidation triggered",
     "deviation_rejected":      "Entry rejected — price moved too far from signal",
+    "thesis_invalidated":      "Thesis invalidated — structural conditions broken",
+    "thesis_degraded":         "Thesis degraded — majority of pillars failed",
 }
 
 
@@ -276,6 +278,7 @@ def _create_pending_trade(
     score:         float = 0.0,
 ) -> int:
     try:
+        from datetime import date as _date
         with get_session() as db:
             trade = TradeModel(
                 signal_id        = signal_id,
@@ -293,6 +296,8 @@ def _create_pending_trade(
                 regime_at_entry  = regime,
                 session_at_entry = session,
                 score_at_entry   = score,
+                trade_date       = _date.today().isoformat(),
+                system_version   = cfg.SYSTEM_VERSION,
             )
             db.add(trade)
             db.flush()
@@ -319,12 +324,14 @@ def _activate_trade(
     entry_role:         str   = "taker",
     tp1_qty:            float = 0.0,
     tp2_qty:            float = 0.0,
+    sizing_result:      dict  = None,
 ) -> None:
     try:
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if not trade:
                 return
+
             trade.state              = "open"
             trade.is_active          = True
             trade.entry_price        = entry_price
@@ -342,9 +349,20 @@ def _activate_trade(
             trade.funding_fees_paid  = 0.0
             trade.total_commission   = entry_commission
             trade.notes              = f"tp1_qty:{tp1_qty:.6f} tp2_qty:{tp2_qty:.6f}"
+
+            if sizing_result:
+                trade.drawdown_at_entry    = sizing_result.get("drawdown_pct")
+                trade.win_rate_at_entry    = sizing_result.get("win_rate")
+                trade.streak_at_entry      = sizing_result.get("streak")
+                trade.streak_type_at_entry = sizing_result.get("streak_type")
+                trade.daily_pnl_at_entry   = sizing_result.get("today_pnl")
+                trade.open_trades_at_entry = sizing_result.get("open_trades")
+
             log.info(
-                "Trade activated: id:%s fill:%.6f slip:%.4f%% fee:$%.8f",
+                "Trade activated: id:%s fill:%.6f slip:%.4f%% fee:$%.8f drawdown:%.2f%% wr:%s",
                 trade_id, actual_fill_entry, slippage_entry_pct, entry_commission,
+                sizing_result.get("drawdown_pct", 0) if sizing_result else 0,
+                sizing_result.get("win_rate", "N/A") if sizing_result else "N/A",
             )
     except Exception as e:
         log.error("_activate_trade error: %s", e)
@@ -383,6 +401,7 @@ def _mark_closed(
             trade.exit_role             = exit_role
             trade.total_commission      = round(total_commission, 8)
             trade.realized_pnl_exchange = round(realized_pnl, 8)
+
             try:
                 import json
                 from trade.health_monitor import get_health_from_redis
@@ -395,12 +414,27 @@ def _mark_closed(
                     })
             except Exception:
                 pass
+
+            try:
+                from trade.thesis_tracker import get_thesis, get_pillar_states_json
+                thesis = get_thesis(trade_id)
+                if thesis:
+                    trade.thesis_strength_at_close  = thesis.thesis_strength
+                    trade.thesis_pillars_at_close   = get_pillar_states_json(trade_id)
+                    trade.thesis_exit_reason        = thesis.action_reason
+                    trade.captured_move_pct_at_exit = thesis.captured_move_pct
+                    trade.expected_move_pct         = thesis.expected_move_pct
+                    trade.velocity_at_close         = thesis.velocity
+            except Exception:
+                pass
+
             if trade.signal_id:
                 sig = db.query(SignalModel).filter(SignalModel.id == trade.signal_id).first()
                 if sig:
                     sig.outcome    = trade.outcome
                     sig.pnl        = pnl
                     sig.exit_price = exit_price
+
             log.info(
                 "Trade closed: id:%s exit:%.6f pnl:%.4f fee:$%.8f reason:%s tp1:%s",
                 trade_id, exit_price, pnl, total_commission, reason, trade.tp1_hit,
@@ -440,6 +474,7 @@ async def open_position(
     score:     float        = 0.0,
     tp2:       float | None = None,
     atr_15m:   float        = 0.0,
+    sizing_result: dict     = None,
 ) -> dict:
     symbol   = f"{coin}USDT"
     is_short = direction == "SHORT"
@@ -603,7 +638,34 @@ async def open_position(
             entry_role         = entry_role,
             tp1_qty            = tp1_qty_final,
             tp2_qty            = tp2_qty_final,
+            sizing_result      = sizing_result,
         )
+
+        from trade.exit_manager import initialize_thesis_for_trade
+        signal_data = {
+            "sweep_score":   float(sizing_result.get("sweep_score",   0) if sizing_result else 0),
+            "zone_score":    float(sizing_result.get("zone_score",    0) if sizing_result else 0),
+            "trigger_score": float(sizing_result.get("trigger_score", 0) if sizing_result else 0),
+            "grade":         grade,
+            "score":         score,
+        }
+        trade_dict = {
+            "id":               trade_id,
+            "coin":             coin,
+            "direction":        direction,
+            "grade":            grade,
+            "entry_price":      fill_price,
+            "sl_price":         sl,
+            "tp1_price":        tp,
+            "tp2_price":        tp2,
+            "regime_at_entry":  regime,
+            "session_at_entry": session,
+            "signal_id":        signal_id,
+        }
+        asyncio.create_task(initialize_thesis_for_trade(trade_dict, signal_data))
+
+        from ml.version_registry import tag_trade
+        tag_trade(trade_id)
 
         from alerts.telegram import send
         mode      = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
@@ -739,9 +801,15 @@ async def close_position(
             slippage_exit_pct = slippage_exit,
         )
 
+        try:
+            from ml.outcome_recorder import record
+            asyncio.create_task(record(trade_id))
+        except Exception as _oe:
+            log.error("outcome_recorder failed trade_id=%s: %s", trade_id, _oe)
+
         from alerts.telegram import send
-        emoji   = "✅" if net_pnl >= 0 else "❌"
-        pnl_str = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
+        emoji        = "✅" if net_pnl >= 0 else "❌"
+        pnl_str      = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
         reason_label = CLOSE_REASONS.get(reason, reason)
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"

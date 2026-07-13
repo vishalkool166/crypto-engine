@@ -147,25 +147,25 @@ ADAPTATION_CONFIG = {
         "ml_threshold":          {"min": 0.55, "max": 0.80, "current": 0.65},
     },
     "change_rules": {
-        "min_trades_before_change":      50,
-        "min_win_rate_improvement":      0.03,
-        "max_change_pct_per_cycle":      0.20,
-        "min_days_between_changes":      7,
+        "min_trades_before_change":        50,
+        "min_win_rate_improvement":        0.03,
+        "max_change_pct_per_cycle":        0.20,
+        "min_days_between_changes":        7,
         "max_parameter_changes_per_month": 3,
-        "rollback_review_trades":        20,
-        "rollback_trigger_drop":         0.05,
-        "require_human_approval":        True,
+        "rollback_review_trades":          20,
+        "rollback_trigger_drop":           0.05,
+        "require_human_approval":          True,
     },
     "regime_thresholds": {
-        "min_trades_for_regime":         200,
-        "min_trades_per_regime":         10,
-        "avoid_below_win_rate":          0.40,
-        "reduce_size_below_win_rate":    0.50,
+        "min_trades_for_regime":      200,
+        "min_trades_per_regime":      10,
+        "avoid_below_win_rate":       0.40,
+        "reduce_size_below_win_rate": 0.50,
     },
     "ml_thresholds": {
-        "min_trades_for_training":       100,
-        "retrain_every_n_trades":        50,
-        "min_cv_auc":                    0.60,
+        "min_trades_for_training": 100,
+        "retrain_every_n_trades":  50,
+        "min_cv_auc":              0.60,
     },
     "analyzer_schedule": {
         "run_day":    "sunday",
@@ -178,6 +178,33 @@ ADAPTATION_CONFIG = {
         "run_minute": 0,
     },
     "rollback_check_hour": 6,
+
+    "pillar_weights": {
+        "sweep":         0.25,
+        "zone":          0.25,
+        "structure":     0.20,
+        "btc_alignment": 0.15,
+        "regime":        0.15,
+    },
+    "pillar_limits": {
+        "min_weight":        0.05,
+        "max_weight":        0.50,
+        "max_change":        0.05,
+        "min_trades":        200,
+        "min_failures":      20,
+    },
+    "thesis_time_limits": {
+        "A+": 48.0,
+        "A":  32.0,
+        "B":  16.0,
+    },
+    "thesis_thresholds": {
+        "hold":         0.80,
+        "monitor":      0.60,
+        "tighten":      0.40,
+        "prepare_exit": 0.20,
+        "exit":         0.00,
+    },
 }
 
 
@@ -346,6 +373,33 @@ class Config:
         "kline_trigger_tf":          "15m",
     }
 
+    # Thesis tracker time limits — configurable by adaptation engine
+    THESIS_TIME_LIMITS = {
+        "A+": 48.0,
+        "A":  32.0,
+        "B":  16.0,
+    }
+
+    # Thesis strength thresholds — configurable by adaptation engine
+    THESIS_THRESHOLDS = {
+        "hold":         0.80,
+        "monitor":      0.60,
+        "tighten":      0.40,
+        "prepare_exit": 0.20,
+        "exit":         0.00,
+    }
+
+    # Pillar weights — managed by pillar_analyzer + adapter
+    # Runtime weights are stored in Redis and read dynamically
+    # These are the fallback defaults only
+    PILLAR_WEIGHTS_DEFAULT = {
+        "sweep":         0.25,
+        "zone":          0.25,
+        "structure":     0.20,
+        "btc_alignment": 0.15,
+        "regime":        0.15,
+    }
+
     SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "1.0.0")
     ADAPTATION_FROZEN = os.getenv("ADAPTATION_FROZEN", "False").lower() == "true"
 
@@ -431,6 +485,20 @@ class Config:
         if key in self.SCALP_ENGINE:
             self.SCALP_ENGINE[key] = value
 
+    def update_thesis_time_limit(self, grade: str, hours: float) -> None:
+        if grade in self.THESIS_TIME_LIMITS:
+            self.THESIS_TIME_LIMITS[grade] = hours
+
+    def update_thesis_threshold(self, level: str, value: float) -> None:
+        if level in self.THESIS_THRESHOLDS:
+            self.THESIS_THRESHOLDS[level] = value
+
+    def get_thesis_time_limit(self, grade: str) -> float:
+        return self.THESIS_TIME_LIMITS.get(grade, 32.0)
+
+    def get_thesis_threshold(self, level: str) -> float:
+        return self.THESIS_THRESHOLDS.get(level, 0.60)
+
     def get_adaptation_config(self) -> dict:
         return ADAPTATION_CONFIG
 
@@ -442,6 +510,19 @@ class Config:
 
     def get_change_rules(self) -> dict:
         return ADAPTATION_CONFIG["change_rules"]
+
+    def get_pillar_weights(self) -> dict:
+        try:
+            from ml.pillar_analyzer import get_current_weights
+            return get_current_weights()
+        except Exception:
+            return dict(self.PILLAR_WEIGHTS_DEFAULT)
+
+    def get_thesis_time_limits(self) -> dict:
+        return dict(self.THESIS_TIME_LIMITS)
+
+    def get_thesis_thresholds(self) -> dict:
+        return dict(self.THESIS_THRESHOLDS)
 
 
 def _bootstrap_secrets() -> None:

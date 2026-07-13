@@ -25,11 +25,15 @@ def run() -> dict:
             log.info("Adapter: no recommendations to apply")
             return {"status": "no_recommendations", "applied": 0}
 
-        applied  = []
-        skipped  = []
+        applied = []
+        skipped = []
 
         for rec in recommendations:
-            result = _apply_recommendation(rec)
+            if rec.get("parameter", "").startswith("pillar_weight_"):
+                result = _apply_pillar_weight_recommendation(rec)
+            else:
+                result = _apply_recommendation(rec)
+
             if result["applied"]:
                 applied.append(result)
             else:
@@ -50,6 +54,61 @@ def run() -> dict:
     except Exception as e:
         log.error("adapter.run: %s", e)
         return {"status": "error", "error": str(e), "applied": 0}
+
+
+def _apply_pillar_weight_recommendation(rec: dict) -> dict:
+    parameter = rec["parameter"]
+    pillar    = parameter.replace("pillar_weight_", "")
+    new_weight= float(rec["recommended_value"])
+    rec_id    = rec.get("id")
+
+    try:
+        from ml.pillar_analyzer import apply_weight_change
+        from ml.safety_checks import check_pillar_weight_change
+
+        safety = check_pillar_weight_change(
+            pillar        = pillar,
+            current_weight= float(rec["current_value"]),
+            new_weight    = new_weight,
+        )
+
+        if not safety["pass"]:
+            log.info("Pillar weight skipped %s: %s", pillar, safety["failures"])
+            return {
+                "applied":   False,
+                "parameter": parameter,
+                "reason":    safety["failures"],
+            }
+
+        result = apply_weight_change(
+            pillar      = pillar,
+            new_weight  = new_weight,
+            rec_id      = rec_id,
+            approved_by = "adapter",
+        )
+
+        if result.get("success"):
+            log.info(
+                "Pillar weight applied: %s %.3f → %.3f",
+                pillar, rec["current_value"], new_weight
+            )
+            return {
+                "applied":     True,
+                "parameter":   parameter,
+                "old_value":   rec["current_value"],
+                "new_value":   new_weight,
+                "new_version": result.get("new_version"),
+            }
+        else:
+            return {
+                "applied":   False,
+                "parameter": parameter,
+                "reason":    result.get("reason", "Unknown error"),
+            }
+
+    except Exception as e:
+        log.error("_apply_pillar_weight_recommendation %s: %s", pillar, e)
+        return {"applied": False, "parameter": parameter, "reason": str(e)}
 
 
 def _apply_recommendation(rec: dict) -> dict:
@@ -104,7 +163,7 @@ def _apply_recommendation(rec: dict) -> dict:
         changed_by = "adapter",
     )
 
-    total_trades    = _get_total_trades()
+    total_trades      = _get_total_trades()
     adaptation_log_id = _log_change(
         parameter      = parameter,
         old_value      = current_value,
@@ -132,15 +191,15 @@ def _apply_recommendation(rec: dict) -> dict:
         _mark_recommendation_applied(rec_id)
 
     _notify_change_applied(
-        parameter      = parameter,
-        old_value      = current_value,
-        new_value      = proposed_value,
-        reasoning      = rec.get("reasoning", ""),
-        data_basis     = rec.get("data_basis", total_trades),
-        expected_imp   = rec.get("expected_improvement", 0),
-        confidence     = rec.get("confidence", "low"),
-        new_version    = new_version,
-        total_trades   = total_trades,
+        parameter    = parameter,
+        old_value    = current_value,
+        new_value    = proposed_value,
+        reasoning    = rec.get("reasoning", ""),
+        data_basis   = rec.get("data_basis", total_trades),
+        expected_imp = rec.get("expected_improvement", 0),
+        confidence   = rec.get("confidence", "low"),
+        new_version  = new_version,
+        total_trades = total_trades,
     )
 
     log.info(
@@ -149,12 +208,12 @@ def _apply_recommendation(rec: dict) -> dict:
     )
 
     return {
-        "applied":        True,
-        "parameter":      parameter,
-        "old_value":      current_value,
-        "new_value":      proposed_value,
-        "new_version":    new_version,
-        "log_id":         adaptation_log_id,
+        "applied":     True,
+        "parameter":   parameter,
+        "old_value":   current_value,
+        "new_value":   proposed_value,
+        "new_version": new_version,
+        "log_id":      adaptation_log_id,
     }
 
 
@@ -324,8 +383,7 @@ def _notify_change_applied(
             f"Confidence: `{confidence}`\n"
             f"Expected WR improvement: `+{expected_imp:.1f}%`\n\n"
             f"System version: `{new_version}`\n"
-            f"Review checkpoint: `{rules['rollback_review_trades']}` trades from now\n"
-            f"Rollback trigger: WR drops `{rules['rollback_trigger_drop']*100:.0f}%` below baseline\n\n"
+            f"Review checkpoint: `{rules['rollback_review_trades']}` trades from now\n\n"
             f"_Type /rollback {parameter} to revert manually._"
         ))
     except Exception as e:

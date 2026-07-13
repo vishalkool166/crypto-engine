@@ -95,8 +95,8 @@ async def record(trade_id: int) -> bool:
             dow        = trade.opened_at.weekday() if trade.opened_at else None
             hod        = trade.opened_at.hour     if trade.opened_at else None
 
-            net_pnl    = float(trade.net_pnl or trade.pnl or 0)
-            gross_pnl  = net_pnl + float(trade.total_commission or 0)
+            net_pnl   = float(trade.net_pnl or trade.pnl or 0)
+            gross_pnl = net_pnl + float(trade.total_commission or 0)
 
             capital_efficiency = round(net_pnl / margin, 4) if margin > 0 else 0.0
 
@@ -122,6 +122,23 @@ async def record(trade_id: int) -> bool:
                     captured_move_pct = round(gross_pnl / max_possible * 100, 1)
                     captured_move_pct = min(captured_move_pct, 100.0)
                     move_left_pct     = round(100.0 - captured_move_pct, 1)
+
+            thesis_strength_at_close = trade.thesis_strength_at_close
+            thesis_pillars_at_close  = trade.thesis_pillars_at_close
+            thesis_exit_reason       = trade.thesis_exit_reason
+            velocity_at_close        = trade.velocity_at_close
+
+            if not thesis_strength_at_close:
+                try:
+                    from trade.thesis_tracker import get_thesis
+                    thesis = get_thesis(trade_id)
+                    if thesis:
+                        thesis_strength_at_close = thesis.thesis_strength
+                        thesis_pillars_at_close  = _pillars_json(thesis)
+                        thesis_exit_reason       = thesis.action_reason
+                        velocity_at_close        = thesis.velocity
+                except Exception:
+                    pass
 
             outcome = TradeOutcome(
                 trade_id                 = trade_id,
@@ -171,6 +188,10 @@ async def record(trade_id: int) -> bool:
                 fee_pct_of_profit        = fee_pct_of_profit,
                 captured_move_pct        = captured_move_pct if captured_move_pct > 0 else None,
                 move_left_pct            = move_left_pct     if captured_move_pct > 0 else None,
+                thesis_strength_at_close = thesis_strength_at_close,
+                thesis_pillars_at_close  = thesis_pillars_at_close,
+                thesis_exit_reason       = thesis_exit_reason,
+                velocity_at_close        = velocity_at_close,
             )
 
             with get_session() as db2:
@@ -180,16 +201,29 @@ async def record(trade_id: int) -> bool:
 
         log.info(
             "Outcome recorded: trade_id=%s coin=%s outcome=%s pnl_r=%.2f "
-            "dur=%.1fh cap_eff=%.4f risk_mult=%.3f captured=%.1f%%",
+            "dur=%.1fh cap_eff=%.4f risk_mult=%.3f captured=%.1f%% thesis=%.2f",
             trade_id, trade.coin, trade.outcome, pnl_r,
             duration_hours, capital_efficiency, risk_multiple,
-            captured_move_pct if captured_move_pct else 0.0
+            captured_move_pct if captured_move_pct else 0.0,
+            thesis_strength_at_close or 0.0,
         )
         return True
 
     except Exception as e:
         log.error("outcome_recorder.record trade_id=%s: %s", trade_id, e)
         return False
+
+
+def _pillars_json(thesis) -> str:
+    import json
+    pillars = {}
+    for name, pillar in thesis.pillars.items():
+        pillars[name] = {
+            "valid":  pillar.valid,
+            "score":  round(pillar.score, 3),
+            "reason": pillar.reason,
+        }
+    return json.dumps(pillars)
 
 
 async def _calculate_mae_mfe(
@@ -388,4 +422,8 @@ def _row_to_dict(row: TradeOutcome) -> dict:
         "fee_pct_of_profit":        row.fee_pct_of_profit,
         "captured_move_pct":        row.captured_move_pct,
         "move_left_pct":            row.move_left_pct,
+        "thesis_strength_at_close": row.thesis_strength_at_close,
+        "thesis_pillars_at_close":  row.thesis_pillars_at_close,
+        "thesis_exit_reason":       row.thesis_exit_reason,
+        "velocity_at_close":        row.velocity_at_close,
     }

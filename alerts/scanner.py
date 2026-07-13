@@ -329,21 +329,51 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
             log.info("_execute_trade: %s already has position", coin)
             return
 
+        from datetime import datetime, timezone
+        _hour = datetime.now(timezone.utc).hour
+        if 8   <= _hour < 13: _session = "London"
+        elif 13 <= _hour < 17: _session = "London/NY Overlap"
+        elif 17 <= _hour < 21: _session = "New York"
+        elif 0  <= _hour < 8:  _session = "Asia"
+        else:                   _session = "Off Hours"
+
+        _regime = signal.get("regime", "")
+        if not _regime:
+            _regime = _derive_regime(signal, "watching")
+
+        sizing_result = {
+            "risk_pct":      signal.get("risk_pct",      0),
+            "risk_amt":      signal.get("risk_amt",      0),
+            "position_size": signal.get("pos_size",      0),
+            "stake":         signal.get("stake",         0),
+            "leverage":      signal.get("leverage",      0),
+            "drawdown_pct":  signal.get("drawdown_pct",  0),
+            "win_rate":      signal.get("win_rate"),
+            "streak":        signal.get("streak",        0),
+            "streak_type":   signal.get("streak_type"),
+            "today_pnl":     signal.get("today_pnl",     0),
+            "open_trades":   signal.get("open_trades",   0),
+            "sweep_score":   signal.get("sweep_score",   0),
+            "zone_score":    signal.get("zone_score",    0),
+            "trigger_score": signal.get("trigger_score", 0),
+        }
+
         result = await open_position(
-            coin      = coin,
-            direction = signal["direction"],
-            entry     = float(signal["entry"]),
-            sl        = float(signal["sl"]),
-            tp        = float(signal["tp1"]),
-            stake     = float(signal["stake"]),
-            leverage  = int(signal["leverage"]),
-            signal_id = db_id,
-            grade     = signal["grade"],
-            regime    = "",
-            session   = "",
-            score     = float(signal["score"]),
-            tp2       = float(signal["tp2"]) if signal.get("tp2") else None,
-            atr_15m   = float(signal.get("atr_15m", 0)),
+            coin          = coin,
+            direction     = signal["direction"],
+            entry         = float(signal["entry"]),
+            sl            = float(signal["sl"]),
+            tp            = float(signal["tp1"]),
+            stake         = float(signal["stake"]),
+            leverage      = int(signal["leverage"]),
+            signal_id     = db_id,
+            grade         = signal["grade"],
+            regime        = _regime,
+            session       = _session,
+            score         = float(signal["score"]),
+            tp2           = float(signal["tp2"]) if signal.get("tp2") else None,
+            atr_15m       = float(signal.get("atr_15m", 0)),
+            sizing_result = sizing_result,
         )
 
         if result.get("success"):

@@ -156,6 +156,31 @@ class Trade(Base):
     mfe                    = Column(Float, nullable=True)
     duration_hours         = Column(Float, nullable=True)
 
+    # ThesisTracker fields
+    thesis_strength_at_close  = Column(Float, nullable=True)
+    thesis_pillars_at_close   = Column(Text, nullable=True)
+    thesis_exit_reason        = Column(Text, nullable=True)
+    captured_move_pct_at_exit = Column(Float, nullable=True)
+    expected_move_pct         = Column(Float, nullable=True)
+    velocity_at_close         = Column(Float, nullable=True)
+
+    # Binance exact fields
+    binance_realized_pnl      = Column(Float, nullable=True)
+    binance_commission_total  = Column(Float, nullable=True)
+    binance_funding_total     = Column(Float, nullable=True)
+    binance_net_pnl           = Column(Float, nullable=True)
+    binance_entry_price       = Column(Float, nullable=True)
+    binance_exit_price        = Column(Float, nullable=True)
+    binance_fill_qty          = Column(Float, nullable=True)
+    binance_leverage          = Column(Integer, nullable=True)
+    binance_margin_type       = Column(String, nullable=True)
+    binance_liq_price         = Column(Float, nullable=True)
+    binance_mark_price_entry  = Column(Float, nullable=True)
+    binance_wallet_at_open    = Column(Float, nullable=True)
+    binance_wallet_at_close   = Column(Float, nullable=True)
+    binance_synced            = Column(Boolean, default=False)
+    binance_synced_at         = Column(DateTime, nullable=True)
+
 
 class Candle(Base):
     __tablename__ = "candles"
@@ -447,6 +472,20 @@ class TradeOutcome(Base):
     captured_move_pct        = Column(Float, nullable=True)
     move_left_pct            = Column(Float, nullable=True)
 
+    # ThesisTracker fields
+    thesis_strength_at_close = Column(Float, nullable=True)
+    thesis_pillars_at_close  = Column(Text, nullable=True)
+    thesis_exit_reason       = Column(Text, nullable=True)
+    velocity_at_close        = Column(Float, nullable=True)
+
+    # Binance exact fields
+    binance_realized_pnl     = Column(Float, nullable=True)
+    binance_commission_total = Column(Float, nullable=True)
+    binance_funding_total    = Column(Float, nullable=True)
+    binance_net_pnl          = Column(Float, nullable=True)
+    binance_entry_price      = Column(Float, nullable=True)
+    binance_exit_price       = Column(Float, nullable=True)
+
 
 class SystemVersion(Base):
     __tablename__ = "system_versions"
@@ -523,10 +562,241 @@ class RollbackCheckpoint(Base):
     rolled_back           = Column(Boolean, default=False)
 
 
+class ThesisSnapshot(Base):
+    __tablename__ = "thesis_snapshots"
+
+    id                    = Column(Integer, primary_key=True)
+    trade_id              = Column(Integer, nullable=False, index=True)
+    coin                  = Column(String, nullable=False)
+    direction             = Column(String, nullable=False)
+    grade                 = Column(String, nullable=True)
+    captured_at           = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    sweep_valid           = Column(Boolean, nullable=True)
+    sweep_score           = Column(Float, nullable=True)
+    zone_valid            = Column(Boolean, nullable=True)
+    zone_score            = Column(Float, nullable=True)
+    structure_valid       = Column(Boolean, nullable=True)
+    structure_score       = Column(Float, nullable=True)
+    btc_alignment_valid   = Column(Boolean, nullable=True)
+    btc_alignment_score   = Column(Float, nullable=True)
+    regime_valid          = Column(Boolean, nullable=True)
+    regime_score          = Column(Float, nullable=True)
+
+    thesis_strength       = Column(Float, nullable=True)
+    thesis_action         = Column(String, nullable=True)
+
+    live_price            = Column(Float, nullable=True)
+    hours_open            = Column(Float, nullable=True)
+    move_pct              = Column(Float, nullable=True)
+    captured_move_pct     = Column(Float, nullable=True)
+    velocity              = Column(Float, nullable=True)
+    current_regime        = Column(String, nullable=True)
+    current_session       = Column(String, nullable=True)
+    funding_rate          = Column(Float, nullable=True)
+
+    entry_regime          = Column(String, nullable=True)
+    entry_thesis_strength = Column(Float, nullable=True)
+    expected_move_pct     = Column(Float, nullable=True)
+
+    outcome               = Column(String, nullable=True)
+    final_pnl             = Column(Float, nullable=True)
+
+
+class BinanceTradeRecord(Base):
+    __tablename__ = "binance_trade_records"
+
+    id                      = Column(Integer, primary_key=True)
+    trade_id                = Column(Integer, nullable=False, index=True)
+    coin                    = Column(String, nullable=False)
+    symbol                  = Column(String, nullable=False)
+    direction               = Column(String, nullable=False)
+    recorded_at             = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Entry fill data
+    entry_order_id          = Column(String, nullable=True)
+    entry_avg_price         = Column(Float, nullable=True)
+    entry_filled_qty        = Column(Float, nullable=True)
+    entry_commission        = Column(Float, nullable=True)
+    entry_commission_asset  = Column(String, nullable=True)
+    entry_role              = Column(String, nullable=True)
+    entry_realized_pnl      = Column(Float, nullable=True)
+
+    # Exit fill data
+    exit_order_id           = Column(String, nullable=True)
+    exit_avg_price          = Column(Float, nullable=True)
+    exit_filled_qty         = Column(Float, nullable=True)
+    exit_commission         = Column(Float, nullable=True)
+    exit_commission_asset   = Column(String, nullable=True)
+    exit_role               = Column(String, nullable=True)
+    exit_realized_pnl       = Column(Float, nullable=True)
+
+    # Position data from Binance
+    leverage                = Column(Integer, nullable=True)
+    margin_type             = Column(String, nullable=True)
+    position_margin         = Column(Float, nullable=True)
+    liquidation_price       = Column(Float, nullable=True)
+    mark_price_at_entry     = Column(Float, nullable=True)
+    mark_price_at_exit      = Column(Float, nullable=True)
+
+    # Account state at open/close
+    wallet_balance_at_open  = Column(Float, nullable=True)
+    wallet_balance_at_close = Column(Float, nullable=True)
+    available_at_open       = Column(Float, nullable=True)
+    available_at_close      = Column(Float, nullable=True)
+    unrealized_pnl_at_open  = Column(Float, nullable=True)
+
+    # Computed from Binance data
+    total_commission        = Column(Float, nullable=True)
+    total_funding           = Column(Float, nullable=True)
+    gross_realized_pnl      = Column(Float, nullable=True)
+    net_pnl                 = Column(Float, nullable=True)
+
+    # Raw payloads — never lose data
+    raw_entry_order_json    = Column(Text, nullable=True)
+    raw_exit_order_json     = Column(Text, nullable=True)
+    raw_position_json       = Column(Text, nullable=True)
+    raw_account_json        = Column(Text, nullable=True)
+    raw_income_json         = Column(Text, nullable=True)
+
+    synced_at               = Column(DateTime, nullable=True)
+    income_fetched          = Column(Boolean, default=False)
+
+
+class BinanceAccountSnapshot(Base):
+    __tablename__ = "binance_account_snapshots"
+
+    id                   = Column(Integer, primary_key=True)
+    snapshot_at          = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    trigger              = Column(String, nullable=True)
+    trade_id             = Column(Integer, nullable=True)
+
+    wallet_balance       = Column(Float, nullable=True)
+    available_balance    = Column(Float, nullable=True)
+    total_unrealized_pnl = Column(Float, nullable=True)
+    total_margin_used    = Column(Float, nullable=True)
+    total_position_count = Column(Integer, nullable=True)
+
+    positions_json       = Column(Text, nullable=True)
+    balances_json        = Column(Text, nullable=True)
+    raw_account_json     = Column(Text, nullable=True)
+
+
+class BinanceFundingRecord(Base):
+    __tablename__ = "binance_funding_records"
+
+    id                      = Column(Integer, primary_key=True)
+    trade_id                = Column(Integer, nullable=True, index=True)
+    coin                    = Column(String, nullable=False)
+    symbol                  = Column(String, nullable=False)
+    funding_time            = Column(DateTime, nullable=False)
+    funding_rate            = Column(Float, nullable=True)
+    funding_fee             = Column(Float, nullable=False)
+    position_size_at_funding= Column(Float, nullable=True)
+    mark_price_at_funding   = Column(Float, nullable=True)
+    raw_income_json         = Column(Text, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "funding_time", name="uq_funding_record"),
+    )
+
+
+class PillarWeightHistory(Base):
+    __tablename__ = "pillar_weight_history"
+
+    id                      = Column(Integer, primary_key=True)
+    applied_at              = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    pillar                  = Column(String, nullable=False)
+    old_weight              = Column(Float, nullable=False)
+    new_weight              = Column(Float, nullable=False)
+    data_basis              = Column(Integer, nullable=True)
+    failure_count           = Column(Integer, nullable=True)
+    win_rate_when_failed    = Column(Float, nullable=True)
+    win_rate_when_valid     = Column(Float, nullable=True)
+    expected_improvement    = Column(Float, nullable=True)
+    reasoning               = Column(Text, nullable=True)
+    approved_by             = Column(String, nullable=True)
+    system_version_before   = Column(String, nullable=True)
+    system_version_after    = Column(String, nullable=True)
+    rolled_back             = Column(Boolean, default=False)
+    rolled_back_at          = Column(DateTime, nullable=True)
+
+
 def init_db():
     Base.metadata.create_all(engine)
+
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+
+    migrations = {
+        "trades": [
+            "thesis_strength_at_close FLOAT",
+            "thesis_pillars_at_close TEXT",
+            "thesis_exit_reason TEXT",
+            "captured_move_pct_at_exit FLOAT",
+            "expected_move_pct FLOAT",
+            "velocity_at_close FLOAT",
+            "binance_realized_pnl FLOAT",
+            "binance_commission_total FLOAT",
+            "binance_funding_total FLOAT",
+            "binance_net_pnl FLOAT",
+            "binance_entry_price FLOAT",
+            "binance_exit_price FLOAT",
+            "binance_fill_qty FLOAT",
+            "binance_leverage INTEGER",
+            "binance_margin_type TEXT",
+            "binance_liq_price FLOAT",
+            "binance_mark_price_entry FLOAT",
+            "binance_wallet_at_open FLOAT",
+            "binance_wallet_at_close FLOAT",
+            "binance_synced BOOLEAN DEFAULT 0",
+            "binance_synced_at DATETIME",
+        ],
+        "trade_outcomes": [
+            "thesis_strength_at_close FLOAT",
+            "thesis_pillars_at_close TEXT",
+            "thesis_exit_reason TEXT",
+            "velocity_at_close FLOAT",
+            "binance_realized_pnl FLOAT",
+            "binance_commission_total FLOAT",
+            "binance_funding_total FLOAT",
+            "binance_net_pnl FLOAT",
+            "binance_entry_price FLOAT",
+            "binance_exit_price FLOAT",
+        ],
+        "signal_snapshots": [
+            "raw_features_json TEXT",
+        ],
+        "thesis_snapshots": [
+            "outcome TEXT",
+            "final_pnl FLOAT",
+        ],
+    }
+
+    with engine.connect() as conn:
+        for table, columns in migrations.items():
+            try:
+                existing = {c["name"] for c in inspector.get_columns(table)}
+            except Exception:
+                continue
+            for col_def in columns:
+                col_name = col_def.split()[0]
+                if col_name not in existing:
+                    try:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_def}"))
+                        conn.commit()
+                        import logging
+                        logging.getLogger(__name__).info(
+                            "Migration: added %s to %s", col_name, table
+                        )
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "Migration skip %s.%s: %s", table, col_name, e
+                        )
+
     import logging
-    logging.getLogger(__name__).info("Database tables created")
+    logging.getLogger(__name__).info("Database initialized")
 
 
 init_db()
