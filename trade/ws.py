@@ -27,13 +27,12 @@ _pending_commissions:   dict                = {}
 _trade_event_callbacks: list                = []
 _kline_callbacks:       list                = []
 
-# Binance exact account state — updated from ACCOUNT_UPDATE WS
 _binance_account: dict = {
     "wallet_balance":       0.0,
     "available_balance":    0.0,
     "total_unrealized_pnl": 0.0,
     "positions":            {},
-    "updated_at":           0.0,
+    "updated_at":           time.time(),
 }
 
 

@@ -778,7 +778,7 @@ async def close_position(
             slippage_exit = abs(exit_price - sl_price) / sl_price * 100
 
         net_pnl = (
-            round(realized_pnl - exit_fee, 8) if realized_pnl != 0
+            round(realized_pnl - total_fee, 8) if realized_pnl != 0
             else _calc_pnl(
                 direction  = direction,
                 entry      = _get_field(trade_id, "entry_price"),

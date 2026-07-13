@@ -550,11 +550,7 @@ def _determine_action(thesis: ThesisState) -> tuple[str, str]:
     stall_hours  = thesis.stall_hours
     captured     = thesis.captured_move_pct
 
-    time_limit   = GRADE_TIME_LIMITS.get(grade, 32.0)
-    time_used_pct= hours_open / time_limit if time_limit > 0 else 1.0
-
-    if strength < THESIS_THRESHOLDS["exit"]:
-        return "exit", f"Thesis strength {strength:.2f} — all pillars failed"
+    time_limit    = GRADE_TIME_LIMITS.get(grade, 32.0)
 
     if hours_open >= time_limit:
         if move_pct > 0.1:
@@ -564,9 +560,12 @@ def _determine_action(thesis: ThesisState) -> tuple[str, str]:
         else:
             return "exit", f"Time limit {time_limit}h reached — adverse"
 
-    if strength < THESIS_THRESHOLDS["prepare_exit"]:
-        if move_pct > 0:
-            return "exit", f"Thesis {strength:.2f} — degraded, protecting profit"
+    if strength < 0.20:
+        return "exit", f"Thesis {strength:.2f} — all pillars failed"
+
+    if strength < 0.40:
+        if move_pct > 0.5:
+            return "exit", f"Thesis {strength:.2f} — degraded, protecting meaningful profit"
         return "prepare_exit", f"Thesis {strength:.2f} — severely degraded"
 
     if stalled and stall_hours >= VELOCITY_STALL_HOURS:
@@ -577,14 +576,10 @@ def _determine_action(thesis: ThesisState) -> tuple[str, str]:
         elif move_pct <= 0:
             return "tighten", f"Velocity stalled {stall_hours:.1f}h — adverse"
 
-    if strength < THESIS_THRESHOLDS["tighten"]:
-        if move_pct > 0:
-            return "tighten", f"Thesis {strength:.2f} — move to breakeven"
+    if strength < 0.60:
         return "tighten", f"Thesis {strength:.2f} — tighten SL"
 
-    if strength < THESIS_THRESHOLDS["monitor"]:
-        if time_used_pct >= 0.75:
-            return "tighten", f"Thesis {strength:.2f} — late in trade, tightening"
+    if strength < 0.80:
         return "monitor", f"Thesis {strength:.2f} — monitoring"
 
     return "hold", f"Thesis {strength:.2f} — intact"
