@@ -7,11 +7,14 @@ from datetime import datetime, timezone
 logging.basicConfig(level=logging.INFO, format="%(asctime)s — %(levelname)s — %(message)s")
 log = logging.getLogger(__name__)
 
-TIMEFRAMES = ["4h", "1h"]
+TIMEFRAMES = ["1w", "1d", "4h", "1h", "15m"]
 
 TARGET_CANDLES = {
-    "4h": 5000,
-    "1h": 5000,
+    "1w":  500,
+    "1d":  1000,
+    "4h":  5000,
+    "1h":  5000,
+    "15m": 2000,
 }
 
 SLEEP_BETWEEN = 0.5
@@ -27,6 +30,17 @@ def get_coins_from_db() -> list:
             return coins
     except Exception as e:
         log.error(f"Failed to load coins from DB: {e}")
+        return []
+
+
+def get_all_coins_from_db() -> list:
+    try:
+        from database import SessionLocal, CoinConfig
+        with SessionLocal() as db:
+            rows = db.query(CoinConfig).all()
+            return [r.coin for r in rows]
+    except Exception as e:
+        log.error(f"Failed to load all coins from DB: {e}")
         return []
 
 
@@ -111,8 +125,86 @@ async def backfill_coin(exchange, coin: str, tf: str, target: int):
     log.info(f"{coin} {tf}: backfill complete — total saved: {total_saved}")
 
 
+def purge_coin_data(coin: str) -> dict:
+    try:
+        from database import SessionLocal, Candle
+        from sqlalchemy import and_
+
+        deleted = {}
+        with SessionLocal() as db:
+            for tf in TIMEFRAMES:
+                count = db.query(Candle).filter(
+                    and_(
+                        Candle.coin      == coin,
+                        Candle.timeframe == tf,
+                    )
+                ).delete()
+                deleted[tf] = count
+            db.commit()
+
+        total = sum(deleted.values())
+        log.info(f"Purged {coin}: {total} candles deleted — {deleted}")
+        return {"coin": coin, "deleted": deleted, "total": total}
+
+    except Exception as e:
+        log.error(f"Purge failed {coin}: {e}")
+        return {"coin": coin, "deleted": {}, "total": 0, "error": str(e)}
+
+
+def purge_disabled_coins() -> list:
+    try:
+        from database import SessionLocal, CoinConfig, Candle
+        from sqlalchemy import and_
+
+        with SessionLocal() as db:
+            disabled = db.query(CoinConfig).filter(CoinConfig.enabled == False).all()
+            disabled_coins = [r.coin for r in disabled]
+
+        if not disabled_coins:
+            log.info("No disabled coins to purge")
+            return []
+
+        results = []
+        for coin in disabled_coins:
+            result = purge_coin_data(coin)
+            results.append(result)
+
+        log.info(f"Purged {len(results)} disabled coins")
+        return results
+
+    except Exception as e:
+        log.error(f"purge_disabled_coins: {e}")
+        return []
+
+
+def get_candle_summary() -> dict:
+    try:
+        from data.store import get_candle_count
+        coins   = get_coins_from_db()
+        summary = {}
+
+        for coin in coins:
+            summary[coin] = {}
+            for tf in TIMEFRAMES:
+                count = get_candle_count(coin, tf)
+                target = TARGET_CANDLES.get(tf, 1000)
+                summary[coin][tf] = {
+                    "count":    count,
+                    "target":   target,
+                    "complete": count >= target,
+                    "pct":      round(count / target * 100, 1) if target > 0 else 0,
+                }
+
+        return summary
+
+    except Exception as e:
+        log.error(f"get_candle_summary: {e}")
+        return {}
+
+
 def _tf_ms(tf: str) -> int:
     mapping = {
+        "15m": 900000,
         "1h":  3600000,
         "4h":  14400000,
         "1d":  86400000,
@@ -121,7 +213,7 @@ def _tf_ms(tf: str) -> int:
     return mapping.get(tf, 3600000)
 
 
-async def run_backfill(coins: list = None):
+async def run_backfill(coins: list = None, purge_disabled: bool = True):
     import ccxt.async_support as ccxt_async
     from dotenv import load_dotenv
     import os
@@ -135,6 +227,11 @@ async def run_backfill(coins: list = None):
     })
 
     try:
+        if purge_disabled:
+            purge_results = purge_disabled_coins()
+            if purge_results:
+                log.info(f"Purged {len(purge_results)} disabled coins before backfill")
+
         if not coins:
             coins = get_coins_from_db()
 
@@ -151,10 +248,50 @@ async def run_backfill(coins: list = None):
                     await backfill_coin(exchange, coin, tf, target)
                 except Exception as e:
                     log.error(f"Backfill failed {coin} {tf}: {e}")
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.3)
+            await asyncio.sleep(1)
 
         log.info("Backfill complete")
 
+        summary = get_candle_summary()
+        incomplete = []
+        for coin, tfs in summary.items():
+            for tf, data in tfs.items():
+                if not data["complete"] and tf not in ("1w",):
+                    incomplete.append(f"{coin} {tf}: {data['count']}/{data['target']}")
+
+        if incomplete:
+            log.warning(f"Incomplete after backfill: {incomplete}")
+        else:
+            log.info("All coins fully backfilled")
+
+    finally:
+        await exchange.close()
+
+
+async def run_backfill_single(coin: str):
+    import ccxt.async_support as ccxt_async
+    from dotenv import load_dotenv
+    import os
+
+    load_dotenv()
+
+    exchange = ccxt_async.binance({
+        "apiKey":  os.getenv("BINANCE_API_KEY"),
+        "secret":  os.getenv("BINANCE_SECRET"),
+        "options": {"defaultType": "future"}
+    })
+
+    try:
+        log.info(f"Backfilling single coin: {coin}")
+        for tf in TIMEFRAMES:
+            target = TARGET_CANDLES.get(tf, 3000)
+            try:
+                await backfill_coin(exchange, coin, tf, target)
+            except Exception as e:
+                log.error(f"Backfill failed {coin} {tf}: {e}")
+            await asyncio.sleep(0.3)
+        log.info(f"Single coin backfill complete: {coin}")
     finally:
         await exchange.close()
 

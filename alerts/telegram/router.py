@@ -46,7 +46,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         cmd_version, cmd_analysis,
     )
     from alerts.telegram.commands.backtest    import (
-        cmd_backtest, cmd_backfill,
+        cmd_backtest, cmd_backfill, cmd_candle_status,
     )
     from alerts.telegram.commands.help        import cmd_help
 
@@ -161,6 +161,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         "/version":     cmd_version,
         "/performance": cmd_performance,
         "/analysis":    cmd_analysis,
+        "/candles":     cmd_candle_status,
     }
 
     if t.startswith("/"):
