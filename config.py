@@ -337,7 +337,7 @@ class Config:
         "trigger_min_body_ratio":    0.55,
         "trigger_min_wick_ratio":    0.55,
         "trigger_min_score":         0.6,
-        "trigger_lookback":          4,
+        "trigger_lookback":          6,
 
         "sl_buffer_atr_mult":        0.3,
         "sl_min_pct":                0.50,
