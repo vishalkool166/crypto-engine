@@ -138,7 +138,7 @@ ADAPTATION_CONFIG = {
         "max_sweep_age_hours":   24,
     },
     "soft_limits": {
-        "sweep_min_score":       {"min": 0.15, "max": 0.50, "current": 0.30},
+        "sweep_min_score":       {"min": 0.10, "max": 0.50, "current": 0.10},
         "zone_min_score":        {"min": 0.30, "max": 0.70, "current": 0.40},
         "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
@@ -326,7 +326,7 @@ class Config:
 
         "sweep_max_age_hours":       12,
         "sweep_min_wick_atr":        0.2,
-        "sweep_min_score":           0.3,
+        "sweep_min_score":           0.1,
 
         "zone_min_width_atr":        0.15,
         "zone_max_dist_atr":         4.0,
