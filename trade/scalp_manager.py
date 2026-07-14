@@ -17,22 +17,22 @@ def _get_open_scalp_trades() -> list:
                 TradeModel.is_active == True
             ).all()
             return [{
-                "id":                trade.id,
-                "coin":              trade.coin,
-                "direction":         trade.direction,
-                "grade":             trade.grade or "A",
-                "entry_price":       float(trade.entry_price  or 0),
-                "sl_price":          float(trade.sl_price     or 0),
-                "tp1_price":         float(trade.tp1_price    or 0),
-                "tp2_price":         float(trade.tp2_price    or 0),
-                "margin_used":       float(trade.margin_used  or 0),
-                "leverage":          int(trade.leverage       or 1),
-                "tp1_hit":           bool(trade.tp1_hit),
-                "opened_at":         trade.opened_at,
-                "tp1_hit_at":        getattr(trade, "tp1_hit_at", None),
-                "signal_id":         trade.signal_id,
-                "regime_at_entry":   trade.regime_at_entry  or "",
-                "session_at_entry":  trade.session_at_entry or "",
+                "id":              trade.id,
+                "coin":            trade.coin,
+                "direction":       trade.direction,
+                "grade":           trade.grade or "A",
+                "entry_price":     float(trade.entry_price  or 0),
+                "sl_price":        float(trade.sl_price     or 0),
+                "tp1_price":       float(trade.tp1_price    or 0),
+                "tp2_price":       float(trade.tp2_price    or 0),
+                "margin_used":     float(trade.margin_used  or 0),
+                "leverage":        int(trade.leverage       or 1),
+                "tp1_hit":         bool(trade.tp1_hit),
+                "opened_at":       trade.opened_at,
+                "tp1_hit_at":      getattr(trade, "tp1_hit_at", None),
+                "signal_id":       trade.signal_id,
+                "regime_at_entry": trade.regime_at_entry  or "",
+                "session_at_entry":trade.session_at_entry or "",
             } for trade in trades]
     except Exception as e:
         log.error("_get_open_scalp_trades: %s", e)
@@ -97,12 +97,16 @@ async def _partial_close(trade: dict, reason: str) -> bool:
             cancel_all_orders, cancel_all_algo_orders
         )
         from trade.executor import _round_step, _mark_closed
+        from engines.sizing import _tp_split_for_grade
 
         coin     = trade["coin"]
         symbol   = f"{coin}USDT"
         is_short = trade["direction"] == "SHORT"
         margin   = trade["margin_used"]
         leverage = trade["leverage"]
+        grade    = trade.get("grade", "A")
+
+        tp1_pct, _ = _tp_split_for_grade(grade)
 
         positions = await get_positions()
         position  = next(
@@ -116,7 +120,7 @@ async def _partial_close(trade: dict, reason: str) -> bool:
             return False
 
         total_qty  = abs(float(position.get("positionAmt", 0)))
-        close_qty  = total_qty * SE["tp1_close_pct"]
+        close_qty  = total_qty * tp1_pct
         prec       = await get_symbol_precision(symbol)
         close_qty  = _round_step(close_qty, prec["step_size"])
         close_side = "BUY" if is_short else "SELL"
@@ -149,15 +153,15 @@ async def _partial_close(trade: dict, reason: str) -> bool:
         from alerts.telegram import send
         await send(
             f"🎯 *{coin} TP1 Hit — Partial Close*\n\n"
-            f"Closed:      `{SE['tp1_close_pct']*100:.0f}%` at `${exit_price:.6f}`\n"
+            f"Closed:      `{tp1_pct*100:.0f}%` at `${exit_price:.6f}`\n"
             f"Partial PnL: `${partial_pnl:.4f}`\n"
             f"SL moved to breakeven: `${entry:.6f}`\n"
-            f"Remaining `{SE['tp2_close_pct']*100:.0f}%` running to TP2"
+            f"Remaining `{(1-tp1_pct)*100:.0f}%` running to TP2"
         )
 
         log.info(
             "Partial close: %s %.0f%% at %.6f pnl:%.4f",
-            coin, SE["tp1_close_pct"] * 100, exit_price, partial_pnl
+            coin, tp1_pct * 100, exit_price, partial_pnl
         )
         return True
 
@@ -241,6 +245,7 @@ async def run_cycle() -> None:
         is_short  = trade["direction"] == "SHORT"
         tp1_hit   = trade["tp1_hit"]
         opened_at = trade["opened_at"]
+        grade     = trade.get("grade", "A")
 
         live_price = get_mark_price(coin) or entry
 
@@ -251,6 +256,9 @@ async def run_cycle() -> None:
         )
 
         await _ensure_thesis(trade)
+
+        grade_time_limit = cfg.get_thesis_time_limit(grade)
+        hours_open       = _hours_since(opened_at)
 
         if tp1_hit:
             hours_since_tp1 = _hours_since(trade.get("tp1_hit_at"))
@@ -271,7 +279,20 @@ async def run_cycle() -> None:
         if thesis and thesis.action == "exit":
             continue
 
-        hours_open = _hours_since(opened_at)
+        if hours_open >= grade_time_limit:
+            if move_pct > 0.001:
+                reason = "time_stop_profit"
+            elif move_pct > -0.001:
+                reason = "time_stop_breakeven"
+            else:
+                reason = "time_stop_loss"
+
+            log.info(
+                "Grade time limit reached: %s grade:%s limit:%.0fh open:%.1fh move:%.2f%%",
+                coin, grade, grade_time_limit, hours_open, move_pct * 100
+            )
+            await _time_stop_close(trade, reason)
+            continue
 
         if SE["close_before_asia"] and _is_asia_session():
             opened_during_asia = _was_opened_during_asia(opened_at)

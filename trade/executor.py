@@ -484,6 +484,9 @@ async def open_position(
 
     SE = cfg.SCALP_ENGINE
 
+    from engines.sizing import _tp_split_for_grade
+    tp1_pct, tp2_pct = _tp_split_for_grade(grade)
+
     trade_id = 0
 
     try:
@@ -545,8 +548,8 @@ async def open_position(
             _cancel_pending_trade(trade_id)
             return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
-        tp1_qty_final = _round_step(total_quantity * SE["tp1_close_pct"], qty_step)
-        tp2_qty_final = _round_step(total_quantity * SE["tp2_close_pct"], qty_step)
+        tp1_qty_final = _round_step(total_quantity * tp1_pct, qty_step)
+        tp2_qty_final = _round_step(total_quantity * tp2_pct, qty_step)
 
         if tp1_qty_final <= 0:
             tp1_qty_final = total_quantity
@@ -584,8 +587,8 @@ async def open_position(
         entry_role   = comm.get("role", "taker")
         slippage_pct = abs(fill_price - entry) / entry * 100 if entry > 0 else 0.0
 
-        tp1_qty_final = _round_step(filled_qty * SE["tp1_close_pct"], qty_step)
-        tp2_qty_final = _round_step(filled_qty * SE["tp2_close_pct"], qty_step)
+        tp1_qty_final = _round_step(filled_qty * tp1_pct, qty_step)
+        tp2_qty_final = _round_step(filled_qty * tp2_pct, qty_step)
 
         if tp1_qty_final <= 0:
             tp1_qty_final = filled_qty
@@ -678,8 +681,8 @@ async def open_position(
             f"{emoji} *{coin} {direction} Opened — {mode}*\n\n"
             f"Entry:   `{fill_price}` (signal `{entry}` slip `{slippage_pct:.4f}%`)\n"
             f"SL:      `{sl_rounded}` {sl_status}\n"
-            f"TP1:     `{tp1_rounded}` qty:`{tp1_qty_final}` {t1_status}\n"
-            f"TP2:     `{tp2_rounded or 'none'}` qty:`{tp2_qty_final}` {t2_status}\n"
+            f"TP1:     `{tp1_rounded}` qty:`{tp1_qty_final}` ({tp1_pct*100:.0f}%) {t1_status}\n"
+            f"TP2:     `{tp2_rounded or 'none'}` qty:`{tp2_qty_final}` ({tp2_pct*100:.0f}%) {t2_status}\n"
             f"Stake:   `${stake:.2f}` × `{leverage}x` = `${stake*leverage:.2f}`\n"
             f"Fee:     `${entry_fee:.8f}` ({entry_role})\n"
             f"Grade:   `{grade}` · Score `{score}`"
@@ -807,16 +810,29 @@ async def close_position(
         except Exception as _oe:
             log.error("outcome_recorder failed trade_id=%s: %s", trade_id, _oe)
 
+        thesis_line   = ""
+        captured_line = ""
+        try:
+            from trade.thesis_tracker import get_thesis
+            thesis = get_thesis(trade_id)
+            if thesis:
+                thesis_line   = f"Thesis:   `{thesis.thesis_strength:.2f}` at close\n"
+                captured_line = f"Captured: `{thesis.captured_move_pct:.1f}%` of predicted move\n"
+        except Exception:
+            pass
+
         from alerts.telegram import send
         emoji        = "✅" if net_pnl >= 0 else "❌"
         pnl_str      = f"+${net_pnl:.4f}" if net_pnl >= 0 else f"-${abs(net_pnl):.4f}"
         reason_label = CLOSE_REASONS.get(reason, reason)
         await send(
             f"{emoji} *{coin} {direction} Closed*\n\n"
-            f"Exit:   `{exit_price}`\n"
-            f"PnL:    `{pnl_str}`\n"
-            f"Fee:    `${total_fee:.8f}` ({exit_role})\n"
-            f"Reason: `{reason_label}`"
+            f"Exit:     `{exit_price}`\n"
+            f"PnL:      `{pnl_str}`\n"
+            f"Fee:      `${total_fee:.8f}` ({exit_role})\n"
+            f"Reason:   `{reason_label}`\n"
+            f"{thesis_line}"
+            f"{captured_line}"
         )
 
         return {"success": True, "exit_price": exit_price, "pnl": net_pnl}

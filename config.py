@@ -132,14 +132,14 @@ ADAPTATION_CONFIG = {
         "max_daily_loss":        0.02,
         "max_concurrent_trades": 3,
         "max_leverage":          15,
-        "min_sweep_score":       0.15,
-        "min_zone_score":        0.30,
+        "min_sweep_score":       0.10,
+        "min_zone_score":        0.10,
         "min_combined_score":    0.50,
         "max_sweep_age_hours":   24,
     },
     "soft_limits": {
         "sweep_min_score":       {"min": 0.10, "max": 0.50, "current": 0.10},
-        "zone_min_score":        {"min": 0.15, "max": 0.70, "current": 0.15},
+        "zone_min_score":        {"min": 0.10, "max": 0.70, "current": 0.10},
         "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
         "sweep_max_age_hours":   {"min": 4,    "max": 24,   "current": 12},
@@ -326,12 +326,12 @@ class Config:
 
         "sweep_max_age_hours":       12,
         "sweep_min_wick_atr":        0.2,
-        "sweep_min_score":           0.1,
+        "sweep_min_score":           0.10,
 
         "zone_min_width_atr":        0.15,
         "zone_max_dist_atr":         4.0,
-        "zone_max_touches":          2,
-        "zone_min_score":            0.15,
+        "zone_max_touches":          3,
+        "zone_min_score":            0.10,
         "zone_max_dist_pct":         4.0,
 
         "trigger_min_body_ratio":    0.55,
@@ -373,14 +373,12 @@ class Config:
         "kline_trigger_tf":          "15m",
     }
 
-    # Thesis tracker time limits — configurable by adaptation engine
     THESIS_TIME_LIMITS = {
         "A+": 48.0,
         "A":  32.0,
         "B":  16.0,
     }
 
-    # Thesis strength thresholds — configurable by adaptation engine
     THESIS_THRESHOLDS = {
         "hold":         0.80,
         "monitor":      0.60,
@@ -389,9 +387,6 @@ class Config:
         "exit":         0.00,
     }
 
-    # Pillar weights — managed by pillar_analyzer + adapter
-    # Runtime weights are stored in Redis and read dynamically
-    # These are the fallback defaults only
     PILLAR_WEIGHTS_DEFAULT = {
         "sweep":         0.25,
         "zone":          0.25,

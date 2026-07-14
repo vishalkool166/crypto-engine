@@ -28,10 +28,10 @@ def _get_recent_performance() -> dict:
 
         if not closed:
             return {
-                "total":      0,
-                "win_rate":   None,
-                "streak":     0,
-                "streak_type":None,
+                "total":         0,
+                "win_rate":      None,
+                "streak":        0,
+                "streak_type":   None,
                 "consec_losses": 0,
             }
 

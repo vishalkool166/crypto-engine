@@ -39,6 +39,20 @@ async def cmd_trades() -> None:
             tp        = t.get("tp1_price")
             sl_dist   = abs(live - sl)  / entry * 100 if sl and entry else 0
             tp_dist   = abs(tp  - live) / entry * 100 if tp and entry else 0
+
+            thesis_line = ""
+            try:
+                from trade.thesis_tracker import get_thesis_summary
+                ts = get_thesis_summary(t.get("trade_id", 0))
+                if ts:
+                    thesis_line = (
+                        f"Thesis: `{ts.get('thesis_strength', 0):.2f}` — "
+                        f"`{ts.get('action', '--').upper()}` · "
+                        f"Captured: `{ts.get('captured_move_pct', 0):.1f}%`\n"
+                    )
+            except Exception:
+                pass
+
             lines.append(
                 f"{side} `{coin}` — Grade `{t.get('grade', '--')}`\n"
                 f"Entry: `{entry:.6f}` · Live: `{live:.6f}`\n"
@@ -47,6 +61,7 @@ async def cmd_trades() -> None:
                 f"TP: `{tp:.6f}` ({tp_dist:.2f}% away)\n"
                 f"Lev: `{leverage}x` · Margin: `${margin:.2f}`\n"
                 f"Health: {h_emoji} `{h_state}` · Open: `{t.get('duration', '--')}`\n"
+                f"{thesis_line}"
             )
         await send("\n".join(lines))
     except Exception as e:
@@ -88,6 +103,7 @@ async def cmd_position(coin: str) -> None:
         h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
         failures  = health.get("failures", []) if health else []
         warnings  = health.get("warnings", []) if health else []
+
         msg = (
             f"{side} *{coin}USDT — Position Detail*\n_{now_ist()}_\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -104,12 +120,37 @@ async def cmd_position(coin: str) -> None:
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Health: {h_emoji} `{h_state}`\n"
         )
+
         if failures:
             msg += "\n*Failures:*\n" + "\n".join(f"✘ _{f}_" for f in failures[:2])
         elif warnings:
             msg += "\n*Warnings:*\n" + "\n".join(f"⚠ _{w}_" for w in warnings[:2])
+
+        thesis_section = ""
+        try:
+            from trade.thesis_tracker import get_thesis_summary
+            ts = get_thesis_summary(trade.get("trade_id", 0))
+            if ts:
+                thesis_section = (
+                    f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"*Thesis:* `{ts.get('thesis_strength', 0):.2f}` — `{ts.get('action', '--').upper()}`\n"
+                    f"Captured: `{ts.get('captured_move_pct', 0):.1f}%` of predicted move\n"
+                    f"Open: `{ts.get('hours_open', 0):.1f}h` · "
+                    f"Velocity: `{ts.get('velocity', 0):.3f}`\n"
+                )
+                pillars = ts.get("pillars", {})
+                if pillars:
+                    thesis_section += "*Pillars:*\n"
+                    for name, p in pillars.items():
+                        icon = "✅" if p.get("valid") else "❌"
+                        thesis_section += f"  {icon} `{name}` score=`{p.get('score', 0):.2f}`\n"
+        except Exception:
+            pass
+
+        msg += thesis_section
         msg += "\n\n_Use dashboard Force Sell to close._"
         await send(msg)
+
     except Exception as e:
         log.error("cmd_position %s: %s", coin, e)
         await send(f"❌ Could not fetch position for `{coin}`.")
