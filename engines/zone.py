@@ -31,53 +31,75 @@ def _width_score(width: float, atr_1h: float) -> float:
 def _find_ob_zone(d4h: dict, direction: str, price: float, atr_1h: float) -> dict | None:
     try:
         ob_data = d4h.get("order_blocks", {})
-        ob      = ob_data.get("nearest_bull") if direction == "LONG" else ob_data.get("nearest_bear")
 
-        if not ob:
-            return None
-        if ob.get("mitigated"):
-            return None
-        if ob.get("touch_count", 0) > SE["zone_max_touches"]:
-            return None
+        if direction == "LONG":
+            all_obs = ob_data.get("bull_obs", [])
+        else:
+            all_obs = ob_data.get("bear_obs", [])
 
-        top    = float(ob["top"])
-        bottom = float(ob["bottom"])
-        width  = top - bottom
-
-        if width < atr_1h * SE["zone_min_width_atr"]:
+        if not all_obs:
             return None
 
-        dist_pct = abs(price - (top + bottom) / 2) / price * 100
-        if dist_pct > SE["zone_max_dist_pct"]:
+        candidates = []
+
+        for ob in all_obs:
+            if ob.get("mitigated"):
+                continue
+
+            if ob.get("touch_count", 0) > SE["zone_max_touches"]:
+                continue
+
+            top    = float(ob["top"])
+            bottom = float(ob["bottom"])
+            width  = top - bottom
+
+            if width < atr_1h * SE["zone_min_width_atr"]:
+                continue
+
+            dist_pct = abs(price - (top + bottom) / 2) / price * 100
+            if dist_pct > SE["zone_max_dist_pct"]:
+                continue
+
+            if direction == "LONG" and price < bottom:
+                continue
+            if direction == "SHORT" and price > top:
+                continue
+
+            touch_count = ob.get("touch_count", 0)
+            touch_mult  = (
+                1.0  if touch_count == 0 else
+                0.75 if touch_count == 1 else
+                0.50 if touch_count == 2 else
+                0.30
+            )
+
+            score = round(_width_score(width, atr_1h) * touch_mult, 3)
+
+            candidates.append({
+                "type":        "OB",
+                "top":         round(top, 6),
+                "bottom":      round(bottom, 6),
+                "mid":         round((top + bottom) / 2, 6),
+                "touch_count": touch_count,
+                "in_zone":     bottom <= price <= top,
+                "strength":    ob.get("strength", 0),
+                "score":       score,
+                "dist_pct":    dist_pct,
+                "origin_desc": "Order block {:.4f}-{:.4f}".format(bottom, top),
+            })
+
+        if not candidates:
             return None
 
-        if direction == "LONG" and price < bottom:
-            return None
-        if direction == "SHORT" and price > top:
-            return None
+        candidates.sort(key=lambda x: (-x["score"], x["dist_pct"]))
+        best = candidates[0]
 
-        touch_mult = (
-            1.0  if ob.get("touch_count", 0) == 0 else
-            0.75 if ob.get("touch_count", 0) == 1 else
-            0.40
-        )
-
-        score = round(_width_score(width, atr_1h) * touch_mult, 3)
-
-        if score < SE["zone_min_score"]:
+        if best["score"] < SE["zone_min_score"]:
             return None
 
-        return {
-            "type":        "OB",
-            "top":         round(top, 6),
-            "bottom":      round(bottom, 6),
-            "mid":         round((top + bottom) / 2, 6),
-            "touch_count": ob.get("touch_count", 0),
-            "in_zone":     bottom <= price <= top,
-            "strength":    ob.get("strength", 0),
-            "score":       score,
-            "origin_desc": f"Order block {bottom:.4f}–{top:.4f}",
-        }
+        best.pop("dist_pct", None)
+        return best
+
     except Exception as e:
         log.error("_find_ob_zone: %s", e)
         return None
