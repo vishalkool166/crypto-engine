@@ -249,6 +249,20 @@ class AuditLog(Base):
     ip        = Column(String, nullable=True)
     success   = Column(Boolean, default=True)
 
+class DemoVisit(Base):
+    __tablename__ = "demo_visits"
+
+    id            = Column(Integer,  primary_key=True)
+    session_id    = Column(String,   nullable=False, index=True)
+    visited_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    referrer      = Column(String,   nullable=True)
+    device        = Column(String,   nullable=True)
+    browser       = Column(String,   nullable=True)
+    ip            = Column(String,   nullable=True)
+    tier_explored = Column(String,   default="free")
+    cta_clicked   = Column(Boolean,  default=False)
+    duration_secs = Column(Integer,  nullable=True)
+
 
 class ContentPost(Base):
     __tablename__ = "content_posts"

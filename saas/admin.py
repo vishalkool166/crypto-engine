@@ -377,6 +377,76 @@ async def admin_stats(request: Request):
         log.error(f"admin_stats error: {e}")
         raise HTTPException(500, str(e))
 
+@router.get("/admin/demo/stats")
+async def admin_demo_stats(request: Request):
+    _auth(request)
+    try:
+        from database import DemoVisit
+        from sqlalchemy import func
+        from datetime import datetime, timezone, timedelta
+
+        now   = datetime.now(timezone.utc)
+        day   = now - timedelta(days=1)
+        week  = now - timedelta(days=7)
+        month = now - timedelta(days=30)
+
+        with get_session() as db:
+            total        = db.query(DemoVisit).count()
+            last_24h     = db.query(DemoVisit).filter(DemoVisit.visited_at >= day).count()
+            last_7d      = db.query(DemoVisit).filter(DemoVisit.visited_at >= week).count()
+            last_30d     = db.query(DemoVisit).filter(DemoVisit.visited_at >= month).count()
+            cta_clicks   = db.query(DemoVisit).filter(DemoVisit.cta_clicked == True).count()
+            mobile_count = db.query(DemoVisit).filter(DemoVisit.device == "mobile").count()
+
+            tier_rows = db.query(
+                DemoVisit.tier_explored,
+                func.count(DemoVisit.id).label("count")
+            ).group_by(DemoVisit.tier_explored).all()
+
+            tier_breakdown = {row.tier_explored: row.count for row in tier_rows}
+
+            avg_duration = db.query(
+                func.avg(DemoVisit.duration_secs)
+            ).filter(
+                DemoVisit.duration_secs != None,
+                DemoVisit.duration_secs > 0
+            ).scalar() or 0
+
+            recent = db.query(DemoVisit).order_by(
+                DemoVisit.visited_at.desc()
+            ).limit(20).all()
+
+            recent_list = [{
+                "id":            v.id,
+                "visited_at":    v.visited_at.isoformat() if v.visited_at else None,
+                "device":        v.device,
+                "browser":       v.browser,
+                "tier_explored": v.tier_explored,
+                "cta_clicked":   v.cta_clicked,
+                "duration_secs": v.duration_secs,
+                "referrer":      v.referrer,
+            } for v in recent]
+
+        conversion_rate = round(cta_clicks / total * 100, 1) if total > 0 else 0
+
+        return JSONResponse(content={
+            "total":            total,
+            "last_24h":         last_24h,
+            "last_7d":          last_7d,
+            "last_30d":         last_30d,
+            "cta_clicks":       cta_clicks,
+            "conversion_rate":  conversion_rate,
+            "mobile_count":     mobile_count,
+            "desktop_count":    total - mobile_count,
+            "avg_duration_secs": round(float(avg_duration)),
+            "tier_breakdown":   tier_breakdown,
+            "recent":           recent_list,
+            "timestamp":        now.isoformat(),
+        })
+
+    except Exception as e:
+        log.error(f"admin_demo_stats error: {e}")
+        raise HTTPException(500, str(e))
 
 @router.get("/admin/audit")
 async def admin_audit(

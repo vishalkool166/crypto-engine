@@ -1316,3 +1316,80 @@ async def chat_endpoint(request: Request):
     except Exception as e:
         log.error("Chat endpoint error: %s", e)
         raise HTTPException(500, str(e))
+    
+@router.post("/demo/visit")
+async def demo_visit(request: Request):
+    try:
+        body       = await request.json()
+        session_id = body.get("session_id", "")
+        if not session_id:
+            return JSONResponse(content={"success": False})
+
+        ip         = request.client.host if request.client else ""
+        user_agent = request.headers.get("user-agent", "")
+
+        device  = "mobile" if any(
+            x in user_agent.lower()
+            for x in ["mobile", "android", "iphone", "ipad"]
+        ) else "desktop"
+
+        browser = "unknown"
+        ua      = user_agent.lower()
+        if "chrome"  in ua: browser = "chrome"
+        elif "safari" in ua: browser = "safari"
+        elif "firefox" in ua: browser = "firefox"
+        elif "edge"   in ua: browser = "edge"
+
+        from database import DemoVisit
+        with SessionLocal() as db:
+            existing = db.query(DemoVisit).filter(
+                DemoVisit.session_id == session_id
+            ).first()
+            if not existing:
+                db.add(DemoVisit(
+                    session_id    = session_id,
+                    referrer      = body.get("referrer", ""),
+                    device        = device,
+                    browser       = browser,
+                    ip            = ip,
+                    tier_explored = body.get("tier", "free"),
+                ))
+                db.commit()
+
+        return JSONResponse(content={"success": True})
+
+    except Exception as e:
+        log.error("demo_visit error: %s", e)
+        return JSONResponse(content={"success": False})
+
+
+@router.post("/demo/event")
+async def demo_event(request: Request):
+    try:
+        body       = await request.json()
+        session_id = body.get("session_id", "")
+        event_type = body.get("event", "")
+
+        if not session_id:
+            return JSONResponse(content={"success": False})
+
+        from database import DemoVisit
+        with SessionLocal() as db:
+            visit = db.query(DemoVisit).filter(
+                DemoVisit.session_id == session_id
+            ).first()
+
+            if visit:
+                if event_type == "tier_switch":
+                    visit.tier_explored = body.get("tier", visit.tier_explored)
+                elif event_type == "cta_click":
+                    visit.cta_clicked = True
+                elif event_type == "exit":
+                    visit.duration_secs = body.get("duration_secs", 0)
+                db.commit()
+
+        return JSONResponse(content={"success": True})
+
+    except Exception as e:
+        log.error("demo_event error: %s", e)
+        return JSONResponse(content={"success": False})
