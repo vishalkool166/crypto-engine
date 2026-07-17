@@ -444,15 +444,12 @@ async def _analyze_coin(
 
             scan_ms = round((time.time() - scan_start) * 1000, 1)
 
-            current = state.get(coin)
-
             if result.get("signal"):
                 state.set_watching(coin, {
                     "direction": result["direction"],
                     "sweep":     result.get("sweep", {}),
                     "zone":      result.get("zone",  {}),
                 })
-                coin_status = "watching"
 
             elif result.get("zone_found") and result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown"):
@@ -461,7 +458,6 @@ async def _analyze_coin(
                         "sweep":     result.get("sweep", {}),
                         "zone":      result.get("zone",  {}),
                     })
-                coin_status = "watching"
 
             elif result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown", "watching"):
@@ -470,12 +466,13 @@ async def _analyze_coin(
                         "sweep":     result.get("sweep", {}),
                         "zone":      {},
                     })
-                coin_status = "watching"
 
             else:
                 if current["status"] == "watching":
                     state.set_idle(coin)
-                coin_status = "idle"
+
+            actual_state = state.get(coin)
+            coin_status  = actual_state["status"]
 
             ticker  = _get_ticker_from_redis(coin)
             funding = _get_funding_from_redis(coin)
