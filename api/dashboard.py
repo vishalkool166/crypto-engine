@@ -231,6 +231,8 @@ def get_signals_data() -> dict:
                 "direction":      r.get("direction", "--"),
                 "score":          r.get("score",     0),
                 "state":          r.get("state",     "idle"),
+                "sweep":          r.get("sweep",     {}),
+                "zone":           r.get("zone",      {}),
                 "price":          market.get("price",    0),
                 "change":         market.get("change24", 0),
                 "change_pos":     market.get("change_pos", True),
@@ -261,6 +263,8 @@ def get_signals_data() -> dict:
                 "direction":        r.get("direction", "?"),
                 "score":            r.get("score",     0),
                 "state":            r.get("state",     "idle"),
+                "sweep":            r.get("sweep",     {}),
+                "zone":             r.get("zone",      {}),
                 "entry":            sig.get("entry"),
                 "sl":               sig.get("sl"),
                 "tp1":              sig.get("tp1"),
@@ -405,6 +409,7 @@ def get_coin_detail(coin: str) -> dict:
         expl    = c.get("explanation", {})
         wconf   = c.get("wconf",       {})
         sweep   = c.get("sweep",       {})
+        zone    = c.get("zone",        {})
         factors = wconf.get("factors", [])
 
         factor_list = []
@@ -458,6 +463,16 @@ def get_coin_detail(coin: str) -> dict:
                 "score":     sweep.get("score",     0),
                 "label":     sweep.get("label",     ""),
                 "age_hours": sweep.get("age_hours", 0),
+            },
+            "zone": {
+                "type":         zone.get("type",         "—"),
+                "top":          zone.get("top",           0),
+                "bottom":       zone.get("bottom",        0),
+                "mid":          zone.get("mid",           0),
+                "distance_pct": zone.get("distance_pct", None),
+                "touch_count":  zone.get("touch_count",  0),
+                "score":        zone.get("score",         0),
+                "origin_desc":  zone.get("origin_desc",  ""),
             },
             "thesis":       expl.get("thesis", ""),
             "confidence":   expl.get("confidence_label", ""),
