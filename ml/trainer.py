@@ -18,7 +18,7 @@ def _ensure_model_dir():
 
 
 def train_model() -> dict:
-    log.info("Starting LightGBM training...")
+    log.info("Starting LightGBM training")
 
     X, y = build_dataset()
     if X is None or y is None:
@@ -30,16 +30,22 @@ def train_model() -> dict:
     try:
         import lightgbm as lgb
     except ImportError:
-        return {"success": False, "reason": "lightgbm not installed — run: pip install lightgbm"}
+        return {"success": False, "reason": "lightgbm not installed"}
 
     try:
         from sklearn.model_selection import TimeSeriesSplit, cross_val_score
-        from sklearn.metrics import classification_report, roc_auc_score
+        from sklearn.metrics import (
+            classification_report,
+            roc_auc_score,
+            precision_score,
+            recall_score,
+            f1_score,
+            confusion_matrix,
+        )
         from sklearn.calibration import CalibratedClassifierCV
         has_sklearn = True
     except ImportError:
         has_sklearn = False
-        log.warning("sklearn not available — skipping cross validation and calibration")
 
     _ensure_model_dir()
 
@@ -58,12 +64,16 @@ def train_model() -> dict:
         scale_pos_weight  = scale_pw,
         random_state      = 42,
         verbose           = -1,
-        n_jobs            = 1
+        n_jobs            = 1,
     )
 
     cv_score    = None
     cv_std      = None
     auc_score   = None
+    precision   = None
+    recall      = None
+    f1          = None
+    conf_matrix = None
     report_dict = {}
 
     if has_sklearn and len(X) >= 20:
@@ -73,41 +83,48 @@ def train_model() -> dict:
             scores   = cross_val_score(model, X, y, cv=tscv, scoring="roc_auc")
             cv_score = round(float(scores.mean()), 4)
             cv_std   = round(float(scores.std()),  4)
-            log.info("Time-series CV AUC: %s +/- %s", cv_score, cv_std)
+            log.info("CV AUC: %s +/- %s", cv_score, cv_std)
         except Exception as e:
             log.warning("Cross-validation failed: %s", e)
 
     model.fit(X, y)
-
     final_model = model
 
     if has_sklearn and len(X) >= 40:
         try:
-            split_idx  = int(len(X) * 0.8)
-            X_cal      = X.iloc[split_idx:]
-            y_cal      = y.iloc[split_idx:]
-
+            split_idx = int(len(X) * 0.8)
+            X_cal     = X.iloc[split_idx:]
+            y_cal     = y.iloc[split_idx:]
             if len(X_cal) >= 10 and y_cal.sum() >= 2 and (y_cal == 0).sum() >= 2:
                 calibrated  = CalibratedClassifierCV(model, method="isotonic", cv="prefit")
                 calibrated.fit(X_cal, y_cal)
                 final_model = calibrated
-                log.info("Probability calibration applied using last %s samples", len(X_cal))
-            else:
-                log.warning("Not enough calibration samples — skipping calibration")
         except Exception as e:
             log.warning("Calibration failed: %s", e)
 
     if has_sklearn:
         try:
             probs     = final_model.predict_proba(X)[:, 1]
+            preds     = final_model.predict(X)
             auc_score = round(float(roc_auc_score(y, probs)), 4)
-            report    = classification_report(y, final_model.predict(X), output_dict=True)
+            precision = round(float(precision_score(y, preds, zero_division=0)), 4)
+            recall    = round(float(recall_score(y, preds, zero_division=0)), 4)
+            f1        = round(float(f1_score(y, preds, zero_division=0)), 4)
+            cm        = confusion_matrix(y, preds)
+            conf_matrix = {
+                "true_negative":  int(cm[0][0]),
+                "false_positive": int(cm[0][1]),
+                "false_negative": int(cm[1][0]),
+                "true_positive":  int(cm[1][1]),
+            }
+            report    = classification_report(y, preds, output_dict=True)
             report_dict = {
                 "precision_win":  round(report.get("1", {}).get("precision", 0), 3),
                 "recall_win":     round(report.get("1", {}).get("recall",    0), 3),
                 "f1_win":         round(report.get("1", {}).get("f1-score",  0), 3),
                 "precision_loss": round(report.get("0", {}).get("precision", 0), 3),
                 "recall_loss":    round(report.get("0", {}).get("recall",    0), 3),
+                "f1_loss":        round(report.get("0", {}).get("f1-score",  0), 3),
             }
         except Exception as e:
             log.warning("Metrics calculation failed: %s", e)
@@ -118,7 +135,7 @@ def train_model() -> dict:
     feature_importance = sorted(
         zip(feature_names, importances),
         key     = lambda x: x[1],
-        reverse = True
+        reverse = True,
     )
 
     top_features = [
@@ -135,31 +152,24 @@ def train_model() -> dict:
         import shap
         explainer   = shap.TreeExplainer(base_model)
         shap_values = explainer.shap_values(X)
-
         if isinstance(shap_values, list):
             shap_matrix = shap_values[1]
         else:
             shap_matrix = shap_values
-
         shap_mean = np.abs(shap_matrix).mean(axis=0)
         shap_importance = sorted(
             zip(feature_names, shap_mean.tolist()),
             key     = lambda x: x[1],
-            reverse = True
+            reverse = True,
         )
         shap_top_features = [
             {"feature": f, "shap_mean": round(float(v), 6)}
             for f, v in shap_importance[:10]
         ]
-        log.info("SHAP analysis complete")
     except ImportError:
-        log.info("shap not installed — skipping SHAP analysis. Run: pip install shap")
+        pass
     except Exception as e:
-        log.warning("SHAP analysis failed: %s", e)
-
-    log.info("Top features by gain:")
-    for f, i in feature_importance[:5]:
-        log.info("  %s: %s", f, i)
+        log.warning("SHAP failed: %s", e)
 
     with open(MODEL_PATH, "wb") as f:
         pickle.dump(final_model, f)
@@ -175,6 +185,10 @@ def train_model() -> dict:
         "cv_std":                   cv_std,
         "cv_method":                "TimeSeriesSplit",
         "train_auc":                auc_score,
+        "precision":                precision,
+        "recall":                   recall,
+        "f1":                       f1,
+        "confusion_matrix":         conf_matrix,
         "calibrated":               final_model is not model,
         "top_features":             top_features,
         "zero_importance_features": zero_importance_features,
@@ -187,8 +201,8 @@ def train_model() -> dict:
         json.dump(meta, f, indent=2)
 
     log.info(
-        "Model saved — samples:%s win_rate:%s%% cv_auc:%s train_auc:%s calibrated:%s",
-        len(X), meta["win_rate"], cv_score, auc_score, meta["calibrated"]
+        "Model saved — samples:%s win_rate:%s%% cv_auc:%s precision:%s recall:%s f1:%s",
+        len(X), meta["win_rate"], cv_score, precision, recall, f1,
     )
 
     _enable_ml()
@@ -201,8 +215,12 @@ def train_model() -> dict:
         "losses":                   int((y == 0).sum()),
         "win_rate":                 meta["win_rate"],
         "cv_auc":                   cv_score,
-        "cv_method":                "TimeSeriesSplit",
+        "cv_std":                   cv_std,
         "train_auc":                auc_score,
+        "precision":                precision,
+        "recall":                   recall,
+        "f1":                       f1,
+        "confusion_matrix":         conf_matrix,
         "calibrated":               meta["calibrated"],
         "top_features":             top_features,
         "zero_importance_features": zero_importance_features,
@@ -215,29 +233,21 @@ def retrain_if_needed() -> bool:
     try:
         if not os.path.exists(META_PATH):
             return False
-
         with open(META_PATH, "r") as f:
             meta = json.load(f)
-
         last_samples = meta.get("samples", 0)
-
         from database import SessionLocal, Signal as SignalModel
         with SessionLocal() as db:
             current_count = db.query(SignalModel).filter(
                 SignalModel.outcome.in_(["win", "loss"]),
-                SignalModel.factor_scores.isnot(None)
+                SignalModel.factor_scores.isnot(None),
             ).count()
-
         new_trades = current_count - last_samples
-
         if new_trades >= 50:
-            log.info("Retraining triggered — %s new trades since last training", new_trades)
+            log.info("Retraining triggered — %s new trades", new_trades)
             result = train_model()
             return result.get("success", False)
-
-        log.debug("No retrain needed — %s new trades since last training (need 50)", new_trades)
         return False
-
     except Exception as e:
         log.error("Retrain check error: %s", e)
         return False
@@ -248,7 +258,6 @@ def _enable_ml():
         from config import cfg, _ensure
         _ensure("ML_ENABLED", "true")
         cfg.ML_ENABLED = True
-        log.info("ML_ENABLED set to True")
     except Exception as e:
         log.error("Failed to enable ML: %s", e)
 
@@ -258,13 +267,14 @@ def _notify_training_complete(meta: dict):
         import asyncio
         from alerts.telegram import send
 
-        top     = meta.get("top_features", [])[:3]
+        top      = meta.get("top_features",      [])[:3]
+        shap_top = meta.get("shap_top_features", [])[:3]
+
         top_str = "\n".join(
-            f"  `{f['feature']}` — importance: `{f['importance']}`"
+            f"  `{f['feature']}` — `{f['importance']}`"
             for f in top
         )
 
-        shap_top = meta.get("shap_top_features", [])[:3]
         shap_str = ""
         if shap_top:
             shap_str = "\n*Top by SHAP:*\n" + "\n".join(
@@ -272,21 +282,32 @@ def _notify_training_complete(meta: dict):
                 for f in shap_top
             )
 
-        zero_count = len(meta.get("zero_importance_features", []))
-        zero_str   = f"\nZero importance features: `{zero_count}` (candidates for removal)" if zero_count else ""
+        cm = meta.get("confusion_matrix", {})
+        cm_str = ""
+        if cm:
+            tp = cm.get("true_positive",  0)
+            tn = cm.get("true_negative",  0)
+            fp = cm.get("false_positive", 0)
+            fn = cm.get("false_negative", 0)
+            cm_str = (
+                f"\n*Confusion Matrix:*\n"
+                f"  TP:`{tp}` FP:`{fp}`\n"
+                f"  FN:`{fn}` TN:`{tn}`"
+            )
 
         asyncio.create_task(send(
             f"🤖 *LightGBM Model Trained*\n\n"
             f"Samples:    `{meta['samples']}`\n"
-            f"Wins:       `{meta['wins']}` · Losses: `{meta['losses']}`\n"
             f"Win Rate:   `{meta['win_rate']}%`\n"
-            f"CV AUC:     `{meta.get('cv_auc', '--')}` ± `{meta.get('cv_std', '--')}` (TimeSeriesSplit)\n"
+            f"CV AUC:     `{meta.get('cv_auc', '--')}` ± `{meta.get('cv_std', '--')}`\n"
             f"Train AUC:  `{meta.get('train_auc', '--')}`\n"
+            f"Precision:  `{meta.get('precision', '--')}`\n"
+            f"Recall:     `{meta.get('recall', '--')}`\n"
+            f"F1:         `{meta.get('f1', '--')}`\n"
             f"Calibrated: `{'Yes' if meta.get('calibrated') else 'No'}`\n\n"
-            f"*Top Features (Gain):*\n{top_str}"
+            f"*Top Features:*\n{top_str}"
             f"{shap_str}"
-            f"{zero_str}\n\n"
-            f"ML filter now active — threshold: `0.65`"
+            f"{cm_str}"
         ))
     except Exception as e:
         log.error("Training notification error: %s", e)
@@ -300,3 +321,26 @@ def get_model_meta() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+def get_validation_report() -> dict:
+    meta = get_model_meta()
+    if not meta:
+        return {"error": "No model trained yet"}
+    return {
+        "trained_at":       meta.get("trained_at"),
+        "samples":          meta.get("samples",    0),
+        "win_rate":         meta.get("win_rate",   0),
+        "cv_auc":           meta.get("cv_auc"),
+        "cv_std":           meta.get("cv_std"),
+        "train_auc":        meta.get("train_auc"),
+        "precision":        meta.get("precision"),
+        "recall":           meta.get("recall"),
+        "f1":               meta.get("f1"),
+        "confusion_matrix": meta.get("confusion_matrix"),
+        "calibrated":       meta.get("calibrated", False),
+        "top_features":     meta.get("top_features",     []),
+        "shap_top_features":meta.get("shap_top_features",[]),
+        "threshold":        meta.get("threshold",  0.65),
+        "classification":   meta.get("classification",  {}),
+    }

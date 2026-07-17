@@ -267,8 +267,8 @@ async def analyze(request: Request, coin: str):
             result["error"] = "Insufficient 15M candles"
             return JSONResponse(content=make_serializable(result))
 
-        d4h = calculate_all(df_4h, timeframe="4h")
-        d1h = calculate_all(df_1h, timeframe="1h")
+        d4h  = calculate_all(df_4h,  timeframe="4h")
+        d1h  = calculate_all(df_1h,  timeframe="1h")
         d15m_indicators = calculate_all(df_15m, timeframe="15m")
 
         atr_1h  = d1h.get("atr")  or float(df_1h["close"].iloc[-1])  * 0.01
@@ -291,29 +291,32 @@ async def analyze(request: Request, coin: str):
 
         ctx = context_check(d4h, coin)
         result["context"] = {
-            "pass":      ctx["pass"],
-            "direction": ctx.get("direction", "NEUTRAL"),
-            "reason":    ctx.get("reason", ""),
+            "pass":          ctx["pass"],
+            "direction":     ctx.get("direction", "NEUTRAL"),
+            "reason":        ctx.get("reason", ""),
+            "btc_score":     ctx.get("btc_score", 0),
+            "htf_score":     ctx.get("htf_score", 0),
+            "context_score": ctx.get("context_score", 0),
+            "trace":         ctx.get("trace", {}),
         }
 
         if not ctx["pass"]:
             result["pipeline_stopped_at"] = "context"
-            result["state"] = get_coin_state(coin)["status"]
+            result["state"]      = get_coin_state(coin)["status"]
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
         direction = ctx["direction"]
 
         sweep_result = detect_sweep(df_1h, d1h, direction)
-        sweep_data   = sweep_result.get("sweep") or {}
         result["sweep"] = {
             "detected":   sweep_result["detected"],
             "score":      sweep_result.get("score", 0),
-            "age_hours":  sweep_data.get("age_hours", 0),
-            "label":      sweep_data.get("level_label", sweep_result.get("label", "--")),
-            "intensity":  sweep_data.get("intensity", 0),
-            "wick_atr":   sweep_data.get("wick_atr", 0),
-            "vol_ratio":  sweep_data.get("vol_ratio", 0),
+            "age_hours":  (sweep_result.get("sweep") or {}).get("age_hours", 0),
+            "label":      (sweep_result.get("sweep") or {}).get("level_label", sweep_result.get("label", "--")),
+            "intensity":  (sweep_result.get("sweep") or {}).get("intensity", 0),
+            "wick_atr":   (sweep_result.get("sweep") or {}).get("wick_atr", 0),
+            "vol_ratio":  (sweep_result.get("sweep") or {}).get("vol_ratio", 0),
             "confirmed":  sweep_result.get("confirmed", False),
             "gate_pass":  sweep_result.get("score", 0) >= cfg.SCALP_ENGINE["sweep_min_score"],
             "gate_min":   cfg.SCALP_ENGINE["sweep_min_score"],
@@ -321,7 +324,7 @@ async def analyze(request: Request, coin: str):
 
         if not sweep_result["detected"] or not result["sweep"]["gate_pass"]:
             result["pipeline_stopped_at"] = "sweep"
-            result["state"] = get_coin_state(coin)["status"]
+            result["state"]      = get_coin_state(coin)["status"]
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
@@ -344,7 +347,7 @@ async def analyze(request: Request, coin: str):
 
         if not zone_result["detected"] or not result["zone"]["gate_pass"]:
             result["pipeline_stopped_at"] = "zone"
-            result["state"] = get_coin_state(coin)["status"]
+            result["state"]      = get_coin_state(coin)["status"]
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
@@ -367,9 +370,8 @@ async def analyze(request: Request, coin: str):
 
         if not trigger_result["confirmed"]:
             result["pipeline_stopped_at"] = "trigger"
-            result["state"] = get_coin_state(coin)["status"]
+            result["state"]      = get_coin_state(coin)["status"]
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
-
             sweep_s  = sweep_result.get("score", 0)
             zone_s   = zone_result.get("score",  0)
             combined = round(sweep_s * 0.40 + zone_s * 0.35, 3)
@@ -381,7 +383,7 @@ async def analyze(request: Request, coin: str):
         risk_result = calculate_risk(
             direction = direction,
             entry     = entry,
-            sweep     = sweep_data,
+            sweep     = (sweep_result.get("sweep") or {}),
             zone      = zone_data,
             trigger   = trigger_result,
             atr_15m   = atr_15m,
@@ -405,41 +407,78 @@ async def analyze(request: Request, coin: str):
 
         if not risk_result["valid"]:
             result["pipeline_stopped_at"] = "risk"
-            result["state"] = get_coin_state(coin)["status"]
+            result["state"]      = get_coin_state(coin)["status"]
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
-        sweep_s   = sweep_result.get("score", 0)
-        zone_s    = zone_result.get("score",  0)
-        trigger_s = trigger_result.get("score", 0)
-        combined  = round(
-            sweep_s   * 0.40 +
-            zone_s    * 0.35 +
-            trigger_s * 0.25,
-            3
-        )
-        SE    = cfg.SCALP_ENGINE
-        grade = (
-            "A+" if combined >= SE["grade_aplus_threshold"] else
-            "A"  if combined >= SE["grade_a_threshold"]     else
-            "B"  if combined >= SE["grade_b_threshold"]     else
-            "F"
-        )
+        from engines.scorer import SignalScore, assign_grade, score_session, score_ml, SCORE_WEIGHTS
+        from engines.scorer import score_btc_context, score_htf_alignment
+
+        sig_score = SignalScore()
+        sig_score.coin      = coin
+        sig_score.direction = direction
+
+        btc_score_val = ctx.get("btc_score", 0)
+        htf_score_val = ctx.get("htf_score", 0)
+
+        sig_score.add("btc_context",   btc_score_val, SCORE_WEIGHTS["btc_context"]["max"],   True, ctx.get("trace", {}).get("btc", ""))
+        sig_score.add("htf_alignment", htf_score_val, SCORE_WEIGHTS["htf_alignment"]["max"], True, ctx.get("trace", {}).get("htf", ""))
+        sig_score.add("sweep",   sweep_result["score"]   * SCORE_WEIGHTS["sweep"]["max"],   SCORE_WEIGHTS["sweep"]["max"],   True, "")
+        sig_score.add("zone",    zone_result["score"]    * SCORE_WEIGHTS["zone"]["max"],    SCORE_WEIGHTS["zone"]["max"],    True, "")
+        sig_score.add("trigger", trigger_result["score"] * SCORE_WEIGHTS["trigger"]["max"], SCORE_WEIGHTS["trigger"]["max"], True, "")
+
+        from datetime import datetime as _dt, timezone as _tz
+        _hour = _dt.now(_tz.utc).hour
+        if 8  <= _hour < 13:  _session = "London"
+        elif 13 <= _hour < 17: _session = "London/NY Overlap"
+        elif 17 <= _hour < 21: _session = "New York"
+        elif 0  <= _hour < 8:  _session = "Asia"
+        else:                   _session = "Off Hours"
+
+        session_score, session_reason = score_session(_session)
+        sig_score.add("session", session_score, SCORE_WEIGHTS["session"]["max"], True, session_reason)
+
+        from engines.signal import _get_total_trades, _get_ml_probability
+        total_trades   = _get_total_trades()
+        ml_probability = _get_ml_probability({
+            "coin":          coin,
+            "direction":     direction,
+            "sweep_score":   sweep_result["score"],
+            "zone_score":    zone_result["score"],
+            "trigger_score": trigger_result["score"],
+            "grade":         "A",
+            "score":         sig_score.pct(),
+            "funding":       0,
+        })
+        ml_score, ml_reason = score_ml(ml_probability, total_trades)
+        sig_score.add("ml", ml_score, SCORE_WEIGHTS["ml"]["max"], True, ml_reason)
+
+        sig_score.total = round(sig_score.total + ctx.get("context_score", 0), 3)
+
+        from engines.signal import _get_regime
+        regime = _get_regime(d4h)
+        pct    = sig_score.pct()
+        grade  = assign_grade(pct, regime)
 
         result["signal"] = {
-            "confirmed":  True,
-            "grade":      grade,
-            "combined":   combined,
-            "sweep_score":   sweep_s,
-            "zone_score":    zone_s,
-            "trigger_score": trigger_s,
-            "entry":      entry,
-            "sl":         risk_result["sl"],
-            "tp1":        risk_result["tp1"],
-            "tp2":        risk_result.get("tp2"),
-            "sl_pct":     risk_result["sl_pct"],
-            "rr1":        risk_result["rr1"],
-            "rr2":        risk_result.get("rr2"),
+            "confirmed":     True,
+            "grade":         grade,
+            "score_pct":     pct,
+            "score_detail":  sig_score.to_dict(),
+            "combined":      round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + trigger_result["score"] * 0.25, 3),
+            "sweep_score":   sweep_result["score"],
+            "zone_score":    zone_result["score"],
+            "trigger_score": trigger_result["score"],
+            "entry":         entry,
+            "sl":            risk_result["sl"],
+            "tp1":           risk_result["tp1"],
+            "tp2":           risk_result.get("tp2"),
+            "sl_pct":        risk_result["sl_pct"],
+            "rr1":           risk_result["rr1"],
+            "rr2":           risk_result.get("rr2"),
+            "ml_probability":ml_probability,
+            "regime":        regime,
+            "session":       _session,
         }
 
         result["pipeline_stopped_at"] = None
@@ -455,6 +494,7 @@ async def analyze(request: Request, coin: str):
                 "state":     cached.get("state"),
                 "regime":    cached.get("regime"),
                 "session":   cached.get("session"),
+                "trace":     cached.get("trace"),
             }
 
         return JSONResponse(content=make_serializable(result))
@@ -531,7 +571,6 @@ async def signals_latest(request: Request):
     _auth(request)
     try:
         from redis_client import get_redis
-        import json
         r = get_redis()
         if not r:
             raise HTTPException(503, "Redis unavailable")
@@ -709,6 +748,8 @@ async def health(request: Request):
         return JSONResponse(content=_health_cache["data"])
     from ml.eligibility import get_ml_status
     from trade.sync import get_sync_status
+    from alerts.scanner import get_engine_health
+    from data.rejection_stats import get_top_rejections
     redis_ok = False
     try:
         from redis_client import get_redis
@@ -729,6 +770,8 @@ async def health(request: Request):
         "redis_connected": redis_ok,
         "ml_status":       get_ml_status(),
         "sync_status":     await get_sync_status(),
+        "engine_health":   get_engine_health(),
+        "top_rejections":  get_top_rejections(3),
         "system":          system,
     }
     _health_cache["data"] = result
@@ -1130,13 +1173,13 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
             }
             return JSONResponse(content=make_serializable(result))
 
-        SE       = cfg.SCALP_ENGINE
+        from engines.scorer import assign_grade
+        from engines.signal import _get_regime
         combined = round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + 0.7 * 0.25, 3)
-        grade    = (
-            "A+" if combined >= SE["grade_aplus_threshold"] else
-            "A"  if combined >= SE["grade_a_threshold"]     else
-            "B"
-        )
+        regime   = _get_regime(d4h)
+        from engines.scorer import SignalScore
+        pct      = min(combined * 100, 100)
+        grade    = assign_grade(pct, regime)
 
         result = {
             "coin":      coin,
@@ -1189,6 +1232,50 @@ async def coins_states(request: Request):
         return JSONResponse(content=make_serializable(result))
     except Exception as e:
         log.error(traceback.format_exc())
+        raise HTTPException(500, str(e))
+
+
+@router.get("/engine/ml/validation")
+async def ml_validation(request: Request):
+    _auth(request)
+    try:
+        from ml.trainer import get_validation_report
+        return JSONResponse(content=get_validation_report())
+    except Exception as e:
+        log.error("ml_validation: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.get("/engine/monthly-report")
+async def monthly_report(request: Request, year: int = None, month: int = None):
+    _auth(request)
+    try:
+        from reports.monthly_report import generate_monthly_report
+        return JSONResponse(content=make_serializable(generate_monthly_report(year, month)))
+    except Exception as e:
+        log.error("monthly_report: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.get("/engine/monthly-report/history")
+async def monthly_report_history(request: Request, months: int = 3):
+    _auth(request)
+    try:
+        from reports.monthly_report import get_last_n_months
+        return JSONResponse(content=make_serializable(get_last_n_months(months)))
+    except Exception as e:
+        log.error("monthly_report_history: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.get("/engine/filter-report")
+async def filter_report(request: Request):
+    _auth(request)
+    try:
+        from reports.filter_analysis import run_filter_analysis
+        return JSONResponse(content=make_serializable(run_filter_analysis()))
+    except Exception as e:
+        log.error("filter_report: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -1316,80 +1403,3 @@ async def chat_endpoint(request: Request):
     except Exception as e:
         log.error("Chat endpoint error: %s", e)
         raise HTTPException(500, str(e))
-    
-@router.post("/demo/visit")
-async def demo_visit(request: Request):
-    try:
-        body       = await request.json()
-        session_id = body.get("session_id", "")
-        if not session_id:
-            return JSONResponse(content={"success": False})
-
-        ip         = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-
-        device  = "mobile" if any(
-            x in user_agent.lower()
-            for x in ["mobile", "android", "iphone", "ipad"]
-        ) else "desktop"
-
-        browser = "unknown"
-        ua      = user_agent.lower()
-        if "chrome"  in ua: browser = "chrome"
-        elif "safari" in ua: browser = "safari"
-        elif "firefox" in ua: browser = "firefox"
-        elif "edge"   in ua: browser = "edge"
-
-        from database import DemoVisit
-        with SessionLocal() as db:
-            existing = db.query(DemoVisit).filter(
-                DemoVisit.session_id == session_id
-            ).first()
-            if not existing:
-                db.add(DemoVisit(
-                    session_id    = session_id,
-                    referrer      = body.get("referrer", ""),
-                    device        = device,
-                    browser       = browser,
-                    ip            = ip,
-                    tier_explored = body.get("tier", "free"),
-                ))
-                db.commit()
-
-        return JSONResponse(content={"success": True})
-
-    except Exception as e:
-        log.error("demo_visit error: %s", e)
-        return JSONResponse(content={"success": False})
-
-
-@router.post("/demo/event")
-async def demo_event(request: Request):
-    try:
-        body       = await request.json()
-        session_id = body.get("session_id", "")
-        event_type = body.get("event", "")
-
-        if not session_id:
-            return JSONResponse(content={"success": False})
-
-        from database import DemoVisit
-        with SessionLocal() as db:
-            visit = db.query(DemoVisit).filter(
-                DemoVisit.session_id == session_id
-            ).first()
-
-            if visit:
-                if event_type == "tier_switch":
-                    visit.tier_explored = body.get("tier", visit.tier_explored)
-                elif event_type == "cta_click":
-                    visit.cta_clicked = True
-                elif event_type == "exit":
-                    visit.duration_secs = body.get("duration_secs", 0)
-                db.commit()
-
-        return JSONResponse(content={"success": True})
-
-    except Exception as e:
-        log.error("demo_event error: %s", e)
-        return JSONResponse(content={"success": False})

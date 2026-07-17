@@ -96,11 +96,11 @@ def detect(
         if age_hours <= max_age_hours * 0.25:
             return {"label": "HIGH",    "pts": 12, "mult": 1.0}
         if age_hours <= max_age_hours * 0.50:
-            return {"label": "MEDIUM",  "pts": 8,  "mult": 0.67}
+            return {"label": "MEDIUM",  "pts": 9,  "mult": 0.67}
         if age_hours <= max_age_hours * 0.75:
-            return {"label": "LOW",     "pts": 4,  "mult": 0.33}
+            return {"label": "LOW",     "pts": 6,  "mult": 0.33}
         if age_hours <= max_age_hours:
-            return {"label": "STALE",   "pts": 2,  "mult": 0.15}
+            return {"label": "STALE",   "pts": 3,  "mult": 0.15}
         return     {"label": "EXPIRED", "pts": 0,  "mult": 0.0}
 
     def check_below(level, label, base_strength):
@@ -127,7 +127,7 @@ def detect(
                 )
                 confirmed  = bool(float(c["close"]) > level and price > level)
                 raw_score  = rel["pts"] * (intensity / 10)
-                adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
+                adj_score  = raw_score if confirmed else round(raw_score * 0.65, 2)
 
                 abs_idx    = len(df_1h) - len(sl) + i
                 disp       = detect_displacement(
@@ -188,7 +188,7 @@ def detect(
                 )
                 confirmed  = bool(float(c["close"]) < level and price < level)
                 raw_score  = rel["pts"] * (intensity / 10)
-                adj_score  = raw_score if confirmed else round(raw_score * 0.4, 2)
+                adj_score  = raw_score if confirmed else round(raw_score * 0.65, 2)
 
                 abs_idx    = len(df_1h) - len(sl) + i
                 disp       = detect_displacement(

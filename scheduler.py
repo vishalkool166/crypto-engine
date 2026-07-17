@@ -87,7 +87,7 @@ async def job_analyzer():
         log.info(
             "Analyzer complete — status:%s recommendations:%s",
             result.get("status"),
-            len(result.get("recommendations", []))
+            len(result.get("recommendations", [])),
         )
     except Exception as e:
         log.error("job_analyzer: %s", e)
@@ -100,7 +100,7 @@ async def job_pillar_analyzer():
         log.info(
             "Pillar analyzer complete — status:%s recommendations:%s",
             result.get("status"),
-            len(result.get("recommendations", []))
+            len(result.get("recommendations", [])),
         )
     except Exception as e:
         log.error("job_pillar_analyzer: %s", e)
@@ -113,7 +113,7 @@ async def job_adapter():
         log.info(
             "Adapter complete — status:%s applied:%s",
             result.get("status"),
-            result.get("applied", 0)
+            result.get("applied", 0),
         )
     except Exception as e:
         log.error("job_adapter: %s", e)
@@ -128,7 +128,7 @@ async def job_rollback_checker():
                 "Rollback check: param=%s action=%s post_wr=%s",
                 r.get("parameter"),
                 r.get("action"),
-                r.get("post_change_wr")
+                r.get("post_change_wr"),
             )
     except Exception as e:
         log.error("job_rollback_checker: %s", e)
@@ -170,6 +170,9 @@ async def job_performance_summary():
             else "➡️"
         )
 
+        from data.rejection_stats import get_summary_line
+        rejection_line = get_summary_line()
+
         await send(
             f"📊 *Daily Performance Summary*\n\n"
             f"Total trades:   `{total}`\n"
@@ -179,6 +182,7 @@ async def job_performance_summary():
             f"Max drawdown:   `{dd:.1f}%`\n\n"
             f"{trend_emoji} Recent trend: `{t_trend}`\n"
             f"Recent WR (20): `{r_wr:.1f}%`\n\n"
+            f"Engine: `{rejection_line}`\n\n"
             f"System version: `{__import__('config').cfg.SYSTEM_VERSION}`"
         )
 
@@ -247,6 +251,30 @@ async def job_update_thesis_outcomes():
 
     except Exception as e:
         log.error("job_update_thesis_outcomes: %s", e)
+
+
+async def job_monthly_report():
+    try:
+        from reports.monthly_report import send_monthly_report_telegram
+        await send_monthly_report_telegram()
+    except Exception as e:
+        log.error("job_monthly_report: %s", e)
+
+
+async def job_filter_analysis():
+    try:
+        from reports.filter_analysis import send_filter_report_telegram
+        await send_filter_report_telegram()
+    except Exception as e:
+        log.error("job_filter_analysis: %s", e)
+
+
+async def job_rs_refresh():
+    try:
+        from engines.relative_strength import invalidate_cache
+        invalidate_cache()
+    except Exception as e:
+        log.error("job_rs_refresh: %s", e)
 
 
 def get_next_scan_time() -> str:
@@ -400,6 +428,24 @@ def start_scheduler():
         id               = "update_thesis_outcomes",
         replace_existing = True,
     )
+    scheduler.add_job(
+        job_monthly_report,
+        trigger          = CronTrigger(day=1, hour=9, minute=0, timezone="UTC"),
+        id               = "monthly_report",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_filter_analysis,
+        trigger          = CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="UTC"),
+        id               = "filter_analysis",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_rs_refresh,
+        trigger          = IntervalTrigger(minutes=15),
+        id               = "rs_refresh",
+        replace_existing = True,
+    )
 
     scheduler.start()
     log.info(
@@ -411,7 +457,9 @@ def start_scheduler():
         "version:6h — performance:daily 08:00 UTC — "
         "morning_brief:08:00 IST — evening_brief:20:00 IST — "
         "binance_snapshot:15m — binance_sync:1h — "
-        "thesis_cleanup:04:00 UTC — thesis_outcomes:30m"
+        "thesis_cleanup:04:00 UTC — thesis_outcomes:30m — "
+        "monthly_report:1st 09:00 UTC — filter_analysis:Sun 02:00 UTC — "
+        "rs_refresh:15m"
     )
 
 

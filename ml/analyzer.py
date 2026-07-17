@@ -22,62 +22,79 @@ def run() -> dict:
         if total_trades < min_trades:
             log.info("Analyzer: insufficient trades %s/%s", total_trades, min_trades)
             return {
-                "status":       "insufficient_data",
-                "total_trades": total_trades,
-                "min_required": min_trades,
+                "status":          "insufficient_data",
+                "total_trades":    total_trades,
+                "min_required":    min_trades,
                 "recommendations": [],
             }
 
         from ml.performance_tracker import get_full_report, get_recent_trend
         from ml.threshold_optimizer import run_full_optimization
         from ml.regime_classifier   import get_regime_recommendations
+        from reports.filter_analysis import run_filter_analysis
 
         report          = get_full_report()
         trend           = get_recent_trend(window=20)
         optimization    = run_full_optimization()
         regime_recs     = get_regime_recommendations()
+        filter_analysis = run_filter_analysis()
 
         recommendations = []
 
         for rec in optimization.get("recommendations", []):
             if rec.get("recommend_change") if isinstance(rec, dict) and "recommend_change" in rec else True:
                 recommendations.append({
-                    "type":            "threshold",
-                    "parameter":       rec["parameter"],
-                    "current_value":   rec["current_value"],
+                    "type":              "threshold",
+                    "parameter":         rec["parameter"],
+                    "current_value":     rec["current_value"],
                     "recommended_value": rec["new_value"],
-                    "direction":       "increase" if rec["new_value"] > rec["current_value"] else "decrease",
+                    "direction":         "increase" if rec["new_value"] > rec["current_value"] else "decrease",
                     "expected_improvement": rec.get("improvement", 0),
-                    "data_basis":      rec.get("data_basis", total_trades),
-                    "confidence":      rec.get("confidence", "low"),
-                    "reasoning":       rec.get("reason", ""),
+                    "data_basis":        rec.get("data_basis", total_trades),
+                    "confidence":        rec.get("confidence", "low"),
+                    "reasoning":         rec.get("reason", ""),
                 })
 
         for rec in regime_recs:
             recommendations.append({
-                "type":            "regime",
-                "parameter":       f"regime_{rec['type']}",
-                "current_value":   0,
+                "type":              "regime",
+                "parameter":         f"regime_{rec['type']}",
+                "current_value":     0,
                 "recommended_value": 1 if rec["action"] == "avoid" else 0.5,
-                "direction":       rec["action"],
+                "direction":         rec["action"],
                 "expected_improvement": 0,
-                "data_basis":      rec.get("trades", 0),
-                "confidence":      "medium" if rec.get("trades", 0) >= 20 else "low",
-                "reasoning":       rec.get("reason", ""),
+                "data_basis":        rec.get("trades", 0),
+                "confidence":        "medium" if rec.get("trades", 0) >= 20 else "low",
+                "reasoning":         rec.get("reason", ""),
             })
+
+        filter_recs = filter_analysis.get("recommendations", [])
+        for rec in filter_recs:
+            if rec.get("type") == "bottleneck" and rec.get("priority") in ("critical", "high"):
+                recommendations.append({
+                    "type":              "filter_bottleneck",
+                    "parameter":         rec.get("filter", ""),
+                    "current_value":     0,
+                    "recommended_value": 0,
+                    "direction":         "review",
+                    "expected_improvement": 0,
+                    "data_basis":        total_trades,
+                    "confidence":        "high" if rec.get("priority") == "critical" else "medium",
+                    "reasoning":         rec.get("message", ""),
+                })
 
         degrading = trend.get("trend") == "degrading"
         if degrading:
             recommendations.append({
-                "type":            "alert",
-                "parameter":       "performance_trend",
-                "current_value":   trend.get("alltime_win_rate", 0),
+                "type":              "alert",
+                "parameter":         "performance_trend",
+                "current_value":     trend.get("alltime_win_rate", 0),
                 "recommended_value": 0,
-                "direction":       "alert",
+                "direction":         "alert",
                 "expected_improvement": 0,
-                "data_basis":      trend.get("recent_trades", 0),
-                "confidence":      "high",
-                "reasoning":       (
+                "data_basis":        trend.get("recent_trades", 0),
+                "confidence":        "high",
+                "reasoning": (
                     f"Recent {trend.get('recent_window')} trades WR "
                     f"{trend.get('recent_win_rate', 0):.1f}% vs "
                     f"all-time {trend.get('alltime_win_rate', 0):.1f}% — "
@@ -85,16 +102,35 @@ def run() -> dict:
                 ),
             })
 
+        signal_rate = filter_analysis.get("total_stats", {}).get("signal_rate", 0)
+        if signal_rate < 1.0 and total_trades >= min_trades:
+            recommendations.append({
+                "type":              "alert",
+                "parameter":         "signal_rate",
+                "current_value":     signal_rate,
+                "recommended_value": 0,
+                "direction":         "alert",
+                "expected_improvement": 0,
+                "data_basis":        filter_analysis.get("total_stats", {}).get("total_scans", 0),
+                "confidence":        "high",
+                "reasoning":         f"Signal rate {signal_rate}% is very low — review top rejection filters",
+            })
+
         saved = _save_recommendations(recommendations)
 
         result = {
-            "status":          "complete",
-            "total_trades":    total_trades,
-            "recommendations": recommendations,
-            "saved":           saved,
-            "report_summary":  _summarize_report(report),
-            "trend":           trend,
-            "analyzed_at":     datetime.now(timezone.utc).isoformat(),
+            "status":           "complete",
+            "total_trades":     total_trades,
+            "recommendations":  recommendations,
+            "saved":            saved,
+            "report_summary":   _summarize_report(report),
+            "trend":            trend,
+            "filter_analysis":  {
+                "signal_rate":      signal_rate,
+                "top_bottlenecks":  filter_analysis.get("bottleneck_analysis", [])[:3],
+                "top_rejections":   filter_analysis.get("total_stats", {}).get("by_reason", {}),
+            },
+            "analyzed_at":      datetime.now(timezone.utc).isoformat(),
         }
 
         log.info("Analyzer complete — %s recommendations", len(recommendations))
@@ -111,7 +147,7 @@ def _save_recommendations(recommendations: list) -> int:
     try:
         with get_session() as db:
             for rec in recommendations:
-                if rec.get("type") == "alert":
+                if rec.get("type") in ("alert",):
                     continue
 
                 row = AdaptationRecommendation(
@@ -233,14 +269,14 @@ def _summarize_report(report: dict) -> dict:
         trend   = report.get("recent_trend", {})
 
         return {
-            "total_trades":    overall.get("total",         0),
-            "win_rate":        overall.get("win_rate",       0),
-            "total_pnl":       overall.get("total_pnl",      0),
-            "profit_factor":   overall.get("profit_factor",  0),
-            "max_drawdown":    overall.get("max_drawdown",   0),
-            "recent_trend":    trend.get("trend",            "unknown"),
-            "recent_wr":       trend.get("recent_win_rate",  0),
-            "alltime_wr":      trend.get("alltime_win_rate", 0),
+            "total_trades":  overall.get("total",         0),
+            "win_rate":      overall.get("win_rate",       0),
+            "total_pnl":     overall.get("total_pnl",      0),
+            "profit_factor": overall.get("profit_factor",  0),
+            "max_drawdown":  overall.get("max_drawdown",   0),
+            "recent_trend":  trend.get("trend",            "unknown"),
+            "recent_wr":     trend.get("recent_win_rate",  0),
+            "alltime_wr":    trend.get("alltime_win_rate", 0),
         }
     except Exception:
         return {}
@@ -251,11 +287,13 @@ def _notify_analysis_complete(result: dict):
         import asyncio
         from alerts.telegram import send
 
-        recs        = result.get("recommendations", [])
-        threshold   = [r for r in recs if r.get("type") == "threshold"]
-        alerts      = [r for r in recs if r.get("type") == "alert"]
-        summary     = result.get("report_summary", {})
-        trend       = result.get("trend", {})
+        recs       = result.get("recommendations", [])
+        threshold  = [r for r in recs if r.get("type") == "threshold"]
+        alerts     = [r for r in recs if r.get("type") == "alert"]
+        bottleneck = [r for r in recs if r.get("type") == "filter_bottleneck"]
+        summary    = result.get("report_summary", {})
+        trend      = result.get("trend", {})
+        fa         = result.get("filter_analysis", {})
 
         lines = [
             f"🔍 *Weekly Analysis Complete*\n",
@@ -263,6 +301,7 @@ def _notify_analysis_complete(result: dict):
             f"Win rate: `{summary.get('win_rate', 0):.1f}%`",
             f"Total PnL: `${summary.get('total_pnl', 0):.2f}`",
             f"Recent trend: `{trend.get('trend', 'unknown')}`",
+            f"Signal rate: `{fa.get('signal_rate', 0)}%`",
             f"",
         ]
 
@@ -277,6 +316,12 @@ def _notify_analysis_complete(result: dict):
                 )
             lines.append("")
 
+        if bottleneck:
+            lines.append(f"*{len(bottleneck)} Filter Bottleneck(s):*")
+            for r in bottleneck[:2]:
+                lines.append(f"  🔴 `{r['parameter']}` — {r['reasoning'][:80]}")
+            lines.append("")
+
         if alerts:
             lines.append(f"*⚠️ {len(alerts)} Alert(s):*")
             for a in alerts:
@@ -289,7 +334,6 @@ def _notify_analysis_complete(result: dict):
             lines.append("_Use /adaptations to review and approve._")
         elif threshold and not require_approval:
             lines.append("_Recommendations queued for auto-application._")
-            lines.append("_Use /adaptations to review._")
         else:
             lines.append("_No parameter changes recommended this week._")
 

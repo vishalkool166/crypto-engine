@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.sessions import SessionMiddleware
 from api.routes       import router, build_dashboard_payload
 from api.trading      import router as trading_router
+from api.engine_health import router as engine_health_router
 from saas.admin       import router as admin_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
@@ -87,6 +88,8 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
     from trade.ws import get_all_mark_prices
     from trade.monitor import get_open_positions_enriched
     from trade.ws import get_mark_price
+    from alerts.scanner import get_engine_health
+    from data.rejection_stats import get_top_rejections
 
     dashboard   = get_dashboard_for_tier(tier)
     mark_prices = get_all_mark_prices()
@@ -115,9 +118,11 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
                     )
         dashboard["open_trades"] = open_trades
     except Exception as e:
-        log.error(f"Trade enrichment error: {e}")
+        log.error("Trade enrichment error: %s", e)
 
-    dashboard["mark_prices"] = mark_prices
+    dashboard["mark_prices"]    = mark_prices
+    dashboard["engine_health"]  = get_engine_health()
+    dashboard["top_rejections"] = get_top_rejections(3)
     return dashboard
 
 
@@ -175,7 +180,7 @@ async def push_event(event_type: str, data: dict = None):
                 _dashboard_clients.pop(ws_id, None)
 
     except Exception as e:
-        log.error(f"push_event error: {e}")
+        log.error("push_event error: %s", e)
 
 
 async def _push_trade_update(event_type: str, data: dict = None):
@@ -205,7 +210,7 @@ async def _push_trade_update(event_type: str, data: dict = None):
         await _push_to_clients(payload)
 
     except Exception as e:
-        log.error(f"_push_trade_update error: {e}")
+        log.error("_push_trade_update error: %s", e)
 
 
 async def _on_trade_event(event_type: str, data: dict):
@@ -235,9 +240,9 @@ async def _session_cleanup_loop():
         try:
             count = cleanup_expired_sessions()
             if count:
-                log.info(f"Session cleanup: {count} expired sessions removed")
+                log.info("Session cleanup: %s expired sessions removed", count)
         except Exception as e:
-            log.error(f"Session cleanup error: {e}")
+            log.error("Session cleanup error: %s", e)
 
 
 @asynccontextmanager
@@ -257,9 +262,9 @@ async def lifespan(app: FastAPI):
     if not status["setup_complete"]:
         log.warning("=" * 60)
         log.warning("FIRST RUN — visit /auth/setup to complete setup")
-        log.warning(f"TOTP URI: {status['totp_uri']}")
-        log.warning(f"API Key:  {status['api_key']}")
-        log.warning(f"Username: {status['username']}")
+        log.warning("TOTP URI: %s", status['totp_uri'])
+        log.warning("API Key:  %s", status['api_key'])
+        log.warning("Username: %s", status['username'])
         log.warning("=" * 60)
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
@@ -412,7 +417,7 @@ async def auth_google(request: Request):
         redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/google"
         return await oauth.google.authorize_redirect(request, redirect_uri)
     except Exception as e:
-        log.error(f"Google auth error: {e}")
+        log.error("Google auth error: %s", e)
         raise HTTPException(500, "OAuth configuration error")
 
 
@@ -504,7 +509,7 @@ async def auth_callback_google(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Google callback error: {e}")
+        log.error("Google callback error: %s", e)
         return RedirectResponse(url="/login?error=oauth_failed")
 
 
@@ -539,7 +544,7 @@ async def auth_session(request: Request):
             }
         })
     except Exception as e:
-        log.error(f"Session check error: {e}")
+        log.error("Session check error: %s", e)
         return JSONResponse(status_code=401, content={"authenticated": False})
 
 
@@ -573,7 +578,7 @@ async def get_my_sessions(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"get_my_sessions error: {e}")
+        log.error("get_my_sessions error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -629,7 +634,7 @@ async def complete_onboarding(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"Onboarding complete error: {e}")
+        log.error("Onboarding complete error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -675,7 +680,7 @@ async def get_me(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"get_me error: {e}")
+        log.error("get_me error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -701,7 +706,7 @@ async def create_api_key(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"create_api_key error: {e}")
+        log.error("create_api_key error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -796,7 +801,7 @@ async def auth_login(request: Request):
                 }
             )
     except Exception as e:
-        log.error(f"Login error: {e}")
+        log.error("Login error: %s", e)
         raise HTTPException(500, "Login failed")
 
 
@@ -824,7 +829,7 @@ async def request_totp_via_telegram(request: Request):
         )
         return JSONResponse(content={"success": True})
     except Exception as e:
-        log.error(f"Request TOTP error: {e}")
+        log.error("Request TOTP error: %s", e)
         return JSONResponse(status_code=500, content={"success": False, "reason": "Failed to send"})
 
 
@@ -844,7 +849,7 @@ async def auth_reset_password(request: Request):
             result = reset_password_with_totp(totp_code, new_password, ip)
         return JSONResponse(content=result)
     except Exception as e:
-        log.error(f"Reset password error: {e}")
+        log.error("Reset password error: %s", e)
         raise HTTPException(500, "Reset failed")
 
 
@@ -937,7 +942,7 @@ async def dashboard_websocket(websocket: WebSocket):
         initial = await _build_ws_payload(tier)
         await websocket.send_text(json.dumps(initial))
     except Exception as e:
-        log.error(f"Dashboard WS initial push error: {e}")
+        log.error("Dashboard WS initial push error: %s", e)
     try:
         while True:
             await websocket.receive_text()
@@ -953,9 +958,10 @@ async def telegram_webhook(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-app.include_router(router,         prefix="/api")
-app.include_router(trading_router, prefix="/api")
-app.include_router(admin_router,   prefix="/api")
+app.include_router(router,               prefix="/api")
+app.include_router(trading_router,       prefix="/api")
+app.include_router(admin_router,         prefix="/api")
+app.include_router(engine_health_router, prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os

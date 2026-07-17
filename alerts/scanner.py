@@ -7,6 +7,9 @@ from data.cache import cache
 from data.store import save_candles
 from engines.signal import run as run_signal
 from engines import state
+from engines.relative_strength import rank_coins, get_scan_priority, get_rs_summary, invalidate_cache as invalidate_rs_cache
+from engines.decision_trace import store_trace, get_recent_traces, get_rejection_summary
+from data.rejection_stats import record_scan, get_total_stats, get_top_rejections
 from database import get_session, Signal as SignalModel
 from trade.exchange import get_balance
 from trade.ws import get_mark_price, on_kline_closed
@@ -27,11 +30,18 @@ _cached_1w: dict = {}
 _HTF_CACHE_TTL   = 3600.0
 _htf_cached_at:  float = 0.0
 
+_scan_stats: dict = {
+    "last_scan_at":    0.0,
+    "last_scan_count": 0,
+    "last_scan_ms":    0.0,
+    "total_scans":     0,
+    "total_signals":   0,
+}
+
 
 def _get_ticker_from_redis(coin: str) -> dict:
     try:
         from redis_client import get_redis
-        import json
         r = get_redis()
         if not r:
             return {"change24": 0.0, "change_pos": True}
@@ -97,7 +107,6 @@ def _derive_session() -> str:
 def _build_partial_score(result: dict) -> float:
     sweep_score   = result.get("sweep_score",   0) or 0
     zone_score    = result.get("zone_score",    0) or 0
-    trigger_score = result.get("trigger_score", 0) or 0
 
     if result.get("signal"):
         return round((result.get("score", 0) or 0) * 100)
@@ -126,7 +135,7 @@ async def _load_htf_candles() -> dict:
     if _cached_1d and (now - _htf_cached_at) < _HTF_CACHE_TTL:
         return {"1d": _cached_1d, "1w": _cached_1w}
 
-    log.info("Loading higher timeframe candles for all coins")
+    log.info("Loading higher timeframe candles")
     new_1d = {}
     new_1w = {}
 
@@ -147,10 +156,9 @@ async def _load_htf_candles() -> dict:
 
         await asyncio.sleep(0.2)
 
-    _cached_1d      = new_1d
-    _cached_1w      = new_1w
-    _htf_cached_at  = now
-    log.info("Higher timeframe candles loaded for %s coins", len(cfg.COINS))
+    _cached_1d     = new_1d
+    _cached_1w     = new_1w
+    _htf_cached_at = now
     return {"1d": new_1d, "1w": new_1w}
 
 
@@ -198,6 +206,7 @@ def _build_factor_scores(result: dict) -> dict:
 
 def _save_signal(signal: dict) -> int | None:
     if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
+        record_scan(signal.get("coin", ""), signal.get("direction", ""), "grade_filter")
         return None
     if signal.get("direction") not in ("LONG", "SHORT"):
         return None
@@ -257,9 +266,8 @@ def _save_signal(signal: dict) -> int | None:
             db.flush()
             db.refresh(row)
             log.info(
-                "Signal saved ID:%s %s %s grade:%s alignment:%s",
-                row.id, signal["coin"], signal["direction"],
-                signal["grade"], signal.get("alignment_str", "none")
+                "Signal saved ID:%s %s %s grade:%s",
+                row.id, signal["coin"], signal["direction"], signal["grade"]
             )
             return row.id
     except Exception as e:
@@ -331,7 +339,7 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
 
         from datetime import datetime, timezone
         _hour = datetime.now(timezone.utc).hour
-        if 8   <= _hour < 13: _session = "London"
+        if 8   <= _hour < 13:  _session = "London"
         elif 13 <= _hour < 17: _session = "London/NY Overlap"
         elif 17 <= _hour < 21: _session = "New York"
         elif 0  <= _hour < 8:  _session = "Asia"
@@ -380,9 +388,8 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
             current_state = state.get(coin)
             state.set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
             log.info(
-                "Trade opened: %s %s grade:%s trade_id:%s alignment:%s",
-                coin, signal["direction"], signal["grade"],
-                result["trade_id"], signal.get("alignment_str", "none")
+                "Trade opened: %s %s grade:%s trade_id:%s",
+                coin, signal["direction"], signal["grade"], result["trade_id"]
             )
         else:
             log.error("Trade open failed %s: %s", coin, result.get("error"))
@@ -395,6 +402,7 @@ async def _analyze_coin(
     coin:    str,
     balance: float,
     htf:     dict,
+    rs_tier: str = "medium",
 ) -> dict | None:
     async with _scan_semaphore:
         try:
@@ -412,6 +420,7 @@ async def _analyze_coin(
 
             if current["status"] == "cooldown":
                 if not state.is_available(coin):
+                    record_scan(coin, "", "cooldown")
                     return None
 
             candles = await _load_candles(coin)
@@ -420,6 +429,8 @@ async def _analyze_coin(
 
             df_1d = htf.get("1d", {}).get(coin)
             df_1w = htf.get("1w", {}).get(coin)
+
+            scan_start = time.time()
 
             result = await run_signal(
                 coin    = coin,
@@ -430,6 +441,8 @@ async def _analyze_coin(
                 df_1d   = df_1d,
                 df_1w   = df_1w,
             )
+
+            scan_ms = round((time.time() - scan_start) * 1000, 1)
 
             current = state.get(coin)
 
@@ -513,15 +526,19 @@ async def _analyze_coin(
                     "alignment": alignment.get("alignment", "none"),
                     "size_mult": alignment.get("size_mult", 1.0),
                 },
-                "narrative": result.get("narrative", ""),
-                "regime":    regime,
-                "session":   session,
+                "narrative":  result.get("narrative", ""),
+                "regime":     regime,
+                "session":    session,
                 "explanation": {
                     "thesis":           result.get("narrative", ""),
                     "confidence_label": result.get("grade", "--") if result.get("signal") else "",
                 },
-                "actual_rr":  result.get("rr1", 0),
-                "cached_at":  time.time(),
+                "actual_rr":   result.get("rr1", 0),
+                "cached_at":   time.time(),
+                "scan_ms":     scan_ms,
+                "rs_tier":     rs_tier,
+                "trace":       result.get("trace"),
+                "score_detail":result.get("score_detail"),
                 "wconf": {
                     "norm_score":   score,
                     "market_score": round(result.get("sweep_score",   0) * 100) if result.get("sweep_score")   else 0,
@@ -619,7 +636,9 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
 
 async def scan_all_coins() -> list:
     async with _scan_lock:
-        log.info("Scan started — %s coins", len(cfg.COINS))
+        scan_start = time.time()
+        coins      = cfg.COINS
+        log.info("Scan started — %s coins", len(coins))
 
         balance = await _get_cached_balance()
         if balance <= 0:
@@ -630,23 +649,109 @@ async def scan_all_coins() -> list:
 
         htf = await _load_htf_candles()
 
-        results = await asyncio.gather(
-            *[_analyze_coin(c, balance, htf) for c in cfg.COINS],
+        invalidate_rs_cache()
+        ranked = rank_coins(coins)
+        rank_map = {r["coin"]: r for r in ranked}
+
+        high_tier   = [r["coin"] for r in ranked if r.get("tier") == "high"]
+        medium_tier = [r["coin"] for r in ranked if r.get("tier") == "medium"]
+        low_tier    = [r["coin"] for r in ranked if r.get("tier") == "low"]
+
+        log.info(
+            "RS ranking — high:%s medium:%s low:%s",
+            len(high_tier), len(medium_tier), len(low_tier)
+        )
+
+        priority_coins = high_tier + medium_tier
+        deferred_coins = low_tier
+
+        priority_results = await asyncio.gather(
+            *[
+                _analyze_coin(
+                    c, balance, htf,
+                    rs_tier=rank_map.get(c, {}).get("tier", "medium")
+                )
+                for c in priority_coins
+            ],
             return_exceptions=True
         )
 
-        valid = [r for r in results if r and not isinstance(r, Exception)]
+        deferred_results = await asyncio.gather(
+            *[
+                _analyze_coin(
+                    c, balance, htf,
+                    rs_tier="low"
+                )
+                for c in deferred_coins
+            ],
+            return_exceptions=True
+        )
+
+        all_results = list(priority_results) + list(deferred_results)
+        valid = [r for r in all_results if r and not isinstance(r, Exception)]
         valid.sort(key=lambda x: x.get("score", 0), reverse=True)
 
+        scan_ms = round((time.time() - scan_start) * 1000, 1)
+
+        _scan_stats["last_scan_at"]    = time.time()
+        _scan_stats["last_scan_count"] = len(valid)
+        _scan_stats["last_scan_ms"]    = scan_ms
+        _scan_stats["total_scans"]    += 1
+        _scan_stats["total_signals"]  += sum(1 for r in valid if r.get("grade") in ("A+", "A"))
+
         _write_active_pairs()
+        _write_engine_health(valid, scan_ms)
 
         await send_scan_summary(valid)
 
         from events import emit
         asyncio.create_task(emit("scan_complete"))
 
-        log.info("Scan complete — %s results", len(valid))
+        log.info("Scan complete — %s results in %sms", len(valid), scan_ms)
         return valid
+
+
+def _write_engine_health(results: list, scan_ms: float) -> None:
+    try:
+        from redis_client import get_redis
+        from data.rejection_stats import get_total_stats, get_top_rejections
+        from data.cache import cache
+
+        r = get_redis()
+        if not r:
+            return
+
+        btc_data  = cache.get_raw("btc_4h_data")
+        btc_cls   = btc_data.get("trend", {}).get("cls", "neutral") if btc_data else "neutral"
+        btc_adx   = float(btc_data.get("adx") or 0) if btc_data else 0.0
+
+        regimes = [x.get("regime", "") for x in results if x.get("regime")]
+        dominant_regime = max(set(regimes), key=regimes.count) if regimes else "Unknown"
+
+        scores = [x.get("score", 0) for x in results if x.get("score", 0) > 0]
+        avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+
+        rejection_stats = get_total_stats()
+        top_rejections  = get_top_rejections(3)
+
+        health = {
+            "coins_scanned":    len(results),
+            "signals_today":    _scan_stats["total_signals"],
+            "total_scans":      _scan_stats["total_scans"],
+            "avg_scan_ms":      scan_ms,
+            "avg_score":        avg_score,
+            "dominant_regime":  dominant_regime,
+            "btc_cls":          btc_cls,
+            "btc_adx":          btc_adx,
+            "top_rejections":   top_rejections,
+            "signal_rate":      rejection_stats.get("signal_rate", 0),
+            "updated_at":       time.time(),
+        }
+
+        r.setex("engine:health", 1800, json.dumps(health))
+
+    except Exception as e:
+        log.error("_write_engine_health: %s", e)
 
 
 def _write_active_pairs() -> None:
@@ -694,6 +799,25 @@ def get_db_stats() -> dict:
     except Exception as e:
         log.error("get_db_stats: %s", e)
         return {}
+
+
+def get_engine_health() -> dict:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return {}
+        raw = r.get("engine:health")
+        if not raw:
+            return {}
+        return json.loads(raw)
+    except Exception as e:
+        log.error("get_engine_health: %s", e)
+        return {}
+
+
+def get_scan_stats() -> dict:
+    return dict(_scan_stats)
 
 
 def register_kline_handler() -> None:

@@ -30,7 +30,7 @@ def get_stats_by_version() -> list:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.system_version.isnot(None)
+                TradeModel.system_version.isnot(None),
             ).all()
 
         by_version: dict = {}
@@ -60,7 +60,7 @@ def get_stats_by_session(min_trades: int = 5) -> dict:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.session_at_entry.isnot(None)
+                TradeModel.session_at_entry.isnot(None),
             ).all()
 
         by_session: dict = {}
@@ -88,7 +88,7 @@ def get_stats_by_regime(min_trades: int = 5) -> dict:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.regime_at_entry.isnot(None)
+                TradeModel.regime_at_entry.isnot(None),
             ).all()
 
         by_regime: dict = {}
@@ -202,7 +202,7 @@ def get_stats_by_sweep_score_bucket(min_trades: int = 5) -> dict:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.signal_id.isnot(None)
+                TradeModel.signal_id.isnot(None),
             ).all()
 
             signal_ids = [t.signal_id for t in closed]
@@ -306,28 +306,26 @@ def get_expectancy_stats() -> dict:
         if not closed:
             return {"error": "No closed trades"}
 
-        wins   = [float(t.net_pnl or t.pnl or 0) for t in closed if t.outcome == "win"]
-        losses = [abs(float(t.net_pnl or t.pnl or 0)) for t in closed if t.outcome == "loss"]
+        wins   = [float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in closed if t.outcome == "win"]
+        losses = [abs(float(t.binance_net_pnl or t.net_pnl or t.pnl or 0)) for t in closed if t.outcome == "loss"]
 
         total     = len(closed)
-        win_rate  = len(wins)  / total
+        win_rate  = len(wins)   / total
         loss_rate = len(losses) / total
         avg_win   = sum(wins)   / len(wins)   if wins   else 0.0
         avg_loss  = sum(losses) / len(losses) if losses else 0.0
 
         expectancy = (win_rate * avg_win) - (loss_rate * avg_loss)
-
-        payoff = avg_win / avg_loss if avg_loss > 0 else 0.0
-
-        kelly = win_rate - (loss_rate / payoff) if payoff > 0 else 0.0
+        payoff     = avg_win / avg_loss if avg_loss > 0 else 0.0
+        kelly      = win_rate - (loss_rate / payoff) if payoff > 0 else 0.0
 
         return {
             "expectancy":   round(expectancy, 4),
-            "win_rate":     round(win_rate  * 100, 1),
-            "loss_rate":    round(loss_rate * 100, 1),
-            "avg_win":      round(avg_win,  4),
-            "avg_loss":     round(avg_loss, 4),
-            "payoff_ratio": round(payoff,   2),
+            "win_rate":     round(win_rate   * 100, 1),
+            "loss_rate":    round(loss_rate  * 100, 1),
+            "avg_win":      round(avg_win,   4),
+            "avg_loss":     round(avg_loss,  4),
+            "payoff_ratio": round(payoff,    2),
             "kelly_pct":    round(kelly * 100, 1),
             "total_trades": total,
         }
@@ -346,7 +344,7 @@ def get_efficiency_stats(min_trades: int = 10) -> dict:
             ).all()
 
         if len(outcomes) < min_trades:
-            return {"error": f"Need {min_trades} outcomes with efficiency data, have {len(outcomes)}"}
+            return {"error": f"Need {min_trades} outcomes, have {len(outcomes)}"}
 
         cap_eff   = [float(o.capital_efficiency) for o in outcomes if o.capital_efficiency is not None]
         risk_mult = [float(o.risk_multiple)       for o in outcomes if o.risk_multiple       is not None]
@@ -372,7 +370,7 @@ def get_drawdown_history() -> dict:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.net_pnl.isnot(None)
+                TradeModel.net_pnl.isnot(None),
             ).order_by(TradeModel.opened_at.asc()).all()
 
         if not closed:
@@ -384,7 +382,7 @@ def get_drawdown_history() -> dict:
         equity_curve = []
 
         for t in closed:
-            equity += float(t.net_pnl or t.pnl or 0)
+            equity += float(t.binance_net_pnl or t.net_pnl or t.pnl or 0)
             if equity > peak:
                 peak = equity
             dd = (peak - equity) / peak * 100 if peak > 0 else 0.0
@@ -422,7 +420,7 @@ def get_win_rate_at_threshold(
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.signal_id.isnot(None)
+                TradeModel.signal_id.isnot(None),
             ).all()
 
             signal_ids = [t.signal_id for t in closed]
@@ -493,6 +491,15 @@ def get_full_report() -> dict:
         return {}
 
 
+def get_monthly_comparison(months: int = 3) -> list:
+    try:
+        from reports.monthly_report import get_last_n_months
+        return get_last_n_months(months)
+    except Exception as e:
+        log.error("get_monthly_comparison: %s", e)
+        return []
+
+
 def _build_stats(trades: list) -> dict:
     if not trades:
         return {
@@ -510,7 +517,7 @@ def _build_stats(trades: list) -> dict:
 
     wins   = [t for t in trades if t.outcome == "win"]
     losses = [t for t in trades if t.outcome == "loss"]
-    pnls   = [float(t.net_pnl or t.pnl or 0) for t in trades]
+    pnls   = [float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in trades]
     total  = len(trades)
     wr     = round(len(wins) / total * 100, 1) if total > 0 else 0.0
 
@@ -522,7 +529,7 @@ def _build_stats(trades: list) -> dict:
     peak   = 0.0
     max_dd = 0.0
     for t in sorted(trades, key=lambda x: x.opened_at or datetime.min):
-        equity += float(t.net_pnl or t.pnl or 0)
+        equity += float(t.binance_net_pnl or t.net_pnl or t.pnl or 0)
         if equity > peak:
             peak = equity
         dd = (peak - equity) / peak * 100 if peak > 0 else 0.0

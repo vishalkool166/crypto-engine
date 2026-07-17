@@ -207,6 +207,87 @@ ADAPTATION_CONFIG = {
     },
 }
 
+RS_CONFIG = {
+    "cache_ttl_seconds":   900,
+    "refresh_interval_m":  15,
+    "high_tier_pct":       0.33,
+    "medium_tier_pct":     0.33,
+    "score_weights": {
+        "relative_strength": 0.35,
+        "volume_expansion":  0.25,
+        "adx":               0.25,
+        "momentum":          0.15,
+    },
+    "score_caps": {
+        "rs_max":       20,
+        "rs_min":      -20,
+        "vol_max":      15,
+        "vol_min":     -10,
+        "adx_max":      15,
+        "momentum_max": 15,
+        "momentum_min":-15,
+    },
+}
+
+DECISION_TRACE_CONFIG = {
+    "max_traces_per_coin": 10,
+    "redis_ttl_seconds":   3600,
+    "recent_list_size":    200,
+}
+
+REJECTION_STATS_CONFIG = {
+    "live_ttl_days":  7,
+    "daily_ttl_days": 90,
+}
+
+SCORE_THRESHOLDS = {
+    "trending": {
+        "aplus": 85,
+        "a":     68,
+        "b":     52,
+    },
+    "ranging": {
+        "aplus": 78,
+        "a":     62,
+        "b":     48,
+    },
+    "choppy": {
+        "aplus": 88,
+        "a":     72,
+        "b":     56,
+    },
+    "volatile": {
+        "aplus": 90,
+        "a":     75,
+        "b":     58,
+    },
+    "default": {
+        "aplus": 85,
+        "a":     68,
+        "b":     52,
+    },
+}
+
+BTC_CONTEXT_SCORES = {
+    "strongly_aligned":   10,
+    "aligned":             7,
+    "neutral":             5,
+    "weakly_opposing":     0,
+    "opposing":           -4,
+    "strongly_opposing":  -8,
+    "adx_strong_threshold": 30,
+    "adx_moderate_threshold": 25,
+    "adx_panic_threshold": 35,
+}
+
+HTF_ALIGNMENT_SCORES = {
+    "both_aligned":    12,
+    "one_aligned":      7,
+    "both_neutral":     4,
+    "one_opposing":    -5,
+    "both_opposing":  -10,
+}
+
 
 def _ensure(key: str, value: str) -> None:
     os.environ[key] = value
@@ -425,6 +506,13 @@ class Config:
 
     CAPITAL = float(os.getenv("CAPITAL", "1000"))
 
+    RS_CACHE_TTL        = RS_CONFIG["cache_ttl_seconds"]
+    RS_HIGH_TIER_PCT    = RS_CONFIG["high_tier_pct"]
+    RS_MEDIUM_TIER_PCT  = RS_CONFIG["medium_tier_pct"]
+
+    TRACE_MAX_PER_COIN  = DECISION_TRACE_CONFIG["max_traces_per_coin"]
+    TRACE_REDIS_TTL     = DECISION_TRACE_CONFIG["redis_ttl_seconds"]
+
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
         if self.PAPER_TRADING:
@@ -518,6 +606,27 @@ class Config:
 
     def get_thesis_thresholds(self) -> dict:
         return dict(self.THESIS_THRESHOLDS)
+
+    def get_score_thresholds(self, regime: str = "default") -> dict:
+        r = (regime or "").lower()
+        if "trend" in r:
+            return SCORE_THRESHOLDS["trending"]
+        if "rang" in r:
+            return SCORE_THRESHOLDS["ranging"]
+        if "chop" in r:
+            return SCORE_THRESHOLDS["choppy"]
+        if "volat" in r or "panic" in r:
+            return SCORE_THRESHOLDS["volatile"]
+        return SCORE_THRESHOLDS["default"]
+
+    def get_btc_context_scores(self) -> dict:
+        return dict(BTC_CONTEXT_SCORES)
+
+    def get_htf_alignment_scores(self) -> dict:
+        return dict(HTF_ALIGNMENT_SCORES)
+
+    def get_rs_config(self) -> dict:
+        return dict(RS_CONFIG)
 
 
 def _bootstrap_secrets() -> None:
