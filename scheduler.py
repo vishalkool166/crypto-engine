@@ -306,6 +306,23 @@ def get_next_scan_epoch() -> int:
     )
     return int(next_hour.timestamp() * 1000)
 
+async def job_funding_rates():
+    try:
+        from data.fetcher import get_funding_rate
+        from redis_client import get_redis
+        from config import cfg
+        r = get_redis()
+        if not r:
+            return
+        for coin in cfg.COINS:
+            try:
+                rate = await get_funding_rate(coin)
+                r.setex(f"funding:{coin}USDT", 3600, str(rate))
+            except Exception as e:
+                log.warning("funding rate %s: %s", coin, e)
+    except Exception as e:
+        log.error("job_funding_rates: %s", e)
+
 
 def start_scheduler():
     scheduler.add_job(
@@ -444,6 +461,12 @@ def start_scheduler():
         job_rs_refresh,
         trigger          = IntervalTrigger(minutes=15),
         id               = "rs_refresh",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_funding_rates,
+        trigger          = IntervalTrigger(hours=1),
+        id               = 'funding_rates',
         replace_existing = True,
     )
 
