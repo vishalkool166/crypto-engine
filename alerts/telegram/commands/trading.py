@@ -8,7 +8,6 @@ log = logging.getLogger(__name__)
 
 async def cmd_trades() -> None:
     from trade.monitor import get_open_positions_enriched
-    from trade.ws import get_mark_price
     try:
         trades = await get_open_positions_enriched()
         if not trades:
@@ -22,13 +21,9 @@ async def cmd_trades() -> None:
             leverage  = int(t.get("leverage") or 1)
             margin    = float(t.get("margin_used") or 0)
             is_short  = direction == "SHORT"
-            live      = get_mark_price(coin) or float(t.get("current_price") or entry)
-            if entry > 0 and live > 0:
-                pnl_abs = ((entry - live) if is_short else (live - entry)) / entry * margin * leverage
-                pnl_abs = round(pnl_abs, 4)
-                pnl_pct = pnl_abs / margin * 100
-            else:
-                pnl_abs = pnl_pct = 0.0
+            live      = float(t.get("current_price") or entry)
+            pnl_abs   = float(t.get("profit_abs") or 0)
+            pnl_pct   = round(pnl_abs / margin * 100, 2) if margin > 0 else 0.0
             pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
             pnl_emoji = "🟢" if pnl_abs >= 0 else "🔴"
             side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"
@@ -70,7 +65,6 @@ async def cmd_trades() -> None:
 
 async def cmd_position(coin: str) -> None:
     from trade.monitor import get_open_positions_enriched
-    from trade.ws import get_mark_price
     try:
         trades = await get_open_positions_enriched()
         trade  = next((t for t in trades if t.get("coin") == coin), None)
@@ -84,13 +78,9 @@ async def cmd_position(coin: str) -> None:
         is_short  = direction == "SHORT"
         sl        = trade.get("sl_price")
         tp        = trade.get("tp1_price")
-        live      = get_mark_price(coin) or float(trade.get("current_price") or entry)
-        if entry > 0 and live > 0:
-            pnl_abs = ((entry - live) if is_short else (live - entry)) / entry * margin * leverage
-            pnl_abs = round(pnl_abs, 4)
-            pnl_pct = pnl_abs / margin * 100
-        else:
-            pnl_abs = pnl_pct = 0.0
+        live      = float(trade.get("current_price") or entry)
+        pnl_abs   = float(trade.get("profit_abs") or 0)
+        pnl_pct   = round(pnl_abs / margin * 100, 2) if margin > 0 else 0.0
         pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
         pnl_emoji = "🟢" if pnl_abs >= 0 else "🔴"
         side      = "📈 LONG" if direction == "LONG" else "📉 SHORT"

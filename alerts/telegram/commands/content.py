@@ -9,9 +9,9 @@ async def cmd_brief() -> None:
     from datetime import datetime, timezone, timedelta
     from data.cache import cache
     from data.fetcher import get_fear_greed
-    from trade.ws import get_mark_price, get_binance_account
     from alerts.scanner import get_db_stats
     from scheduler import get_next_scan_time
+    from trade.monitor import get_open_positions_enriched
 
     await send("⏳ Generating market report...")
 
@@ -98,60 +98,13 @@ async def cmd_brief() -> None:
             and r.get("grade") not in ("A+", "A", "B")
         ]
 
-        from database import SessionLocal, Trade as TradeModel
-        open_trades = []
-        try:
-            with SessionLocal() as db:
-                trades = db.query(TradeModel).filter(
-                    TradeModel.is_active == True
-                ).all()
-                for t in trades:
-                    live = get_mark_price(t.coin) or float(t.entry_price or 0)
-                    entry    = float(t.entry_price or 0)
-                    margin   = float(t.margin_used or 0)
-                    leverage = int(t.leverage or 1)
-                    is_short = t.direction == "SHORT"
-                    if entry > 0:
-                        ratio   = (entry - live) / entry if is_short else (live - entry) / entry
-                        pnl_abs = round(ratio * margin * leverage, 4)
-                    else:
-                        pnl_abs = 0.0
-                    open_trades.append({
-                        "coin":      t.coin,
-                        "direction": t.direction,
-                        "grade":     t.grade,
-                        "entry":     entry,
-                        "live":      live,
-                        "pnl":       pnl_abs,
-                        "tp1":       float(t.tp1_price or 0),
-                        "sl":        float(t.sl_price  or 0),
-                    })
-        except Exception as e:
-            log.error("cmd_brief open trades: %s", e)
-
-        from datetime import date, timedelta as td
-        stats_7d = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
-        try:
-            week_start = datetime.now(timezone.utc) - td(days=7)
-            with SessionLocal() as db:
-                recent = db.query(TradeModel).filter(
-                    TradeModel.closed_at >= week_start,
-                    TradeModel.outcome.in_(["win", "loss"])
-                ).all()
-                stats_7d["trades"]  = len(recent)
-                stats_7d["wins"]    = sum(1 for t in recent if t.outcome == "win")
-                stats_7d["losses"]  = sum(1 for t in recent if t.outcome == "loss")
-                stats_7d["pnl"]     = round(sum(float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in recent), 4)
-        except Exception as e:
-            log.error("cmd_brief 7d stats: %s", e)
+        open_trades = await get_open_positions_enriched()
 
         all_stats = get_db_stats()
         next_scan = get_next_scan_time()
 
         btc_sign   = "+" if btc_change >= 0 else ""
         eth_sign   = "+" if eth_change >= 0 else ""
-        pnl_sign   = "+" if stats_7d["pnl"] >= 0 else ""
-        wr_7d      = round(stats_7d["wins"] / stats_7d["trades"] * 100, 1) if stats_7d["trades"] > 0 else 0
 
         lines = [
             f"📊 *Market Report — {time_label}*",
@@ -242,21 +195,49 @@ async def cmd_brief() -> None:
 
         if open_trades:
             for t in open_trades:
-                pnl_str   = f"+${t['pnl']:.4f}" if t["pnl"] >= 0 else f"-${abs(t['pnl']):.4f}"
-                pnl_emoji = "🟢" if t["pnl"] >= 0 else "🔴"
-                dir_emoji = "📈" if t["direction"] == "LONG" else "📉"
+                coin      = t.get("coin", "--")
+                direction = t.get("direction", "--")
+                grade     = t.get("grade", "--")
+                entry     = float(t.get("entry_price") or 0)
+                live      = float(t.get("current_price") or entry)
+                pnl_abs   = float(t.get("profit_abs") or 0)
+                tp        = t.get("tp1_price")
+                sl        = t.get("sl_price")
+                pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
+                pnl_emoji = "🟢" if pnl_abs >= 0 else "🔴"
+                dir_emoji = "📈" if direction == "LONG" else "📉"
                 lines.append(
-                    f"{dir_emoji} *{t['coin']}* `{t['direction']}` Grade `{t['grade']}`"
+                    f"{dir_emoji} *{coin}* `{direction}` Grade `{grade}`"
                 )
                 lines.append(
-                    f"   Entry `{t['entry']:.4f}` · Live `{t['live']:.4f}` · {pnl_emoji} `{pnl_str}`"
+                    f"   Entry `{entry:.4f}` · Live `{live:.4f}` · {pnl_emoji} `{pnl_str}`"
                 )
-                if t["tp1"] and t["sl"]:
-                    lines.append(f"   TP `{t['tp1']:.4f}` · SL `{t['sl']:.4f}`")
+                if tp and sl:
+                    lines.append(f"   TP `{tp:.4f}` · SL `{sl:.4f}`")
                 lines.append("")
         else:
             lines.append("No open trades")
             lines.append("")
+
+        from datetime import date, timedelta as td
+        stats_7d = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+        try:
+            from database import SessionLocal, Trade as TradeModel
+            week_start = datetime.now(timezone.utc) - td(days=7)
+            with SessionLocal() as db:
+                recent = db.query(TradeModel).filter(
+                    TradeModel.closed_at >= week_start,
+                    TradeModel.outcome.in_(["win", "loss"])
+                ).all()
+                stats_7d["trades"]  = len(recent)
+                stats_7d["wins"]    = sum(1 for t in recent if t.outcome == "win")
+                stats_7d["losses"]  = sum(1 for t in recent if t.outcome == "loss")
+                stats_7d["pnl"]     = round(sum(float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in recent), 4)
+        except Exception as e:
+            log.error("cmd_brief 7d stats: %s", e)
+
+        wr_7d    = round(stats_7d["wins"] / stats_7d["trades"] * 100, 1) if stats_7d["trades"] > 0 else 0
+        pnl_sign = "+" if stats_7d["pnl"] >= 0 else ""
 
         lines += [
             f"━━━━━━━━━━━━━━━━━━━━━━",
