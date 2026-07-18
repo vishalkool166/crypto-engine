@@ -112,20 +112,15 @@ async def _get_commission(symbol: str, order_id: str) -> dict:
 
 
 def _calc_pnl(
-    direction:  str,
-    entry:      float,
-    exit_price: float,
-    margin:     float,
-    leverage:   int,
-    commission: float = 0.0,
+    direction:    str,
+    entry:        float,
+    exit_price:   float,
+    position_amt: float,
+    commission:   float = 0.0,
 ) -> float:
-    if not entry or not exit_price or not margin:
+    if not entry or not exit_price or not position_amt:
         return 0.0
-    position = margin * leverage
-    gross    = (
-        (exit_price - entry) / entry * position if direction == "LONG"
-        else (entry - exit_price) / entry * position
-    )
+    gross = position_amt * (exit_price - entry)
     return round(gross - commission, 4)
 
 
@@ -186,6 +181,7 @@ def _create_pending_trade(
 def _activate_trade(
     trade_id:           int,
     entry_price:        float,
+    position_amt:       float,
     position_size:      float,
     margin_used:        float,
     sl_order_id:        str | None,
@@ -205,7 +201,7 @@ def _activate_trade(
             trade.state              = "open"
             trade.is_active          = True
             trade.entry_price        = entry_price
-            trade.position_size      = position_size
+            trade.position_size      = position_amt
             trade.margin_used        = margin_used
             trade.sl_order_id        = sl_order_id
             trade.tp1_order_id       = tp1_order_id
@@ -227,8 +223,8 @@ def _activate_trade(
                 trade.open_trades_at_entry = sizing_result.get("open_trades")
 
             log.info(
-                "Trade activated: id:%s fill:%.6f slip:%.4f%% fee:$%.8f",
-                trade_id, actual_fill_entry, slippage_entry_pct, entry_commission,
+                "Trade activated: id:%s fill:%.6f position_amt:%.6f slip:%.4f%% fee:$%.8f",
+                trade_id, actual_fill_entry, position_amt, slippage_entry_pct, entry_commission,
             )
     except Exception as e:
         log.error("_activate_trade error: %s", e)
@@ -381,8 +377,8 @@ async def open_position(
             _cancel_pending_trade(trade_id)
             return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
-        sl_rounded  = _round_tick(sl,  tick_size)
-        tp1_rounded = _round_tick(tp,  tick_size)
+        sl_rounded  = _round_tick(sl, tick_size)
+        tp1_rounded = _round_tick(tp, tick_size)
 
         log.info(
             "Opening: %s %s price:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s",
@@ -396,10 +392,11 @@ async def open_position(
         filled_qty = _round_step(float(filled.get("executedQty", total_quantity)), qty_step)
         entry_oid  = str(filled.get("orderId", ""))
 
-        actual_position_size = round(filled_qty * fill_price, 8)
-        actual_margin        = round(actual_position_size / leverage, 8)
+        signed_qty           = -filled_qty if is_short else filled_qty
+        actual_position_size = signed_qty
+        actual_margin        = round(abs(filled_qty * fill_price) / leverage, 8)
 
-        log.info("Entry filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
+        log.info("Entry filled: %s %.6f qty:%s signed_qty:%s", coin, fill_price, filled_qty, signed_qty)
 
         await asyncio.sleep(3.0)
 
@@ -428,7 +425,8 @@ async def open_position(
         _activate_trade(
             trade_id           = trade_id,
             entry_price        = fill_price,
-            position_size      = actual_position_size,
+            position_amt       = signed_qty,
+            position_size      = signed_qty,
             margin_used        = actual_margin,
             sl_order_id        = sl_oid,
             tp1_order_id       = tp1_oid,
@@ -489,6 +487,7 @@ async def open_position(
             "trade_id":   trade_id,
             "fill_price": fill_price,
             "quantity":   filled_qty,
+            "signed_qty": signed_qty,
             "sl_order":   sl_oid,
             "tp1_order":  tp1_oid,
             "commission": entry_fee,
@@ -614,15 +613,17 @@ async def close_position(
         entry_fee       = _get_field(trade_id, "entry_commission")
         total_fee       = round(entry_fee + exit_fee, 8)
 
+        position_amt    = _get_field(trade_id, "position_size")
+        entry_price     = _get_field(trade_id, "entry_price")
+
         net_pnl = (
             round(realized_pnl - total_fee, 8) if realized_pnl != 0
             else _calc_pnl(
-                direction  = direction,
-                entry      = _get_field(trade_id, "entry_price"),
-                exit_price = exit_price,
-                margin     = _get_field(trade_id, "margin_used"),
-                leverage   = int(_get_field(trade_id, "leverage") or 1),
-                commission = total_fee,
+                direction    = direction,
+                entry        = entry_price,
+                exit_price   = exit_price,
+                position_amt = position_amt,
+                commission   = total_fee,
             )
         )
 

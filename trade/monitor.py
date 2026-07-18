@@ -24,10 +24,10 @@ def _get_open_trades_from_db() -> list:
                 "direction":          t.direction,
                 "grade":              t.grade,
                 "entry_price":        t.entry_price,
+                "position_size":      t.position_size,
                 "sl_price":           t.sl_price,
                 "tp1_price":          t.tp1_price,
                 "tp2_price":          t.tp2_price,
-                "position_size":      t.position_size,
                 "margin_used":        t.margin_used,
                 "leverage":           t.leverage,
                 "sl_order_id":        t.sl_order_id,
@@ -46,7 +46,6 @@ def _get_open_trades_from_db() -> list:
                 "system_version":     t.system_version,
                 "tp1_hit":            t.tp1_hit,
                 "binance_liq_price":  t.binance_liq_price,
-                "binance_mark_price_entry": t.binance_mark_price_entry,
                 "binance_leverage":   t.binance_leverage,
                 "binance_margin_type":t.binance_margin_type,
                 "binance_wallet_at_open": t.binance_wallet_at_open,
@@ -78,73 +77,45 @@ def _duration_str(opened_at: str | None, closed_at: datetime | None = None) -> s
         return "—"
 
 
-def _get_binance_unrealized(coin: str) -> float | None:
-    try:
-        from trade.ws import get_binance_unrealized_pnl
-        return get_binance_unrealized_pnl(coin)
-    except Exception:
-        return None
-
-
-def _get_binance_position_data(coin: str) -> dict | None:
-    try:
-        from trade.ws import get_binance_position
-        return get_binance_position(coin)
-    except Exception:
-        return None
-
-
-def _live_pnl_inhouse(
-    entry:    float,
-    price:    float,
-    margin:   float,
-    leverage: int,
-    is_short: bool,
-) -> tuple[float, float]:
-    if not entry or not price or not margin:
-        return 0.0, 0.0
-    ratio = (entry - price) / entry if is_short else (price - entry) / entry
-    return round(ratio * leverage, 4), round(ratio * margin * leverage, 4)
+def _calc_live_pnl(
+    position_amt: float,
+    entry_price:  float,
+    mark_price:   float,
+) -> float:
+    if not position_amt or not entry_price or not mark_price:
+        return 0.0
+    return round(position_amt * (mark_price - entry_price), 4)
 
 
 def _enrich_trade(trade: dict, position_map: dict) -> dict:
-    coin      = trade["coin"]
-    position  = position_map.get(coin)
-    entry     = float(trade.get("entry_price") or 0)
-    direction = trade.get("direction", "LONG")
-    leverage  = int(trade.get("leverage") or 1)
-    margin    = float(trade.get("margin_used") or 0)
-    is_short  = direction == "SHORT"
+    coin         = trade["coin"]
+    position     = position_map.get(coin)
+    entry        = float(trade.get("entry_price") or 0)
+    direction    = trade.get("direction", "LONG")
+    leverage     = int(trade.get("leverage") or 1)
+    margin       = float(trade.get("margin_used") or 0)
+    is_short     = direction == "SHORT"
+    position_amt = float(trade.get("position_size") or 0)
 
-    try:
-        from trade.ws import get_mark_price
-        live_price = get_mark_price(coin)
-    except Exception:
-        live_price = 0.0
+    from trade.ws import get_mark_price
+    mark_price = get_mark_price(coin)
 
-    if not live_price and position:
-        live_price = float(position.get("markPrice") or position.get("entryPrice") or entry)
-    if not live_price:
-        live_price = entry
+    if not mark_price and position:
+        mark_price = float(position.get("markPrice") or position.get("entryPrice") or entry)
+    if not mark_price:
+        mark_price = entry
 
-    binance_pos        = _get_binance_position_data(coin)
-    binance_unrealized = None
-    liquidation_price  = float(trade.get("binance_liq_price") or 0)
-
-    if binance_pos:
-        binance_unrealized = float(binance_pos.get("unrealizedProfit", 0) or 0)
-        if not liquidation_price:
-            liquidation_price = float(position.get("liquidationPrice", 0) or 0) if position else 0.0
-
-    if binance_unrealized is not None:
-        profit_abs   = binance_unrealized
-        profit_ratio = round(profit_abs / margin, 4) if margin > 0 else 0.0
-    else:
-        profit_ratio, profit_abs = _live_pnl_inhouse(entry, live_price, margin, leverage, is_short)
+    profit_abs   = _calc_live_pnl(position_amt, entry, mark_price)
+    profit_ratio = round(profit_abs / margin, 4) if margin > 0 else 0.0
+    pnl_source   = "binance_ws"
 
     funding      = float(trade.get("funding_fees_paid") or 0)
     total_fee    = float(trade.get("total_commission")  or 0)
     net_live     = round(profit_abs - total_fee - funding, 4)
+
+    liquidation_price = float(trade.get("binance_liq_price") or 0)
+    if not liquidation_price and position:
+        liquidation_price = float(position.get("liquidationPrice", 0) or 0)
 
     health = None
     try:
@@ -178,26 +149,27 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "entry_price":             entry,
         "actual_fill_entry":       float(trade.get("actual_fill_entry") or entry),
         "binance_entry_price":     binance_record.get("entry_avg_price") if binance_record else None,
-        "current_price":           live_price,
+        "current_price":           mark_price,
         "exit_price":              None,
         "actual_fill_exit":        None,
         "sl_price":                trade.get("sl_price"),
         "tp1_price":               trade.get("tp1_price"),
         "sl_signal":               trade.get("sl_price"),
         "tp1":                     trade.get("tp1_price"),
-        "position_size":           trade.get("position_size") or (margin * leverage),
+        "position_size":           abs(position_amt),
+        "position_amt":            position_amt,
         "margin_used":             margin,
         "leverage":                leverage,
         "binance_leverage":        trade.get("binance_leverage") or leverage,
         "margin_type":             trade.get("binance_margin_type", "isolated"),
         "liquidation_price":       liquidation_price,
-        "profit_abs":              round(profit_abs, 4),
+        "profit_abs":              profit_abs,
         "profit_ratio":            profit_ratio,
         "net_pnl_live":            net_live,
-        "pnl_source":              "binance" if binance_unrealized is not None else "inhouse",
+        "pnl_source":              pnl_source,
         "pnl":                     None,
-        "unrealized_pnl":          binance_unrealized if binance_unrealized is not None else profit_abs,
-        "unrealized_pnl_source":   "binance" if binance_unrealized is not None else "inhouse",
+        "unrealized_pnl":          profit_abs,
+        "unrealized_pnl_source":   pnl_source,
         "entry_commission":        float(trade.get("entry_commission") or 0),
         "exit_commission":         0.0,
         "total_commission":        total_fee,
@@ -293,10 +265,11 @@ async def _update_funding_fees(db_trades: list) -> None:
 
 
 def _determine_exit_reason(trade: dict, exit_price: float) -> str:
-    entry    = float(trade.get("entry_price") or 0)
-    sl       = float(trade.get("sl_price")    or 0)
-    tp       = float(trade.get("tp1_price")   or 0)
-    is_short = trade.get("direction", "LONG") == "SHORT"
+    entry        = float(trade.get("entry_price") or 0)
+    sl           = float(trade.get("sl_price")    or 0)
+    tp           = float(trade.get("tp1_price")   or 0)
+    is_short     = trade.get("direction", "LONG") == "SHORT"
+    position_amt = float(trade.get("position_size") or 0)
 
     if not entry:
         return "exchange_closed"
@@ -344,8 +317,10 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
     }
 
     for trade in db_trades:
-        coin     = trade["coin"]
-        trade_id = trade["id"]
+        coin         = trade["coin"]
+        trade_id     = trade["id"]
+        position_amt = float(trade.get("position_size") or 0)
+
         if coin in active_coins:
             continue
 
@@ -355,11 +330,10 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
 
         from trade.executor import _calc_pnl, _mark_closed
         pnl = _calc_pnl(
-            direction  = trade["direction"],
-            entry      = float(trade.get("entry_price") or 0),
-            exit_price = exit_price,
-            margin     = float(trade.get("margin_used") or 0),
-            leverage   = int(trade.get("leverage") or 1),
+            direction    = trade["direction"],
+            entry        = float(trade.get("entry_price") or 0),
+            exit_price   = exit_price,
+            position_amt = position_amt,
         )
 
         _mark_closed(trade_id, exit_price, pnl, exit_reason)
@@ -424,6 +398,26 @@ async def _ensure_thesis_for_all(db_trades: list) -> None:
             log.error("_ensure_thesis_for_all trade_id=%s: %s", trade["id"], e)
 
 
+async def _update_thesis_snapshots(db_trades: list) -> None:
+    for trade in db_trades:
+        try:
+            from trade.thesis_tracker import get_thesis, evaluate
+            thesis = get_thesis(trade["id"])
+            if not thesis:
+                continue
+            await evaluate(trade["id"], trade)
+        except Exception as e:
+            log.error("_update_thesis_snapshots trade_id=%s: %s", trade["id"], e)
+
+
+async def _update_health_checks(db_trades: list) -> None:
+    try:
+        from trade.health_monitor import run_health_checks
+        await run_health_checks()
+    except Exception as e:
+        log.error("_update_health_checks: %s", e)
+
+
 async def run_monitor_cycle() -> None:
     db_trades = _get_open_trades_from_db()
     if not db_trades:
@@ -440,6 +434,8 @@ async def run_monitor_cycle() -> None:
     _position_cache.update({t["trade_id"]: t for t in enriched})
 
     await _ensure_thesis_for_all(db_trades)
+    await _update_thesis_snapshots(db_trades)
+    await _update_health_checks(db_trades)
     await _detect_exchange_closed_trades(db_trades, positions)
     await _update_funding_fees(db_trades)
 
@@ -605,7 +601,7 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "margin_type":            t.binance_margin_type,
             "liquidation_price":      t.binance_liq_price,
             "margin_used":            t.margin_used,
-            "position_size":          t.position_size or (float(t.margin_used or 0) * int(t.leverage or 1)),
+            "position_size":          abs(float(t.position_size or 0)),
             "pnl":                    round(float(t.net_pnl or t.pnl or 0), 4),
             "binance_pnl":            round(float(t.binance_net_pnl or 0), 4) if t.binance_net_pnl else None,
             "net_pnl_live":           None,
