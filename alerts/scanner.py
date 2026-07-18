@@ -105,8 +105,8 @@ def _derive_session() -> str:
 
 
 def _build_partial_score(result: dict) -> float:
-    sweep_score   = result.get("sweep_score",   0) or 0
-    zone_score    = result.get("zone_score",    0) or 0
+    sweep_score = result.get("sweep_score", 0) or 0
+    zone_score  = result.get("zone_score",  0) or 0
 
     if result.get("signal"):
         return round((result.get("score", 0) or 0) * 100)
@@ -450,7 +450,6 @@ async def _analyze_coin(
                     "sweep":     result.get("sweep", {}),
                     "zone":      result.get("zone",  {}),
                 })
-
             elif result.get("zone_found") and result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown"):
                     state.set_watching(coin, {
@@ -458,7 +457,6 @@ async def _analyze_coin(
                         "sweep":     result.get("sweep", {}),
                         "zone":      result.get("zone",  {}),
                     })
-
             elif result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown", "watching"):
                     state.set_watching(coin, {
@@ -466,7 +464,6 @@ async def _analyze_coin(
                         "sweep":     result.get("sweep", {}),
                         "zone":      {},
                     })
-
             else:
                 if current["status"] == "watching":
                     state.set_idle(coin)
@@ -523,9 +520,9 @@ async def _analyze_coin(
                     "alignment": alignment.get("alignment", "none"),
                     "size_mult": alignment.get("size_mult", 1.0),
                 },
-                "narrative":  result.get("narrative", ""),
-                "regime":     regime,
-                "session":    session,
+                "narrative":   result.get("narrative", ""),
+                "regime":      regime,
+                "session":     session,
                 "explanation": {
                     "thesis":           result.get("narrative", ""),
                     "confidence_label": result.get("grade", "--") if result.get("signal") else "",
@@ -647,7 +644,7 @@ async def scan_all_coins() -> list:
         htf = await _load_htf_candles()
 
         invalidate_rs_cache()
-        ranked = rank_coins(coins)
+        ranked   = rank_coins(coins)
         rank_map = {r["coin"]: r for r in ranked}
 
         high_tier   = [r["coin"] for r in ranked if r.get("tier") == "high"]
@@ -675,10 +672,7 @@ async def scan_all_coins() -> list:
 
         deferred_results = await asyncio.gather(
             *[
-                _analyze_coin(
-                    c, balance, htf,
-                    rs_tier="low"
-                )
+                _analyze_coin(c, balance, htf, rs_tier="low")
                 for c in deferred_coins
             ],
             return_exceptions=True
@@ -725,24 +719,24 @@ def _write_engine_health(results: list, scan_ms: float) -> None:
         regimes = [x.get("regime", "") for x in results if x.get("regime")]
         dominant_regime = max(set(regimes), key=regimes.count) if regimes else "Unknown"
 
-        scores = [x.get("score", 0) for x in results if x.get("score", 0) > 0]
+        scores    = [x.get("score", 0) for x in results if x.get("score", 0) > 0]
         avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
 
         rejection_stats = get_total_stats()
         top_rejections  = get_top_rejections(3)
 
         health = {
-            "coins_scanned":    len(results),
-            "signals_today":    _scan_stats["total_signals"],
-            "total_scans":      _scan_stats["total_scans"],
-            "avg_scan_ms":      scan_ms,
-            "avg_score":        avg_score,
-            "dominant_regime":  dominant_regime,
-            "btc_cls":          btc_cls,
-            "btc_adx":          btc_adx,
-            "top_rejections":   top_rejections,
-            "signal_rate":      rejection_stats.get("signal_rate", 0),
-            "updated_at":       time.time(),
+            "coins_scanned":   len(results),
+            "signals_today":   _scan_stats["total_signals"],
+            "total_scans":     _scan_stats["total_scans"],
+            "avg_scan_ms":     scan_ms,
+            "avg_score":       avg_score,
+            "dominant_regime": dominant_regime,
+            "btc_cls":         btc_cls,
+            "btc_adx":         btc_adx,
+            "top_rejections":  top_rejections,
+            "signal_rate":     rejection_stats.get("signal_rate", 0),
+            "updated_at":      time.time(),
         }
 
         r.setex("engine:health", 1800, json.dumps(health))

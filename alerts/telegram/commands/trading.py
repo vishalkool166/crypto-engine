@@ -25,7 +25,7 @@ async def cmd_trades() -> None:
             live      = get_mark_price(coin) or float(t.get("current_price") or entry)
             if entry > 0 and live > 0:
                 pnl_abs = ((entry - live) if is_short else (live - entry)) / entry * margin * leverage
-                pnl_abs = round(pnl_abs - margin * leverage * 0.001, 4)
+                pnl_abs = round(pnl_abs, 4)
                 pnl_pct = pnl_abs / margin * 100
             else:
                 pnl_abs = pnl_pct = 0.0
@@ -47,7 +47,6 @@ async def cmd_trades() -> None:
                 if ts:
                     thesis_line = (
                         f"Thesis: `{ts.get('thesis_strength', 0):.2f}` — "
-                        f"`{ts.get('action', '--').upper()}` · "
                         f"Captured: `{ts.get('captured_move_pct', 0):.1f}%`\n"
                     )
             except Exception:
@@ -88,7 +87,7 @@ async def cmd_position(coin: str) -> None:
         live      = get_mark_price(coin) or float(trade.get("current_price") or entry)
         if entry > 0 and live > 0:
             pnl_abs = ((entry - live) if is_short else (live - entry)) / entry * margin * leverage
-            pnl_abs = round(pnl_abs - margin * leverage * 0.001, 4)
+            pnl_abs = round(pnl_abs, 4)
             pnl_pct = pnl_abs / margin * 100
         else:
             pnl_abs = pnl_pct = 0.0
@@ -133,7 +132,8 @@ async def cmd_position(coin: str) -> None:
             if ts:
                 thesis_section = (
                     f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"*Thesis:* `{ts.get('thesis_strength', 0):.2f}` — `{ts.get('action', '--').upper()}`\n"
+                    f"*Thesis Observer:*\n"
+                    f"Strength: `{ts.get('thesis_strength', 0):.2f}`\n"
                     f"Captured: `{ts.get('captured_move_pct', 0):.1f}%` of predicted move\n"
                     f"Open: `{ts.get('hours_open', 0):.1f}h` · "
                     f"Velocity: `{ts.get('velocity', 0):.3f}`\n"
@@ -173,10 +173,6 @@ async def cmd_queue() -> None:
         coin for coin in cfg.COINS
         if get_coin_state(coin)["status"] == "watching"
     ]
-    in_trade = [
-        coin for coin in cfg.COINS
-        if get_coin_state(coin)["status"] == "in_trade"
-    ]
     in_trade_db = get_in_trade_count()
 
     if not watching and not in_trade_db:
@@ -200,11 +196,5 @@ async def cmd_queue() -> None:
 
     if in_trade_db:
         lines.append(f"\n*🔥 In Trade — {in_trade_db}*")
-        for coin in in_trade[:3]:
-            s         = get_coin_state(coin)
-            setup     = s.get("setup") or {}
-            direction = setup.get("direction", "--")
-            dir_emoji = "📈" if direction == "LONG" else "📉"
-            lines.append(f"{dir_emoji} `{coin}` — `{direction}`")
 
     await send("\n".join(lines))

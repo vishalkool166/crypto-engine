@@ -127,10 +127,9 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
     if not live_price:
         live_price = entry
 
-    binance_pos      = _get_binance_position_data(coin)
+    binance_pos        = _get_binance_position_data(coin)
     binance_unrealized = None
     liquidation_price  = float(trade.get("binance_liq_price") or 0)
-    mark_price_entry   = float(trade.get("binance_mark_price_entry") or 0)
 
     if binance_pos:
         binance_unrealized = float(binance_pos.get("unrealizedProfit", 0) or 0)
@@ -145,7 +144,6 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
 
     funding      = float(trade.get("funding_fees_paid") or 0)
     total_fee    = float(trade.get("total_commission")  or 0)
-    entry_fee    = float(trade.get("entry_commission")  or 0)
     net_live     = round(profit_abs - total_fee - funding, 4)
 
     health = None
@@ -169,17 +167,6 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
     except Exception:
         pass
 
-    risk_pct = 0.0
-    risk_amt = 0.0
-    if margin > 0 and trade.get("binance_wallet_at_open"):
-        wallet = float(trade["binance_wallet_at_open"])
-        if wallet > 0:
-            sl_price = float(trade.get("sl_price") or 0)
-            if sl_price and entry:
-                sl_dist  = abs(entry - sl_price) / entry
-                risk_amt = margin * leverage * sl_dist
-                risk_pct = round(risk_amt / wallet * 100, 3)
-
     return {
         "trade_id":                trade["id"],
         "coin":                    coin,
@@ -188,38 +175,30 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "grade":                   trade.get("grade", "--"),
         "is_short":                is_short,
         "is_open":                 True,
-
         "entry_price":             entry,
         "actual_fill_entry":       float(trade.get("actual_fill_entry") or entry),
         "binance_entry_price":     binance_record.get("entry_avg_price") if binance_record else None,
         "current_price":           live_price,
-        "mark_price_entry":        mark_price_entry,
-
         "exit_price":              None,
         "actual_fill_exit":        None,
-
         "sl_price":                trade.get("sl_price"),
         "tp1_price":               trade.get("tp1_price"),
         "sl_signal":               trade.get("sl_price"),
         "tp1":                     trade.get("tp1_price"),
-
         "position_size":           trade.get("position_size") or (margin * leverage),
         "margin_used":             margin,
         "leverage":                leverage,
         "binance_leverage":        trade.get("binance_leverage") or leverage,
         "margin_type":             trade.get("binance_margin_type", "isolated"),
         "liquidation_price":       liquidation_price,
-
         "profit_abs":              round(profit_abs, 4),
         "profit_ratio":            profit_ratio,
         "net_pnl_live":            net_live,
         "pnl_source":              "binance" if binance_unrealized is not None else "inhouse",
         "pnl":                     None,
-
         "unrealized_pnl":          binance_unrealized if binance_unrealized is not None else profit_abs,
         "unrealized_pnl_source":   "binance" if binance_unrealized is not None else "inhouse",
-
-        "entry_commission":        entry_fee,
+        "entry_commission":        float(trade.get("entry_commission") or 0),
         "exit_commission":         0.0,
         "total_commission":        total_fee,
         "entry_role":              trade.get("entry_role", "taker"),
@@ -228,25 +207,19 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "slippage_entry_pct":      float(trade.get("slippage_entry_pct") or 0),
         "slippage_exit_pct":       0.0,
         "realized_pnl":            0.0,
-
-        "risk_amt":                round(risk_amt, 4),
-        "risk_pct":                risk_pct,
         "drawdown_at_entry":       trade.get("drawdown_at_entry"),
         "win_rate_at_entry":       trade.get("win_rate_at_entry"),
         "streak_at_entry":         trade.get("streak_at_entry"),
         "streak_type_at_entry":    trade.get("streak_type_at_entry"),
-
         "duration":                _duration_str(trade.get("opened_at")),
         "opened_at":               trade.get("opened_at"),
         "closed_at":               None,
         "outcome":                 "pending",
         "close_reason":            None,
         "tp1_hit":                 trade.get("tp1_hit", False),
-
         "health":                  health,
         "thesis":                  thesis_summary,
         "binance":                 binance_record,
-
         "regime_at_entry":         trade.get("regime_at_entry",  "--"),
         "session_at_entry":        trade.get("session_at_entry", "--"),
         "score_at_entry":          trade.get("score_at_entry",   0),
@@ -328,11 +301,11 @@ def _determine_exit_reason(trade: dict, exit_price: float) -> str:
     if not entry:
         return "exchange_closed"
     if sl and tp:
-        return "sl_hit" if abs(exit_price - sl) < abs(exit_price - tp) else "tp_hit"
+        return "sl_hit" if abs(exit_price - sl) < abs(exit_price - tp) else "tp1_hit"
     if sl:
         return "sl_hit" if (is_short and exit_price >= sl * 0.99) or (not is_short and exit_price <= sl * 1.01) else "exchange_closed"
     if tp:
-        return "tp_hit" if (is_short and exit_price <= tp * 1.01) or (not is_short and exit_price >= tp * 0.99) else "exchange_closed"
+        return "tp1_hit" if (is_short and exit_price <= tp * 1.01) or (not is_short and exit_price >= tp * 0.99) else "exchange_closed"
     return "exchange_closed"
 
 
@@ -393,14 +366,19 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
         invalidate_position_cache()
 
         asyncio.create_task(_record_trade_outcome(trade_id))
-
         asyncio.create_task(_sync_close_on_detect(trade_id, coin, trade["direction"], exit_price))
 
-        from trade.thesis_tracker import remove_thesis
-        remove_thesis(trade_id)
+        try:
+            from trade.thesis_tracker import remove_thesis
+            remove_thesis(trade_id)
+        except Exception:
+            pass
 
-        from trade.health_monitor import clear_health_state
-        clear_health_state(coin)
+        try:
+            from trade.health_monitor import clear_health_state
+            clear_health_state(coin)
+        except Exception:
+            pass
 
         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
 
@@ -465,12 +443,6 @@ async def run_monitor_cycle() -> None:
     await _detect_exchange_closed_trades(db_trades, positions)
     await _update_funding_fees(db_trades)
 
-    try:
-        from trade.health_monitor import run_health_checks
-        await run_health_checks()
-    except Exception as e:
-        log.error("Health check error: %s", e)
-
 
 def get_profit_summary() -> dict:
     try:
@@ -495,14 +467,14 @@ def get_profit_summary() -> dict:
                 "binance_synced_count":    0,
             }
 
-        total_pnl       = sum(float(t.net_pnl or t.pnl or 0) for t in closed)
-        binance_pnl     = sum(float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in closed)
-        binance_synced  = sum(1 for t in closed if t.binance_synced)
-        total_fee       = sum(float(t.total_commission  or 0) for t in closed)
-        total_fund      = sum(float(t.funding_fees_paid or 0) for t in closed)
-        wins            = [t for t in closed if t.outcome == "win"]
-        winrate         = len(wins) / len(closed)
-        avg_margin      = sum(float(t.margin_used or 0) for t in closed) / len(closed) or 1
+        total_pnl      = sum(float(t.net_pnl or t.pnl or 0) for t in closed)
+        binance_pnl    = sum(float(t.binance_net_pnl or t.net_pnl or t.pnl or 0) for t in closed)
+        binance_synced = sum(1 for t in closed if t.binance_synced)
+        total_fee      = sum(float(t.total_commission  or 0) for t in closed)
+        total_fund     = sum(float(t.funding_fees_paid or 0) for t in closed)
+        wins           = [t for t in closed if t.outcome == "win"]
+        winrate        = len(wins) / len(closed)
+        avg_margin     = sum(float(t.margin_used or 0) for t in closed) / len(closed) or 1
 
         by_coin: dict = {}
         for t in closed:
@@ -620,14 +592,12 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "grade":                  t.grade,
             "is_short":               t.direction == "SHORT",
             "is_open":                t.is_active,
-
             "entry_price":            t.entry_price,
             "actual_fill_entry":      t.actual_fill_entry,
             "binance_entry_price":    t.binance_entry_price,
             "exit_price":             t.exit_price,
             "actual_fill_exit":       t.actual_fill_exit,
             "binance_exit_price":     t.binance_exit_price,
-
             "sl_price":               t.sl_price,
             "tp1_price":              t.tp1_price,
             "leverage":               t.leverage,
@@ -636,28 +606,22 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "liquidation_price":      t.binance_liq_price,
             "margin_used":            t.margin_used,
             "position_size":          t.position_size or (float(t.margin_used or 0) * int(t.leverage or 1)),
-
             "pnl":                    round(float(t.net_pnl or t.pnl or 0), 4),
             "binance_pnl":            round(float(t.binance_net_pnl or 0), 4) if t.binance_net_pnl else None,
-            "binance_realized_pnl":   round(float(t.binance_realized_pnl or 0), 4) if t.binance_realized_pnl else None,
             "net_pnl_live":           None,
             "realized_pnl":           round(float(t.realized_pnl_exchange or 0), 4),
-
             "total_commission":       round(float(t.total_commission  or 0), 6),
             "binance_commission":     round(float(t.binance_commission_total or 0), 6) if t.binance_commission_total else None,
             "funding_fees_paid":      round(float(t.funding_fees_paid or 0), 6),
-            "binance_funding":        round(float(t.binance_funding_total or 0), 6) if t.binance_funding_total else None,
             "entry_commission":       round(float(t.entry_commission  or 0), 6),
             "exit_commission":        round(float(t.exit_commission   or 0), 6),
             "entry_role":             t.entry_role,
             "exit_role":              t.exit_role,
             "slippage_entry_pct":     round(float(t.slippage_entry_pct or 0), 4),
             "slippage_exit_pct":      round(float(t.slippage_exit_pct  or 0), 4),
-
             "outcome":                t.outcome,
             "close_reason":           t.close_reason,
             "tp1_hit":                t.tp1_hit,
-
             "regime_at_entry":        t.regime_at_entry,
             "session_at_entry":       t.session_at_entry,
             "score_at_entry":         t.score_at_entry,
@@ -665,22 +629,18 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "win_rate_at_entry":      t.win_rate_at_entry,
             "streak_at_entry":        t.streak_at_entry,
             "streak_type_at_entry":   t.streak_type_at_entry,
-
             "system_version":         t.system_version,
             "mae":                    t.mae,
             "mfe":                    t.mfe,
             "duration_hours":         t.duration_hours,
-
             "thesis_strength":        t.thesis_strength_at_close,
             "thesis_exit_reason":     t.thesis_exit_reason,
             "captured_move_pct":      t.captured_move_pct_at_exit,
             "expected_move_pct":      t.expected_move_pct,
             "velocity_at_close":      t.velocity_at_close,
-
             "binance_synced":         t.binance_synced,
             "binance_wallet_at_open": t.binance_wallet_at_open,
             "binance_wallet_at_close":t.binance_wallet_at_close,
-
             "opened_at":              t.opened_at.replace(tzinfo=timezone.utc).isoformat() if t.opened_at else None,
             "closed_at":              t.closed_at.replace(tzinfo=timezone.utc).isoformat() if t.closed_at else None,
             "duration":               _duration_str(

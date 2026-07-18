@@ -15,7 +15,6 @@ PAPER_BASE_RISK    = 0.015
 LIVE_BASE_RISK     = 0.01
 ML_MIN_TRADES      = 100
 DAILY_LOSS_LIMIT   = 0.02
-CHOP_RISK_MULT     = 0.5
 
 
 def _get_recent_performance() -> dict:
@@ -147,47 +146,6 @@ def _get_total_closed_trades() -> int:
         return 0
 
 
-def _is_paused_for_losses() -> tuple[bool, str]:
-    try:
-        from database import SessionLocal, Trade as TradeModel
-        import runtime_state as rs
-
-        pause_until = rs.get("loss_pause_until", 0)
-        import time
-        if pause_until and time.time() < pause_until:
-            remaining_h = round((pause_until - time.time()) / 3600, 1)
-            return True, f"Paused after 3 consecutive losses — {remaining_h}h remaining"
-
-        with SessionLocal() as db:
-            last_3 = db.query(TradeModel).filter(
-                TradeModel.outcome.in_(["win", "loss"])
-            ).order_by(TradeModel.opened_at.desc()).limit(3).all()
-
-        if len(last_3) == 3 and all(t.outcome == "loss" for t in last_3):
-            import time
-            pause_until = time.time() + 24 * 3600
-            rs.set("loss_pause_until", pause_until)
-            log.warning("3 consecutive losses — pausing trading for 24 hours")
-            try:
-                import asyncio
-                from alerts.telegram import send
-                asyncio.create_task(send(
-                    "⚠️ *Trading Paused*\n\n"
-                    "3 consecutive losses detected.\n"
-                    "System paused for 24 hours.\n"
-                    "Use /status to check."
-                ))
-            except Exception:
-                pass
-            return True, "Paused after 3 consecutive losses — 24h pause started"
-
-        return False, ""
-
-    except Exception as e:
-        log.error("_is_paused_for_losses: %s", e)
-        return False, ""
-
-
 def _leverage_from_sl(sl_pct: float, is_paper: bool) -> int:
     cap = PAPER_LEVERAGE_CAP if is_paper else LIVE_LEVERAGE_CAP
     if sl_pct < 0.5:
@@ -211,15 +169,6 @@ def _grade_mult(grade: str) -> float:
     }.get(grade, SE["grade_b_size_mult"])
 
 
-def _tp_split_for_grade(grade: str) -> tuple[float, float]:
-    splits = {
-        "A+": (0.50, 0.50),
-        "A":  (0.65, 0.35),
-        "B":  (0.80, 0.20),
-    }
-    return splits.get(grade, (0.65, 0.35))
-
-
 def _ml_mult(total_trades: int, ml_probability: float | None) -> float:
     if total_trades < ML_MIN_TRADES:
         return 1.0
@@ -241,10 +190,9 @@ def _alignment_mult(alignment: dict | None) -> float:
 
 
 def _dynamic_risk(
-    base:        float,
-    perf:        dict,
-    drawdown:    float,
-    is_paper:    bool,
+    base:     float,
+    perf:     dict,
+    drawdown: float,
 ) -> float:
     win_rate    = perf.get("win_rate")
     streak      = perf.get("streak", 0)
@@ -305,10 +253,6 @@ def calculate(
 ) -> dict:
     is_paper = cfg.PAPER_TRADING
 
-    paused, pause_reason = _is_paused_for_losses()
-    if paused:
-        return {"skip": True, "reason": pause_reason}
-
     today_pnl   = _get_today_pnl()
     daily_limit = balance * DAILY_LOSS_LIMIT
 
@@ -342,7 +286,7 @@ def calculate(
 
     base_risk = PAPER_BASE_RISK if is_paper else LIVE_BASE_RISK
 
-    risk_pct = _dynamic_risk(base_risk, perf, drawdown, is_paper)
+    risk_pct = _dynamic_risk(base_risk, perf, drawdown)
     risk_pct = risk_pct * _grade_mult(grade)
     risk_pct = risk_pct * _ml_mult(total_trades, ml_probability)
     risk_pct = risk_pct * _alignment_mult(alignment)
@@ -357,8 +301,6 @@ def calculate(
     stake         = max(stake, MIN_STAKE)
     position_size = stake * leverage
     actual_risk   = position_size * (sl_pct / 100)
-
-    tp1_pct, tp2_pct = _tp_split_for_grade(grade)
 
     win_rate    = perf.get("win_rate")
     streak      = perf.get("streak", 0)
@@ -384,6 +326,4 @@ def calculate(
         "ml_mult":       round(_ml_mult(total_trades, ml_probability), 2),
         "alignment_mult":round(_alignment_mult(alignment), 2),
         "alignment":     alignment.get("alignment", "none") if alignment else "none",
-        "tp1_pct":       tp1_pct,
-        "tp2_pct":       tp2_pct,
     }

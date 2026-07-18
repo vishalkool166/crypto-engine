@@ -452,8 +452,8 @@ async def _handle_reduce_order_filled(
         from database import get_session, Trade as TradeModel, Signal as SignalModel
         from trade.monitor import invalidate_position_cache
         from trade.health_monitor import clear_health_state
-        from trade.executor import _calc_pnl, _mark_closed, _mark_tp1_hit, move_sl_to_breakeven, CLOSE_REASONS
-        from engines.state import get as get_coin_state, set_cooldown, set_idle
+        from trade.executor import _calc_pnl, _mark_closed, CLOSE_REASONS
+        from engines.state import set_cooldown, set_idle
 
         with get_session() as db:
             trade = db.query(TradeModel).filter(
@@ -461,7 +461,6 @@ async def _handle_reduce_order_filled(
             ).filter(
                 (TradeModel.sl_order_id    == order_id) |
                 (TradeModel.tp1_order_id   == order_id) |
-                (TradeModel.tp2_order_id   == order_id) |
                 (TradeModel.entry_order_id == order_id) |
                 (TradeModel.coin           == coin)
             ).first()
@@ -478,78 +477,9 @@ async def _handle_reduce_order_filled(
             entry_fee  = float(trade.entry_commission or 0)
             sl_oid     = str(trade.sl_order_id     or "")
             tp1_oid    = str(trade.tp1_order_id    or "")
-            tp2_oid    = str(trade.tp2_order_id    or "")
-            tp1_hit    = bool(trade.tp1_hit)
             is_long    = direction == "LONG"
 
-        is_tp1 = (order_id == tp1_oid) and not tp1_hit
-        is_tp2 = (order_id == tp2_oid) and tp1_hit
-
-        await asyncio.sleep(1.0)
-        try:
-            positions     = await get_positions()
-            remaining     = next(
-                (float(p.get("positionAmt", 0)) for p in positions if p.get("symbol") == symbol),
-                0.0
-            )
-            has_remaining = abs(remaining) > 0
-        except Exception:
-            has_remaining = False
-
-        if is_tp1 and has_remaining:
-            partial_pnl = (
-                round(realized_pnl - commission, 8) if realized_pnl != 0
-                else _calc_pnl(
-                    direction  = direction,
-                    entry      = entry,
-                    exit_price = exit_price,
-                    margin     = margin * cfg.SCALP_ENGINE["tp1_close_pct"],
-                    leverage   = leverage,
-                    commission = commission,
-                )
-            )
-
-            try:
-                prec    = await get_symbol_precision(symbol)
-                atr_15m = exit_price * 0.005
-                new_sl  = await move_sl_to_breakeven(
-                    symbol          = symbol,
-                    side            = "BUY" if not is_long else "SELL",
-                    entry_price     = entry,
-                    atr_15m         = atr_15m,
-                    price_precision = prec["price_precision"],
-                    tick_size       = prec["tick_size"],
-                    is_long         = is_long,
-                )
-            except Exception as e:
-                log.error("move_sl_to_breakeven failed %s: %s", symbol, e)
-                new_sl = None
-
-            _mark_tp1_hit(trade_id, partial_pnl, new_sl)
-            invalidate_position_cache()
-
-            pnl_str = f"+${partial_pnl:.4f}" if partial_pnl >= 0 else f"-${abs(partial_pnl):.4f}"
-
-            from alerts.telegram import send
-            await send(
-                f"🎯 *{coin} {direction} — TP1 Hit*\n\n"
-                f"Closed:      `{cfg.SCALP_ENGINE['tp1_close_pct']*100:.0f}%` at `${exit_price:.6f}`\n"
-                f"Partial PnL: `{pnl_str}`\n"
-                f"SL moved to: `breakeven {'✅' if new_sl else '⚠️ failed'}`\n"
-                f"Remaining:   `{cfg.SCALP_ENGINE['tp2_close_pct']*100:.0f}%` running to TP2"
-            )
-
-            await _emit("order_filled", {
-                "coin":        coin,
-                "event":       "tp1_hit",
-                "exit_price":  exit_price,
-                "partial_pnl": partial_pnl,
-            })
-
-            log.info("TP1 hit: %s exit:%.6f partial_pnl:%.4f", coin, exit_price, partial_pnl)
-            return
-
-        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, tp2_oid, tp1_hit, entry, exit_price, is_long)
+        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, entry, exit_price, is_long)
         total_fee = round(entry_fee + commission, 8)
 
         net_pnl = (
@@ -564,20 +494,12 @@ async def _handle_reduce_order_filled(
             )
         )
 
-        if tp1_hit and reason in ("sl_hit", "tp1_be_stop"):
-            with get_session() as db:
-                trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
-                if trade:
-                    partial = float(trade.partial_pnl or 0)
-                    net_pnl = round(partial + net_pnl, 4)
-
         slippage_exit = 0.0
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if trade:
-                if reason in ("tp2_hit", "tp1_hit") and trade.tp1_price:
-                    ref = float(trade.tp2_price or trade.tp1_price)
-                    slippage_exit = abs(exit_price - ref) / ref * 100
+                if reason == "tp1_hit" and trade.tp1_price:
+                    slippage_exit = abs(exit_price - float(trade.tp1_price)) / float(trade.tp1_price) * 100
                 elif reason == "sl_hit" and trade.sl_price:
                     slippage_exit = abs(exit_price - float(trade.sl_price)) / float(trade.sl_price) * 100
 
@@ -617,8 +539,11 @@ async def _handle_reduce_order_filled(
         except Exception as _oe:
             log.error("outcome_recorder failed trade_id=%s: %s", trade_id, _oe)
 
-        from trade.thesis_tracker import remove_thesis
-        remove_thesis(trade_id)
+        try:
+            from trade.thesis_tracker import remove_thesis
+            remove_thesis(trade_id)
+        except Exception:
+            pass
 
         if reason == "sl_hit":
             set_cooldown(coin)
@@ -699,36 +624,26 @@ def _exit_reason(
     order_id:   str,
     sl_oid:     str,
     tp1_oid:    str,
-    tp2_oid:    str,
-    tp1_hit:    bool,
     entry:      float = 0.0,
     exit_price: float = 0.0,
     is_long:    bool  = True,
 ) -> str:
-    if order_id == tp2_oid:
-        return "tp2_hit"
-    if order_id == tp1_oid and tp1_hit:
+    if order_id == tp1_oid:
         return "tp1_hit"
     if order_id == sl_oid:
-        return "sl_hit" if not tp1_hit else "tp1_be_stop"
+        return "sl_hit"
 
     ot = order_type.upper()
 
-    if "STOP"        in ot: return "sl_hit" if not tp1_hit else "tp1_be_stop"
-    if "TAKE_PROFIT" in ot: return "tp2_hit" if tp1_hit else "tp1_hit"
+    if "STOP"        in ot: return "sl_hit"
+    if "TAKE_PROFIT" in ot: return "tp1_hit"
     if "LIQUIDATION" in ot: return "liquidated"
 
     if entry > 0 and exit_price > 0:
         if is_long:
-            if exit_price < entry:
-                return "sl_hit" if not tp1_hit else "tp1_be_stop"
-            else:
-                return "tp2_hit" if tp1_hit else "tp1_hit"
+            return "tp1_hit" if exit_price > entry else "sl_hit"
         else:
-            if exit_price > entry:
-                return "sl_hit" if not tp1_hit else "tp1_be_stop"
-            else:
-                return "tp2_hit" if tp1_hit else "tp1_hit"
+            return "tp1_hit" if exit_price < entry else "sl_hit"
 
     return "exchange_closed"
 
@@ -781,10 +696,10 @@ async def _handle_account_update(data: dict) -> None:
             pass
 
         await _emit("account_update", {
-            "balances":              balances,
-            "positions":             positions,
-            "wallet_balance":        _binance_account["wallet_balance"],
-            "total_unrealized_pnl":  total_unrealized,
+            "balances":             balances,
+            "positions":            positions,
+            "wallet_balance":       _binance_account["wallet_balance"],
+            "total_unrealized_pnl": total_unrealized,
         })
 
     except Exception as e:
