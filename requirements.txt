@@ -38,5 +38,5 @@ langgraph==0.2.45
 langsmith==0.1.147
 chromadb==0.5.18
 sentence-transformers==3.3.1
-arize-phoenix>=5.0.0
+arize-phoenix>=4.35.0,<5.0.0
 openinference-instrumentation-langchain==0.1.67
