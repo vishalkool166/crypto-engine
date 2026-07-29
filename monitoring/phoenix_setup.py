@@ -1,14 +1,12 @@
 import logging
-import os
 
 log = logging.getLogger(__name__)
 
 _phoenix_session = None
-_tracer_provider = None
 
 
 def start_phoenix() -> bool:
-    global _phoenix_session, _tracer_provider
+    global _phoenix_session
 
     try:
         import phoenix as px
@@ -23,12 +21,8 @@ def start_phoenix() -> bool:
 
         log.info("Phoenix started — dashboard at %s", url)
 
-        try:
-            from openinference.instrumentation.langchain import LangChainInstrumentor
-            LangChainInstrumentor().instrument()
-            log.info("LangChain instrumented with Phoenix")
-        except Exception as e:
-            log.warning("LangChain instrumentation error: %s", e)
+        _instrument_langchain()
+        _instrument_langgraph()
 
         log.info("Phoenix instrumentation complete")
         return True
@@ -36,6 +30,23 @@ def start_phoenix() -> bool:
     except Exception as e:
         log.error("Phoenix start error: %s", e)
         return False
+
+
+def _instrument_langchain() -> None:
+    try:
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        LangChainInstrumentor().instrument()
+        log.info("LangChain instrumented with Phoenix")
+    except Exception as e:
+        log.warning("LangChain instrumentation error: %s", e)
+
+
+def _instrument_langgraph() -> None:
+    try:
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        log.info("LangGraph instrumented via LangChain instrumentor")
+    except Exception as e:
+        log.warning("LangGraph instrumentation error: %s", e)
 
 
 def get_phoenix_url() -> str:
