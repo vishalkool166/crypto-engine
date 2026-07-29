@@ -2,7 +2,7 @@
 
 <div align="center">
 
-*A step-by-step technical deep dive into how Signal Engine v5 thinks, decides, and acts — now with LangGraph agents, RAG intelligence, and Phoenix observability.*
+*A step-by-step technical deep dive into how Signal Engine v5 thinks, decides, and acts — now with LangGraph agents, RAG intelligence, and LangSmith observability.*
 
 [![Live System](https://img.shields.io/badge/🔴_LIVE-Running_24%2F7-00ff88?style=for-the-badge)](https://signal-engine-v5.vishalkool.top)
 
@@ -24,7 +24,7 @@
 │  │   FUTURES    │  CCXT   │      (The Brain)             │  │
 │  │   API        │         │      LangGraph Agent         │  │
 │  └──────────────┘         │      RAG Intelligence        │  │
-│                           │      Phoenix Monitoring      │  │
+│                           │      LangSmith Tracing       │  │
 │                           └──────────────────────────────┘  │
 │                                        │                     │
 │                                        ▼                     │
@@ -37,20 +37,30 @@
 │                           ┌──────────────────────────────┐  │
 │                           │      CHROMADB                │  │
 │                           │   (The Long Term Memory)     │  │
-│                           │   100+ chunks of trade       │  │
+│                           │   115+ chunks of trade       │  │
 │                           │   history indexed as         │  │
 │                           │   searchable vectors         │  │
+│                           └──────────────────────────────┘  │
+│                                        │                     │
+│                                        ▼                     │
+│                           ┌──────────────────────────────┐  │
+│                           │      LANGSMITH               │  │
+│                           │   (The Observer)             │  │
+│                           │   Traces every AI call       │  │
+│                           │   smith.langchain.com        │  │
 │                           └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Signal Engine has three layers now:
+Signal Engine has four layers now:
 
 **Redis** — the nervous system. Real-time market data flows through it. Fast, temporary, refreshes constantly.
 
-**SQLite** — the long term memory. Every trade, signal, and performance metric stored permanently.
+**SQLite** — the permanent memory. Every trade, signal, and performance metric stored forever.
 
 **ChromaDB** — the intelligent memory. Trade history converted to vectors so the AI can search by meaning not just keywords.
+
+**LangSmith** — the observer. Every AI operation traced, logged, and visible at smith.langchain.com.
 
 ---
 
@@ -59,7 +69,7 @@ Signal Engine has three layers now:
 ```
 UTC Clock
     │
-    ├── :00 ──► SCAN FIRES
+    ├── :00 ──► SCAN FIRES (LangGraph agent runs for each coin)
     ├── :15 ──► SCAN FIRES
     ├── :30 ──► SCAN FIRES + RAG REINDEX
     └── :45 ──► SCAN FIRES
@@ -67,6 +77,7 @@ UTC Clock
 Maximum 3 coins analyzed simultaneously
 RAG reindex runs every 30 minutes
 New trades indexed automatically
+LangSmith traces every agent execution
 ```
 
 ---
@@ -96,7 +107,7 @@ New trades indexed automatically
 │  STEP 19 ──► Index Closed Trade into ChromaDB               │
 │  STEP 20 ──► ML Training (after 100 trades)                 │
 │  STEP 21 ──► RAG Reindex (every 30 min)                     │
-│  STEP 22 ──► Phoenix traces entire execution                │
+│  STEP 22 ──► LangSmith traces entire execution              │
 │  STEP 23 ──► Commentary Posts (no-signal scans)             │
 │  STEP 24 ──► RAG Chat answers user questions                │
 │  STEP 25 ──► Dashboard updates via WebSocket                │
@@ -113,7 +124,7 @@ Same as before. Redis first, Binance fallback.
 For each coin:
     │
     ├── Check Redis first (fast, no API call)
-    │   ├── HIT  ──► Use cached data ✅
+    │   ├── HIT  ──► Use cached data
     │   └── MISS ──► Fall back to Binance API
     │
     └── Calculate indicators on 4 timeframes
@@ -124,21 +135,19 @@ For each coin:
 
 ## Step 4 — LangGraph Agent Starts
 
-This is where v5 is different from v4.
-
 ```
-Old way (v4):
+Old way (before v5):
   Linear Python function
   if/else statements
   Returns dict
-  Black box
+  Black box — no visibility
 
 New way (v5):
   LangGraph stateful agent
   Each step is a node
   State flows between nodes
   Every decision is logged
-  Observable in Phoenix
+  Observable in LangSmith
   Can branch, reject, finalize
 ```
 
@@ -146,16 +155,18 @@ The agent receives initial state:
 
 ```python
 SignalAgentState(
-    coin     = "BTC",
-    balance  = 1000.0,
-    df_4h    = dataframe,
-    df_1h    = dataframe,
-    df_15m   = dataframe,
-    signal   = True,      # starts as True
-    reason   = "",        # filled if rejected
-    trace_steps = [],     # filled as nodes run
+    coin        = "BTC",
+    balance     = 1000.0,
+    df_4h       = dataframe,
+    df_1h       = dataframe,
+    df_15m      = dataframe,
+    signal      = True,       # starts as True
+    reason      = "",         # filled if rejected
+    trace_steps = [],         # filled as nodes run
 )
 ```
+
+LangSmith starts tracing this execution immediately.
 
 ---
 
@@ -182,14 +193,11 @@ If direction is NEUTRAL:
   state["reason"] = "ema_neutral"
   → Graph routes to reject_node → END
 
-Trace step added:
-  {
-    "node": "context",
-    "passed": true/false,
-    "direction": "LONG/SHORT/NEUTRAL",
-    "btc_score": 7.0,
-    "reason": ""
-  }
+LangSmith records:
+  Node: context
+  Input: d4h indicators
+  Output: direction, btc_score, htf_score
+  Duration: Xms
 ```
 
 ---
@@ -202,7 +210,7 @@ What it does:
   Checks if smart money hunted stops
 
 What a sweep looks like:
-  Price dips below key level (swing low, PDL, weekly low)
+  Price dips below key level
   Immediately recovers above it
   Volume spike on the sweep candle
   Wick below level = the hunt
@@ -214,17 +222,14 @@ Scoring:
   Confirmation (price back above level)
 
 Threshold: sweep_min_score = 0.30
-  Below → REJECT with reason "sweep_score_low"
+  Below → REJECT "sweep_score_low"
   Above → continue to zone_node
 
-Trace step added:
-  {
-    "node": "sweep",
-    "passed": true,
-    "score": 0.72,
-    "label": "Swing Low Sweep",
-    "age_hours": 2.1
-  }
+LangSmith records:
+  Node: sweep
+  Score: 0.72
+  Label: Swing Low Sweep
+  Age: 2.1h
 ```
 
 ---
@@ -237,34 +242,22 @@ What it does:
   This is where institutions placed orders
 
 Order Block:
-  Last bearish candle before bullish move (bull OB)
-  Last bullish candle before bearish move (bear OB)
+  Last bearish candle before bullish move
+  Last bullish candle before bearish move
   Price returning to this zone = high probability
 
-Fair Value Gap (FVG):
+Fair Value Gap:
   Gap between candle 1 high and candle 3 low
   Price imbalance that often gets filled
-  Acts as magnet for price
 
 Scoring:
   Zone width in ATR multiples
   Touch count (each touch weakens it)
   Distance from current price
-  Zone type (OB scores higher than FVG)
 
 Threshold: zone_min_score = 0.40
-  Below → REJECT with reason "zone_score_low"
+  Below → REJECT "zone_score_low"
   Above → continue to trigger_node
-
-Trace step added:
-  {
-    "node": "zone",
-    "passed": true,
-    "zone_type": "OB",
-    "score": 0.65,
-    "touch_count": 0,
-    "distance_pct": 0.8
-  }
 ```
 
 ---
@@ -275,18 +268,15 @@ Trace step added:
 What it does:
   Zooms into 15M chart
   Looks for entry confirmation pattern
-  Inside or near the zone
 
-Patterns it looks for:
+Patterns:
   Engulfing candle
-    Previous candle bearish
-    Current candle bullish and engulfs it
+    Previous bearish + current bullish
     Body ratio > 55%
 
   Pin bar / Hammer
     Long wick in rejection direction
     Wick ratio > 55% of total range
-    Close in upper half (for longs)
 
 Volume check:
   Current volume vs 50-period MA
@@ -295,16 +285,6 @@ Volume check:
 Threshold: trigger_min_score = 0.60
   No pattern → REJECT "no_trigger"
   Pattern found → continue to risk_node
-
-Trace step added:
-  {
-    "node": "trigger",
-    "passed": true,
-    "pattern": "engulfing",
-    "score": 0.85,
-    "vol_mult": 1.4,
-    "entry_price": 43250.0
-  }
 ```
 
 ---
@@ -325,23 +305,12 @@ SL placement priority:
 TP placement:
   Searches swing highs/lows
   Checks previous day/week levels
-  Checks volume area high/low
   Uses nearest structure OR grade minimum RR
 
 RR check:
   tp1_min_rr = 1.5
   Below 1.5R → REJECT "rr_too_low"
   Above 1.5R → continue to grade_node
-
-Trace step added:
-  {
-    "node": "risk",
-    "passed": true,
-    "sl": 42800.0,
-    "tp1": 44100.0,
-    "sl_pct": 1.04,
-    "rr1": 1.8
-  }
 ```
 
 ---
@@ -354,13 +323,13 @@ What it does:
   Assigns grade A+/A/B/F
 
 Score calculation:
-  btc_context score    (from context_node)
-  htf_alignment score  (from context_node)
-  sweep contribution   (sweep_score × weight)
-  zone contribution    (zone_score × weight)
-  trigger contribution (trigger_score × weight)
-  session score        (London/NY = high)
-  context bonus        (overall context score)
+  btc_context score
+  htf_alignment score
+  sweep contribution
+  zone contribution
+  trigger contribution
+  session score
+  context bonus
 
 Grade thresholds (trending regime):
   85+ → A+
@@ -372,17 +341,6 @@ Session scoring:
   London/NY Overlap → 6 pts (max)
   London or NY → 4 pts
   Asia → 1 pt
-  Off Hours → 2 pts
-
-Trace step added:
-  {
-    "node": "grade",
-    "passed": true,
-    "grade": "A",
-    "score": 71.4,
-    "regime": "trending",
-    "session": "London/NY Overlap"
-  }
 ```
 
 ---
@@ -399,7 +357,6 @@ When ML is not active yet:
   Need 100 closed trades minimum
   Currently at 34 trades
   ml_node passes all signals through
-  No filtering until 100 trades reached
 
 When ML is active:
   Feeds 16 factor scores to model
@@ -407,14 +364,6 @@ When ML is active:
   Threshold: 0.65
   Below 0.65 → REJECT "ml_gate_blocked"
   Above 0.65 → continue to finalize
-
-Trace step added:
-  {
-    "node": "ml",
-    "passed": true,
-    "probability": null,  (until 100 trades)
-    "reason": "ml_not_active_yet"
-  }
 ```
 
 ---
@@ -429,19 +378,11 @@ What it does:
 
 Position sizing:
   Base risk: 1.5% of balance (paper mode)
-  Grade multiplier: A+ = 1.3x, A = 1.0x, B = 0.7x
+  Grade multiplier: A+ = 1.3x, A = 1.0x
   ML multiplier: high prob = 1.1x
   Alignment multiplier: strong HTF = 1.3x
-  Dynamic leverage based on SL%
 
-Narrative generation:
-  Describes the setup in plain English
-  Mentions sweep level and age
-  Mentions zone type and quality
-  Mentions entry pattern
-  Lists risk factors
-
-Final result built:
+Final result:
   entry, sl, tp1, tp2
   grade, score, direction
   risk_amt, pos_size, stake, leverage
@@ -451,137 +392,76 @@ Final result built:
 
 ---
 
-## Step 13-16 — Execution and Alerts
+## Step 22 — LangSmith Traces Everything
 
 ```
-Step 13: Write to Redis
-  Key: signal:{coin}USDT
-  TTL: 1800 seconds
-  Contains: full signal payload
+LangSmith is watching all AI operations:
 
-Step 14: Content pipeline
-  Generate chart with mplfinance
-  Groq writes tweet draft
-  Send to Telegram for approval
-
-Step 15: Execute on Binance
-  Place MARKET order via CCXT
-  Place SL (STOP_MARKET algo order)
-  Place TP (TAKE_PROFIT_MARKET algo order)
-
-Step 16: Telegram alert
-  Full signal details
-  Entry, SL, TP, grade, score
-  Why this trade (narrative)
-  Agent trace summary
-```
-
----
-
-## Step 17 + 19 — RAG Indexing
-
-This is completely new in v5.
-
-```
-Step 17: Index new signal
-  Signal saved to SQLite
-  RAG indexer picks it up
-  Converts to text chunk
-  Embeds with sentence-transformers
-  Stores in ChromaDB signals collection
-
-Step 19: Index closed trade
-  Trade closes (win or loss)
-  Outcome synced to SQLite
-  RAG indexer picks it up
-  Converts to text chunk with outcome
-  Embeds and stores in ChromaDB trades collection
-  Updates coin performance chunk
-  Updates daily summary chunk
-
-Why this matters:
-  Every trade becomes searchable
-  AI can find patterns across all history
-  "When do I lose?" → searches all losses
-  "How is BTC performing?" → searches BTC trades
-```
-
----
-
-## Step 21 — RAG Reindex Job
-
-```
-Runs every 30 minutes via APScheduler
-
-What it does:
-  Checks for new closed trades
-  Checks for new signals
-  Indexes only NEW items (incremental)
-  Updates coin performance chunks
-  Updates daily summary chunks
-
-5 collections maintained:
-  trades          — one chunk per closed trade
-  signals         — one chunk per closed signal
-  daily_summaries — one chunk per trading day
-  coin_performance— one chunk per coin
-  documentation   — README + WORKING.md chunks
-
-Current stats:
-  trades:          34 chunks
-  signals:         34 chunks
-  daily_summaries: 14 chunks
-  coin_performance:18 chunks
-  documentation:   indexed from README/WORKING
-  total:           100+ chunks
-```
-
----
-
-## Step 22 — Phoenix Traces Everything
-
-```
-Phoenix is watching all AI operations:
-
-RAG chat trace:
-  User question received
-  Embedding generated
-  ChromaDB queried
-  Documents retrieved (with similarity scores)
-  Context formatted
-  Groq LLM called
-  Answer generated
-  Sources returned to user
-
-LangGraph trace:
-  Agent started for coin X
-  context_node: passed, direction LONG
-  sweep_node: passed, score 0.72
-  zone_node: passed, OB found
-  trigger_node: passed, engulfing
-  risk_node: passed, RR 1.8
-  grade_node: passed, grade A
-  ml_node: passed, probability null
-  finalize_node: passed, stake $150
+LangGraph agent trace:
+  Run ID: abc123
+  Coin: BTC
   Total time: 847ms
 
-Dashboard: http://your-server:6006
+  context_node:
+    Input: price=43250, ema20=43100
+    Output: direction=LONG, btc_score=7
+    Duration: 45ms
+
+  sweep_node:
+    Input: df_1h, direction=LONG
+    Output: detected=True, score=0.72
+    Duration: 123ms
+
+  zone_node:
+    Input: d4h, direction=LONG
+    Output: detected=True, type=OB
+    Duration: 89ms
+
+  trigger_node:
+    Input: df_15m, zone
+    Output: confirmed=True, pattern=engulfing
+    Duration: 67ms
+
+  risk_node:
+    Input: entry=43250, sweep, zone
+    Output: sl=42800, tp1=44100, rr=1.8
+    Duration: 34ms
+
+  grade_node:
+    Input: all scores
+    Output: grade=A, score=71.4
+    Duration: 23ms
+
+  ml_node:
+    Input: factor scores
+    Output: probability=null (not active yet)
+    Duration: 5ms
+
+  finalize_node:
+    Input: all state
+    Output: stake=150, leverage=10
+    Duration: 156ms
+
+RAG chat trace:
+  Question: "why do signals fail?"
+  Retrieval: 6 chunks from trades collection
+  LLM call: Groq llama-3.3-70b
+  Answer: "Your signals fail most often..."
+  Total time: 1.2s
+
+Dashboard: smith.langchain.com
+Project: signal-engine-v5
 ```
 
 ---
 
 ## Step 24 — RAG Chat Answers Questions
 
-This is the most visible new feature.
-
 ```
-How it works:
-
 User types: "why do my shorts fail?"
                     │
                     ▼
 Question embedded as vector
-[0.23, -0.45, 0.12, 0.89, ...]
                     │
                     ▼
 Intent detected: trades + signals
@@ -601,40 +481,25 @@ Top 6 chunks retrieved:
   Daily: Tuesday shorts all losses
                     │
                     ▼
-Context formatted and sent to Groq:
-  "RELEVANT TRADING DATA:
-   [1] Trade #12 | BTC | SHORT | Grade A
-   Opened: 2026-07-17 | London session
-   Outcome: LOSS | PnL: -$18.40
-   BTC score: -4 (BTC was bullish)
-   ..."
+Context sent to Groq with question
                     │
                     ▼
-Groq llama-3.3-70b answers:
-  "Your SHORT trades show a 31% win rate
-   vs 61% for LONG trades. Looking at
-   your 21 losses, 14 occurred when BTC
-   was trending bullish (ADX > 25).
-   Your best SHORT performance is during
-   London session when BTC is bearish."
-                    │
-                    ▼
-Response returned with sources:
-  answer: "Your SHORT trades show..."
-  sources: [trade_12, trade_19, ...]
-  chunks: 6
+Answer returned with sources:
+  answer: "Your SHORT trades show 31% WR..."
+  sources: [trades, signals, coins]
   rag_used: true
+
+LangSmith traces this entire flow
 ```
 
 ---
 
-## The 5 Chunk Types — Deep Dive
+## The 5 Chunk Types
 
 ### Chunk Type 1 — Trade Chunks
 ```
 One chunk per closed trade.
 
-Example:
 "Trade #47 | BTC | LONG | Grade A
  Opened: 2026-07-20 14:00 UTC
  Session: London/NY Overlap
@@ -643,76 +508,40 @@ Example:
  Outcome: WIN | PnL: +$28.40
  Score at entry: 71.4
  Duration: 4.2 hours
- Close reason: tp1_hit
- Thesis strength at close: 0.82"
-
-Good for:
-  "when do I win?"
-  "what sessions work best?"
-  "how long do my trades last?"
+ Close reason: tp1_hit"
 ```
 
 ### Chunk Type 2 — Signal Chunks
 ```
 One chunk per closed signal.
 
-Example:
 "Signal #23 | ETH | SHORT | Grade A+
  Score: 87/100 | Session: London/NY Overlap
  Sweep score: 0.85 | Displacement: 0.79
  BTC score: 8 | Market score: 72
- Top factors: liquidity_sweep:11,
-              displacement:10,
-              market_structure:8
  Outcome: WIN | PnL: +$34.20"
-
-Good for:
-  "what makes a good signal?"
-  "which factors matter most?"
-  "what score do winners have?"
 ```
 
 ### Chunk Type 3 — Daily Summary Chunks
 ```
 One chunk per trading day.
 
-Example:
 "Daily Summary | 2026-07-20 | Sunday
  Total trades: 3 | Wins: 2 | Losses: 1
  Win rate: 66.7% | Total PnL: +$42.10
  Sessions: London, London/NY Overlap
- Regimes: TRENDING BULLISH
- Coins traded: BTC, ETH, SOL
- Best trade: BTC LONG +$28.40
- Worst trade: SOL SHORT -$8.30"
-
-Good for:
-  "how was last week?"
-  "what day is best for trading?"
-  "how did Sunday perform?"
+ Coins traded: BTC, ETH, SOL"
 ```
 
 ### Chunk Type 4 — Coin Performance Chunks
 ```
 One chunk per coin — updated on reindex.
 
-Example:
 "Coin Performance | BTC
- Total trades: 12 | Wins: 8 | Losses: 4
- Win rate: 66.7% | Total PnL: +$124.50
- Best trade: LONG +$67.20
- Worst trade: SHORT -$23.10
- Performance by session:
-   London/NY Overlap: 78% WR (9 trades)
-   Asia: 33% WR (3 trades)
- Performance by regime:
-   TRENDING BULLISH: 82% WR (11 trades)
-   CHOPPY: 0% WR (1 trade)"
-
-Good for:
-  "how do I do on BTC?"
-  "which coin is most profitable?"
-  "should I trade ETH?"
+ Total trades: 12 | Win rate: 66.7%
+ Best session: London/NY Overlap 78% WR
+ Worst session: Asia 33% WR
+ Best regime: TRENDING BULLISH 82% WR"
 ```
 
 ### Chunk Type 5 — Documentation Chunks
@@ -724,7 +553,32 @@ Good for:
   "what is an order block?"
   "how does sweep detection work?"
   "what does grade A+ mean?"
-  "explain the confluence scoring"
+```
+
+---
+
+## What Changed From Before v5
+
+```
+Signal Pipeline:
+  Before: Linear Python if/else
+  After:  LangGraph 8-node agent graph
+          Every decision visible
+          Observable in LangSmith
+
+Chatbot:
+  Before: Manual context injection
+          Only sees last few signals
+  After:  RAG searches ALL trade history
+          Semantic search by meaning
+          Sources shown to user
+
+Observability:
+  Before: Python logging only
+  After:  LangSmith traces everything
+          Every LLM call logged
+          Every agent execution traced
+          Dashboard at smith.langchain.com
 ```
 
 ---
@@ -734,75 +588,25 @@ Good for:
 | Step | What Happens | New in v5? |
 |------|-------------|------------|
 | 1-3 | Fetch + validate + indicators | No |
-| 4 | LangGraph agent starts | ✅ Yes |
-| 5 | context_node | ✅ Yes |
-| 6 | sweep_node | ✅ Yes |
-| 7 | zone_node | ✅ Yes |
-| 8 | trigger_node | ✅ Yes |
-| 9 | risk_node | ✅ Yes |
-| 10 | grade_node | ✅ Yes |
-| 11 | ml_node | ✅ Yes |
-| 12 | finalize_node | ✅ Yes |
-| 13 | Write to Redis | No |
-| 14 | Content pipeline | No |
-| 15 | Execute on Binance | No |
-| 16 | Telegram alert | No |
-| 17 | Index signal to ChromaDB | ✅ Yes |
+| 4 | LangGraph agent starts | Yes |
+| 5 | context_node | Yes |
+| 6 | sweep_node | Yes |
+| 7 | zone_node | Yes |
+| 8 | trigger_node | Yes |
+| 9 | risk_node | Yes |
+| 10 | grade_node | Yes |
+| 11 | ml_node | Yes |
+| 12 | finalize_node | Yes |
+| 13-16 | Redis + content + execution + alerts | No |
+| 17 | Index signal to ChromaDB | Yes |
 | 18 | Outcome sync | No |
-| 19 | Index trade to ChromaDB | ✅ Yes |
+| 19 | Index trade to ChromaDB | Yes |
 | 20 | ML training | No |
-| 21 | RAG reindex job | ✅ Yes |
-| 22 | Phoenix traces everything | ✅ Yes |
+| 21 | RAG reindex job | Yes |
+| 22 | LangSmith traces everything | Yes |
 | 23 | Commentary posts | No |
-| 24 | RAG chat answers questions | ✅ Yes |
+| 24 | RAG chat answers questions | Yes |
 | 25 | Dashboard WebSocket push | No |
-
----
-
-## What Changed From v4 to v5
-
-```
-v4 Signal Pipeline:
-  Linear Python function
-  Hard coded if/else
-  Returns dict
-  No visibility
-  Hard to debug
-  Hard to explain
-
-v5 Signal Pipeline:
-  LangGraph stateful agent
-  8 nodes with conditional edges
-  Full execution trace
-  Observable in Phoenix
-  Every decision logged
-  Easy to explain and demo
-
-v4 Chatbot:
-  Manual context injection
-  Only sees last few signals
-  Generic answers
-  Limited to cache data
-
-v5 RAG Chatbot:
-  Searches ALL trade history
-  Semantic search by meaning
-  Specific data-driven answers
-  Sources shown to user
-  Grounded in real data
-
-v4 Observability:
-  Python logging only
-  No AI-specific monitoring
-  No trace visibility
-
-v5 Observability:
-  Phoenix AI monitoring
-  Every LLM call traced
-  Every RAG query traced
-  Every agent execution traced
-  Dashboard at :6006
-```
 
 ---
 
@@ -823,7 +627,7 @@ Structure says direction is this way.
 BTC agrees. Volume confirms.
 LangGraph traced every step.
 RAG found the pattern in history.
-Phoenix watched it all happen.
+LangSmith watched it all happen.
 
 That is the signal.
 That is the edge.

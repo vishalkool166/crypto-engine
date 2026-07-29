@@ -13,11 +13,11 @@
 [![LightGBM](https://img.shields.io/badge/LightGBM-ML_Gate-9B59B6?style=for-the-badge)](https://lightgbm.readthedocs.io)
 [![LangChain](https://img.shields.io/badge/LangChain-0.3-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain.com)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2-1C3C3C?style=for-the-badge)](https://langchain-ai.github.io/langgraph)
-[![Phoenix](https://img.shields.io/badge/Phoenix-Arize-FF6B35?style=for-the-badge)](https://phoenix.arize.com)
+[![LangSmith](https://img.shields.io/badge/LangSmith-Tracing-FF6B35?style=for-the-badge)](https://smith.langchain.com)
 
 **Automated crypto futures intelligence engine built on Binance Futures.**
 
-*Combines ICT concepts, multi-timeframe confluence scoring, and smart money principles into a fully automated trading system — now powered by a RAG intelligence layer, LangGraph agent pipeline, and Phoenix AI observability.*
+*Combines ICT concepts, multi-timeframe confluence scoring, and smart money principles into a fully automated trading system — now powered by a RAG intelligence layer, LangGraph agent pipeline, and LangSmith AI observability.*
 
 [🔴 Live Demo](https://signal-engine-v5.vishalkool.top) · [📁 Portfolio Code](https://github.com/vishalkool166/signal-engine-portfolio) · [📄 Resume](https://github.com/vishalkool166/signal-engine-portfolio/blob/main/RESUME.md)
 
@@ -33,7 +33,7 @@ It doesn't just show charts. It **reads the market** using institutional trading
 
 In v5, the system gained a **RAG intelligence layer** — a retrieval-augmented generation pipeline that indexes all trade history, signals, and performance data into a vector store. You can now ask the system natural language questions and get answers grounded in your actual trading data.
 
-The signal pipeline was also converted into a **LangGraph agent graph** — making every decision step visible, traceable, and observable through Phoenix AI monitoring.
+The signal pipeline was also converted into a **LangGraph agent graph** — making every decision step visible, traceable, and observable through LangSmith AI tracing.
 
 > *"Every signal has a reason — a story. Sweep happened here. Institutions displaced price there. Retest gave entry here. Structure says direction is this way. BTC agrees. Volume confirms. ML says 73% probability. When enough of those pieces align at the same time — that is the signal."*
 
@@ -99,9 +99,18 @@ The signal pipeline was also converted into a **LangGraph agent graph** — maki
            │
            ▼
 ┌─────────────────────────────────────────────────────────────┐
+│            LANGSMITH OBSERVABILITY (NEW in v5)               │
+│                                                              │
+│  Traces every LangChain call · Every LangGraph execution    │
+│  Every RAG query · Latency · Token usage · Errors           │
+│  Dashboard: smith.langchain.com                             │
+└─────────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
 │                   REACT DASHBOARD (PWA)                      │
 │         WebSocket push · Real-time PnL · Signal Radar        │
-│    RAG Chat Widget · Agent Trace View · Phoenix Monitoring   │
+│    RAG Chat Widget · Agent Trace View · LangSmith Link       │
 │         Multi-tier SaaS · Google OAuth · Mobile Ready        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -152,12 +161,12 @@ User asks: "Why do my signals fail on Fridays?"
 ### Tech Stack
 
 ```
-Embeddings:  sentence-transformers/all-MiniLM-L6-v2
-             Runs locally — zero cost — data stays on server
+Embeddings:   sentence-transformers/all-MiniLM-L6-v2
+              Runs locally — zero cost — data stays on server
 Vector Store: ChromaDB — persistent, local, no external deps
-LLM:         Groq llama-3.3-70b — free tier, 0.5s response
-Framework:   LangChain 0.3 — retrieval chains
-Re-indexing: Every 30 minutes via APScheduler
+LLM:          Groq llama-3.3-70b — free tier, 0.5s response
+Framework:    LangChain 0.3 — retrieval chains
+Re-indexing:  Every 30 minutes via APScheduler
 ```
 
 ---
@@ -203,40 +212,49 @@ After LangGraph:
   Every step is a visible node
   Every decision is logged
   Full execution trace available
-  Observable in Phoenix
+  Observable in LangSmith
   Easy to explain in interviews
   Can visualize the graph
 ```
 
 ---
 
-## 🔭 Phoenix AI Observability (New in v5)
+## 🔭 LangSmith Observability (New in v5)
 
-Every AI operation is monitored through **Arize Phoenix** — an open source LLM observability platform.
+Every AI operation is traced through **LangSmith** — the official observability platform for LangChain and LangGraph.
 
 ```
-What Phoenix tracks:
+What LangSmith traces:
   RAG queries:
-    - What question was asked
-    - What documents were retrieved
+    - Question asked
+    - Documents retrieved
     - Similarity scores
-    - LLM response
-    - Latency
+    - LLM prompt sent
+    - LLM response received
+    - Total latency
 
   LangGraph executions:
     - Which nodes ran
     - Which edges were taken
     - Why signals were rejected
     - Full execution trace
+    - Node-level timing
 
   LangChain calls:
-    - Prompt sent to LLM
-    - Response received
+    - Chain inputs and outputs
     - Token usage
-    - Errors
+    - Model used
+    - Errors and retries
 ```
 
-Phoenix dashboard runs at `http://your-server:6006`
+Dashboard: `https://smith.langchain.com`
+
+Setup:
+```
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=ls__your_key
+LANGCHAIN_PROJECT=signal-engine-v5
+```
 
 ---
 
@@ -250,6 +268,7 @@ Fetch market data from Redis
          │
          ▼
 LangGraph Agent starts
+(traced in LangSmith)
          │
          ▼
 [context_node]
@@ -311,6 +330,7 @@ Send Telegram alert
 Trigger content pipeline
 Push to dashboard via WebSocket
 Index new signal into RAG vector store
+LangSmith records full trace
 ```
 
 ---
@@ -374,7 +394,7 @@ Index new signal into RAG vector store
 | RAG | LangChain + ChromaDB | Retrieval augmented generation |
 | Embeddings | sentence-transformers | Local CPU embeddings |
 | Agents | LangGraph | Stateful signal agent graph |
-| Observability | Arize Phoenix | AI monitoring + tracing |
+| Observability | LangSmith | AI tracing + monitoring |
 | Alerts | Telegram Bot API + HTTPX | Real-time notifications |
 | Content | Groq llama-3.3-70b | AI post + RAG answers |
 | Charts | mplfinance | Signal chart images |
@@ -436,8 +456,8 @@ signal-engine-portfolio/
 │   │       ├── grade_node.py     # Confluence scoring
 │   │       └── ml_node.py        # LightGBM gate
 │   │
-│   ├── 📂 monitoring/       # ⭐ Phoenix Observability (NEW)
-│   │   └── phoenix_setup.py # Phoenix + OpenTelemetry setup
+│   ├── 📂 monitoring/       # ⭐ LangSmith Observability (NEW)
+│   │   └── langsmith_setup.py   # LangSmith tracing setup
 │   │
 │   ├── 📂 engines/          # Core intelligence (unchanged)
 │   │   ├── indicators.py    # EMA · RSI · MACD · ATR · ADX
@@ -475,7 +495,7 @@ signal-engine-portfolio/
 | `POST` | `/api/chat` | RAG-powered chat with trade history |
 | `GET` | `/api/rag/status` | Vector store health + chunk counts |
 | `POST` | `/api/rag/reindex` | Force full reindex of all data |
-| `GET` | `/api/phoenix/status` | Phoenix monitoring status |
+| `GET` | `/api/langsmith/status` | LangSmith tracing status |
 
 ### Signal Engine Endpoints
 | Method | Endpoint | Description |
@@ -493,39 +513,19 @@ signal-engine-portfolio/
 | `GET` | `/api/analysis/factors` | Factor edge analysis |
 | `POST` | `/api/sync/outcomes` | Manual outcome sync |
 | `POST` | `/api/mode/toggle` | Switch live/paper (TOTP) |
-| `GET` | `/api/health` | System health + RAG + Phoenix |
+| `GET` | `/api/health` | System health + RAG + LangSmith |
 | `WS` | `/ws/dashboard` | Real-time push every 2s |
 
 ---
 
-## 🤖 Telegram Bot Commands
+## 🔒 Security
 
-```
-📊 STATUS          🔍 MARKET
-/status            /btc
-/mode              /coin ETH
-/next              /regime
-/session           /funding
-                   /fear
-
-📡 SIGNALS         📈 PERFORMANCE
-/scan              /pnl
-/queue             /history
-/brief             /stats
-/evening           /streak
-                   /grade
-                   /daily
-
-🔬 ANALYSIS        🤖 ML + AI
-/backtest BTC      /ml
-/factors           /sync
-/debrief
-
-📝 CONTENT
-/pending
-/brief
-/discard N
-```
+- **Google OAuth** — Secure user authentication
+- **TOTP (2FA)** — Required for mode switching and dangerous actions
+- **JWT Sessions** — Secure session management with device tracking
+- **Rate Limiting** — All endpoints protected via slowapi
+- **API Keys** — Programmatic access with prefix tracking
+- **Audit Log** — Every action logged with IP and timestamp
 
 ---
 
@@ -539,7 +539,6 @@ signal-engine-portfolio/
 | Evening briefing | `14:30 UTC` | NY open summary |
 | Outcome sync | `Every 30 min` | Closed trade sync |
 | ML check | `Every 1 hour` | Auto-train trigger |
-| Engagement update | `Every 6 hours` | Twitter metrics |
 
 ---
 
@@ -563,17 +562,6 @@ signal-engine-portfolio/
 
 ---
 
-## 🔒 Security
-
-- **Google OAuth** — Secure user authentication
-- **TOTP (2FA)** — Required for mode switching and dangerous actions
-- **JWT Sessions** — Secure session management with device tracking
-- **Rate Limiting** — All endpoints protected via slowapi
-- **API Keys** — Programmatic access with prefix tracking
-- **Audit Log** — Every action logged with IP and timestamp
-
----
-
 ## 🖥️ Infrastructure
 
 ```
@@ -590,15 +578,13 @@ AWS EC2 t3.small (2 vCPU · 2GB RAM)
         ├── LangGraph agent pipeline
         ├── RAG vector store (ChromaDB)
         ├── sentence-transformers (local CPU)
-        ├── Phoenix monitoring (:6006)
+        ├── LangSmith tracing (cloud)
         └── All background jobs
 ```
 
 ---
 
 ## 🔒 Proprietary Components
-
-The following contain core trading intelligence and are available for review during technical interviews:
 
 | File | Contains |
 |------|----------|
@@ -630,15 +616,9 @@ No traditional software engineering background.
 **v5 specifically demonstrates:**
 - Designing and implementing RAG pipelines from scratch
 - Converting existing logic into LangGraph agent graphs
-- Integrating AI observability with Phoenix
+- Integrating LangSmith observability into production AI systems
 - Making architectural decisions about embeddings, chunking, and retrieval
 - Deploying AI systems to production with zero downtime
-
-This demonstrates the core skill of modern AI-augmented development:
-- Knowing **what** to build
-- Knowing **how** to structure it
-- Directing AI to implement it correctly
-- Debugging and deploying it to production
 
 ---
 
@@ -660,7 +640,7 @@ This demonstrates the core skill of modern AI-augmented development:
 
 <div align="center">
 
-*Built with Python · FastAPI · Redis · LightGBM · LangChain · LangGraph · ChromaDB · Phoenix · React · TypeScript*
+*Built with Python · FastAPI · Redis · LightGBM · LangChain · LangGraph · LangSmith · ChromaDB · React · TypeScript*
 
 ⭐ Star this repo if you found it interesting!
 

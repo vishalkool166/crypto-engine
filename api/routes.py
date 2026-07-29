@@ -754,6 +754,9 @@ async def health(request: Request):
     from trade.sync import get_sync_status
     from alerts.scanner import get_engine_health
     from data.rejection_stats import get_top_rejections
+    from chatbot_rag import get_rag_status
+    from monitoring.langsmith_setup import get_langsmith_status
+
     redis_ok = False
     try:
         from redis_client import get_redis
@@ -763,26 +766,24 @@ async def health(request: Request):
             redis_ok = True
     except Exception:
         pass
+
     loop   = asyncio.get_running_loop()
     system = await loop.run_in_executor(None, _system_stats)
 
-    from chatbot_rag import get_rag_status
-    from monitoring.phoenix_setup import get_phoenix_status
-
     result = {
-        "status":          "ok",
-        "timestamp":       datetime.now(timezone.utc).isoformat(),
-        "trading_mode":    "live" if not cfg.PAPER_TRADING else "paper",
-        "coins_count":     len(cfg.COINS),
-        "grades":          cfg.MIN_GRADE_TO_TRADE,
-        "redis_connected": redis_ok,
-        "ml_status":       get_ml_status(),
-        "sync_status":     await get_sync_status(),
-        "engine_health":   get_engine_health(),
-        "top_rejections":  get_top_rejections(3),
-        "rag_status":      get_rag_status(),
-        "phoenix_status":  get_phoenix_status(),
-        "system":          system,
+        "status":           "ok",
+        "timestamp":        datetime.now(timezone.utc).isoformat(),
+        "trading_mode":     "live" if not cfg.PAPER_TRADING else "paper",
+        "coins_count":      len(cfg.COINS),
+        "grades":           cfg.MIN_GRADE_TO_TRADE,
+        "redis_connected":  redis_ok,
+        "ml_status":        get_ml_status(),
+        "sync_status":      await get_sync_status(),
+        "engine_health":    get_engine_health(),
+        "top_rejections":   get_top_rejections(3),
+        "rag_status":       get_rag_status(),
+        "langsmith_status": get_langsmith_status(),
+        "system":           system,
     }
     _health_cache["data"] = result
     _health_cache["at"]   = time.time()

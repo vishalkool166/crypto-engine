@@ -24,7 +24,6 @@ services:
     stop_grace_period: 30s
     ports:
       - "8000:8000"
-      - "6006:6006"
     volumes:
       - ./database:/app/database
       - /var/run/docker.sock:/var/run/docker.sock

@@ -245,16 +245,16 @@ async def _session_cleanup_loop():
             log.error("Session cleanup error: %s", e)
 
 
-async def _start_phoenix():
+async def _start_langsmith():
     try:
-        from monitoring.phoenix_setup import start_phoenix
-        success = start_phoenix()
+        from monitoring.langsmith_setup import start_langsmith
+        success = start_langsmith()
         if success:
-            log.info("Phoenix monitoring started")
+            log.info("LangSmith tracing active")
         else:
-            log.warning("Phoenix failed to start — continuing without monitoring")
+            log.warning("LangSmith tracing not active — add LANGCHAIN_API_KEY to .env")
     except Exception as e:
-        log.warning("Phoenix startup error: %s — continuing without monitoring", e)
+        log.warning("LangSmith setup error: %s — continuing without tracing", e)
 
 
 async def _start_rag_indexer():
@@ -312,22 +312,26 @@ async def lifespan(app: FastAPI):
     await start_ws()
     log.info("Binance WebSocket streams started")
 
-    await _start_phoenix()
+    await _start_langsmith()
     await _start_rag_indexer()
 
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
 
+    from monitoring.langsmith_setup import get_langsmith_status
+    ls_status = get_langsmith_status()
+    ls_line   = f"`✅ Active — {ls_status['url']}`" if ls_status["enabled"] else "`⚠️ Add LANGCHAIN_API_KEY to .env`"
+
     await send(
         f"✅ *Signal Engine v5 Started*\n\n"
-        f"Mode:     `{mode}`\n"
-        f"Coins:    `{len(cfg.COINS)} coins`\n"
-        f"Grades:   `{grades}`\n"
-        f"Webhook:  `✅ Active`\n"
-        f"WS:       `✅ Binance streams active`\n"
-        f"RAG:      `✅ Vector store ready`\n"
-        f"Phoenix:  `✅ Monitoring active`\n"
-        f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
+        f"Mode:       `{mode}`\n"
+        f"Coins:      `{len(cfg.COINS)} coins`\n"
+        f"Grades:     `{grades}`\n"
+        f"Webhook:    `✅ Active`\n"
+        f"WS:         `✅ Binance streams active`\n"
+        f"RAG:        `✅ Vector store ready`\n"
+        f"LangSmith:  {ls_line}\n"
+        f"Scan:       `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
 
@@ -368,8 +372,8 @@ async def lifespan(app: FastAPI):
     from trade.monitor import stop_monitor
     stop_monitor()
 
-    from monitoring.phoenix_setup import stop_phoenix
-    stop_phoenix()
+    from monitoring.langsmith_setup import stop_langsmith
+    stop_langsmith()
 
     stop_scheduler()
 
@@ -988,11 +992,11 @@ async def rag_reindex(request: Request):
         raise HTTPException(500, str(e))
 
 
-@app.get("/api/phoenix/status")
-async def phoenix_status(request: Request):
+@app.get("/api/langsmith/status")
+async def langsmith_status(request: Request):
     try:
-        from monitoring.phoenix_setup import get_phoenix_status
-        return JSONResponse(content=get_phoenix_status())
+        from monitoring.langsmith_setup import get_langsmith_status
+        return JSONResponse(content=get_langsmith_status())
     except Exception as e:
         raise HTTPException(500, str(e))
 
