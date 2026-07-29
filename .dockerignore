@@ -9,5 +9,4 @@ __pycache__
 database/
 watcher.py
 start.bat
-*.md
 .DS_Store

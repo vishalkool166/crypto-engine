@@ -12,23 +12,28 @@ def start_phoenix() -> bool:
 
     try:
         import phoenix as px
-        from phoenix.otel import register
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
         _phoenix_session = px.launch_app()
 
-        log.info(
-            "Phoenix started — dashboard at %s",
-            _phoenix_session.url if _phoenix_session else "http://localhost:6006"
-        )
+        url = "http://localhost:6006"
+        try:
+            url = _phoenix_session.url
+        except Exception:
+            pass
 
-        _tracer_provider = register(
-            project_name    = "signal-engine-v5",
-            auto_instrument = True,
-        )
+        log.info("Phoenix started — dashboard at %s", url)
+
+        try:
+            from phoenix.otel import register
+            _tracer_provider = register(
+                project_name    = "signal-engine-v5",
+                auto_instrument = True,
+            )
+            log.info("Phoenix OTEL registered")
+        except Exception as e:
+            log.warning("Phoenix OTEL registration failed: %s", e)
 
         _instrument_langchain()
-        _instrument_langgraph()
 
         log.info("Phoenix instrumentation complete")
         return True
@@ -41,20 +46,15 @@ def start_phoenix() -> bool:
 def _instrument_langchain() -> None:
     try:
         from openinference.instrumentation.langchain import LangChainInstrumentor
-        LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+        if _tracer_provider:
+            LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
+        else:
+            LangChainInstrumentor().instrument()
         log.info("LangChain instrumented with Phoenix")
     except ImportError:
         log.warning("openinference-instrumentation-langchain not installed — skipping")
     except Exception as e:
         log.warning("LangChain instrumentation error: %s", e)
-
-
-def _instrument_langgraph() -> None:
-    try:
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-        log.info("LangGraph instrumented via LangChain instrumentor")
-    except Exception as e:
-        log.warning("LangGraph instrumentation error: %s", e)
 
 
 def get_phoenix_url() -> str:
@@ -72,9 +72,9 @@ def is_phoenix_running() -> bool:
 
 def get_phoenix_status() -> dict:
     return {
-        "running":   is_phoenix_running(),
-        "url":       get_phoenix_url(),
-        "project":   "signal-engine-v5",
+        "running": is_phoenix_running(),
+        "url":     get_phoenix_url(),
+        "project": "signal-engine-v5",
     }
 
 

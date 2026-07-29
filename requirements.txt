@@ -40,6 +40,7 @@ chromadb==0.5.18
 sentence-transformers==3.3.1
 arize-phoenix==4.29.0
 arize-phoenix-otel==0.6.1
+arize-phoenix-evals==0.17.0
 opentelemetry-sdk==1.28.1
 opentelemetry-exporter-otlp==1.28.1
 openinference-instrumentation-langchain==0.1.67
