@@ -12,12 +12,6 @@ from agents.nodes.ml_node      import ml_node
 log = logging.getLogger(__name__)
 
 
-def _should_continue(state: SignalAgentState) -> str:
-    if not state.get("signal", True):
-        return "end"
-    return "continue"
-
-
 def _after_context(state: SignalAgentState) -> str:
     ctx = state.get("ctx", {})
     if not ctx.get("pass", False):
@@ -59,7 +53,7 @@ def _after_risk(state: SignalAgentState) -> str:
     return "continue"
 
 
-def _after_grade(state: SignalAgentState) -> str:
+def _after_grader(state: SignalAgentState) -> str:
     grade = state.get("grade", "F")
     if grade == "F":
         return "end"
@@ -163,7 +157,7 @@ def _finalize_signal(state: SignalAgentState) -> SignalAgentState:
             "regime":        state.get("regime",  ""),
             "session":       state.get("session", ""),
             "alignment":     state.get("ctx", {}).get("alignment"),
-            "trace":         {
+            "trace": {
                 "steps":     state.get("trace_steps", []),
                 "direction": state["direction"],
                 "grade":     state["grade"],
@@ -228,7 +222,7 @@ def build_signal_graph() -> StateGraph:
     graph.add_node("zone",     zone_node)
     graph.add_node("trigger",  trigger_node)
     graph.add_node("risk",     risk_node)
-    graph.add_node("grade",    grade_node)
+    graph.add_node("grader",   grade_node)
     graph.add_node("ml",       ml_node)
     graph.add_node("finalize", _finalize_signal)
     graph.add_node("reject",   _build_rejection_result)
@@ -258,11 +252,11 @@ def build_signal_graph() -> StateGraph:
     graph.add_conditional_edges(
         "risk",
         _after_risk,
-        {"continue": "grade", "end": "reject"},
+        {"continue": "grader", "end": "reject"},
     )
     graph.add_conditional_edges(
-        "grade",
-        _after_grade,
+        "grader",
+        _after_grader,
         {"continue": "ml", "end": "reject"},
     )
     graph.add_conditional_edges(
@@ -284,7 +278,7 @@ def get_signal_graph():
     global _compiled_graph
     if _compiled_graph is not None:
         return _compiled_graph
-    graph            = build_signal_graph()
-    _compiled_graph  = graph.compile()
+    graph           = build_signal_graph()
+    _compiled_graph = graph.compile()
     log.info("LangGraph signal graph compiled")
     return _compiled_graph
