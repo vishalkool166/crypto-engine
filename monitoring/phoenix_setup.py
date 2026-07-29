@@ -24,16 +24,11 @@ def start_phoenix() -> bool:
         log.info("Phoenix started — dashboard at %s", url)
 
         try:
-            from phoenix.otel import register
-            _tracer_provider = register(
-                project_name    = "signal-engine-v5",
-                auto_instrument = True,
-            )
-            log.info("Phoenix OTEL registered")
+            from openinference.instrumentation.langchain import LangChainInstrumentor
+            LangChainInstrumentor().instrument()
+            log.info("LangChain instrumented with Phoenix")
         except Exception as e:
-            log.warning("Phoenix OTEL registration failed: %s", e)
-
-        _instrument_langchain()
+            log.warning("LangChain instrumentation error: %s", e)
 
         log.info("Phoenix instrumentation complete")
         return True
@@ -41,20 +36,6 @@ def start_phoenix() -> bool:
     except Exception as e:
         log.error("Phoenix start error: %s", e)
         return False
-
-
-def _instrument_langchain() -> None:
-    try:
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-        if _tracer_provider:
-            LangChainInstrumentor().instrument(tracer_provider=_tracer_provider)
-        else:
-            LangChainInstrumentor().instrument()
-        log.info("LangChain instrumented with Phoenix")
-    except ImportError:
-        log.warning("openinference-instrumentation-langchain not installed — skipping")
-    except Exception as e:
-        log.warning("LangChain instrumentation error: %s", e)
 
 
 def get_phoenix_url() -> str:
