@@ -11,10 +11,13 @@
 [![AWS](https://img.shields.io/badge/AWS-EC2-FF9900?style=for-the-badge&logo=amazonaws&logoColor=white)](https://aws.amazon.com)
 [![Redis](https://img.shields.io/badge/Redis-7-DC382D?style=for-the-badge&logo=redis&logoColor=white)](https://redis.io)
 [![LightGBM](https://img.shields.io/badge/LightGBM-ML_Gate-9B59B6?style=for-the-badge)](https://lightgbm.readthedocs.io)
+[![LangChain](https://img.shields.io/badge/LangChain-0.3-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain.com)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.2-1C3C3C?style=for-the-badge)](https://langchain-ai.github.io/langgraph)
+[![Phoenix](https://img.shields.io/badge/Phoenix-Arize-FF6B35?style=for-the-badge)](https://phoenix.arize.com)
 
 **Automated crypto futures intelligence engine built on Binance Futures.**
 
-*Combines ICT concepts, multi-timeframe confluence scoring, and smart money principles into a fully automated trading system with real-time dashboard, Telegram control, Twitter content pipeline, and LightGBM ML gate.*
+*Combines ICT concepts, multi-timeframe confluence scoring, and smart money principles into a fully automated trading system — now powered by a RAG intelligence layer, LangGraph agent pipeline, and Phoenix AI observability.*
 
 [🔴 Live Demo](https://signal-engine-v5.vishalkool.top) · [📁 Portfolio Code](https://github.com/vishalkool166/signal-engine-portfolio) · [📄 Resume](https://github.com/vishalkool166/signal-engine-portfolio/blob/main/RESUME.md)
 
@@ -27,6 +30,10 @@
 Signal Engine v5 is a **fully autonomous crypto futures trading intelligence platform** that thinks, decides, and acts — 24 hours a day, 7 days a week.
 
 It doesn't just show charts. It **reads the market** using institutional trading concepts, scores every opportunity across 16 dimensions, filters with machine learning, and executes trades on Binance Futures — all without human intervention.
+
+In v5, the system gained a **RAG intelligence layer** — a retrieval-augmented generation pipeline that indexes all trade history, signals, and performance data into a vector store. You can now ask the system natural language questions and get answers grounded in your actual trading data.
+
+The signal pipeline was also converted into a **LangGraph agent graph** — making every decision step visible, traceable, and observable through Phoenix AI monitoring.
 
 > *"Every signal has a reason — a story. Sweep happened here. Institutions displaced price there. Retest gave entry here. Structure says direction is this way. BTC agrees. Volume confirms. ML says 73% probability. When enough of those pieces align at the same time — that is the signal."*
 
@@ -58,24 +65,18 @@ It doesn't just show charts. It **reads the market** using institutional trading
 │         └────────────────┼──────────────────────┘           │
 │                          ▼                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
-│  │              4 ENGINE CHECKS (ICT Concepts)           │  │
-│  │  💧 Liquidity Sweep  ⚡ Displacement                  │  │
-│  │  🎯 Retest Zone      📦 Order Blocks                  │  │
+│  │         LANGGRAPH SIGNAL AGENT (NEW in v5)            │  │
+│  │  context → sweep → zone → trigger → risk →           │  │
+│  │  grade → ml_gate → finalize                          │  │
+│  │  Each step is a node. Each decision is traced.       │  │
 │  └───────────────────────┬───────────────────────────────┘  │
 │                          ▼                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │         16-FACTOR CONFLUENCE SCORER (0-100)           │  │
-│  │  Score = Σ(factor_earned) / max_possible × 100        │  │
-│  └───────────────────────┬───────────────────────────────┘  │
-│                          ▼                                   │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │              SIGNAL GRADING ENGINE                    │  │
-│  │   A+ (85+) · A (68+) · B (52+) · C (38+) · F (<38)   │  │
 │  └───────────────────────┬───────────────────────────────┘  │
 │                          ▼                                   │
 │  ┌───────────────────────────────────────────────────────┐  │
 │  │           LIGHTGBM ML GATE (after 100 trades)         │  │
-│  │      Win probability ≥ 65% → PASS · < 65% → BLOCK    │  │
 │  └───────────────────────┬───────────────────────────────┘  │
 └──────────────────────────┼──────────────────────────────────┘
                            │
@@ -89,62 +90,227 @@ It doesn't just show charts. It **reads the market** using institutional trading
            │
            ▼
 ┌─────────────────────────────────────────────────────────────┐
+│              RAG INTELLIGENCE LAYER (NEW in v5)              │
+│                                                              │
+│  ChromaDB Vector Store · sentence-transformers embeddings    │
+│  5 chunk types · LangChain retrieval · Groq LLM answers     │
+│  Indexes: trades · signals · daily · coins · docs           │
+└─────────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌─────────────────────────────────────────────────────────────┐
 │                   REACT DASHBOARD (PWA)                      │
 │         WebSocket push · Real-time PnL · Signal Radar        │
+│    RAG Chat Widget · Agent Trace View · Phoenix Monitoring   │
 │         Multi-tier SaaS · Google OAuth · Mobile Ready        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ⚡ How A Signal Is Born
+## 🤖 RAG Intelligence Layer (New in v5)
+
+The biggest addition in v5 is a full **Retrieval-Augmented Generation** pipeline that gives the AI assistant access to your actual trading history.
+
+### How It Works
+
+```
+User asks: "Why do my signals fail on Fridays?"
+                    │
+                    ▼
+         Embed question as vector
+                    │
+                    ▼
+    Search ChromaDB across 5 collections
+                    │
+                    ▼
+    Retrieve most relevant chunks:
+    - Trade #47: Friday, Asia session, loss
+    - Trade #52: Friday, low ADX, loss
+    - Daily summary: Friday performance
+                    │
+                    ▼
+    Send retrieved context to Groq LLM
+                    │
+                    ▼
+    Answer grounded in YOUR actual data:
+    "Your Friday signals show 31% WR vs
+     61% overall. 8 of 11 losses occurred
+     during Asia session with ADX below 20"
+```
+
+### 5 Chunk Types
+
+| Chunk Type | Source | Good For |
+|------------|--------|----------|
+| Trade chunks | trades table | Loss analysis, pattern finding |
+| Signal chunks | signals table | Signal quality questions |
+| Daily summaries | trades grouped by day | Period performance |
+| Coin performance | trades grouped by coin | Coin-specific analysis |
+| Documentation | README + WORKING.md | Concept explanations |
+
+### Tech Stack
+
+```
+Embeddings:  sentence-transformers/all-MiniLM-L6-v2
+             Runs locally — zero cost — data stays on server
+Vector Store: ChromaDB — persistent, local, no external deps
+LLM:         Groq llama-3.3-70b — free tier, 0.5s response
+Framework:   LangChain 0.3 — retrieval chains
+Re-indexing: Every 30 minutes via APScheduler
+```
+
+---
+
+## 🕸️ LangGraph Signal Agent (New in v5)
+
+The signal analysis pipeline was converted from linear Python code into a proper **LangGraph stateful agent graph**.
+
+### The Graph
+
+```
+START
+  ↓
+[context_node]  — EMA direction + BTC alignment
+  ↓ PASS / → [reject_node] → END
+[sweep_node]    — Liquidity sweep detection
+  ↓ PASS / → [reject_node] → END
+[zone_node]     — Order block / FVG detection
+  ↓ PASS / → [reject_node] → END
+[trigger_node]  — 15M entry pattern confirmation
+  ↓ PASS / → [reject_node] → END
+[risk_node]     — SL/TP calculation + RR check
+  ↓ PASS / → [reject_node] → END
+[grade_node]    — 16-factor confluence scoring
+  ↓ PASS / → [reject_node] → END
+[ml_node]       — LightGBM win probability gate
+  ↓ PASS / → [reject_node] → END
+[finalize_node] — Sizing + narrative generation
+  ↓
+END
+```
+
+### Why This Matters
+
+```
+Before LangGraph:
+  Linear Python if/else
+  Black box — hard to debug
+  No visibility into decisions
+  Hard to explain to others
+
+After LangGraph:
+  Every step is a visible node
+  Every decision is logged
+  Full execution trace available
+  Observable in Phoenix
+  Easy to explain in interviews
+  Can visualize the graph
+```
+
+---
+
+## 🔭 Phoenix AI Observability (New in v5)
+
+Every AI operation is monitored through **Arize Phoenix** — an open source LLM observability platform.
+
+```
+What Phoenix tracks:
+  RAG queries:
+    - What question was asked
+    - What documents were retrieved
+    - Similarity scores
+    - LLM response
+    - Latency
+
+  LangGraph executions:
+    - Which nodes ran
+    - Which edges were taken
+    - Why signals were rejected
+    - Full execution trace
+
+  LangChain calls:
+    - Prompt sent to LLM
+    - Response received
+    - Token usage
+    - Errors
+```
+
+Phoenix dashboard runs at `http://your-server:6006`
+
+---
+
+## ⚡ How A Signal Is Born (v5 with LangGraph)
 
 ```
 Every 15 minutes (:00 :15 :30 :45 UTC)
          │
          ▼
-Fetch market data from Redis (Binance fallback)
+Fetch market data from Redis
          │
          ▼
-Clean + validate candle data
+LangGraph Agent starts
          │
          ▼
-Calculate indicators on 4 timeframes (1W · 1D · 4H · 1H)
+[context_node]
+  Check EMA direction + BTC alignment
+  → NEUTRAL: reject with reason
+  → LONG/SHORT: continue
          │
          ▼
-Run 4 ICT engine checks
-  ├── 💧 Liquidity Sweep — Did big players hunt stops?
-  ├── ⚡ Displacement — Did institutions push price hard?
-  ├── 🎯 Retest — Is price returning to launch zone?
-  └── 📦 Order Blocks — Are we near institutional level?
+[sweep_node]
+  Detect liquidity sweep on 1H
+  Score sweep quality
+  → Below threshold: reject
+  → Above threshold: continue
          │
          ▼
-Detect market regime
-  ├── TRENDING BULLISH/BEARISH → Tradeable ✅
-  ├── RANGING → Reduced confidence ⚠️
-  └── CHOPPY → Hard blocked ❌
+[zone_node]
+  Find order block or FVG on 4H
+  Score zone quality
+  → Not found: reject
+  → Found: continue
          │
          ▼
-Score 16 confluence factors (0-100)
+[trigger_node]
+  Look for 15M entry pattern
+  Engulfing or pin bar in zone
+  → No pattern: reject
+  → Pattern confirmed: continue
          │
          ▼
-Grade signal: A+ · A · B · C · F
+[risk_node]
+  Calculate structure-aware SL
+  Find nearest structure TP
+  Check RR ratio
+  → RR too low: reject
+  → Valid: continue
          │
          ▼
-ML Gate check (if 100+ closed trades exist)
-  ├── Win probability ≥ 65% → PASS ✅
-  └── Win probability < 65% → BLOCKED ❌
+[grade_node]
+  Score 16 confluence factors
+  Assign grade A+/A/B/F
+  → Grade F: reject
+  → Grade B+: continue
          │
          ▼
-Calculate structure-aware SL + TP
+[ml_node]
+  LightGBM win probability
+  → Below 65%: reject
+  → Above 65%: continue
          │
          ▼
-Execute on Binance Futures via CCXT
+[finalize_node]
+  Calculate position size
+  Generate narrative
+  Write to Redis
          │
          ▼
-Push to dashboard via WebSocket
+Execute on Binance Futures
 Send Telegram alert
-Trigger Twitter content pipeline
+Trigger content pipeline
+Push to dashboard via WebSocket
+Index new signal into RAG vector store
 ```
 
 ---
@@ -155,16 +321,9 @@ Trigger Twitter content pipeline
 |-------|-------|--------|------|---------------|
 | 🏆 **A+** | 85-100 | Auto-execute | 2% capital | 2.5x risk |
 | ✅ **A** | 68-84 | Auto-execute | 1.5% capital | 2.0x risk |
-| 👀 **B** | 52-67 | Paper only + quality filter | 1% capital | 1.5x risk |
-| ⏳ **C** | 38-51 | Watch — setup building | Never | — |
+| 👀 **B** | 52-67 | Paper only | 1% capital | 1.5x risk |
+| ⏳ **C** | 38-51 | Watch only | Never | — |
 | 🚫 **F** | 0-37 | Hard blocked | Never | — |
-
-### Grade B Quality Filter
-B grades only execute in paper mode when **ALL** pass:
-- ✅ Market score ≥ 65
-- ✅ London or NY session active
-- ✅ BTC score ≥ 4 (not conflicting)
-- ✅ Maximum 1 hard block present
 
 ---
 
@@ -195,84 +354,6 @@ B grades only execute in paper mode when **ALL** pass:
 ├──────────────────────────┼──────────┼───────────────────────┤
 │ TOTAL MAX POSSIBLE       │  114     │                       │
 └──────────────────────────┴──────────┴───────────────────────┘
-
-Score = (Total Earned / 114) × 100
-```
-
----
-
-## 🤖 LightGBM ML Gate
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    ML GATE PIPELINE                          │
-│                                                              │
-│  TRAINING DATA                                               │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │ 16 factor scores + regime + session + direction     │    │
-│  │ + sweep/retest/disp scores + BTC score + funding    │    │
-│  │ + grade + slippage + commission + hold duration     │    │
-│  └──────────────────────┬──────────────────────────────┘    │
-│                         │                                    │
-│                         ▼                                    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │           LightGBM Binary Classifier                │    │
-│  │  Label: win=1 loss=0                                │    │
-│  │  CV: 5-fold StratifiedKFold                         │    │
-│  │  Class weights: balanced for win/loss ratio         │    │
-│  └──────────────────────┬──────────────────────────────┘    │
-│                         │                                    │
-│                         ▼                                    │
-│  ACTIVATION RULES                                            │
-│  ├── Below 100 trades → All A+/A/B signals pass             │
-│  ├── After 100 trades → ML gate activates                   │
-│  ├── Probability ≥ 0.65 → Signal PASSES ✅                  │
-│  ├── Probability < 0.65 → Signal BLOCKED ❌                 │
-│  └── Auto-retrains every 50 new closed trades               │
-└─────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🐦 Content Pipeline
-
-```
-A+/A Signal Generated
-         │
-         ▼
-┌────────────────────┐
-│  Chart Generated   │
-│  mplfinance 4H     │
-│  Entry·SL·TP lines │
-│  Sweep zone shaded │
-└────────┬───────────┘
-         │
-         ▼
-┌────────────────────┐
-│   Groq LLM Writes  │
-│   llama-3.3-70b    │
-│   Tone rotation:   │
-│   70% professional │
-│   20% educational  │
-│   10% humor        │
-└────────┬───────────┘
-         │
-         ▼
-┌────────────────────────────────────────┐
-│         Telegram Approval              │
-│                                        │
-│  📊 Chart image sent                  │
-│  📝 Draft post sent                   │
-│                                        │
-│  [✅ Approve & Post]  [❌ Discard]    │
-│  [✏️ Edit Draft]      [🔄 Regenerate] │
-└────────┬───────────────────────────────┘
-         │ Approved
-         ▼
-┌────────────────────┐
-│   Twitter/X Post   │
-│   Engagement track │
-└────────────────────┘
 ```
 
 ---
@@ -287,11 +368,15 @@ A+/A Signal Generated
 | Data Layer | Redis 7 | Real-time market data cache |
 | Database | SQLite + SQLAlchemy | Signal + trade persistence |
 | Exchange | Binance Futures via CCXT | Market data + execution |
-| Scheduling | APScheduler | 15-min scan jobs |
+| Scheduling | APScheduler | 15-min scan + RAG reindex jobs |
 | Indicators | TA-Lib, Pandas, NumPy | Technical analysis |
 | ML | LightGBM + scikit-learn | Signal win probability |
+| RAG | LangChain + ChromaDB | Retrieval augmented generation |
+| Embeddings | sentence-transformers | Local CPU embeddings |
+| Agents | LangGraph | Stateful signal agent graph |
+| Observability | Arize Phoenix | AI monitoring + tracing |
 | Alerts | Telegram Bot API + HTTPX | Real-time notifications |
-| Content | Groq llama-3.3-70b | AI post generation |
+| Content | Groq llama-3.3-70b | AI post + RAG answers |
 | Charts | mplfinance | Signal chart images |
 | Social | Tweepy | Twitter/X posting |
 | Auth | PyOTP + bcrypt + JWT | TOTP + session security |
@@ -329,89 +414,68 @@ signal-engine-portfolio/
 │   ├── main.py              # FastAPI app · WebSocket · lifespan
 │   ├── config.py            # Weights · constants · SaaS tiers
 │   ├── database.py          # SQLAlchemy models · session mgmt
-│   ├── scheduler.py         # APScheduler · scan · ML · sync
-│   ├── auth.py              # JWT · TOTP · OAuth · sessions
-│   ├── redis_client.py      # Redis connection singleton
-│   ├── requirements.txt     # Python dependencies
+│   ├── scheduler.py         # APScheduler · scan · ML · RAG reindex
+│   ├── chatbot_rag.py       # RAG-powered chatbot entry point
 │   │
-│   ├── 📂 engines/          # ⚠️ Core intelligence
-│   │   ├── indicators.py    # ✅ EMA · RSI · MACD · ATR · ADX
-│   │   ├── capital.py       # ✅ Dynamic position sizing
-│   │   ├── validator.py     # ✅ Candle data validation
-│   │   └── PROPRIETARY.md  # 🔒 Confluence · Signal · Sweep
-│   │                        #    Displacement · Retest · Regime
-│   │                        #    OrderBlocks · Thesis
+│   ├── 📂 rag/              # ⭐ RAG Intelligence Layer (NEW)
+│   │   ├── vectorstore.py   # ChromaDB setup + collection management
+│   │   ├── indexer.py       # 5 chunk types · trade/signal indexing
+│   │   ├── retriever.py     # Semantic search · intent detection
+│   │   └── chain.py         # LangChain RAG chain · Groq integration
 │   │
-│   ├── 📂 ml/               # ⚠️ ML pipeline
-│   │   └── PROPRIETARY.md  # 🔒 Trainer · Predictor · Dataset
-│   │                        #    Eligibility checker
+│   ├── 📂 agents/           # ⭐ LangGraph Agent Pipeline (NEW)
+│   │   ├── state.py         # SignalAgentState TypedDict
+│   │   ├── graph.py         # LangGraph graph definition
+│   │   ├── signal_agent.py  # Agent entry point
+│   │   └── nodes/
+│   │       ├── context_node.py   # EMA + BTC alignment
+│   │       ├── sweep_node.py     # Liquidity sweep detection
+│   │       ├── zone_node.py      # Order block / FVG
+│   │       ├── trigger_node.py   # 15M entry pattern
+│   │       ├── risk_node.py      # SL/TP calculation
+│   │       ├── grade_node.py     # Confluence scoring
+│   │       └── ml_node.py        # LightGBM gate
 │   │
-│   ├── 📂 alerts/
-│   │   ├── telegram.py      # ✅ Bot commands · webhook · alerts
-│   │   ├── briefing.py      # ✅ Morning/evening briefings
-│   │   ├── utils.py         # ✅ Shared utilities
-│   │   └── PROPRIETARY.md  # 🔒 Core scanner orchestration
+│   ├── 📂 monitoring/       # ⭐ Phoenix Observability (NEW)
+│   │   └── phoenix_setup.py # Phoenix + OpenTelemetry setup
 │   │
-│   ├── 📂 trade/
-│   │   ├── exchange.py      # ✅ Binance CCXT integration
-│   │   ├── executor.py      # ✅ Order placement + SL/TP
-│   │   ├── monitor.py       # ✅ Position monitoring
-│   │   ├── sync.py          # ✅ Outcome sync
-│   │   └── ws.py            # ✅ WebSocket streams
+│   ├── 📂 engines/          # Core intelligence (unchanged)
+│   │   ├── indicators.py    # EMA · RSI · MACD · ATR · ADX
+│   │   ├── signal.py        # Original signal pipeline (fallback)
+│   │   ├── sweep.py         # Liquidity sweep detection
+│   │   ├── zone.py          # Order block / FVG detection
+│   │   ├── trigger.py       # Entry pattern detection
+│   │   ├── risk.py          # SL/TP calculation
+│   │   ├── scorer.py        # Grade assignment
+│   │   └── PROPRIETARY.md
 │   │
-│   ├── 📂 data/
-│   │   ├── fetcher.py       # ✅ Redis-first + Binance fallback
-│   │   ├── store.py         # ✅ Candle persistence
-│   │   └── cache.py         # ✅ In-memory TTL cache
+│   ├── 📂 ml/               # ML pipeline (unchanged)
+│   │   └── PROPRIETARY.md
 │   │
-│   ├── 📂 api/
-│   │   ├── routes.py        # ✅ All REST endpoints
-│   │   ├── trading.py       # ✅ Trade management endpoints
-│   │   └── dashboard.py     # ✅ Dashboard payload builders
-│   │
-│   ├── 📂 backtest/
-│   │   ├── report.py        # ✅ Backtest report builder
-│   │   └── factor_analysis.py # ✅ Factor edge analysis
-│   │
-│   └── 📂 content/
-│       └── PROPRIETARY.md  # 🔒 Pipeline · Chart · Groq · Twitter
+│   ├── 📂 alerts/           # Telegram + scanner
+│   ├── 📂 trade/            # Execution + monitoring
+│   ├── 📂 data/             # Fetcher + store + cache
+│   ├── 📂 api/              # REST endpoints
+│   ├── 📂 backtest/         # Backtest engine
+│   └── 📂 content/          # Content pipeline
 │
 └── 📂 frontend/
-    ├── 📂 src/
-    │   ├── 📂 pages/        # 11 dashboard pages
-    │   │   ├── Home.tsx     # Overview + KPIs + signal queue
-    │   │   ├── Signals.tsx  # Signal radar + coin detail
-    │   │   ├── Trades.tsx   # Live positions + history
-    │   │   ├── Performance.tsx # Equity curve + factor analysis
-    │   │   ├── Users.tsx    # Admin user management
-    │   │   ├── Coins.tsx    # Coin universe management
-    │   │   ├── System.tsx   # Infrastructure monitor
-    │   │   ├── Audit.tsx    # Audit log
-    │   │   ├── Settings.tsx # API keys + sessions
-    │   │   ├── Profile.tsx  # Subscription + features
-    │   │   └── Pricing.tsx  # SaaS pricing tiers
-    │   │
-    │   ├── 📂 components/
-    │   │   ├── layout/      # Sidebar · TopBar · AuthGuard
-    │   │   ├── modals/      # CommandPalette · TotpModal
-    │   │   └── ui/          # KPICard · GradeTag · SpotlightCard
-    │   │                    # DataTable · StatusBadge · EmptyState
-    │   │
-    │   ├── 📂 stores/       # Zustand state management
-    │   │   ├── authStore.ts # User + tier + features
-    │   │   ├── wsStore.ts   # WebSocket payload
-    │   │   └── uiStore.ts   # Sidebar + UI state
-    │   │
-    │   └── 📂 types/        # Full TypeScript definitions
-    │
-    ├── package.json
-    ├── vite.config.ts
-    └── tailwind.config.ts
+    └── 📂 src/
+        ├── 📂 pages/        # 11 dashboard pages
+        └── 📂 components/   # UI components
 ```
 
 ---
 
 ## 🌐 API Reference
+
+### New RAG + Agent Endpoints
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/chat` | RAG-powered chat with trade history |
+| `GET` | `/api/rag/status` | Vector store health + chunk counts |
+| `POST` | `/api/rag/reindex` | Force full reindex of all data |
+| `GET` | `/api/phoenix/status` | Phoenix monitoring status |
 
 ### Signal Engine Endpoints
 | Method | Endpoint | Description |
@@ -429,8 +493,7 @@ signal-engine-portfolio/
 | `GET` | `/api/analysis/factors` | Factor edge analysis |
 | `POST` | `/api/sync/outcomes` | Manual outcome sync |
 | `POST` | `/api/mode/toggle` | Switch live/paper (TOTP) |
-| `GET` | `/api/health` | System health + ML status |
-| `GET` | `/api/audit/log` | Audit log |
+| `GET` | `/api/health` | System health + RAG + Phoenix |
 | `WS` | `/ws/dashboard` | Real-time push every 2s |
 
 ---
@@ -453,7 +516,7 @@ signal-engine-portfolio/
                    /grade
                    /daily
 
-🔬 ANALYSIS        🤖 ML
+🔬 ANALYSIS        🤖 ML + AI
 /backtest BTC      /ml
 /factors           /sync
 /debrief
@@ -463,6 +526,20 @@ signal-engine-portfolio/
 /brief
 /discard N
 ```
+
+---
+
+## ⏱️ Scan + Reindex Schedule
+
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Coin scan | `:00/:15/:30/:45 UTC` | Full universe analysis |
+| RAG reindex | `Every 30 min` | Index new trades + signals |
+| Morning briefing | `08:00 UTC` | London open summary |
+| Evening briefing | `14:30 UTC` | NY open summary |
+| Outcome sync | `Every 30 min` | Closed trade sync |
+| ML check | `Every 1 hour` | Auto-train trigger |
+| Engagement update | `Every 6 hours` | Twitter metrics |
 
 ---
 
@@ -478,6 +555,7 @@ signal-engine-portfolio/
 │ Levels ❌│ Levels ✅│ Levels ✅│ Levels ✅│
 │ ML ❌    │ ML ❌    │ ML ✅    │ ML ✅    │
 │ Factors❌│Factors ❌│Factors ✅│Factors ✅│
+│ RAG ❌   │ RAG ❌   │ RAG ✅   │ RAG ✅   │
 │ API ❌   │ API ❌   │ API ✅   │ API ✅   │
 │ 5 coins  │All coins │All coins │All coins │
 └──────────┴──────────┴──────────┴──────────┘
@@ -496,19 +574,6 @@ signal-engine-portfolio/
 
 ---
 
-## ⏱️ Scan Schedule
-
-| Job | Schedule | Description |
-|-----|----------|-------------|
-| Coin scan | `:00/:15/:30/:45 UTC` | Full universe analysis |
-| Morning briefing | `08:00 UTC` | London open summary |
-| Evening briefing | `13:00 UTC` | NY open summary |
-| Outcome sync | `Every 30 min` | Closed trade sync |
-| ML check | `Every 1 hour` | Auto-train trigger |
-| Engagement update | `Every 6 hours` | Twitter metrics |
-
----
-
 ## 🖥️ Infrastructure
 
 ```
@@ -518,10 +583,14 @@ AWS EC2 t3.small (2 vCPU · 2GB RAM)
 │   └── signal-engine-v5.vishalkool.top → :8000
 │
 └── Docker Compose
-    ├── redis:7-alpine      (~50MB RAM)
-    └── signal-engine       (~400MB RAM)
+    ├── redis:7-alpine          (~10MB RAM)
+    └── signal-engine           (~900MB RAM)
         ├── FastAPI backend
         ├── React frontend (served as static)
+        ├── LangGraph agent pipeline
+        ├── RAG vector store (ChromaDB)
+        ├── sentence-transformers (local CPU)
+        ├── Phoenix monitoring (:6006)
         └── All background jobs
 ```
 
@@ -536,10 +605,12 @@ The following contain core trading intelligence and are available for review dur
 | `engines/confluence.py` | 16-factor weighted scoring engine |
 | `engines/signal.py` | Signal generation + grading logic |
 | `engines/sweep.py` | Liquidity sweep detection algorithm |
-| `engines/displacement.py` | Institutional displacement detection |
-| `engines/retest.py` | Retest zone confirmation engine |
-| `engines/regime.py` | Market regime classification |
-| `engines/orderblocks.py` | ICT order block detection |
+| `engines/zone.py` | Order block / FVG detection |
+| `engines/trigger.py` | 15M entry pattern detection |
+| `engines/risk.py` | Structure-aware SL/TP calculation |
+| `agents/graph.py` | LangGraph signal agent graph |
+| `rag/chain.py` | LangChain RAG pipeline |
+| `rag/indexer.py` | 5-type chunking strategy |
 | `ml/trainer.py` | LightGBM training pipeline |
 | `ml/predictor.py` | Win probability prediction |
 | `alerts/scanner.py` | Core scan orchestration |
@@ -549,12 +620,19 @@ The following contain core trading intelligence and are available for review dur
 
 ---
 
-## 🚀 Built With Prompt Engineering
+## 🚀 Built With Prompt Engineering + AI Augmented Development
 
-This entire system — 50+ Python files, 70+ React components, full infrastructure — was **architected and built through structured prompt engineering** over 2 months.
+This entire system — 50+ Python files, 70+ React components, RAG pipeline, LangGraph agents, full infrastructure — was **architected and built through structured prompt engineering** over 2 months.
 
 No traditional software engineering background.
 100% production deployed and running live.
+
+**v5 specifically demonstrates:**
+- Designing and implementing RAG pipelines from scratch
+- Converting existing logic into LangGraph agent graphs
+- Integrating AI observability with Phoenix
+- Making architectural decisions about embeddings, chunking, and retrieval
+- Deploying AI systems to production with zero downtime
 
 This demonstrates the core skill of modern AI-augmented development:
 - Knowing **what** to build
@@ -574,7 +652,7 @@ This demonstrates the core skill of modern AI-augmented development:
 [![Phone](https://img.shields.io/badge/Phone-+91_8978439995-25D366?style=for-the-badge&logo=whatsapp&logoColor=white)](tel:+918978439995)
 [![Location](https://img.shields.io/badge/Location-Hyderabad,_India-FF9900?style=for-the-badge&logo=googlemaps&logoColor=white)](https://maps.google.com/?q=Hyderabad)
 
-*Open to: Prompt Engineer · AI Product Analyst · AI Solutions Engineer · Technical AI Roles*
+*Open to: AI Engineer · RAG Engineer · LangChain Developer · AI Product Engineer · Prompt Engineer · AI Solutions Engineer*
 
 </div>
 
@@ -582,7 +660,7 @@ This demonstrates the core skill of modern AI-augmented development:
 
 <div align="center">
 
-*Built with Python + FastAPI + Redis + LightGBM + React + TypeScript and a lot of market structure reading.*
+*Built with Python · FastAPI · Redis · LightGBM · LangChain · LangGraph · ChromaDB · Phoenix · React · TypeScript*
 
 ⭐ Star this repo if you found it interesting!
 

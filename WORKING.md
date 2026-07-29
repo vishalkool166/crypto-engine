@@ -1,8 +1,8 @@
-# How A Signal Is Born — Complete Journey
+# How A Signal Is Born — Complete Journey v5
 
 <div align="center">
 
-*A step-by-step technical deep dive into how Signal Engine v5 thinks, decides, and acts.*
+*A step-by-step technical deep dive into how Signal Engine v5 thinks, decides, and acts — now with LangGraph agents, RAG intelligence, and Phoenix observability.*
 
 [![Live System](https://img.shields.io/badge/🔴_LIVE-Running_24%2F7-00ff88?style=for-the-badge)](https://signal-engine-v5.vishalkool.top)
 
@@ -22,24 +22,35 @@
 │  ┌──────────────┐         ┌──────────────────────────────┐  │
 │  │   BINANCE    │◄───────►│      SIGNAL ENGINE           │  │
 │  │   FUTURES    │  CCXT   │      (The Brain)             │  │
-│  │   API        │         │      Watches · Scores ·      │  │
-│  └──────────────┘         │      Decides · Executes      │  │
+│  │   API        │         │      LangGraph Agent         │  │
+│  └──────────────┘         │      RAG Intelligence        │  │
+│                           │      Phoenix Monitoring      │  │
 │                           └──────────────────────────────┘  │
 │                                        │                     │
 │                                        ▼                     │
 │                           ┌──────────────────────────────┐  │
 │                           │         REDIS                │  │
 │                           │    (The Nervous System)      │  │
-│                           │    Real-time data layer      │  │
+│                           └──────────────────────────────┘  │
+│                                        │                     │
+│                                        ▼                     │
+│                           ┌──────────────────────────────┐  │
+│                           │      CHROMADB                │  │
+│                           │   (The Long Term Memory)     │  │
+│                           │   100+ chunks of trade       │  │
+│                           │   history indexed as         │  │
+│                           │   searchable vectors         │  │
 │                           └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Signal Engine is the **brain** — it watches the market, scores every coin,
-decides what is worth trading, and executes directly on Binance via CCXT.
+Signal Engine has three layers now:
 
-Redis is the **nervous system** — real-time market data flows through it.
-Signal Engine reads from Redis first, falls back to Binance API if needed.
+**Redis** — the nervous system. Real-time market data flows through it. Fast, temporary, refreshes constantly.
+
+**SQLite** — the long term memory. Every trade, signal, and performance metric stored permanently.
+
+**ChromaDB** — the intelligent memory. Trade history converted to vectors so the AI can search by meaning not just keywords.
 
 ---
 
@@ -50,51 +61,53 @@ UTC Clock
     │
     ├── :00 ──► SCAN FIRES
     ├── :15 ──► SCAN FIRES
-    ├── :30 ──► SCAN FIRES
+    ├── :30 ──► SCAN FIRES + RAG REINDEX
     └── :45 ──► SCAN FIRES
 
 Maximum 3 coins analyzed simultaneously
-(respects Binance API rate limits)
+RAG reindex runs every 30 minutes
+New trades indexed automatically
 ```
-
-Every 15 minutes, Signal Engine wakes up and checks every coin
-in the active universe — controlled via the dashboard.
 
 ---
 
-## 📋 Complete Signal Journey — 23 Steps
+## 📋 Complete Signal Journey — 25 Steps
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  STEP 1 ──► Fetch Market Data                               │
-│  STEP 2 ──► Clean + Validate Data                           │
-│  STEP 3 ──► Calculate Indicators                            │
-│  STEP 4 ──► Run 4 ICT Engine Checks                         │
-│  STEP 5 ──► Detect Market Regime                            │
-│  STEP 6 ──► No-Trade Engine (Bouncer)                       │
-│  STEP 7 ──► Score 16 Confluence Factors                     │
-│  STEP 8 ──► Calculate Final Score                           │
-│  STEP 9 ──► Grade Signal (A+/A/B/C/F)                       │
-│  STEP 10 ──► Grade B Quality Filter                         │
-│  STEP 11 ──► Direction Decision (LONG/SHORT)                │
-│  STEP 12 ──► 15M Entry Refinement                           │
-│  STEP 13 ──► Structure-Aware SL Calculation                 │
-│  STEP 14 ──► TP Calculation                                 │
-│  STEP 15 ──► Risk Sizing + Capital Allocation               │
-│  STEP 16 ──► ML Gate Check                                  │
-│  STEP 17 ──► Write Signal to Redis                          │
-│  STEP 18 ──► Content Pipeline Triggered                     │
-│  STEP 19 ──► Execute on Binance Futures                     │
-│  STEP 20 ──► Telegram Alert Sent                            │
-│  STEP 21 ──► Outcome Sync (every 30 min)                    │
-│  STEP 22 ──► ML Training (after 100 trades)                 │
+│  STEP 1  ──► Fetch Market Data                              │
+│  STEP 2  ──► Clean + Validate Data                          │
+│  STEP 3  ──► Calculate Indicators                           │
+│  STEP 4  ──► LangGraph Agent Starts                         │
+│  STEP 5  ──► context_node (EMA + BTC alignment)             │
+│  STEP 6  ──► sweep_node (Liquidity sweep detection)         │
+│  STEP 7  ──► zone_node (Order block / FVG detection)        │
+│  STEP 8  ──► trigger_node (15M entry pattern)               │
+│  STEP 9  ──► risk_node (SL/TP calculation)                  │
+│  STEP 10 ──► grade_node (16-factor confluence scoring)      │
+│  STEP 11 ──► ml_node (LightGBM win probability gate)        │
+│  STEP 12 ──► finalize_node (Sizing + narrative)             │
+│  STEP 13 ──► Write Signal to Redis                          │
+│  STEP 14 ──► Content Pipeline Triggered                     │
+│  STEP 15 ──► Execute on Binance Futures                     │
+│  STEP 16 ──► Telegram Alert Sent                            │
+│  STEP 17 ──► Index Signal into ChromaDB                     │
+│  STEP 18 ──► Outcome Sync (every 30 min)                    │
+│  STEP 19 ──► Index Closed Trade into ChromaDB               │
+│  STEP 20 ──► ML Training (after 100 trades)                 │
+│  STEP 21 ──► RAG Reindex (every 30 min)                     │
+│  STEP 22 ──► Phoenix traces entire execution                │
 │  STEP 23 ──► Commentary Posts (no-signal scans)             │
+│  STEP 24 ──► RAG Chat answers user questions                │
+│  STEP 25 ──► Dashboard updates via WebSocket                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Step 1 — Fetching Market Data
+## Step 1-3 — Data Fetching and Indicators
+
+Same as before. Redis first, Binance fallback.
 
 ```
 For each coin:
@@ -103,702 +116,722 @@ For each coin:
     │   ├── HIT  ──► Use cached data ✅
     │   └── MISS ──► Fall back to Binance API
     │
-    └── Always fetch from external:
-        ├── Fear & Greed Index ──► alternative.me
-        └── News Filter ──────► Finnhub economic calendar
-```
-
-### Redis Data Keys
-
-| Data | Redis Key | TTL |
-|------|-----------|-----|
-| OHLCV candles | `candles:{coin}USDT:{tf}` | 900s |
-| Current price | `ticker:{coin}USDT` | 60s |
-| Funding rate | `funding:{coin}USDT` | 300s |
-| Open interest | `oi:{coin}USDT` | 300s |
-| OI change % | `oi_change:{coin}USDT` | 300s |
-| Long/short ratio | `ls_ratio:{coin}USDT` | 300s |
-
-### Candle Coverage
-
-| Timeframe | Candles | Covers |
-|-----------|---------|--------|
-| Weekly (1W) | 500 | ~10 years |
-| Daily (1D) | 1000 | ~3 years |
-| 4 Hour (4H) | 500 | ~83 days |
-| 1 Hour (1H) | 300 | ~12 days |
-| 15 Minute (15M) | 200 | ~2 days |
-
-> All candles saved to SQLite. Next scan loads from SQLite
-> and only fetches new candles incrementally.
-
----
-
-## Step 2 — Data Cleaning
-
-```
-Raw candle data
-      │
-      ▼
-┌─────────────────────────────────────┐
-│         VALIDATION CHECKS           │
-│                                     │
-│  ✓ Missing candles (gaps)           │
-│  ✓ Duplicate timestamps             │
-│  ✓ High < Low (impossible data)     │
-│  ✓ Zero prices (exchange glitch)    │
-│  ✓ Moves > 50% (data error)         │
-└──────────────┬──────────────────────┘
-               │
-       ┌───────┴───────┐
-       ▼               ▼
-   CLEAN ✅        TOO DIRTY ❌
-   Continue        Skip coin entirely
-```
-
-> *Better to miss a signal than trade on corrupted data.*
-
----
-
-## Step 3 — Running The Indicators
-
-Calculated on **all 4 timeframes** (1W · 1D · 4H · 1H):
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    INDICATOR SUITE                           │
-├──────────────────────┬──────────────────────────────────────┤
-│ EMA 20 / 50 / 200    │ Trend direction                      │
-│ RSI (14)             │ Momentum strength                    │
-│ MACD                 │ Buying/selling pressure              │
-│ ATR (14)             │ Normal price movement range          │
-│ ADX (14)             │ Trend strength vs noise              │
-│ Bollinger Bands      │ Squeeze vs expansion                 │
-│ Swing Highs/Lows     │ Where price reversed before          │
-│ Volume Profile       │ Where most trading happened          │
-│ CVD                  │ Buyers vs sellers in control         │
-│ BOS / CHoCH          │ Structure break or character change  │
-│ Order Blocks         │ Institutional order zones            │
-│ Fair Value Gaps      │ Price imbalances to fill             │
-└──────────────────────┴──────────────────────────────────────┘
+    └── Calculate indicators on 4 timeframes
+        1W · 1D · 4H · 1H · 15M
 ```
 
 ---
 
-## Step 4 — The Four ICT Engine Checks
+## Step 4 — LangGraph Agent Starts
 
-These are the **core concepts** the system is built on.
-
-### 💧 Engine 1 — Liquidity Sweep
+This is where v5 is different from v4.
 
 ```
-Key price level (swing low / PDL / weekly low)
-         │
-         │  Big players push price DOWN
-         │  to trigger everyone's stop losses
-         ▼
-    ┌─────────┐
-    │  SWEEP  │  ← Price dips below level briefly
-    └────┬────┘
-         │  Immediately reverses UP
-         │  Big players collected liquidity
-         ▼
-    Real move begins ──► Signal Engine detects this
+Old way (v4):
+  Linear Python function
+  if/else statements
+  Returns dict
+  Black box
 
-Checks:
-  ├── Did price dip below key level?
-  ├── Did it immediately recover?
-  ├── How strong was the move? (ATR multiple)
-  ├── How much volume on that candle?
-  └── How recent? (5 candles = high · 20 candles = expired)
-
-Score: 0 to 12
+New way (v5):
+  LangGraph stateful agent
+  Each step is a node
+  State flows between nodes
+  Every decision is logged
+  Observable in Phoenix
+  Can branch, reject, finalize
 ```
 
-### ⚡ Engine 2 — Displacement
+The agent receives initial state:
 
-```
-After sweep ──► Institutions push price HARD in real direction
-
-Think of it like a slingshot:
-  Sweep ──► pulls rubber band back (fake move)
-  Displacement ──► lets go (real move)
-
-Checks:
-  ├── Candle bigger than 1.5x normal daily range?
-  ├── Body takes up more than 60% of candle range?
-  ├── Price closed beyond previous candle high?
-  └── Volume higher than normal?
-
-Score: 0 to 11
-```
-
-### 🎯 Engine 3 — Retest
-
-```
-After displacement ──► Price returns to launch zone
-
-Think of it like a rocket:
-  Displacement ──► rocket blasts off
-  Retest ──────► briefly dips back to launch pad
-  Entry ────────► get on board here
-
-Zone Priority:
-  1st ──► Order Block (institutional orders)
-  2nd ──► Fair Value Gap (price imbalance)
-  3rd ──► EMA 20 or 50 (dynamic support)
-
-Checks:
-  ├── Valid zone exists?
-  ├── Price currently inside zone?
-  ├── Rejection candle shown?
-  └── Volume absorbed in zone?
-
-Score: 0 to 12
-```
-
-### 📦 Engine 4 — Order Blocks
-
-```
-Before big move ──► Institutions place massive orders
-Last candle before move ──► The Order Block
-                            (footprint of big money)
-
-When price returns ──► Institutions defend their zone
-That defense ──────► Creates the bounce
-
-Checks:
-  ├── Last bearish candle before bullish move (bull OB)
-  ├── Last bullish candle before bearish move (bear OB)
-  ├── Price in zone or approaching?
-  ├── Touch count (each touch weakens it)
-  └── Zone mitigated? (broken = invalid)
-
-Score: 0 to 10
+```python
+SignalAgentState(
+    coin     = "BTC",
+    balance  = 1000.0,
+    df_4h    = dataframe,
+    df_1h    = dataframe,
+    df_15m   = dataframe,
+    signal   = True,      # starts as True
+    reason   = "",        # filled if rejected
+    trace_steps = [],     # filled as nodes run
+)
 ```
 
 ---
 
-## Step 5 — Market Regime Detection
+## Step 5 — context_node
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   REGIME CLASSIFIER                          │
-├──────────────────────┬──────────────┬───────────────────────┤
-│ Regime               │ Condition    │ Tradeable?            │
-├──────────────────────┼──────────────┼───────────────────────┤
-│ 📈 Trending Bullish  │ ADX > 25 ↑  │ ✅ Yes                │
-│ 📉 Trending Bearish  │ ADX > 25 ↓  │ ✅ Yes                │
-│ 💥 Volatility Expand │ BB wide+vol  │ ✅ Yes                │
-│ 〰️ Weak Trend        │ ADX 18-25   │ ⚠️ Reduced            │
-│ ➡️ Ranging           │ BB narrow    │ ❌ No                 │
-│ 🌀 Choppy            │ ADX < 18    │ 🚫 Hard blocked       │
-└──────────────────────┴──────────────┴───────────────────────┘
+What it does:
+  Checks EMA direction on 4H
+  Checks BTC alignment
+  Checks higher timeframe bias
 
-Think of regime like weather.
-You only go sailing in good weather.
-Choppy market = stay home.
-```
+Decision:
+  Price above EMA20 and EMA20 > EMA50 → LONG
+  Price below EMA20 and EMA20 < EMA50 → SHORT
+  Between EMAs → NEUTRAL → REJECT
 
----
+BTC scoring:
+  BTC strongly bullish + we want LONG → +10 pts
+  BTC strongly bearish + we want LONG → -8 pts
+  BTC neutral → +5 pts
 
-## Step 6 — The No-Trade Engine (Bouncer)
+If direction is NEUTRAL:
+  state["signal"] = False
+  state["reason"] = "ema_neutral"
+  → Graph routes to reject_node → END
 
-```
-Signal approaching ──► BOUNCER checks conditions
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-        HARD BLOCKS                     SOFT BLOCKS
-        (Kill signal)                   (Reduce score)
-              │                               │
-┌─────────────┴──────────────┐  ┌────────────┴────────────────┐
-│ ✗ Market choppy            │  │ -6 RSI deeply overbought    │
-│ ✗ Weekly/daily conflict    │  │ -4 No liquidity sweep       │
-│ ✗ Funding > 0.08%          │  │ -3 News approaching 1hr     │
-│ ✗ High-impact news active  │  │ -3 No retest zone active    │
-│ ✗ Retest zone failed       │  │ -3 Crowded positioning 68%+ │
-│ ✗ BTC unstable (2+ warns)  │  │ -3 4H conflicts daily       │
-│ ✗ No sweep AND no disp     │  └─────────────────────────────┘
-│ ✗ Asia / Off Hours session │
-└────────────────────────────┘
+Trace step added:
+  {
+    "node": "context",
+    "passed": true/false,
+    "direction": "LONG/SHORT/NEUTRAL",
+    "btc_score": 7.0,
+    "reason": ""
+  }
 ```
 
 ---
 
-## Step 7-8 — Scoring + Final Score
+## Step 6 — sweep_node
 
 ```
-16 FACTORS SCORED
-      │
-      ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Total Earned Points / 114 (max possible) × 100             │
-│                    =                                         │
-│              CONFLUENCE SCORE (0-100)                        │
-│                                                              │
-│  Then subtract soft block penalties                          │
-│                    =                                         │
-│                FINAL SCORE                                   │
-└─────────────────────────────────────────────────────────────┘
-```
+What it does:
+  Detects liquidity sweep on 1H chart
+  Checks if smart money hunted stops
 
----
+What a sweep looks like:
+  Price dips below key level (swing low, PDL, weekly low)
+  Immediately recovers above it
+  Volume spike on the sweep candle
+  Wick below level = the hunt
 
-## Step 9 — Signal Grading
+Scoring:
+  Age of sweep (fresh = high score)
+  Wick size in ATR multiples
+  Volume ratio vs average
+  Confirmation (price back above level)
 
-```
-Final Score
-    │
-    ├── 85-100 ──► 🏆 A+  Auto-execute · 2% risk · 2.5x TP
-    ├── 68-84  ──► ✅ A   Auto-execute · 1.5% risk · 2.0x TP
-    ├── 52-67  ──► 👀 B   Paper only + quality filter · 1% risk
-    ├── 38-51  ──► ⏳ C   Watch only · Never trade
-    └── 0-37   ──► 🚫 F   Hard blocked · Never trade
-```
+Threshold: sweep_min_score = 0.30
+  Below → REJECT with reason "sweep_score_low"
+  Above → continue to zone_node
 
----
-
-## Step 10 — Grade B Quality Filter
-
-```
-Grade B signal
-      │
-      ▼
-ALL of these must pass:
-  ├── ✅ Paper mode active (never in live)
-  ├── ✅ Market score ≥ 65
-  ├── ✅ Session = London / NY / London+NY Overlap
-  ├── ✅ BTC score ≥ 4 (not conflicting)
-  └── ✅ Maximum 1 hard block present
-      │
-      ├── ALL PASS ──► Execute in paper mode
-      └── ANY FAIL ──► Mark SKIP · Save to DB for ML analysis
-```
-
-> *B grades collect training data for ML without real risk.*
-> *ML learns which B grades actually win.*
-
----
-
-## Step 11 — Direction Decision
-
-```
-1D Trend + 4H Trend
-      │
-      ├── Both BULLISH ──► LONG ✅
-      ├── Both BEARISH ──► SHORT ✅
-      └── CONFLICT ──────► Downgrade to C · No trade ❌
+Trace step added:
+  {
+    "node": "sweep",
+    "passed": true,
+    "score": 0.72,
+    "label": "Swing Low Sweep",
+    "age_hours": 2.1
+  }
 ```
 
 ---
 
-## Step 12 — 15 Minute Entry Refinement
+## Step 7 — zone_node
 
 ```
-4H signal confirmed
-      │
-      ▼
-Zoom into 15M chart
-      │
-      ├── Look for entry patterns:
-      │   ├── Bullish engulfing
-      │   ├── Hammer / Pin bar
-      │   ├── Shooting star
-      │   ├── Bearish engulfing
-      │   └── Micro sweep (15M stop hunt)
-      │
-      ├── Also check:
-      │   ├── Price above EMA20 (for longs)
-      │   ├── Volume above average
-      │   └── Micro sweep present
-      │
-      ├── 15M CONFIRMS ──► Use 15M price as entry ✅
-      └── 15M NO CONFIRM ──► Use 4H price · -2 score penalty
-```
+What it does:
+  Finds order block or FVG on 4H
+  This is where institutions placed orders
 
----
+Order Block:
+  Last bearish candle before bullish move (bull OB)
+  Last bullish candle before bearish move (bear OB)
+  Price returning to this zone = high probability
 
-## Step 13 — Structure-Aware SL
+Fair Value Gap (FVG):
+  Gap between candle 1 high and candle 3 low
+  Price imbalance that often gets filled
+  Acts as magnet for price
 
-```
-SL placed at ACTUAL trade invalidation point
-(not a random ATR multiple)
+Scoring:
+  Zone width in ATR multiples
+  Touch count (each touch weakens it)
+  Distance from current price
+  Zone type (OB scores higher than FVG)
 
-Priority:
-  1st ──► Below retest zone bottom + ATR×0.15 buffer
-  2nd ──► Below sweep low + ATR×0.1 buffer
-  3rd ──► Beyond swing point + ATR×0.1 buffer
-  4th ──► ATR × regime multiplier (fallback only)
+Threshold: zone_min_score = 0.40
+  Below → REJECT with reason "zone_score_low"
+  Above → continue to trigger_node
 
-ATR Multipliers by Regime:
-  Expansion  ──► 2.5x
-  Trending   ──► 2.0x
-  Weak Trend ──► 1.5x
+Trace step added:
+  {
+    "node": "zone",
+    "passed": true,
+    "zone_type": "OB",
+    "score": 0.65,
+    "touch_count": 0,
+    "distance_pct": 0.8
+  }
 ```
 
 ---
 
-## Step 14 — TP Calculation
+## Step 8 — trigger_node
 
 ```
-Single TP only (no TP1/TP2 split)
-Cleaner ML labels = full win or full loss
+What it does:
+  Zooms into 15M chart
+  Looks for entry confirmation pattern
+  Inside or near the zone
 
-Structure levels checked:
-  ├── Swing highs/lows
-  ├── Previous day high/low
-  ├── Previous week high/low
-  └── Volume Area High/Low
+Patterns it looks for:
+  Engulfing candle
+    Previous candle bearish
+    Current candle bullish and engulfs it
+    Body ratio > 55%
 
-Grade multipliers (minimum distance):
-  A+ ──► 2.5x risk distance
-  A  ──► 2.0x risk distance
-  B  ──► 1.5x risk distance
+  Pin bar / Hammer
+    Long wick in rejection direction
+    Wick ratio > 55% of total range
+    Close in upper half (for longs)
 
-Rule: Use nearest structure OR grade minimum
-      whichever gives better reward
-```
+Volume check:
+  Current volume vs 50-period MA
+  Higher volume = stronger confirmation
 
----
+Threshold: trigger_min_score = 0.60
+  No pattern → REJECT "no_trigger"
+  Pattern found → continue to risk_node
 
-## Step 15 — Risk Sizing
-
-```
-Risk Amount  = Capital × Grade Risk %
-Position     = Risk Amount ÷ SL Distance %
-Margin Used  = Position ÷ Leverage
-
-Grade Risk %:
-  A+ ──► 2.0% of capital
-  A  ──► 1.5% of capital
-  B  ──► 1.0% of capital
-
-Dynamic leverage based on:
-  ├── ATR% (volatility)
-  ├── ADX (trend strength)
-  └── Drawdown (performance history)
+Trace step added:
+  {
+    "node": "trigger",
+    "passed": true,
+    "pattern": "engulfing",
+    "score": 0.85,
+    "vol_mult": 1.4,
+    "entry_price": 43250.0
+  }
 ```
 
 ---
 
-## Step 16 — ML Gate Check
+## Step 9 — risk_node
 
 ```
-Signal ready
-      │
-      ▼
-Is ML enabled? (100+ closed trades exist)
-      │
-      ├── NO ──► All A+/A/B signals pass through
-      │
-      └── YES ──► Feed 16 factor scores to LightGBM
-                        │
-                        ▼
-              Win Probability (0.0 - 1.0)
-                        │
-              ┌─────────┴─────────┐
-              ▼                   ▼
-          ≥ 0.65               < 0.65
-          PASS ✅              BLOCK ❌
-          Continue             Signal filtered
-```
+What it does:
+  Calculates structure-aware stop loss
+  Finds nearest structure take profit
+  Checks risk/reward ratio
 
----
+SL placement priority:
+  1st → Below sweep wick + ATR buffer
+  2nd → Below zone bottom + ATR buffer
+  3rd → Below candle low + ATR buffer
 
-## Step 17 — Signal Written to Redis
+TP placement:
+  Searches swing highs/lows
+  Checks previous day/week levels
+  Checks volume area high/low
+  Uses nearest structure OR grade minimum RR
 
-```json
-{
-  "symbol": "AVAXUSDT",
-  "side": "short",
-  "entry": 6.32,
-  "stoploss": 6.80,
-  "tp1": 5.90,
-  "grade": "A",
-  "score": 71,
-  "valid_until": 1782034000,
-  "signal_id": 47,
-  "regime": "TRENDING BEARISH",
-  "session": "London/NY Overlap",
-  "ml_probability": 0.73,
-  "tp_mult": 2.0,
-  "actual_rr": 1.9
-}
-```
+RR check:
+  tp1_min_rr = 1.5
+  Below 1.5R → REJECT "rr_too_low"
+  Above 1.5R → continue to grade_node
 
-```
-Key: signal:{coin}USDT
-TTL: 900 seconds (15 minutes)
+Trace step added:
+  {
+    "node": "risk",
+    "passed": true,
+    "sl": 42800.0,
+    "tp1": 44100.0,
+    "sl_pct": 1.04,
+    "rr1": 1.8
+  }
 ```
 
 ---
 
-## Step 18 — Content Pipeline
+## Step 10 — grade_node
 
 ```
-A+/A Signal Generated
-         │
-         ▼
-┌────────────────────────────────────────────────────────┐
-│  CHART GENERATED (mplfinance)                          │
-│  ├── 4H candlestick · last 50 candles                 │
-│  ├── Entry · SL · TP lines drawn                      │
-│  ├── Sweep zone shaded yellow                         │
-│  ├── Grade badge + score watermark                    │
-│  └── Saved as PNG 1200×675px                          │
-└──────────────────────┬─────────────────────────────────┘
-                       │
-                       ▼
-┌────────────────────────────────────────────────────────┐
-│  GROQ LLM WRITES POST (llama-3.3-70b)                 │
-│  ├── Under 280 characters                             │
-│  ├── Tone rotation:                                   │
-│  │   ├── 70% professional                            │
-│  │   ├── 20% educational                             │
-│  │   └── 10% humor                                   │
-│  └── Includes: coin · direction · entry · thesis      │
-└──────────────────────┬─────────────────────────────────┘
-                       │
-                       ▼
-┌────────────────────────────────────────────────────────┐
-│  TELEGRAM APPROVAL                                     │
-│                                                        │
-│  📊 Chart image sent                                  │
-│  📝 Draft post sent (char count shown)                │
-│                                                        │
-│  [✅ Approve & Post]  [❌ Discard]                    │
-│  [✏️ Edit Draft]      [🔄 Regenerate]                 │
-└────────────────────────────────────────────────────────┘
-```
+What it does:
+  Scores 16 confluence factors
+  Assigns grade A+/A/B/F
 
----
+Score calculation:
+  btc_context score    (from context_node)
+  htf_alignment score  (from context_node)
+  sweep contribution   (sweep_score × weight)
+  zone contribution    (zone_score × weight)
+  trigger contribution (trigger_score × weight)
+  session score        (London/NY = high)
+  context bonus        (overall context score)
 
-## Step 19 — Binance Execution
+Grade thresholds (trending regime):
+  85+ → A+
+  68+ → A
+  52+ → B
+  Below 52 → F → REJECT
 
-```
-Signal in Redis
-      │
-      ▼
-Signal Engine reads signal
-      │
-      ▼
-Final checks:
-  ├── Signal still valid (not expired)
-  ├── Entry price within 0.5% of current price
-  ├── Grade is A+, A, or B
-  └── No existing position for this coin
-      │
-      ├── ALL PASS ──► Place MARKET order via CCXT
-      │                     │
-      │                     ▼
-      │               Order FILLED
-      │                     │
-      │                     ▼
-      │               Place SL (STOP_MARKET)
-      │               Place TP (TAKE_PROFIT_MARKET)
-      │
-      └── ANY FAIL ──► Trade rejected · Log reason
+Session scoring:
+  London/NY Overlap → 6 pts (max)
+  London or NY → 4 pts
+  Asia → 1 pt
+  Off Hours → 2 pts
 
-Exit conditions:
-  ├── Price hits TP ──► tp_hit
-  ├── Price hits SL ──► sl_hit
-  └── Manual close ──► manual_close
+Trace step added:
+  {
+    "node": "grade",
+    "passed": true,
+    "grade": "A",
+    "score": 71.4,
+    "regime": "trending",
+    "session": "London/NY Overlap"
+  }
 ```
 
 ---
 
-## Step 20 — Telegram Alert
+## Step 11 — ml_node
 
 ```
-🏆 Grade A+ — SHORT
-━━━━━━━━━━━━━━━━━━━━━━
+What it does:
+  Checks if LightGBM model is active
+  Predicts win probability
+  Gates signal based on threshold
 
-AVAXUSDT — 📉 SHORT
-Confidence: High (87/100)
-ML Prob: ✅ 73.2%
-Regime: TRENDING BEARISH
-Session: London/NY Overlap
-Time: 06:45 PM IST
+When ML is not active yet:
+  Need 100 closed trades minimum
+  Currently at 34 trades
+  ml_node passes all signals through
+  No filtering until 100 trades reached
 
-━━━━━━━━━━━━━━━━━━━━━━
-Entry:   $6.3200
-SL:      $6.8000 (7.59%)
-TP:      $5.9000 (2.5x risk)
-R:R:     1:1.9
+When ML is active:
+  Feeds 16 factor scores to model
+  Gets win probability 0.0 to 1.0
+  Threshold: 0.65
+  Below 0.65 → REJECT "ml_gate_blocked"
+  Above 0.65 → continue to finalize
 
-━━━━━━━━━━━━━━━━━━━━━━
-Risk:    $20.00
-Size:    $263.00
-
-Why This Trade:
-✔ Liquidity swept at Weekly High — 2 candles ago
-✔ Strong bearish displacement — 2.3x ATR, vol 1.9x
-✔ BTC bearish — confirms direction
-⚠ OI exhaustion — momentum may be fading
-
-[📊 Factors]  [⚠️ Risks]
+Trace step added:
+  {
+    "node": "ml",
+    "passed": true,
+    "probability": null,  (until 100 trades)
+    "reason": "ml_not_active_yet"
+  }
 ```
 
 ---
 
-## Step 21 — Outcome Sync
+## Step 12 — finalize_node
 
 ```
-Every 30 minutes:
-      │
-      ▼
-Read all closed trades from Binance
-      │
-      ▼
-Match to Signal table by:
-  ├── Same coin
-  ├── Same direction
-  ├── Entry price within 2% tolerance
-  └── Closest timestamp match
-      │
-      ▼
-Update Signal record:
-  ├── outcome = "win" or "loss"
-  ├── pnl = actual PnL
-  └── exit_price = actual exit
+What it does:
+  Calculates position size
+  Generates trade narrative
+  Builds final signal dict
 
-This feeds the ML training pipeline.
-Without sync ──► ML has no labels to learn from.
-```
+Position sizing:
+  Base risk: 1.5% of balance (paper mode)
+  Grade multiplier: A+ = 1.3x, A = 1.0x, B = 0.7x
+  ML multiplier: high prob = 1.1x
+  Alignment multiplier: strong HTF = 1.3x
+  Dynamic leverage based on SL%
 
----
+Narrative generation:
+  Describes the setup in plain English
+  Mentions sweep level and age
+  Mentions zone type and quality
+  Mentions entry pattern
+  Lists risk factors
 
-## Step 22 — ML Training
-
-```
-Hourly check:
-      │
-      ▼
-100+ closed trades with factor scores?
-      │
-      ├── NO ──► Wait · Keep collecting
-      │
-      └── YES ──► Train LightGBM
-                        │
-                        ▼
-            Feature Matrix:
-            ├── All 16 factor scores
-            ├── sweep/retest/disp scores
-            ├── btc_score · market_score
-            ├── grade · regime · session
-            ├── direction · funding
-            └── slippage · commission
-
-            Label: win=1 · loss=0
-
-            Training:
-            ├── 200 estimators
-            ├── 5-fold cross validation
-            ├── Balanced class weights
-            └── Model saved to ml/models/
-
-            After training:
-            ├── ML_ENABLED = True
-            ├── All signals run through predictor
-            ├── Telegram notification sent
-            └── Auto-retrains every 50 new trades
+Final result built:
+  entry, sl, tp1, tp2
+  grade, score, direction
+  risk_amt, pos_size, stake, leverage
+  narrative, regime, session
+  full trace of all node decisions
 ```
 
 ---
 
-## Step 23 — Commentary Posts
+## Step 13-16 — Execution and Alerts
 
 ```
-Scan completes with NO tradeable signals
-      │
-      ▼
-Is market interesting enough to post about?
-      │
-      ├── Fear/Greed < 20 (extreme fear)
-      ├── Fear/Greed > 80 (extreme greed)
-      ├── 70%+ coins in choppy regime
-      ├── Average funding > 0.06%
-      └── Weekend market
-      │
-      ├── YES ──► Groq writes commentary
-      │           Tone: 40% humor · 30% educational
-      │           Sent to Telegram for approval
-      │
-      └── NO ──► Silent scan · No post
+Step 13: Write to Redis
+  Key: signal:{coin}USDT
+  TTL: 1800 seconds
+  Contains: full signal payload
 
-Cooldown by session:
-  London/NY Overlap ──► 1 hour
-  London or NY ──────► 2 hours
-  Asia ──────────────► 6 hours
-  Weekend ───────────► 8 hours
+Step 14: Content pipeline
+  Generate chart with mplfinance
+  Groq writes tweet draft
+  Send to Telegram for approval
 
-Example posts:
-  "Market regime: choppy. ADX: 12.
-   Translation: nobody knows anything. #Crypto"
+Step 15: Execute on Binance
+  Place MARKET order via CCXT
+  Place SL (STOP_MARKET algo order)
+  Place TP (TAKE_PROFIT_MARKET algo order)
 
-  "Funding at 0.09%. Someone is very confident.
-   History suggests otherwise. #Bitcoin"
+Step 16: Telegram alert
+  Full signal details
+  Entry, SL, TP, grade, score
+  Why this trade (narrative)
+  Agent trace summary
 ```
 
 ---
 
-## 📊 Complete Journey Summary
+## Step 17 + 19 — RAG Indexing
 
-| Step | What Happens | Output |
-|------|-------------|--------|
-| 1 | Fetch market data | OHLCV + funding + OI |
-| 2 | Clean + validate | Clean candle data |
-| 3 | Calculate indicators | EMA · RSI · MACD · ATR · ADX |
-| 4 | 4 ICT engine checks | Sweep · Disp · Retest · OB scores |
-| 5 | Detect regime | Trending / Ranging / Choppy |
-| 6 | No-trade bouncer | Hard blocks · Soft penalties |
-| 7 | Score 16 factors | Individual factor scores |
-| 8 | Calculate final score | 0-100 confluence score |
-| 9 | Grade signal | A+ / A / B / C / F |
-| 10 | B grade filter | Pass or SKIP |
-| 11 | Direction decision | LONG / SHORT / No trade |
-| 12 | 15M entry refinement | Exact entry price |
-| 13 | SL calculation | Structure-aware stop loss |
-| 14 | TP calculation | Nearest structure target |
-| 15 | Risk sizing | Position size + leverage |
-| 16 | ML gate | Win probability check |
-| 17 | Write to Redis | Signal payload TTL 900s |
-| 18 | Content pipeline | Chart + Groq draft + Telegram |
-| 19 | Execute on Binance | Market order + SL + TP |
-| 20 | Telegram alert | Full signal details |
-| 21 | Outcome sync | Win/loss label for ML |
-| 22 | ML training | LightGBM model update |
-| 23 | Commentary posts | Market insight tweets |
+This is completely new in v5.
+
+```
+Step 17: Index new signal
+  Signal saved to SQLite
+  RAG indexer picks it up
+  Converts to text chunk
+  Embeds with sentence-transformers
+  Stores in ChromaDB signals collection
+
+Step 19: Index closed trade
+  Trade closes (win or loss)
+  Outcome synced to SQLite
+  RAG indexer picks it up
+  Converts to text chunk with outcome
+  Embeds and stores in ChromaDB trades collection
+  Updates coin performance chunk
+  Updates daily summary chunk
+
+Why this matters:
+  Every trade becomes searchable
+  AI can find patterns across all history
+  "When do I lose?" → searches all losses
+  "How is BTC performing?" → searches BTC trades
+```
+
+---
+
+## Step 21 — RAG Reindex Job
+
+```
+Runs every 30 minutes via APScheduler
+
+What it does:
+  Checks for new closed trades
+  Checks for new signals
+  Indexes only NEW items (incremental)
+  Updates coin performance chunks
+  Updates daily summary chunks
+
+5 collections maintained:
+  trades          — one chunk per closed trade
+  signals         — one chunk per closed signal
+  daily_summaries — one chunk per trading day
+  coin_performance— one chunk per coin
+  documentation   — README + WORKING.md chunks
+
+Current stats:
+  trades:          34 chunks
+  signals:         34 chunks
+  daily_summaries: 14 chunks
+  coin_performance:18 chunks
+  documentation:   indexed from README/WORKING
+  total:           100+ chunks
+```
+
+---
+
+## Step 22 — Phoenix Traces Everything
+
+```
+Phoenix is watching all AI operations:
+
+RAG chat trace:
+  User question received
+  Embedding generated
+  ChromaDB queried
+  Documents retrieved (with similarity scores)
+  Context formatted
+  Groq LLM called
+  Answer generated
+  Sources returned to user
+
+LangGraph trace:
+  Agent started for coin X
+  context_node: passed, direction LONG
+  sweep_node: passed, score 0.72
+  zone_node: passed, OB found
+  trigger_node: passed, engulfing
+  risk_node: passed, RR 1.8
+  grade_node: passed, grade A
+  ml_node: passed, probability null
+  finalize_node: passed, stake $150
+  Total time: 847ms
+
+Dashboard: http://your-server:6006
+```
+
+---
+
+## Step 24 — RAG Chat Answers Questions
+
+This is the most visible new feature.
+
+```
+How it works:
+
+User types: "why do my shorts fail?"
+                    │
+                    ▼
+Question embedded as vector
+[0.23, -0.45, 0.12, 0.89, ...]
+                    │
+                    ▼
+Intent detected: trades + signals
+                    │
+                    ▼
+ChromaDB searched across collections
+Finds most similar chunks by meaning
+Not keyword matching — semantic search
+                    │
+                    ▼
+Top 6 chunks retrieved:
+  Trade #12: SHORT, loss, BTC bullish
+  Trade #19: SHORT, loss, Asia session
+  Trade #28: SHORT, loss, low sweep score
+  Signal #8: SHORT, grade A, loss
+  Coin perf: SHORT trades 31% WR
+  Daily: Tuesday shorts all losses
+                    │
+                    ▼
+Context formatted and sent to Groq:
+  "RELEVANT TRADING DATA:
+   [1] Trade #12 | BTC | SHORT | Grade A
+   Opened: 2026-07-17 | London session
+   Outcome: LOSS | PnL: -$18.40
+   BTC score: -4 (BTC was bullish)
+   ..."
+                    │
+                    ▼
+Groq llama-3.3-70b answers:
+  "Your SHORT trades show a 31% win rate
+   vs 61% for LONG trades. Looking at
+   your 21 losses, 14 occurred when BTC
+   was trending bullish (ADX > 25).
+   Your best SHORT performance is during
+   London session when BTC is bearish."
+                    │
+                    ▼
+Response returned with sources:
+  answer: "Your SHORT trades show..."
+  sources: [trade_12, trade_19, ...]
+  chunks: 6
+  rag_used: true
+```
+
+---
+
+## The 5 Chunk Types — Deep Dive
+
+### Chunk Type 1 — Trade Chunks
+```
+One chunk per closed trade.
+
+Example:
+"Trade #47 | BTC | LONG | Grade A
+ Opened: 2026-07-20 14:00 UTC
+ Session: London/NY Overlap
+ Regime: TRENDING BULLISH
+ Entry: 43250.0 | SL: 42800.0 | TP: 44100.0
+ Outcome: WIN | PnL: +$28.40
+ Score at entry: 71.4
+ Duration: 4.2 hours
+ Close reason: tp1_hit
+ Thesis strength at close: 0.82"
+
+Good for:
+  "when do I win?"
+  "what sessions work best?"
+  "how long do my trades last?"
+```
+
+### Chunk Type 2 — Signal Chunks
+```
+One chunk per closed signal.
+
+Example:
+"Signal #23 | ETH | SHORT | Grade A+
+ Score: 87/100 | Session: London/NY Overlap
+ Sweep score: 0.85 | Displacement: 0.79
+ BTC score: 8 | Market score: 72
+ Top factors: liquidity_sweep:11,
+              displacement:10,
+              market_structure:8
+ Outcome: WIN | PnL: +$34.20"
+
+Good for:
+  "what makes a good signal?"
+  "which factors matter most?"
+  "what score do winners have?"
+```
+
+### Chunk Type 3 — Daily Summary Chunks
+```
+One chunk per trading day.
+
+Example:
+"Daily Summary | 2026-07-20 | Sunday
+ Total trades: 3 | Wins: 2 | Losses: 1
+ Win rate: 66.7% | Total PnL: +$42.10
+ Sessions: London, London/NY Overlap
+ Regimes: TRENDING BULLISH
+ Coins traded: BTC, ETH, SOL
+ Best trade: BTC LONG +$28.40
+ Worst trade: SOL SHORT -$8.30"
+
+Good for:
+  "how was last week?"
+  "what day is best for trading?"
+  "how did Sunday perform?"
+```
+
+### Chunk Type 4 — Coin Performance Chunks
+```
+One chunk per coin — updated on reindex.
+
+Example:
+"Coin Performance | BTC
+ Total trades: 12 | Wins: 8 | Losses: 4
+ Win rate: 66.7% | Total PnL: +$124.50
+ Best trade: LONG +$67.20
+ Worst trade: SHORT -$23.10
+ Performance by session:
+   London/NY Overlap: 78% WR (9 trades)
+   Asia: 33% WR (3 trades)
+ Performance by regime:
+   TRENDING BULLISH: 82% WR (11 trades)
+   CHOPPY: 0% WR (1 trade)"
+
+Good for:
+  "how do I do on BTC?"
+  "which coin is most profitable?"
+  "should I trade ETH?"
+```
+
+### Chunk Type 5 — Documentation Chunks
+```
+README.md and WORKING.md split into
+500-word chunks with 50-word overlap.
+
+Good for:
+  "what is an order block?"
+  "how does sweep detection work?"
+  "what does grade A+ mean?"
+  "explain the confluence scoring"
+```
+
+---
+
+## Complete Journey Summary
+
+| Step | What Happens | New in v5? |
+|------|-------------|------------|
+| 1-3 | Fetch + validate + indicators | No |
+| 4 | LangGraph agent starts | ✅ Yes |
+| 5 | context_node | ✅ Yes |
+| 6 | sweep_node | ✅ Yes |
+| 7 | zone_node | ✅ Yes |
+| 8 | trigger_node | ✅ Yes |
+| 9 | risk_node | ✅ Yes |
+| 10 | grade_node | ✅ Yes |
+| 11 | ml_node | ✅ Yes |
+| 12 | finalize_node | ✅ Yes |
+| 13 | Write to Redis | No |
+| 14 | Content pipeline | No |
+| 15 | Execute on Binance | No |
+| 16 | Telegram alert | No |
+| 17 | Index signal to ChromaDB | ✅ Yes |
+| 18 | Outcome sync | No |
+| 19 | Index trade to ChromaDB | ✅ Yes |
+| 20 | ML training | No |
+| 21 | RAG reindex job | ✅ Yes |
+| 22 | Phoenix traces everything | ✅ Yes |
+| 23 | Commentary posts | No |
+| 24 | RAG chat answers questions | ✅ Yes |
+| 25 | Dashboard WebSocket push | No |
+
+---
+
+## What Changed From v4 to v5
+
+```
+v4 Signal Pipeline:
+  Linear Python function
+  Hard coded if/else
+  Returns dict
+  No visibility
+  Hard to debug
+  Hard to explain
+
+v5 Signal Pipeline:
+  LangGraph stateful agent
+  8 nodes with conditional edges
+  Full execution trace
+  Observable in Phoenix
+  Every decision logged
+  Easy to explain and demo
+
+v4 Chatbot:
+  Manual context injection
+  Only sees last few signals
+  Generic answers
+  Limited to cache data
+
+v5 RAG Chatbot:
+  Searches ALL trade history
+  Semantic search by meaning
+  Specific data-driven answers
+  Sources shown to user
+  Grounded in real data
+
+v4 Observability:
+  Python logging only
+  No AI-specific monitoring
+  No trace visibility
+
+v5 Observability:
+  Phoenix AI monitoring
+  Every LLM call traced
+  Every RAG query traced
+  Every agent execution traced
+  Dashboard at :6006
+```
 
 ---
 
 <div align="center">
 
 ```
-Signal Engine is not a bot that buys when RSI is low
-and sells when RSI is high.
+Signal Engine v5 is not a bot that buys when RSI is low.
 
 Every signal has a reason — a story.
+Every decision is a node in a graph.
+Every answer is grounded in real data.
+Every operation is observable.
 
 Sweep happened here.
 Institutions displaced price there.
 Retest gave entry here.
 Structure says direction is this way.
 BTC agrees. Volume confirms.
-ML says 73% probability.
+LangGraph traced every step.
+RAG found the pattern in history.
+Phoenix watched it all happen.
 
-When enough of those pieces align at the same time
-— that is the signal.
+That is the signal.
 That is the edge.
-Not any single indicator.
-The alignment of all of them together.
-
-The ML layer learns which specific combinations
-actually produce winning trades in real conditions.
-Over time the system gets smarter about its own signals.
+That is v5.
 ```
 
 [![Live System](https://img.shields.io/badge/🔴_See_It_Live-signal--engine--v5.vishalkool.top-00ff88?style=for-the-badge)](https://signal-engine-v5.vishalkool.top)
+
+**Vishal Katike** · vishalkool166@gmail.com · +91 8978439995 · Hyderabad, India
 
 </div>
