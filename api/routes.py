@@ -351,6 +351,9 @@ async def analyze(request: Request, coin: str):
             result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
+        price   = d4h.get("price", 0)
+        atr_15m = d4h.get("atr", price * 0.005) * 0.3
+
         trigger_result = detect_trigger(
             df_15m    = df_15m,
             zone      = zone_data,
@@ -571,6 +574,7 @@ async def signals_latest(request: Request):
     _auth(request)
     try:
         from redis_client import get_redis
+        import json
         r = get_redis()
         if not r:
             raise HTTPException(503, "Redis unavailable")
@@ -761,6 +765,10 @@ async def health(request: Request):
         pass
     loop   = asyncio.get_running_loop()
     system = await loop.run_in_executor(None, _system_stats)
+
+    from chatbot_rag import get_rag_status
+    from monitoring.phoenix_setup import get_phoenix_status
+
     result = {
         "status":          "ok",
         "timestamp":       datetime.now(timezone.utc).isoformat(),
@@ -772,6 +780,8 @@ async def health(request: Request):
         "sync_status":     await get_sync_status(),
         "engine_health":   get_engine_health(),
         "top_rejections":  get_top_rejections(3),
+        "rag_status":      get_rag_status(),
+        "phoenix_status":  get_phoenix_status(),
         "system":          system,
     }
     _health_cache["data"] = result
@@ -1177,7 +1187,6 @@ async def backtest_signal(request: Request, coin: str, date: str = None):
         from engines.signal import _get_regime
         combined = round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + 0.7 * 0.25, 3)
         regime   = _get_regime(d4h)
-        from engines.scorer import SignalScore
         pct      = min(combined * 100, 100)
         grade    = assign_grade(pct, regime)
 
@@ -1394,9 +1403,9 @@ async def chat_endpoint(request: Request):
         if not message:
             raise HTTPException(400, "Message required")
 
-        from chatbot import chat
-        reply = await chat(message)
-        return JSONResponse(content={"reply": reply})
+        from chatbot_rag import chat_with_sources
+        result = await chat_with_sources(message)
+        return JSONResponse(content=result)
 
     except HTTPException:
         raise

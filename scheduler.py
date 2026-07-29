@@ -80,6 +80,17 @@ async def job_btc_cache():
         log.error("job_btc_cache: %s", e)
 
 
+async def job_rag_reindex():
+    try:
+        from rag.indexer import run_incremental_index
+        results = run_incremental_index()
+        total   = sum(results.values())
+        if total > 0:
+            log.info("RAG incremental index: %s new chunks — %s", total, results)
+    except Exception as e:
+        log.error("job_rag_reindex: %s", e)
+
+
 async def job_analyzer():
     try:
         from ml.analyzer import run
@@ -277,6 +288,24 @@ async def job_rs_refresh():
         log.error("job_rs_refresh: %s", e)
 
 
+async def job_funding_rates():
+    try:
+        from data.fetcher import get_funding_rate
+        from redis_client import get_redis
+        from config import cfg
+        r = get_redis()
+        if not r:
+            return
+        for coin in cfg.COINS:
+            try:
+                rate = await get_funding_rate(coin)
+                r.setex(f"funding:{coin}USDT", 3600, str(rate))
+            except Exception as e:
+                log.warning("funding rate %s: %s", coin, e)
+    except Exception as e:
+        log.error("job_funding_rates: %s", e)
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -305,23 +334,6 @@ def get_next_scan_epoch() -> int:
         microsecond = 0,
     )
     return int(next_hour.timestamp() * 1000)
-
-async def job_funding_rates():
-    try:
-        from data.fetcher import get_funding_rate
-        from redis_client import get_redis
-        from config import cfg
-        r = get_redis()
-        if not r:
-            return
-        for coin in cfg.COINS:
-            try:
-                rate = await get_funding_rate(coin)
-                r.setex(f"funding:{coin}USDT", 3600, str(rate))
-            except Exception as e:
-                log.warning("funding rate %s: %s", coin, e)
-    except Exception as e:
-        log.error("job_funding_rates: %s", e)
 
 
 def start_scheduler():
@@ -371,6 +383,12 @@ def start_scheduler():
         job_session_cleanup,
         trigger          = IntervalTrigger(hours=1),
         id               = "session_cleanup",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_rag_reindex,
+        trigger          = IntervalTrigger(minutes=30),
+        id               = "rag_reindex",
         replace_existing = True,
     )
     scheduler.add_job(
@@ -466,7 +484,7 @@ def start_scheduler():
     scheduler.add_job(
         job_funding_rates,
         trigger          = IntervalTrigger(hours=1),
-        id               = 'funding_rates',
+        id               = "funding_rates",
         replace_existing = True,
     )
 
@@ -475,6 +493,7 @@ def start_scheduler():
         "Scheduler started — "
         "scan:15m — btc:30m — monitor:30s — scalp_mgr:30m — "
         "ml:1h — cooldown:30m — purge:03:00 UTC — sessions:1h — "
+        "rag_reindex:30m — "
         "analyzer:Sun 00:00 UTC — pillar_analyzer:Sun 00:30 UTC — "
         "adapter:Sun 01:00 UTC — rollback:daily 06:00 UTC — "
         "version:6h — performance:daily 08:00 UTC — "
@@ -482,7 +501,7 @@ def start_scheduler():
         "binance_snapshot:15m — binance_sync:1h — "
         "thesis_cleanup:04:00 UTC — thesis_outcomes:30m — "
         "monthly_report:1st 09:00 UTC — filter_analysis:Sun 02:00 UTC — "
-        "rs_refresh:15m"
+        "rs_refresh:15m — funding_rates:1h"
     )
 
 

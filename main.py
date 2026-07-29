@@ -245,6 +245,30 @@ async def _session_cleanup_loop():
             log.error("Session cleanup error: %s", e)
 
 
+async def _start_phoenix():
+    try:
+        from monitoring.phoenix_setup import start_phoenix
+        success = start_phoenix()
+        if success:
+            log.info("Phoenix monitoring started")
+        else:
+            log.warning("Phoenix failed to start — continuing without monitoring")
+    except Exception as e:
+        log.warning("Phoenix startup error: %s — continuing without monitoring", e)
+
+
+async def _start_rag_indexer():
+    try:
+        from rag.indexer import run_full_index
+        log.info("Starting RAG indexer on startup...")
+        loop    = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, run_full_index)
+        total   = sum(results.values())
+        log.info("RAG indexer complete — %s chunks indexed: %s", total, results)
+    except Exception as e:
+        log.warning("RAG indexer startup error: %s — continuing without RAG", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _dashboard_push_task, _cpu_warmup_task
@@ -288,6 +312,9 @@ async def lifespan(app: FastAPI):
     await start_ws()
     log.info("Binance WebSocket streams started")
 
+    await _start_phoenix()
+    await _start_rag_indexer()
+
     mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
     grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
 
@@ -298,6 +325,8 @@ async def lifespan(app: FastAPI):
         f"Grades:   `{grades}`\n"
         f"Webhook:  `✅ Active`\n"
         f"WS:       `✅ Binance streams active`\n"
+        f"RAG:      `✅ Vector store ready`\n"
+        f"Phoenix:  `✅ Monitoring active`\n"
         f"Scan:     `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
@@ -338,6 +367,9 @@ async def lifespan(app: FastAPI):
 
     from trade.monitor import stop_monitor
     stop_monitor()
+
+    from monitoring.phoenix_setup import stop_phoenix
+    stop_phoenix()
 
     stop_scheduler()
 
@@ -930,6 +962,39 @@ async def auth_qr_png():
 async def ws_status(request: Request):
     from trade.ws import get_ws_status
     return JSONResponse(content=get_ws_status())
+
+
+@app.get("/api/rag/status")
+async def rag_status(request: Request):
+    try:
+        from chatbot_rag import get_rag_status
+        return JSONResponse(content=get_rag_status())
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/rag/reindex")
+async def rag_reindex(request: Request):
+    from auth import is_authenticated
+    if not is_authenticated(request):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        from rag.indexer import run_full_index
+        loop    = asyncio.get_event_loop()
+        results = await loop.run_in_executor(None, lambda: run_full_index(full_reindex=True))
+        total   = sum(results.values())
+        return JSONResponse(content={"success": True, "total": total, "breakdown": results})
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/phoenix/status")
+async def phoenix_status(request: Request):
+    try:
+        from monitoring.phoenix_setup import get_phoenix_status
+        return JSONResponse(content=get_phoenix_status())
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.websocket("/ws/dashboard")
