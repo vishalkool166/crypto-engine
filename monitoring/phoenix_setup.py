@@ -1,41 +1,14 @@
 import logging
-import sys
-from unittest.mock import MagicMock
 
 log = logging.getLogger(__name__)
 
 _phoenix_session = None
 
 
-def _patch_broken_imports() -> None:
-    broken_modules = [
-        "phoenix.evals.models",
-        "phoenix.evals.models.rate_limiters",
-        "phoenix.evals.models.base",
-        "phoenix.evals.models.openai",
-        "phoenix.evals.models.litellm",
-        "phoenix.evals.models.anthropic",
-        "phoenix.evals.models.google",
-        "phoenix.evals.models.bedrock",
-        "phoenix.evals.models.mistralai",
-        "phoenix.evals.models.cohere",
-        "phoenix.evals.models.vertex",
-        "phoenix.evals.models.gemini",
-        "phoenix.experiments.functions",
-        "phoenix.experiments",
-    ]
-    for mod in broken_modules:
-        if mod not in sys.modules:
-            sys.modules[mod] = MagicMock()
-    log.debug("Phoenix broken imports patched")
-
-
 def start_phoenix() -> bool:
     global _phoenix_session
 
     try:
-        _patch_broken_imports()
-
         import phoenix as px
 
         _phoenix_session = px.launch_app()
