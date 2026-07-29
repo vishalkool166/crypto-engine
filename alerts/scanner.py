@@ -5,8 +5,6 @@ import time
 from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.store import save_candles
-from engines.signal import run as run_signal
-from engines import state
 from engines.relative_strength import rank_coins, get_scan_priority, get_rs_summary, invalidate_cache as invalidate_rs_cache
 from engines.decision_trace import store_trace, get_recent_traces, get_rejection_summary
 from data.rejection_stats import record_scan, get_total_stats, get_top_rejections
@@ -237,7 +235,7 @@ def _save_signal(signal: dict) -> int | None:
                 direction         = signal["direction"],
                 grade             = signal["grade"],
                 score             = signal["score"],
-                signal_type       = signal["signal_type"],
+                signal_type       = signal.get("signal_type", "FULL"),
                 entry             = signal["entry"],
                 sl                = signal["sl"],
                 tp1               = signal["tp1"],
@@ -385,8 +383,10 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         )
 
         if result.get("success"):
-            current_state = state.get(coin)
-            state.set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
+            from engines.state import set_in_trade
+            from engines.state import get as get_coin_state
+            current_state = get_coin_state(coin)
+            set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
             log.info(
                 "Trade opened: %s %s grade:%s trade_id:%s",
                 coin, signal["direction"], signal["grade"], result["trade_id"]
@@ -398,6 +398,45 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         log.error("_execute_trade %s: %s", coin, e, exc_info=True)
 
 
+async def _run_content(db_id: int) -> None:
+    try:
+        from content.pipeline import run_content_pipeline
+        await run_content_pipeline(db_id)
+    except Exception as e:
+        log.error("Content pipeline: %s", e)
+
+
+async def _on_kline_closed(coin: str, kline: dict) -> None:
+    try:
+        from engines.state import get as get_coin_state
+        current = get_coin_state(coin)
+        if current["status"] not in ("watching", "idle"):
+            return
+
+        import pandas as pd
+
+        df_row = pd.DataFrame([{
+            "timestamp": pd.Timestamp(kline["timestamp"], unit="ms"),
+            "open":      kline["open"],
+            "high":      kline["high"],
+            "low":       kline["low"],
+            "close":     kline["close"],
+            "volume":    kline["volume"],
+        }]).set_index("timestamp")
+
+        save_candles(coin, kline["tf"], df_row)
+
+        balance = await _get_cached_balance()
+        if balance <= 0:
+            return
+
+        htf = {"1d": _cached_1d, "1w": _cached_1w}
+        await _analyze_coin(coin, balance, htf)
+
+    except Exception as e:
+        log.error("_on_kline_closed %s: %s", coin, e)
+
+
 async def _analyze_coin(
     coin:    str,
     balance: float,
@@ -406,7 +445,9 @@ async def _analyze_coin(
 ) -> dict | None:
     async with _scan_semaphore:
         try:
-            current = state.get(coin)
+            from engines.state import get as get_coin_state
+            from engines.state import set_watching, set_idle
+            current = get_coin_state(coin)
 
             if current["status"] == "in_trade":
                 cached = cache.get_raw(f"signal_{coin}")
@@ -418,8 +459,9 @@ async def _analyze_coin(
                     cache.set(f"signal_{coin}", cached, ttl=1800)
                 return cached
 
+            from engines.state import is_available
             if current["status"] == "cooldown":
-                if not state.is_available(coin):
+                if not is_available(coin):
                     record_scan(coin, "", "cooldown")
                     return None
 
@@ -432,7 +474,8 @@ async def _analyze_coin(
 
             scan_start = time.time()
 
-            result = await run_signal(
+            from agents.signal_agent import run as agent_run
+            result = await agent_run(
                 coin    = coin,
                 df_4h   = candles["4h"],
                 df_1h   = candles["1h"],
@@ -445,30 +488,30 @@ async def _analyze_coin(
             scan_ms = round((time.time() - scan_start) * 1000, 1)
 
             if result.get("signal"):
-                state.set_watching(coin, {
+                set_watching(coin, {
                     "direction": result["direction"],
                     "sweep":     result.get("sweep", {}),
                     "zone":      result.get("zone",  {}),
                 })
             elif result.get("zone_found") and result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown"):
-                    state.set_watching(coin, {
+                    set_watching(coin, {
                         "direction": result["direction"],
                         "sweep":     result.get("sweep", {}),
                         "zone":      result.get("zone",  {}),
                     })
             elif result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown", "watching"):
-                    state.set_watching(coin, {
+                    set_watching(coin, {
                         "direction": result["direction"],
                         "sweep":     result.get("sweep", {}),
                         "zone":      {},
                     })
             else:
                 if current["status"] == "watching":
-                    state.set_idle(coin)
+                    set_idle(coin)
 
-            actual_state = state.get(coin)
+            actual_state = get_coin_state(coin)
             coin_status  = actual_state["status"]
 
             ticker  = _get_ticker_from_redis(coin)
@@ -501,8 +544,8 @@ async def _analyze_coin(
                 "sweep": {
                     "detected":  result.get("sweep_found", False),
                     "score":     result.get("sweep_score", 0),
-                    "label":     sweep_data.get("level_label", "") if sweep_data else "",
-                    "age_hours": sweep_data.get("age_hours",  0)   if sweep_data else 0,
+                    "label":     (sweep_data.get("level_label", "") or sweep_data.get("label", "")) if sweep_data else "",
+                    "age_hours": sweep_data.get("age_hours", 0) if sweep_data else 0,
                 },
                 "zone": {
                     "type":         zone_data.get("type",         "—"),
@@ -533,6 +576,8 @@ async def _analyze_coin(
                 "rs_tier":     rs_tier,
                 "trace":       result.get("trace"),
                 "score_detail":result.get("score_detail"),
+                "agent_ms":    result.get("agent_ms", 0),
+                "agent_steps": result.get("agent_steps", 0),
                 "wconf": {
                     "norm_score":   score,
                     "market_score": round(result.get("sweep_score",   0) * 100) if result.get("sweep_score")   else 0,
@@ -590,44 +635,6 @@ async def _analyze_coin(
             return None
 
 
-async def _run_content(db_id: int) -> None:
-    try:
-        from content.pipeline import run_content_pipeline
-        await run_content_pipeline(db_id)
-    except Exception as e:
-        log.error("Content pipeline: %s", e)
-
-
-async def _on_kline_closed(coin: str, kline: dict) -> None:
-    try:
-        current = state.get(coin)
-        if current["status"] not in ("watching", "idle"):
-            return
-
-        import pandas as pd
-
-        df_row = pd.DataFrame([{
-            "timestamp": pd.Timestamp(kline["timestamp"], unit="ms"),
-            "open":      kline["open"],
-            "high":      kline["high"],
-            "low":       kline["low"],
-            "close":     kline["close"],
-            "volume":    kline["volume"],
-        }]).set_index("timestamp")
-
-        save_candles(coin, kline["tf"], df_row)
-
-        balance = await _get_cached_balance()
-        if balance <= 0:
-            return
-
-        htf = {"1d": _cached_1d, "1w": _cached_1w}
-        await _analyze_coin(coin, balance, htf)
-
-    except Exception as e:
-        log.error("_on_kline_closed %s: %s", coin, e)
-
-
 async def scan_all_coins() -> list:
     async with _scan_lock:
         scan_start = time.time()
@@ -639,7 +646,8 @@ async def scan_all_coins() -> list:
             log.warning("Scan aborted — zero balance")
             return []
 
-        state.tick_cooldowns()
+        from engines.state import tick_cooldowns
+        tick_cooldowns()
 
         htf = await _load_htf_candles()
 
