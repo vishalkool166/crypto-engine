@@ -37,7 +37,6 @@ langchain-huggingface==0.1.2
 langgraph==0.2.45
 langsmith==0.1.147
 chromadb==0.5.18
-torch==2.2.2+cpu --index-url https://download.pytorch.org/whl/cpu
 sentence-transformers==3.3.1
 arize-phoenix==4.29.0
 arize-phoenix-otel==0.6.1
