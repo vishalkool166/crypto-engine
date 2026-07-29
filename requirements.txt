@@ -38,7 +38,7 @@ langgraph==0.2.45
 langsmith==0.1.147
 chromadb==0.5.18
 sentence-transformers==3.3.1
-arize-phoenix==4.29.0
+arize-phoenix==3.0.0
 arize-phoenix-otel==0.6.1
 arize-phoenix-evals==0.17.0
 opentelemetry-sdk==1.28.1
