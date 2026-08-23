@@ -80,17 +80,17 @@ def check(
     if direction == "NEUTRAL":
         record_scan(coin, "NEUTRAL", "ema_neutral")
         return {
-            "pass":         False,
-            "direction":    "NEUTRAL",
-            "reason":       "ema_neutral",
-            "btc_score":    0.0,
-            "htf_score":    0.0,
-            "context_score":0.0,
-            "alignment":    None,
-            "trace":        {
-                "ema":  "NEUTRAL — price between EMAs",
-                "btc":  "skipped",
-                "htf":  "skipped",
+            "pass":          False,
+            "direction":     "NEUTRAL",
+            "reason":        "ema_neutral",
+            "btc_score":     0.0,
+            "htf_score":     0.0,
+            "context_score": 0.0,
+            "alignment":     None,
+            "trace": {
+                "ema": "NEUTRAL — price between EMAs",
+                "btc": "skipped",
+                "htf": "skipped",
             },
         }
 
@@ -99,6 +99,23 @@ def check(
         btc["cls"], btc["adx"], direction
     )
 
+    if btc_score <= -8:
+        record_scan(coin, direction, "btc_strongly_opposing")
+        return {
+            "pass":          False,
+            "direction":     direction,
+            "reason":        "btc_strongly_opposing",
+            "btc_score":     btc_score,
+            "htf_score":     0.0,
+            "context_score": btc_score,
+            "alignment":     None,
+            "trace": {
+                "ema": f"direction:{direction}",
+                "btc": btc_reason,
+                "htf": "skipped — btc hard block",
+            },
+        }
+
     daily_bias  = get_higher_tf_bias(df_1d, "1d") if df_1d is not None else "NEUTRAL"
     weekly_bias = get_higher_tf_bias(df_1w, "1w") if df_1w is not None else "NEUTRAL"
 
@@ -106,8 +123,25 @@ def check(
 
     context_score = round(btc_score + htf_score, 3)
 
-    opposite = "SHORT" if direction == "LONG" else "LONG"
+    opposite      = "SHORT" if direction == "LONG" else "LONG"
     both_opposing = daily_bias == opposite and weekly_bias == opposite
+
+    if both_opposing:
+        record_scan(coin, direction, "htf_both_opposing")
+        return {
+            "pass":          False,
+            "direction":     direction,
+            "reason":        "htf_both_opposing",
+            "btc_score":     btc_score,
+            "htf_score":     htf_score,
+            "context_score": context_score,
+            "alignment":     None,
+            "trace": {
+                "ema": f"direction:{direction}",
+                "btc": btc_reason,
+                "htf": htf_reason,
+            },
+        }
 
     size_mult = 1.0
     alignment = "none"
@@ -118,29 +152,9 @@ def check(
     elif daily_bias == direction or weekly_bias == direction:
         size_mult = 1.0
         alignment = "normal"
-    elif both_opposing:
-        size_mult = 0.5
-        alignment = "opposing"
     else:
         size_mult = 0.7
         alignment = "weak"
-
-    if btc_score <= -8 and htf_score <= -5:
-        record_scan(coin, direction, "btc_context")
-        return {
-            "pass":          False,
-            "direction":     direction,
-            "reason":        "btc_and_htf_both_strongly_opposing",
-            "btc_score":     btc_score,
-            "htf_score":     htf_score,
-            "context_score": context_score,
-            "alignment":     None,
-            "trace": {
-                "ema":  f"direction:{direction}",
-                "btc":  btc_reason,
-                "htf":  htf_reason,
-            },
-        }
 
     alignment_dict = {
         "pass":      True,
@@ -160,8 +174,8 @@ def check(
         "context_score": context_score,
         "alignment":     alignment_dict,
         "trace": {
-            "ema":  f"direction:{direction}",
-            "btc":  btc_reason,
-            "htf":  htf_reason,
+            "ema": f"direction:{direction}",
+            "btc": btc_reason,
+            "htf": htf_reason,
         },
     }

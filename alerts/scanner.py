@@ -181,7 +181,8 @@ async def _get_cached_balance() -> float:
 
 
 def _build_factor_scores(result: dict) -> dict:
-    zone = result.get("zone") or {}
+    zone      = result.get("zone") or {}
+    btc_score = result.get("btc_score", 0) or 0
     return {
         "liquidity_sweep":     round(result.get("sweep_score",   0) * 12, 2),
         "displacement":        round(result.get("trigger_score", 0) * 11, 2),
@@ -191,7 +192,7 @@ def _build_factor_scores(result: dict) -> dict:
         "volume_expansion":    round(result.get("trigger_score", 0) * 7,  2),
         "market_regime":       8 if result.get("direction") in ("LONG", "SHORT") else 0,
         "session_timing":      6 if _derive_session() in ("London", "London/NY Overlap", "New York") else 2,
-        "btc_alignment":       6,
+        "btc_alignment":       min(10, max(-8, round(btc_score, 2))),
         "oi_behavior":         4,
         "funding_extreme":     0,
         "rsi_divergence":      0,
@@ -209,6 +210,12 @@ def _save_signal(signal: dict) -> int | None:
     if signal.get("direction") not in ("LONG", "SHORT"):
         return None
     if not signal.get("entry"):
+        return None
+
+    rr1 = signal.get("rr1", 0) or 0
+    if rr1 < 1.5:
+        log.info("Signal rejected RR %.2f < 1.5: %s %s", rr1, signal.get("coin"), signal.get("direction"))
+        record_scan(signal.get("coin", ""), signal.get("direction", ""), "rr_too_low")
         return None
 
     try:
@@ -231,41 +238,42 @@ def _save_signal(signal: dict) -> int | None:
             now = datetime.now(timezone.utc)
 
             row = SignalModel(
-                coin              = signal["coin"],
-                direction         = signal["direction"],
-                grade             = signal["grade"],
-                score             = signal["score"],
-                signal_type       = signal.get("signal_type", "FULL"),
-                entry             = signal["entry"],
-                sl                = signal["sl"],
-                tp1               = signal["tp1"],
-                tp2               = signal.get("tp2"),
-                sl_pct            = signal["sl_pct"],
-                risk_amt          = signal["risk_amt"],
-                risk_pct          = signal["risk_pct"],
-                position          = signal["pos_size"],
-                leverage          = str(signal["leverage"]) + "x",
-                sweep_score       = signal["sweep_score"],
-                retest_score      = 0,
-                disp_score        = signal["trigger_score"],
-                funding           = 0,
-                oi_signal         = "",
-                outcome           = "pending",
-                atr_at_entry      = signal.get("atr_4h"),
-                factor_scores     = json.dumps({k: min(round(v, 2), cfg.WEIGHTS.get(k, 999)) for k, v in factor_scores.items()}),
-                market_score      = min(round(signal.get("sweep_score",   0) * 100, 2), 100.0),
-                entry_score       = min(round(signal.get("trigger_score", 0) * 100, 2), 100.0),
-                btc_score         = 6.0,
-                day_of_week       = now.weekday(),
-                hour_of_day       = now.hour,
-                system_version    = cfg.SYSTEM_VERSION,
+                coin           = signal["coin"],
+                direction      = signal["direction"],
+                grade          = signal["grade"],
+                score          = signal["score"],
+                signal_type    = signal.get("signal_type", "FULL"),
+                entry          = signal["entry"],
+                sl             = signal["sl"],
+                tp1            = signal["tp1"],
+                tp2            = signal.get("tp2"),
+                sl_pct         = signal["sl_pct"],
+                risk_amt       = signal["risk_amt"],
+                risk_pct       = signal["risk_pct"],
+                position       = signal["pos_size"],
+                leverage       = str(signal["leverage"]) + "x",
+                sweep_score    = signal["sweep_score"],
+                retest_score   = signal.get("zone_score", 0),
+                disp_score     = signal["trigger_score"],
+                funding        = 0,
+                oi_signal      = "",
+                outcome        = "pending",
+                atr_at_entry   = signal.get("atr_4h"),
+                factor_scores  = json.dumps({k: min(round(v, 2), cfg.WEIGHTS.get(k, 999)) for k, v in factor_scores.items()}),
+                market_score   = min(round(signal.get("sweep_score",   0) * 100, 2), 100.0),
+                entry_score    = min(round(signal.get("trigger_score", 0) * 100, 2), 100.0),
+                btc_score      = signal.get("btc_score", 0),
+                day_of_week    = now.weekday(),
+                hour_of_day    = now.hour,
+                system_version = cfg.SYSTEM_VERSION,
             )
             db.add(row)
             db.flush()
             db.refresh(row)
             log.info(
-                "Signal saved ID:%s %s %s grade:%s",
-                row.id, signal["coin"], signal["direction"], signal["grade"]
+                "Signal saved ID:%s %s %s grade:%s btc_score:%.1f rr:%.2f",
+                row.id, signal["coin"], signal["direction"], signal["grade"],
+                signal.get("btc_score", 0), rr1,
             )
             return row.id
     except Exception as e:
@@ -582,7 +590,7 @@ async def _analyze_coin(
                     "norm_score":   score,
                     "market_score": round(result.get("sweep_score",   0) * 100) if result.get("sweep_score")   else 0,
                     "entry_score":  round(result.get("trigger_score", 0) * 100) if result.get("trigger_score") else 0,
-                    "btc_score":    0,
+                    "btc_score":    result.get("btc_score", 0),
                     "factors":      [],
                 },
             }
