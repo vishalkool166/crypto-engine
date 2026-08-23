@@ -403,7 +403,7 @@ class Config:
 
     SCALP_ENGINE = {
         "ema_period":                20,
-        "ema_buffer_atr_mult":       0.3,
+        "ema_buffer_atr_mult":       0.1,
 
         "sweep_max_age_hours":       12,
         "sweep_min_wick_atr":        0.2,
