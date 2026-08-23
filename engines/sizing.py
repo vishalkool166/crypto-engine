@@ -16,6 +16,14 @@ LIVE_BASE_RISK     = 0.01
 ML_MIN_TRADES      = 100
 DAILY_LOSS_LIMIT   = 0.02
 
+SESSION_SIZE_MULT = {
+    "London/NY Overlap": 1.0,
+    "London":            1.0,
+    "New York":          1.0,
+    "Asia":              0.5,
+    "Off Hours":         0.0,
+}
+
 
 def _get_recent_performance() -> dict:
     try:
@@ -189,6 +197,10 @@ def _alignment_mult(alignment: dict | None) -> float:
     return alignment.get("size_mult", 1.0)
 
 
+def _session_mult(session: str) -> float:
+    return SESSION_SIZE_MULT.get(session, 1.0)
+
+
 def _dynamic_risk(
     base:     float,
     perf:     dict,
@@ -250,6 +262,7 @@ def calculate(
     direction:      str,
     ml_probability: float | None = None,
     alignment:      dict | None  = None,
+    session:        str          = "",
 ) -> dict:
     is_paper = cfg.PAPER_TRADING
 
@@ -290,6 +303,7 @@ def calculate(
     risk_pct = risk_pct * _grade_mult(grade)
     risk_pct = risk_pct * _ml_mult(total_trades, ml_probability)
     risk_pct = risk_pct * _alignment_mult(alignment)
+    risk_pct = risk_pct * _session_mult(session)
     risk_pct = max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk_pct))
 
     leverage      = _leverage_from_sl(sl_pct, is_paper)
@@ -325,5 +339,7 @@ def calculate(
         "grade_mult":    round(_grade_mult(grade), 2),
         "ml_mult":       round(_ml_mult(total_trades, ml_probability), 2),
         "alignment_mult":round(_alignment_mult(alignment), 2),
+        "session_mult":  round(_session_mult(session), 2),
+        "session":       session,
         "alignment":     alignment.get("alignment", "none") if alignment else "none",
     }

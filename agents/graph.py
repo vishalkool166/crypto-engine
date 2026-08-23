@@ -12,10 +12,30 @@ from agents.nodes.ml_node      import ml_node
 log = logging.getLogger(__name__)
 
 
+def _get_session() -> str:
+    from datetime import datetime, timezone
+    hour = datetime.now(timezone.utc).hour
+    if 8  <= hour < 13: return "London"
+    if 13 <= hour < 17: return "London/NY Overlap"
+    if 17 <= hour < 21: return "New York"
+    if 0  <= hour < 8:  return "Asia"
+    return "Off Hours"
+
+
 def _after_context(state: SignalAgentState) -> str:
     ctx = state.get("ctx", {})
     if not ctx.get("pass", False):
         return "end"
+
+    session = _get_session()
+    state["session"] = session
+
+    if session == "Off Hours":
+        from data.rejection_stats import record_scan
+        record_scan(state.get("coin", ""), state.get("direction", ""), "off_hours")
+        state["reason"] = "off_hours"
+        return "end"
+
     return "continue"
 
 
@@ -91,6 +111,7 @@ def _finalize_signal(state: SignalAgentState) -> SignalAgentState:
             direction      = state["direction"],
             ml_probability = state.get("ml_probability"),
             alignment      = state.get("ctx", {}).get("alignment"),
+            session        = state.get("session", ""),
         )
 
         if sizing_result.get("skip"):
@@ -180,10 +201,11 @@ def _finalize_signal(state: SignalAgentState) -> SignalAgentState:
         })
 
         log.info(
-            "Signal finalized: %s %s grade:%s score:%.3f btc_score:%.1f",
+            "Signal finalized: %s %s grade:%s score:%.3f btc_score:%.1f session:%s",
             state["coin"], state["direction"],
             state["grade"], combined,
             ctx.get("btc_score", 0),
+            state.get("session", ""),
         )
 
     except Exception as e:
@@ -197,18 +219,18 @@ def _finalize_signal(state: SignalAgentState) -> SignalAgentState:
 def _build_rejection_result(state: SignalAgentState) -> SignalAgentState:
     state["signal"] = False
     state["final_result"] = {
-        "signal":      False,
-        "coin":        state["coin"],
-        "direction":   state.get("direction", "NEUTRAL"),
-        "grade":       state.get("grade",     "F"),
-        "score":       0,
-        "reason":      state.get("reason",    "unknown"),
-        "sweep_found": bool(state.get("sweep_result", {}).get("detected")),
-        "zone_found":  bool(state.get("zone_result",  {}).get("detected")),
-        "sweep_score": state.get("sweep_result", {}).get("score", 0),
-        "zone_score":  state.get("zone_result",  {}).get("score", 0),
-        "sweep":       state.get("sweep_result", {}).get("sweep"),
-        "zone":        state.get("zone_result",  {}).get("zone"),
+        "signal":        False,
+        "coin":          state["coin"],
+        "direction":     state.get("direction", "NEUTRAL"),
+        "grade":         state.get("grade",     "F"),
+        "score":         0,
+        "reason":        state.get("reason",    "unknown"),
+        "sweep_found":   bool(state.get("sweep_result", {}).get("detected")),
+        "zone_found":    bool(state.get("zone_result",  {}).get("detected")),
+        "sweep_score":   state.get("sweep_result", {}).get("score", 0),
+        "zone_score":    state.get("zone_result",  {}).get("score", 0),
+        "sweep":         state.get("sweep_result", {}).get("sweep"),
+        "zone":          state.get("zone_result",  {}).get("zone"),
         "direction_raw": state.get("direction", "NEUTRAL"),
         "trace": {
             "steps":     state.get("trace_steps", []),
