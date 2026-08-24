@@ -403,9 +403,9 @@ class Config:
 
     SCALP_ENGINE = {
         "ema_period":                20,
-        "ema_buffer_atr_mult":       0.3,
+        "ema_buffer_atr_mult":       0.1,
 
-        "sweep_max_age_hours":       4,
+        "sweep_max_age_hours":       8,
         "sweep_min_wick_atr":        1.5,
         "sweep_min_score":           0.45,
 
@@ -456,7 +456,7 @@ class Config:
         "entry_order_type":          "LIMIT",
         "limit_order_expiry_hours":  4,
 
-        "min_adx":                   20,
+        "min_adx":                   15,
     }
 
     THESIS_TIME_LIMITS = {
