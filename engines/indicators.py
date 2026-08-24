@@ -43,7 +43,7 @@ def calculate_all(df: pd.DataFrame, timeframe: str = "4h") -> dict:
 
     swing_lookback = _get_swing_lookback(timeframe)
     trend          = _get_trend(price, e20, e50, e200)
-    swings         = _find_swings(df, lookback=50, pivot_bars=swing_lookback)
+    swings         = _find_swings(df, lookback=200, pivot_bars=swing_lookback)
     structure      = _detect_structure(df, swings)
     fvgs           = _detect_fvg(df)
     ob_data        = detect_order_blocks(df, atr or price * 0.015, lookback=50)
@@ -191,7 +191,7 @@ def _get_trend(price, e20, e50, e200) -> dict:
 
 def _find_swings(
     df:         pd.DataFrame,
-    lookback:   int = 50,
+    lookback:   int = 200,
     pivot_bars: int = 3
 ) -> dict:
     sl    = df.tail(lookback)
