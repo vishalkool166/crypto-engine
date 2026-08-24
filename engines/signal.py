@@ -62,6 +62,39 @@ def _get_ml_probability(signal: dict) -> float | None:
         return None
 
 
+def _hard_filters_pass(
+    coin:         str,
+    direction:    str,
+    sweep_result: dict,
+    zone_result:  dict,
+    trace:        DecisionTrace,
+) -> tuple[bool, str]:
+
+    sweep_data = sweep_result.get("sweep") or {}
+    age_hours  = float(sweep_data.get("age_hours", 999) or 999)
+    max_age    = SE["sweep_max_age_hours"]
+
+    if age_hours > max_age:
+        reason = f"sweep_too_old_{age_hours:.1f}h"
+        trace.stop(reason, f"Sweep {age_hours:.1f}h old — max {max_age}h")
+        store_trace(trace)
+        record_scan(coin, direction, reason)
+        return False, reason
+
+    zone_data    = zone_result.get("zone") or {}
+    touch_count  = int(zone_data.get("touch_count", 0) or 0)
+    max_touches  = SE["zone_max_touches"]
+
+    if touch_count > max_touches:
+        reason = f"zone_too_many_touches_{touch_count}"
+        trace.stop(reason, f"Zone touched {touch_count}x — max {max_touches}")
+        store_trace(trace)
+        record_scan(coin, direction, reason)
+        return False, reason
+
+    return True, ""
+
+
 async def run(
     coin:    str,
     df_4h:   object,
@@ -73,8 +106,8 @@ async def run(
 ) -> dict:
 
     no_signal = {"coin": coin, "signal": False}
-    trace = DecisionTrace(coin=coin, direction="")
-    session = _get_session()
+    trace     = DecisionTrace(coin=coin, direction="")
+    session   = _get_session()
     trace.session = session
 
     try:
@@ -117,14 +150,14 @@ async def run(
             record_scan(coin, trace.direction, ctx.get("reason", "context"))
             return {
                 **no_signal,
-                "reason":    ctx.get("reason"),
-                "trace":     trace.to_dict(),
+                "reason":  ctx.get("reason"),
+                "trace":   trace.to_dict(),
             }
 
         direction = ctx["direction"]
         alignment = ctx.get("alignment")
 
-        sig_score = SignalScore()
+        sig_score           = SignalScore()
         sig_score.coin      = coin
         sig_score.direction = direction
 
@@ -176,6 +209,20 @@ async def run(
                 "trace":       trace.to_dict(),
             }
 
+        disp = sweep_result.get("displacement", {})
+        if not disp.get("found") and sweep_result["score"] < 0.60:
+            trace.stop("no_displacement", "Sweep without displacement and score below 0.60")
+            store_trace(trace)
+            record_scan(coin, direction, "no_displacement")
+            return {
+                **no_signal,
+                "reason":      "no_displacement",
+                "sweep_found": True,
+                "sweep_score": sweep_result["score"],
+                "direction":   direction,
+                "trace":       trace.to_dict(),
+            }
+
         sig_score.add(
             "sweep",
             sweep_result["score"] * SCORE_WEIGHTS["sweep"]["max"],
@@ -220,6 +267,24 @@ async def run(
                 "zone_score":  zone_result["score"],
                 "sweep":       sweep_result["sweep"],
                 "zone":        zone_result["zone"],
+                "direction":   direction,
+                "trace":       trace.to_dict(),
+            }
+
+        hard_pass, hard_reason = _hard_filters_pass(
+            coin         = coin,
+            direction    = direction,
+            sweep_result = sweep_result,
+            zone_result  = zone_result,
+            trace        = trace,
+        )
+
+        if not hard_pass:
+            return {
+                **no_signal,
+                "reason":      hard_reason,
+                "sweep_found": True,
+                "zone_found":  True,
                 "direction":   direction,
                 "trace":       trace.to_dict(),
             }
@@ -276,14 +341,16 @@ async def run(
         )
         trace.add_step("session", "SCORE", session_score, session_reason)
 
-        entry = trigger_result["entry_price"]
+        zone_data    = zone_result["zone"]
+        is_long      = direction == "LONG"
+        limit_entry  = zone_data["top"] if is_long else zone_data["bottom"]
 
         risk_result = risk.calculate(
             direction = direction,
-            entry     = entry,
+            entry     = limit_entry,
             sweep     = sweep_result["sweep"],
-            zone      = zone_result["zone"],
-            trigger   = trigger_result,
+            zone      = zone_data,
+            trigger   = {**trigger_result, "entry_price": limit_entry},
             atr_15m   = atr_15m,
             d1h       = d1h,
             d4h       = d4h,
@@ -299,7 +366,7 @@ async def run(
         if not risk_result["valid"]:
             trace.stop(f"risk_{risk_result['reason']}", risk_result["reason"])
             store_trace(trace)
-            record_scan(coin, direction, f"risk_invalid")
+            record_scan(coin, direction, "risk_invalid")
             return {
                 **no_signal,
                 "reason": risk_result["reason"],
@@ -328,7 +395,7 @@ async def run(
         )
         trace.add_step("ml", "SCORE", ml_score, ml_reason)
 
-        context_score = ctx.get("context_score", 0)
+        context_score  = ctx.get("context_score", 0)
         sig_score.total = round(sig_score.total + context_score, 3)
 
         pct   = sig_score.pct()
@@ -373,8 +440,8 @@ async def run(
             grade     = grade,
             context   = ctx,
             sweep     = sweep_result,
-            zone      = zone_result["zone"],
-            trigger   = trigger_result,
+            zone      = zone_data,
+            trigger   = {**trigger_result, "entry_price": limit_entry},
             risk      = risk_result,
             sizing    = sizing_result,
         )
@@ -393,54 +460,55 @@ async def run(
         record_scan(coin, direction, "TRADE")
 
         return {
-            "signal":        True,
-            "coin":          coin,
-            "direction":     direction,
-            "grade":         grade,
-            "score":         combined,
-            "score_pct":     pct,
-            "score_detail":  sig_score.to_dict(),
-            "entry":         entry,
-            "sl":            risk_result["sl"],
-            "tp1":           risk_result["tp1"],
-            "tp2":           risk_result["tp2"],
-            "sl_pct":        risk_result["sl_pct"],
-            "sl_dist":       risk_result["sl_dist"],
-            "rr1":           risk_result["rr1"],
-            "rr2":           risk_result["rr2"],
-            "tp1_label":     risk_result["tp1_label"],
-            "tp2_label":     risk_result["tp2_label"],
-            "sl_reason":     risk_result["sl_reason"],
-            "poc_used":      risk_result.get("poc_used", False),
-            "risk_amt":      sizing_result["risk_amt"],
-            "pos_size":      sizing_result["position_size"],
-            "stake":         sizing_result["stake"],
-            "leverage":      sizing_result["leverage"],
-            "risk_pct":      sizing_result["risk_pct"],
-            "tp1_pct":       sizing_result.get("tp1_pct", 0.65),
-            "tp2_pct":       sizing_result.get("tp2_pct", 0.35),
-            "sweep_score":   sweep_result["score"],
-            "zone_score":    zone_result["score"],
-            "trigger_score": trigger_result["score"],
-            "sweep":         sweep_result["sweep"],
-            "zone":          zone_result["zone"],
-            "sweep_found":   True,
-            "zone_found":    True,
-            "narrative":     narrative_text,
-            "signal_type":   "FULL",
-            "atr_4h":        atr_4h,
-            "atr_1h":        atr_1h,
-            "atr_15m":       atr_15m,
-            "generated_at":  time.time(),
-            "alignment":     alignment,
-            "displacement":  displacement,
-            "daily_bias":    alignment.get("daily",     "NEUTRAL") if alignment else "NEUTRAL",
-            "weekly_bias":   alignment.get("weekly",    "NEUTRAL") if alignment else "NEUTRAL",
-            "alignment_str": alignment.get("alignment", "none")    if alignment else "none",
-            "ml_probability":ml_probability,
-            "regime":        regime,
-            "session":       session,
-            "trace":         trace.to_dict(),
+            "signal":         True,
+            "coin":           coin,
+            "direction":      direction,
+            "grade":          grade,
+            "score":          combined,
+            "score_pct":      pct,
+            "score_detail":   sig_score.to_dict(),
+            "entry":          limit_entry,
+            "entry_type":     "limit",
+            "sl":             risk_result["sl"],
+            "tp1":            risk_result["tp1"],
+            "tp2":            risk_result["tp2"],
+            "sl_pct":         risk_result["sl_pct"],
+            "sl_dist":        risk_result["sl_dist"],
+            "rr1":            risk_result["rr1"],
+            "rr2":            risk_result["rr2"],
+            "tp1_label":      risk_result["tp1_label"],
+            "tp2_label":      risk_result["tp2_label"],
+            "sl_reason":      risk_result["sl_reason"],
+            "poc_used":       risk_result.get("poc_used", False),
+            "risk_amt":       sizing_result["risk_amt"],
+            "pos_size":       sizing_result["position_size"],
+            "stake":          sizing_result["stake"],
+            "leverage":       sizing_result["leverage"],
+            "risk_pct":       sizing_result["risk_pct"],
+            "tp1_pct":        sizing_result.get("tp1_pct", 0.65),
+            "tp2_pct":        sizing_result.get("tp2_pct", 0.35),
+            "sweep_score":    sweep_result["score"],
+            "zone_score":     zone_result["score"],
+            "trigger_score":  trigger_result["score"],
+            "sweep":          sweep_result["sweep"],
+            "zone":           zone_data,
+            "sweep_found":    True,
+            "zone_found":     True,
+            "narrative":      narrative_text,
+            "signal_type":    "FULL",
+            "atr_4h":         atr_4h,
+            "atr_1h":         atr_1h,
+            "atr_15m":        atr_15m,
+            "generated_at":   time.time(),
+            "alignment":      alignment,
+            "displacement":   displacement,
+            "daily_bias":     alignment.get("daily",     "NEUTRAL") if alignment else "NEUTRAL",
+            "weekly_bias":    alignment.get("weekly",    "NEUTRAL") if alignment else "NEUTRAL",
+            "alignment_str":  alignment.get("alignment", "none")    if alignment else "none",
+            "ml_probability": ml_probability,
+            "regime":         regime,
+            "session":        session,
+            "trace":          trace.to_dict(),
         }
 
     except Exception as e:

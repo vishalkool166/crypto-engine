@@ -306,6 +306,15 @@ async def job_funding_rates():
         log.error("job_funding_rates: %s", e)
 
 
+async def job_htf_cache_refresh():
+    try:
+        from alerts.scanner import _load_htf_candles
+        await _load_htf_candles()
+        log.info("HTF cache refreshed")
+    except Exception as e:
+        log.error("job_htf_cache_refresh: %s", e)
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -487,6 +496,12 @@ def start_scheduler():
         id               = "funding_rates",
         replace_existing = True,
     )
+    scheduler.add_job(
+        job_htf_cache_refresh,
+        trigger          = IntervalTrigger(hours=1),
+        id               = "htf_cache_refresh",
+        replace_existing = True,
+    )
 
     scheduler.start()
     log.info(
@@ -501,7 +516,7 @@ def start_scheduler():
         "binance_snapshot:15m — binance_sync:1h — "
         "thesis_cleanup:04:00 UTC — thesis_outcomes:30m — "
         "monthly_report:1st 09:00 UTC — filter_analysis:Sun 02:00 UTC — "
-        "rs_refresh:15m — funding_rates:1h"
+        "rs_refresh:15m — funding_rates:1h — htf_cache:1h"
     )
 
 

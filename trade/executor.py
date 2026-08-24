@@ -28,6 +28,8 @@ CLOSE_REASONS = {
     "deviation_rejected":     "Entry rejected — price moved too far",
 }
 
+LIMIT_ORDER_EXPIRY_HOURS = cfg.SCALP_ENGINE.get("limit_order_expiry_hours", 4)
+
 
 def _round_tick(price: float, tick_size: float) -> float:
     if not tick_size or tick_size <= 0:
@@ -97,6 +99,25 @@ async def _wait_for_fill(symbol: str, order_id: str) -> dict:
         await asyncio.sleep(ORDER_POLL_INTERVAL)
     await cancel_order(symbol, order_id)
     raise RuntimeError(f"Order {order_id} timeout after {ORDER_FILL_TIMEOUT}s")
+
+
+async def _wait_for_limit_fill(symbol: str, order_id: str) -> dict | None:
+    expiry = LIMIT_ORDER_EXPIRY_HOURS * 3600
+    deadline = asyncio.get_event_loop().time() + expiry
+    while asyncio.get_event_loop().time() < deadline:
+        order  = await _fetch_order(symbol, order_id)
+        status = order.get("status", "")
+        if status == "FILLED":
+            return order
+        if status in ("CANCELED", "EXPIRED", "REJECTED"):
+            return None
+        await asyncio.sleep(30)
+    try:
+        await cancel_order(symbol, order_id)
+    except Exception:
+        pass
+    log.info("Limit order expired after %sh: %s", LIMIT_ORDER_EXPIRY_HOURS, order_id)
+    return None
 
 
 async def _get_commission(symbol: str, order_id: str) -> dict:
@@ -190,7 +211,7 @@ def _activate_trade(
     actual_fill_entry:  float = 0.0,
     slippage_entry_pct: float = 0.0,
     entry_commission:   float = 0.0,
-    entry_role:         str   = "taker",
+    entry_role:         str   = "maker",
     sizing_result:      dict  = None,
 ) -> None:
     try:
@@ -298,6 +319,18 @@ def _mark_closed(
         log.error("_mark_closed error: %s", e)
 
 
+def _cancel_pending_trade(trade_id: int) -> None:
+    try:
+        with get_session() as db:
+            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if trade and trade.state == "pending":
+                trade.state   = "cancelled"
+                trade.outcome = "cancelled"
+                log.info("Pending trade cancelled: id:%s", trade_id)
+    except Exception as e:
+        log.error("_cancel_pending_trade error: %s", e)
+
+
 async def open_position(
     coin:      str,
     direction: str,
@@ -327,10 +360,6 @@ async def open_position(
         current = await get_ticker_price(symbol)
         if not current:
             return {"success": False, "error": "Could not fetch price"}
-
-        ok, reason = _deviation_check(entry, current, sl, direction)
-        if not ok:
-            return {"success": False, "error": reason, "deviation_rejected": True}
 
         balance = await get_balance()
         if balance["free"] < stake:
@@ -377,33 +406,134 @@ async def open_position(
             _cancel_pending_trade(trade_id)
             return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
-        sl_rounded  = _round_tick(sl, tick_size)
-        tp1_rounded = _round_tick(tp, tick_size)
+        entry_rounded = _round_tick(entry, tick_size)
+        sl_rounded    = _round_tick(sl,    tick_size)
+        tp1_rounded   = _round_tick(tp,    tick_size)
 
         log.info(
-            "Opening: %s %s price:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s",
-            coin, direction, current, total_quantity,
+            "Opening LIMIT: %s %s limit:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s",
+            coin, direction, entry_rounded, total_quantity,
             stake, leverage, sl_rounded, tp1_rounded
         )
 
-        raw        = await _place_with_retry(symbol=symbol, side=side, order_type="MARKET", quantity=total_quantity)
-        filled     = await _wait_for_fill(symbol, raw["orderId"])
-        fill_price = float(filled.get("avgPrice") or filled.get("price") or current)
+        raw = await _place_with_retry(
+            symbol        = symbol,
+            side          = side,
+            order_type    = "LIMIT",
+            quantity      = total_quantity,
+            price         = entry_rounded,
+        )
+
+        entry_oid = str(raw.get("orderId", ""))
+
+        log.info(
+            "Limit order placed: %s %s price:%.6f qty:%s order_id:%s",
+            coin, direction, entry_rounded, total_quantity, entry_oid
+        )
+
+        from alerts.telegram import send
+        mode  = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
+        emoji = "📈" if direction == "LONG" else "📉"
+        await send(
+            f"{emoji} *{coin} {direction} Limit Order Placed — {mode}*\n\n"
+            f"Limit:   `{entry_rounded}` (zone level)\n"
+            f"Current: `{current:.6f}`\n"
+            f"SL:      `{sl_rounded}`\n"
+            f"TP:      `{tp1_rounded}`\n"
+            f"Stake:   `${stake:.2f}` × `{leverage}x`\n"
+            f"Grade:   `{grade}` · Score `{score}`\n"
+            f"Expires: `{LIMIT_ORDER_EXPIRY_HOURS}h`"
+        )
+
+        asyncio.create_task(
+            _monitor_limit_order(
+                trade_id      = trade_id,
+                coin          = coin,
+                symbol        = symbol,
+                direction     = direction,
+                entry_oid     = entry_oid,
+                entry_rounded = entry_rounded,
+                total_quantity= total_quantity,
+                qty_step      = qty_step,
+                sl_rounded    = sl_rounded,
+                tp1_rounded   = tp1_rounded,
+                sl_side       = sl_side,
+                tp_side       = tp_side,
+                price_precision = price_precision,
+                tick_size     = tick_size,
+                stake         = stake,
+                leverage      = leverage,
+                grade         = grade,
+                score         = score,
+                sizing_result = sizing_result,
+            )
+        )
+
+        return {
+            "success":     True,
+            "trade_id":    trade_id,
+            "order_id":    entry_oid,
+            "limit_price": entry_rounded,
+            "quantity":    total_quantity,
+            "pending":     True,
+        }
+
+    except Exception as e:
+        log.error("open_position %s: %s", coin, e, exc_info=True)
+        if trade_id:
+            _cancel_pending_trade(trade_id)
+        return {"success": False, "error": str(e)}
+
+
+async def _monitor_limit_order(
+    trade_id:       int,
+    coin:           str,
+    symbol:         str,
+    direction:      str,
+    entry_oid:      str,
+    entry_rounded:  float,
+    total_quantity: float,
+    qty_step:       float,
+    sl_rounded:     float,
+    tp1_rounded:    float,
+    sl_side:        str,
+    tp_side:        str,
+    price_precision:int,
+    tick_size:      float,
+    stake:          float,
+    leverage:       int,
+    grade:          str,
+    score:          float,
+    sizing_result:  dict,
+) -> None:
+    try:
+        filled = await _wait_for_limit_fill(symbol, entry_oid)
+
+        if not filled:
+            _cancel_pending_trade(trade_id)
+            log.info("Limit order not filled — trade cancelled: %s %s", coin, direction)
+            from alerts.telegram import send
+            emoji = "📈" if direction == "LONG" else "📉"
+            await send(
+                f"{emoji} *{coin} {direction} Limit Expired*\n\n"
+                f"Price never reached `{entry_rounded}`\n"
+                f"Order cancelled — no loss."
+            )
+            return
+
+        fill_price = float(filled.get("avgPrice") or filled.get("price") or entry_rounded)
         filled_qty = _round_step(float(filled.get("executedQty", total_quantity)), qty_step)
-        entry_oid  = str(filled.get("orderId", ""))
+        signed_qty = -filled_qty if direction == "SHORT" else filled_qty
+        actual_margin = round(abs(filled_qty * fill_price) / leverage, 8)
 
-        signed_qty           = -filled_qty if is_short else filled_qty
-        actual_position_size = signed_qty
-        actual_margin        = round(abs(filled_qty * fill_price) / leverage, 8)
-
-        log.info("Entry filled: %s %.6f qty:%s signed_qty:%s", coin, fill_price, filled_qty, signed_qty)
+        log.info("Limit filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
 
         await asyncio.sleep(3.0)
 
         comm         = await _get_commission(symbol, entry_oid)
         entry_fee    = float(comm.get("commission", 0))
-        entry_role   = comm.get("role", "taker")
-        slippage_pct = abs(fill_price - entry) / entry * 100 if entry > 0 else 0.0
+        entry_role   = comm.get("role", "maker")
+        slippage_pct = abs(fill_price - entry_rounded) / entry_rounded * 100 if entry_rounded > 0 else 0.0
 
         sl_oid = await _place_sl(
             symbol          = symbol,
@@ -453,11 +583,11 @@ async def open_position(
                 direction   = direction,
                 grade       = grade,
                 entry_price = fill_price,
-                sl_price    = sl,
-                tp1_price   = tp,
-                tp2_price   = tp2,
-                regime      = regime,
-                session     = session,
+                sl_price    = sl_rounded,
+                tp1_price   = tp1_rounded,
+                tp2_price   = None,
+                regime      = "",
+                session     = "",
                 signal_data = signal_data,
             )
         except Exception as e:
@@ -473,8 +603,8 @@ async def open_position(
         tp_status = "✅" if tp1_oid else "⚠️ Failed"
 
         await send(
-            f"{emoji} *{coin} {direction} Opened — {mode}*\n\n"
-            f"Entry:   `{fill_price}` (signal `{entry}` slip `{slippage_pct:.4f}%`)\n"
+            f"{emoji} *{coin} {direction} FILLED — {mode}*\n\n"
+            f"Fill:    `{fill_price}` (limit `{entry_rounded}` slip `{slippage_pct:.4f}%`)\n"
             f"SL:      `{sl_rounded}` {sl_status}\n"
             f"TP:      `{tp1_rounded}` {tp_status}\n"
             f"Stake:   `${stake:.2f}` × `{leverage}x` = `${stake*leverage:.2f}`\n"
@@ -482,23 +612,10 @@ async def open_position(
             f"Grade:   `{grade}` · Score `{score}`"
         )
 
-        return {
-            "success":    True,
-            "trade_id":   trade_id,
-            "fill_price": fill_price,
-            "quantity":   filled_qty,
-            "signed_qty": signed_qty,
-            "sl_order":   sl_oid,
-            "tp1_order":  tp1_oid,
-            "commission": entry_fee,
-            "role":       entry_role,
-        }
-
     except Exception as e:
-        log.error("open_position %s: %s", coin, e, exc_info=True)
+        log.error("_monitor_limit_order %s: %s", coin, e, exc_info=True)
         if trade_id:
             _cancel_pending_trade(trade_id)
-        return {"success": False, "error": str(e)}
 
 
 async def _place_sl(
@@ -680,18 +797,6 @@ async def _cleanup_orders(symbol: str) -> None:
                 await cancel_order(symbol, oid)
     except Exception as e:
         log.warning("_cleanup_orders %s: %s", symbol, e)
-
-
-def _cancel_pending_trade(trade_id: int) -> None:
-    try:
-        with get_session() as db:
-            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
-            if trade and trade.state == "pending":
-                trade.state   = "cancelled"
-                trade.outcome = "cancelled"
-                log.info("Pending trade cancelled: id:%s", trade_id)
-    except Exception as e:
-        log.error("_cancel_pending_trade error: %s", e)
 
 
 def has_open_trade(coin: str) -> bool:

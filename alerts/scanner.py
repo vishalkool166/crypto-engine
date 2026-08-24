@@ -213,8 +213,8 @@ def _save_signal(signal: dict) -> int | None:
         return None
 
     rr1 = signal.get("rr1", 0) or 0
-    if rr1 < 1.5:
-        log.info("Signal rejected RR %.2f < 1.5: %s %s", rr1, signal.get("coin"), signal.get("direction"))
+    if rr1 < 2.0:
+        log.info("Signal rejected RR %.2f < 2.0: %s %s", rr1, signal.get("coin"), signal.get("direction"))
         record_scan(signal.get("coin", ""), signal.get("direction", ""), "rr_too_low")
         return None
 
@@ -416,6 +416,9 @@ async def _run_content(db_id: int) -> None:
 
 async def _on_kline_closed(coin: str, kline: dict) -> None:
     try:
+        if kline.get("tf") != "1h":
+            return
+
         from engines.state import get as get_coin_state
         current = get_coin_state(coin)
         if current["status"] not in ("watching", "idle"):
@@ -443,6 +446,18 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
 
     except Exception as e:
         log.error("_on_kline_closed %s: %s", coin, e)
+
+
+async def scan_single_coin(coin: str) -> dict | None:
+    try:
+        balance = await _get_cached_balance()
+        if balance <= 0:
+            return None
+        htf = {"1d": _cached_1d, "1w": _cached_1w}
+        return await _analyze_coin(coin, balance, htf)
+    except Exception as e:
+        log.error("scan_single_coin %s: %s", coin, e)
+        return None
 
 
 async def _analyze_coin(

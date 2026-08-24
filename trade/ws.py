@@ -194,13 +194,14 @@ async def _kline_stream() -> None:
                 await asyncio.sleep(10)
                 continue
 
-            tf      = cfg.SCALP_ENGINE["kline_trigger_tf"]
-            streams = "/".join(f"{c.lower()}usdt@kline_{tf}" for c in coins)
-            url     = f"{get_ws_base_url()}/stream?streams={streams}"
+            streams_1h  = "/".join(f"{c.lower()}usdt@kline_1h"  for c in coins)
+            streams_15m = "/".join(f"{c.lower()}usdt@kline_15m" for c in coins)
+            all_streams  = streams_1h + "/" + streams_15m
+            url          = f"{get_ws_base_url()}/stream?streams={all_streams}"
 
             async with websockets.connect(url, ping_interval=20, ping_timeout=10, open_timeout=15) as ws:
                 _kline_ws_connected = True
-                log.info("Kline WS connected — %s coins", len(coins))
+                log.info("Kline WS connected — %s coins (1h + 15m)", len(coins))
                 async for message in ws:
                     try:
                         data  = json.loads(message)
@@ -211,6 +212,7 @@ async def _kline_stream() -> None:
                         coin   = symbol.replace("USDT", "")
                         if coin not in coins:
                             continue
+                        tf = kline.get("i", "")
                         parsed = {
                             "coin":      coin,
                             "tf":        tf,

@@ -8,7 +8,7 @@ log = logging.getLogger(__name__)
 SE = cfg.SCALP_ENGINE
 
 
-def get_direction(d4h: dict) -> str:
+def get_direction(d4h: dict, d1d: dict = None) -> str:
     price = d4h.get("price", 0)
     ema20 = d4h.get("ema20")
     ema50 = d4h.get("ema50")
@@ -20,10 +20,20 @@ def get_direction(d4h: dict) -> str:
     buffer = atr * SE["ema_buffer_atr_mult"]
 
     if price > ema20 + buffer and ema20 > ema50:
-        return "LONG"
-    if price < ema20 - buffer and ema20 < ema50:
-        return "SHORT"
-    return "NEUTRAL"
+        h4_direction = "LONG"
+    elif price < ema20 - buffer and ema20 < ema50:
+        h4_direction = "SHORT"
+    else:
+        return "NEUTRAL"
+
+    if d1d is not None:
+        d1_trend = d1d.get("trend", {}).get("cls", "neutral")
+        if h4_direction == "LONG" and d1_trend == "bear":
+            return "NEUTRAL"
+        if h4_direction == "SHORT" and d1_trend == "bull":
+            return "NEUTRAL"
+
+    return h4_direction
 
 
 def get_higher_tf_bias(df, tf: str) -> str:
@@ -67,6 +77,16 @@ def get_btc_context() -> dict:
         return {"cls": "neutral", "adx": 0.0, "available": False}
 
 
+def _is_asia_session() -> bool:
+    from datetime import datetime, timezone
+    hour = datetime.now(timezone.utc).hour
+    return 0 <= hour < 8
+
+
+def _get_adx(d4h: dict) -> float:
+    return float(d4h.get("adx") or 0)
+
+
 def check(
     d4h:   dict,
     coin:  str,
@@ -75,7 +95,50 @@ def check(
 ) -> dict:
     from data.rejection_stats import record_scan
 
-    direction = get_direction(d4h)
+    if _is_asia_session():
+        record_scan(coin, "NEUTRAL", "asia_session_blocked")
+        return {
+            "pass":          False,
+            "direction":     "NEUTRAL",
+            "reason":        "asia_session_blocked",
+            "btc_score":     0.0,
+            "htf_score":     0.0,
+            "context_score": 0.0,
+            "alignment":     None,
+            "trace": {
+                "ema": "BLOCKED — Asia session",
+                "btc": "skipped",
+                "htf": "skipped",
+            },
+        }
+
+    adx = _get_adx(d4h)
+    min_adx = SE.get("min_adx", 20)
+    if adx < min_adx:
+        record_scan(coin, "NEUTRAL", "adx_too_low")
+        return {
+            "pass":          False,
+            "direction":     "NEUTRAL",
+            "reason":        "adx_too_low",
+            "btc_score":     0.0,
+            "htf_score":     0.0,
+            "context_score": 0.0,
+            "alignment":     None,
+            "trace": {
+                "ema": f"BLOCKED — ADX {adx:.1f} below minimum {min_adx}",
+                "btc": "skipped",
+                "htf": "skipped",
+            },
+        }
+
+    d1d_indicators = None
+    if df_1d is not None and len(df_1d) >= 20:
+        try:
+            d1d_indicators = calculate_all(df_1d, timeframe="1d")
+        except Exception as e:
+            log.warning("1D indicators error %s: %s", coin, e)
+
+    direction = get_direction(d4h, d1d_indicators)
 
     if direction == "NEUTRAL":
         record_scan(coin, "NEUTRAL", "ema_neutral")
@@ -88,33 +151,56 @@ def check(
             "context_score": 0.0,
             "alignment":     None,
             "trace": {
-                "ema": "NEUTRAL — price between EMAs",
-                "btc": "skipped",
-                "htf": "skipped",
+                "ema":  "NEUTRAL — 4H and 1D not aligned",
+                "btc":  "skipped",
+                "htf":  "skipped",
             },
         }
 
     btc = get_btc_context()
+
+    if btc["available"]:
+        btc_cls = btc["cls"]
+        btc_adx = btc["adx"]
+        opposite = "SHORT" if direction == "LONG" else "LONG"
+
+        if direction == "LONG" and btc_cls == "bear" and btc_adx >= 25:
+            record_scan(coin, direction, "btc_opposing")
+            return {
+                "pass":          False,
+                "direction":     direction,
+                "reason":        "btc_opposing",
+                "btc_score":     -8.0,
+                "htf_score":     0.0,
+                "context_score": -8.0,
+                "alignment":     None,
+                "trace": {
+                    "ema": f"direction:{direction}",
+                    "btc": f"BLOCKED — BTC bearish ADX:{btc_adx:.0f}",
+                    "htf": "skipped",
+                },
+            }
+
+        if direction == "SHORT" and btc_cls == "bull" and btc_adx >= 25:
+            record_scan(coin, direction, "btc_opposing")
+            return {
+                "pass":          False,
+                "direction":     direction,
+                "reason":        "btc_opposing",
+                "btc_score":     -8.0,
+                "htf_score":     0.0,
+                "context_score": -8.0,
+                "alignment":     None,
+                "trace": {
+                    "ema": f"direction:{direction}",
+                    "btc": f"BLOCKED — BTC bullish ADX:{btc_adx:.0f}",
+                    "htf": "skipped",
+                },
+            }
+
     btc_score, btc_reason = score_btc_context(
         btc["cls"], btc["adx"], direction
     )
-
-    if btc_score <= -8:
-        record_scan(coin, direction, "btc_strongly_opposing")
-        return {
-            "pass":          False,
-            "direction":     direction,
-            "reason":        "btc_strongly_opposing",
-            "btc_score":     btc_score,
-            "htf_score":     0.0,
-            "context_score": btc_score,
-            "alignment":     None,
-            "trace": {
-                "ema": f"direction:{direction}",
-                "btc": btc_reason,
-                "htf": "skipped — btc hard block",
-            },
-        }
 
     daily_bias  = get_higher_tf_bias(df_1d, "1d") if df_1d is not None else "NEUTRAL"
     weekly_bias = get_higher_tf_bias(df_1w, "1w") if df_1w is not None else "NEUTRAL"
@@ -126,23 +212,6 @@ def check(
     opposite      = "SHORT" if direction == "LONG" else "LONG"
     both_opposing = daily_bias == opposite and weekly_bias == opposite
 
-    if both_opposing:
-        record_scan(coin, direction, "htf_both_opposing")
-        return {
-            "pass":          False,
-            "direction":     direction,
-            "reason":        "htf_both_opposing",
-            "btc_score":     btc_score,
-            "htf_score":     htf_score,
-            "context_score": context_score,
-            "alignment":     None,
-            "trace": {
-                "ema": f"direction:{direction}",
-                "btc": btc_reason,
-                "htf": htf_reason,
-            },
-        }
-
     size_mult = 1.0
     alignment = "none"
 
@@ -152,6 +221,9 @@ def check(
     elif daily_bias == direction or weekly_bias == direction:
         size_mult = 1.0
         alignment = "normal"
+    elif both_opposing:
+        size_mult = 0.5
+        alignment = "opposing"
     else:
         size_mult = 0.7
         alignment = "weak"
@@ -174,8 +246,8 @@ def check(
         "context_score": context_score,
         "alignment":     alignment_dict,
         "trace": {
-            "ema": f"direction:{direction}",
-            "btc": btc_reason,
-            "htf": htf_reason,
+            "ema":  f"direction:{direction} adx:{adx:.1f}",
+            "btc":  btc_reason,
+            "htf":  htf_reason,
         },
     }

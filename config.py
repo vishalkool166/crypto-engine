@@ -17,7 +17,7 @@ ORDER_FILL_TIMEOUT   = 60
 ORDER_POLL_INTERVAL  = 3
 MIN_STAKE_USDT       = 5.0
 MAX_SIGNAL_AGE_HOURS = 4
-ENTRY_DEVIATION_MULT = 0.40
+ENTRY_DEVIATION_MULT = 0.10
 ENTRY_FAVORABLE_MULT = 0.60
 
 TIER_FREE  = "free"
@@ -132,17 +132,17 @@ ADAPTATION_CONFIG = {
         "max_daily_loss":        0.02,
         "max_concurrent_trades": 3,
         "max_leverage":          15,
-        "min_sweep_score":       0.10,
-        "min_zone_score":        0.10,
+        "min_sweep_score":       0.45,
+        "min_zone_score":        0.45,
         "min_combined_score":    0.50,
-        "max_sweep_age_hours":   24,
+        "max_sweep_age_hours":   4,
     },
     "soft_limits": {
-        "sweep_min_score":       {"min": 0.10, "max": 0.50, "current": 0.10},
-        "zone_min_score":        {"min": 0.10, "max": 0.70, "current": 0.10},
+        "sweep_min_score":       {"min": 0.45, "max": 0.70, "current": 0.45},
+        "zone_min_score":        {"min": 0.45, "max": 0.70, "current": 0.45},
         "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
-        "sweep_max_age_hours":   {"min": 4,    "max": 24,   "current": 12},
+        "sweep_max_age_hours":   {"min": 2,    "max": 6,    "current": 4},
         "base_risk_pct":         {"min": 0.005,"max": 0.015,"current": 0.010},
         "ml_threshold":          {"min": 0.55, "max": 0.80, "current": 0.65},
     },
@@ -403,45 +403,45 @@ class Config:
 
     SCALP_ENGINE = {
         "ema_period":                20,
-        "ema_buffer_atr_mult":       0.1,
+        "ema_buffer_atr_mult":       0.3,
 
-        "sweep_max_age_hours":       12,
-        "sweep_min_wick_atr":        0.2,
-        "sweep_min_score":           0.10,
+        "sweep_max_age_hours":       4,
+        "sweep_min_wick_atr":        1.5,
+        "sweep_min_score":           0.45,
 
         "zone_min_width_atr":        0.15,
         "zone_max_dist_atr":         4.0,
-        "zone_max_touches":          3,
-        "zone_min_score":            0.10,
-        "zone_max_dist_pct":         4.0,
+        "zone_max_touches":          1,
+        "zone_min_score":            0.45,
+        "zone_max_dist_pct":         1.0,
 
         "trigger_min_body_ratio":    0.55,
         "trigger_min_wick_ratio":    0.55,
-        "trigger_min_score":         0.6,
+        "trigger_min_score":         0.75,
         "trigger_lookback":          6,
 
-        "sl_buffer_atr_mult":        0.3,
+        "sl_buffer_atr_mult":        1.0,
         "sl_min_pct":                0.50,
         "sl_max_pct":                4.0,
 
-        "tp1_min_rr":                1.5,
-        "tp2_min_rr":                2.5,
+        "tp1_min_rr":                2.0,
+        "tp2_min_rr":                3.5,
 
-        "time_stop_hours":           8,
+        "time_stop_hours":           6,
         "close_before_asia":         True,
         "tp1_close_pct":             0.65,
         "tp2_close_pct":             0.35,
         "time_stop_after_tp1_hours": 2,
 
         "base_risk_pct":             0.01,
-        "max_risk_pct":              0.02,
+        "max_risk_pct":              0.015,
         "min_risk_pct":              0.005,
         "daily_loss_limit_pct":      0.02,
-        "max_open_trades":           3,
-        "max_same_direction":        2,
-        "max_leverage":              15,
+        "max_open_trades":           2,
+        "max_same_direction":        1,
+        "max_leverage":              10,
 
-        "coin_cooldown_hours":       2,
+        "coin_cooldown_hours":       4,
 
         "grade_aplus_threshold":     0.80,
         "grade_a_threshold":         0.65,
@@ -451,7 +451,12 @@ class Config:
         "grade_a_size_mult":         1.0,
         "grade_b_size_mult":         0.7,
 
-        "kline_trigger_tf":          "15m",
+        "kline_trigger_tf":          "1h",
+
+        "entry_order_type":          "LIMIT",
+        "limit_order_expiry_hours":  4,
+
+        "min_adx":                   20,
     }
 
     THESIS_TIME_LIMITS = {
@@ -516,7 +521,7 @@ class Config:
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
         if self.PAPER_TRADING:
-            return ["A+", "A", "B"]
+            return ["A+", "A"]
         return ["A+", "A"]
 
     @property
