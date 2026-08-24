@@ -21,7 +21,7 @@ def _vol_score(df: pd.DataFrame) -> float:
 
 
 def _near_zone(price: float, zone: dict, atr_15m: float) -> bool:
-    buffer = atr_15m * 1.5
+    buffer = atr_15m * 0.5
     return (zone["bottom"] - buffer) <= price <= (zone["top"] + buffer)
 
 

@@ -249,7 +249,7 @@ def detect(
 
     for fn, level, label, strength in checks:
         res = fn(level, label, strength)
-        if res and res["intensity"] >= 3:
+        if res and res["intensity"] >= 6:
             results.append(res)
 
     if not results:
