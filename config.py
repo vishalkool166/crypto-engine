@@ -142,7 +142,7 @@ ADAPTATION_CONFIG = {
         "zone_min_score":        {"min": 0.45, "max": 0.70, "current": 0.45},
         "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
-        "sweep_max_age_hours":   {"min": 2,    "max": 6,    "current": 4},
+        "sweep_max_age_hours":   {"min": 2,    "max": 72,    "current": 72},
         "base_risk_pct":         {"min": 0.005,"max": 0.015,"current": 0.010},
         "ml_threshold":          {"min": 0.45, "max": 0.70, "current": 0.50},
     },
@@ -405,7 +405,7 @@ class Config:
         "ema_period":                20,
         "ema_buffer_atr_mult":       0.1,
 
-        "sweep_max_age_hours":       8,
+        "sweep_max_age_hours":       72,
         "sweep_min_wick_atr":        1.5,
         "sweep_min_score":           0.45,
 
