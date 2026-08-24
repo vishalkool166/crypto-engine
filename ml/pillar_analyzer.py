@@ -6,8 +6,8 @@ from config import cfg, ADAPTATION_CONFIG
 
 log = logging.getLogger(__name__)
 
-MIN_TRADES_FOR_ANALYSIS  = 200
-MIN_FAILURES_PER_PILLAR  = 20
+MIN_TRADES_FOR_ANALYSIS  = 50
+MIN_FAILURES_PER_PILLAR  = 10
 MAX_WEIGHT_CHANGE        = 0.05
 MIN_WEIGHT               = 0.05
 MAX_WEIGHT               = 0.50
@@ -96,9 +96,9 @@ def run() -> dict:
                 len(snapshots), MIN_TRADES_FOR_ANALYSIS
             )
             return {
-                "status":       "insufficient_data",
-                "total":        len(snapshots),
-                "min_required": MIN_TRADES_FOR_ANALYSIS,
+                "status":          "insufficient_data",
+                "total":           len(snapshots),
+                "min_required":    MIN_TRADES_FOR_ANALYSIS,
                 "recommendations": [],
             }
 
@@ -242,7 +242,6 @@ def _analyze_pillars(snapshots: list) -> dict:
 
 def _generate_recommendations(pillar_stats: dict, current_weights: dict) -> list:
     recommendations = []
-    total_weight    = sum(current_weights.values())
 
     for pillar, stats in pillar_stats.items():
         if not stats["sufficient_data"]:
@@ -269,8 +268,8 @@ def _generate_recommendations(pillar_stats: dict, current_weights: dict) -> list
         expected_improvement = abs(predictive_power) * 100
 
         confidence = (
-            "high"   if stats["fail_total"] >= 100 else
-            "medium" if stats["fail_total"] >= 50  else
+            "high"   if stats["fail_total"] >= 50 else
+            "medium" if stats["fail_total"] >= 25 else
             "low"
         )
 
@@ -399,12 +398,12 @@ def apply_weight_change(
         _notify_weight_change(pillar, old_weight, new_weight, new_version)
 
         return {
-            "success":        True,
-            "pillar":         pillar,
-            "old_weight":     old_weight,
-            "new_weight":     new_weight,
-            "new_weights":    current_weights,
-            "new_version":    new_version,
+            "success":     True,
+            "pillar":      pillar,
+            "old_weight":  old_weight,
+            "new_weight":  new_weight,
+            "new_weights": current_weights,
+            "new_version": new_version,
         }
 
     except Exception as e:
@@ -484,7 +483,6 @@ def get_weight_history(pillar: str = None, limit: int = 20) -> list:
 def cleanup_old_snapshots(keep_per_trade: int = 200) -> int:
     try:
         from database import SessionLocal
-        from sqlalchemy import func
 
         deleted = 0
         with SessionLocal() as db:

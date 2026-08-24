@@ -28,7 +28,26 @@ CLOSE_REASONS = {
     "deviation_rejected":     "Entry rejected — price moved too far",
 }
 
-LIMIT_ORDER_EXPIRY_HOURS = cfg.SCALP_ENGINE.get("limit_order_expiry_hours", 4)
+SESSION_EXPIRY_HOURS = {
+    "London/NY Overlap": 2,
+    "London":            3,
+    "New York":          3,
+    "Off Hours":         1,
+    "Asia":              1,
+}
+
+DEFAULT_EXPIRY_HOURS = cfg.SCALP_ENGINE.get("limit_order_expiry_hours", 4)
+
+
+def _get_session_expiry() -> int:
+    from datetime import datetime, timezone
+    hour = datetime.now(timezone.utc).hour
+    if 8  <= hour < 13: session = "London"
+    elif 13 <= hour < 17: session = "London/NY Overlap"
+    elif 17 <= hour < 21: session = "New York"
+    elif 0  <= hour < 8:  session = "Asia"
+    else:                  session = "Off Hours"
+    return SESSION_EXPIRY_HOURS.get(session, DEFAULT_EXPIRY_HOURS)
 
 
 def _round_tick(price: float, tick_size: float) -> float:
@@ -101,8 +120,8 @@ async def _wait_for_fill(symbol: str, order_id: str) -> dict:
     raise RuntimeError(f"Order {order_id} timeout after {ORDER_FILL_TIMEOUT}s")
 
 
-async def _wait_for_limit_fill(symbol: str, order_id: str) -> dict | None:
-    expiry = LIMIT_ORDER_EXPIRY_HOURS * 3600
+async def _wait_for_limit_fill(symbol: str, order_id: str, expiry_hours: int) -> dict | None:
+    expiry   = expiry_hours * 3600
     deadline = asyncio.get_event_loop().time() + expiry
     while asyncio.get_event_loop().time() < deadline:
         order  = await _fetch_order(symbol, order_id)
@@ -116,7 +135,7 @@ async def _wait_for_limit_fill(symbol: str, order_id: str) -> dict | None:
         await cancel_order(symbol, order_id)
     except Exception:
         pass
-    log.info("Limit order expired after %sh: %s", LIMIT_ORDER_EXPIRY_HOURS, order_id)
+    log.info("Limit order expired after %sh: %s", expiry_hours, order_id)
     return None
 
 
@@ -410,25 +429,27 @@ async def open_position(
         sl_rounded    = _round_tick(sl,    tick_size)
         tp1_rounded   = _round_tick(tp,    tick_size)
 
+        expiry_hours = _get_session_expiry()
+
         log.info(
-            "Opening LIMIT: %s %s limit:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s",
+            "Opening LIMIT: %s %s limit:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s expiry:%sh",
             coin, direction, entry_rounded, total_quantity,
-            stake, leverage, sl_rounded, tp1_rounded
+            stake, leverage, sl_rounded, tp1_rounded, expiry_hours
         )
 
         raw = await _place_with_retry(
-            symbol        = symbol,
-            side          = side,
-            order_type    = "LIMIT",
-            quantity      = total_quantity,
-            price         = entry_rounded,
+            symbol     = symbol,
+            side       = side,
+            order_type = "LIMIT",
+            quantity   = total_quantity,
+            price      = entry_rounded,
         )
 
         entry_oid = str(raw.get("orderId", ""))
 
         log.info(
-            "Limit order placed: %s %s price:%.6f qty:%s order_id:%s",
-            coin, direction, entry_rounded, total_quantity, entry_oid
+            "Limit order placed: %s %s price:%.6f qty:%s order_id:%s expiry:%sh",
+            coin, direction, entry_rounded, total_quantity, entry_oid, expiry_hours
         )
 
         from alerts.telegram import send
@@ -442,30 +463,33 @@ async def open_position(
             f"TP:      `{tp1_rounded}`\n"
             f"Stake:   `${stake:.2f}` × `{leverage}x`\n"
             f"Grade:   `{grade}` · Score `{score}`\n"
-            f"Expires: `{LIMIT_ORDER_EXPIRY_HOURS}h`"
+            f"Expires: `{expiry_hours}h` ({session or 'current session'})"
         )
 
         asyncio.create_task(
             _monitor_limit_order(
-                trade_id      = trade_id,
-                coin          = coin,
-                symbol        = symbol,
-                direction     = direction,
-                entry_oid     = entry_oid,
-                entry_rounded = entry_rounded,
-                total_quantity= total_quantity,
-                qty_step      = qty_step,
-                sl_rounded    = sl_rounded,
-                tp1_rounded   = tp1_rounded,
-                sl_side       = sl_side,
-                tp_side       = tp_side,
-                price_precision = price_precision,
-                tick_size     = tick_size,
-                stake         = stake,
-                leverage      = leverage,
-                grade         = grade,
-                score         = score,
-                sizing_result = sizing_result,
+                trade_id       = trade_id,
+                coin           = coin,
+                symbol         = symbol,
+                direction      = direction,
+                entry_oid      = entry_oid,
+                entry_rounded  = entry_rounded,
+                total_quantity = total_quantity,
+                qty_step       = qty_step,
+                sl_rounded     = sl_rounded,
+                tp1_rounded    = tp1_rounded,
+                sl_side        = sl_side,
+                tp_side        = tp_side,
+                price_precision= price_precision,
+                tick_size      = tick_size,
+                stake          = stake,
+                leverage       = leverage,
+                grade          = grade,
+                score          = score,
+                sizing_result  = sizing_result,
+                expiry_hours   = expiry_hours,
+                session        = session or "",
+                tp2            = tp2,
             )
         )
 
@@ -475,6 +499,7 @@ async def open_position(
             "order_id":    entry_oid,
             "limit_price": entry_rounded,
             "quantity":    total_quantity,
+            "expiry_hours":expiry_hours,
             "pending":     True,
         }
 
@@ -505,9 +530,12 @@ async def _monitor_limit_order(
     grade:          str,
     score:          float,
     sizing_result:  dict,
+    expiry_hours:   int,
+    session:        str = "",
+    tp2:            float | None = None,
 ) -> None:
     try:
-        filled = await _wait_for_limit_fill(symbol, entry_oid)
+        filled = await _wait_for_limit_fill(symbol, entry_oid, expiry_hours)
 
         if not filled:
             _cancel_pending_trade(trade_id)
@@ -517,13 +545,14 @@ async def _monitor_limit_order(
             await send(
                 f"{emoji} *{coin} {direction} Limit Expired*\n\n"
                 f"Price never reached `{entry_rounded}`\n"
+                f"Expired after `{expiry_hours}h` ({session or 'session'})\n"
                 f"Order cancelled — no loss."
             )
             return
 
-        fill_price = float(filled.get("avgPrice") or filled.get("price") or entry_rounded)
-        filled_qty = _round_step(float(filled.get("executedQty", total_quantity)), qty_step)
-        signed_qty = -filled_qty if direction == "SHORT" else filled_qty
+        fill_price    = float(filled.get("avgPrice") or filled.get("price") or entry_rounded)
+        filled_qty    = _round_step(float(filled.get("executedQty", total_quantity)), qty_step)
+        signed_qty    = -filled_qty if direction == "SHORT" else filled_qty
         actual_margin = round(abs(filled_qty * fill_price) / leverage, 8)
 
         log.info("Limit filled: %s %.6f qty:%s", coin, fill_price, filled_qty)
@@ -585,9 +614,9 @@ async def _monitor_limit_order(
                 entry_price = fill_price,
                 sl_price    = sl_rounded,
                 tp1_price   = tp1_rounded,
-                tp2_price   = None,
+                tp2_price   = tp2,
                 regime      = "",
-                session     = "",
+                session     = session,
                 signal_data = signal_data,
             )
         except Exception as e:

@@ -113,11 +113,13 @@ def detect(
                 wick = level - float(c["low"])
                 if wick < atr * min_wick_atr:
                     continue
+                vs = float(c["volume"]) / vol_ma
+                if vs < 1.2:
+                    continue
                 candles_ago = len(sl) - 1 - i
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
                     continue
-                vs         = float(c["volume"]) / vol_ma
                 body_below = min(float(c["open"]), float(c["close"])) < level
                 intensity  = min(10,
                     (3 if wick / atr > 0.5 else 1) +
@@ -125,6 +127,8 @@ def detect(
                     2 +
                     (2 if not body_below else 0)
                 )
+                if intensity < 6:
+                    continue
                 confirmed  = bool(float(c["close"]) > level and price > level)
                 raw_score  = rel["pts"] * (intensity / 10)
                 adj_score  = raw_score if confirmed else round(raw_score * 0.65, 2)
@@ -174,11 +178,13 @@ def detect(
                 wick = float(c["high"]) - level
                 if wick < atr * min_wick_atr:
                     continue
+                vs = float(c["volume"]) / vol_ma
+                if vs < 1.2:
+                    continue
                 candles_ago = len(sl) - 1 - i
                 rel         = relevance(candles_ago)
                 if rel["mult"] == 0:
                     continue
-                vs         = float(c["volume"]) / vol_ma
                 body_above = max(float(c["open"]), float(c["close"])) > level
                 intensity  = min(10,
                     (3 if wick / atr > 0.5 else 1) +
@@ -186,6 +192,8 @@ def detect(
                     2 +
                     (2 if not body_above else 0)
                 )
+                if intensity < 6:
+                    continue
                 confirmed  = bool(float(c["close"]) < level and price < level)
                 raw_score  = rel["pts"] * (intensity / 10)
                 adj_score  = raw_score if confirmed else round(raw_score * 0.65, 2)

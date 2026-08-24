@@ -130,8 +130,8 @@ ADAPTATION_CONFIG = {
     "hard_limits": {
         "max_risk_per_trade":    0.02,
         "max_daily_loss":        0.02,
-        "max_concurrent_trades": 3,
-        "max_leverage":          15,
+        "max_concurrent_trades": 2,
+        "max_leverage":          10,
         "min_sweep_score":       0.45,
         "min_zone_score":        0.45,
         "min_combined_score":    0.50,
@@ -144,7 +144,7 @@ ADAPTATION_CONFIG = {
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
         "sweep_max_age_hours":   {"min": 2,    "max": 6,    "current": 4},
         "base_risk_pct":         {"min": 0.005,"max": 0.015,"current": 0.010},
-        "ml_threshold":          {"min": 0.55, "max": 0.80, "current": 0.65},
+        "ml_threshold":          {"min": 0.45, "max": 0.70, "current": 0.50},
     },
     "change_rules": {
         "min_trades_before_change":        50,
@@ -163,9 +163,9 @@ ADAPTATION_CONFIG = {
         "reduce_size_below_win_rate": 0.50,
     },
     "ml_thresholds": {
-        "min_trades_for_training": 100,
-        "retrain_every_n_trades":  50,
-        "min_cv_auc":              0.60,
+        "min_trades_for_training": 50,
+        "retrain_every_n_trades":  25,
+        "min_cv_auc":              0.55,
     },
     "analyzer_schedule": {
         "run_day":    "sunday",
@@ -190,8 +190,8 @@ ADAPTATION_CONFIG = {
         "min_weight":        0.05,
         "max_weight":        0.50,
         "max_change":        0.05,
-        "min_trades":        200,
-        "min_failures":      20,
+        "min_trades":        50,
+        "min_failures":      10,
     },
     "thesis_time_limits": {
         "A+": 48.0,
@@ -336,8 +336,8 @@ class Config:
     JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
-    ML_MIN_TRADES = 100
-    ML_ENABLED    = os.getenv("ML_ENABLED", "False").lower() == "true"
+    ML_MIN_TRADES = 50
+    ML_ENABLED    = True
 
     TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
     TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
@@ -357,7 +357,7 @@ class Config:
         {"min": 0,    "max": 50,   "leverage": 5},
         {"min": 50,   "max": 200,  "leverage": 7},
         {"min": 200,  "max": 1000, "leverage": 10},
-        {"min": 1000, "max": None, "leverage": 15},
+        {"min": 1000, "max": None, "leverage": 10},
     ]
 
     B_GRADE_MARKET_SCORE_MIN = 65
@@ -399,7 +399,7 @@ class Config:
     REQUIRE_SWEEP_OR_DISPLACEMENT = True
     REQUIRE_CANDLE_CLOSE          = True
 
-    RISK_PCT_PER_TRADE = 0.02
+    RISK_PCT_PER_TRADE = 0.01
 
     SCALP_ENGINE = {
         "ema_period":                20,
@@ -520,8 +520,6 @@ class Config:
 
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
-        if self.PAPER_TRADING:
-            return ["A+", "A"]
         return ["A+", "A"]
 
     @property

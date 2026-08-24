@@ -194,7 +194,7 @@ def train_model() -> dict:
         "zero_importance_features": zero_importance_features,
         "shap_top_features":        shap_top_features,
         "classification":           report_dict,
-        "threshold":                0.65,
+        "threshold":                0.50,
     }
 
     with open(META_PATH, "w") as f:
@@ -205,7 +205,6 @@ def train_model() -> dict:
         len(X), meta["win_rate"], cv_score, precision, recall, f1,
     )
 
-    _enable_ml()
     _notify_training_complete(meta)
 
     return {
@@ -243,23 +242,14 @@ def retrain_if_needed() -> bool:
                 SignalModel.factor_scores.isnot(None),
             ).count()
         new_trades = current_count - last_samples
-        if new_trades >= 50:
-            log.info("Retraining triggered — %s new trades", new_trades)
+        if new_trades >= 25:
+            log.info("Retraining triggered — %s new trades since last train", new_trades)
             result = train_model()
             return result.get("success", False)
         return False
     except Exception as e:
         log.error("Retrain check error: %s", e)
         return False
-
-
-def _enable_ml():
-    try:
-        from config import cfg, _ensure
-        _ensure("ML_ENABLED", "true")
-        cfg.ML_ENABLED = True
-    except Exception as e:
-        log.error("Failed to enable ML: %s", e)
 
 
 def _notify_training_complete(meta: dict):
@@ -341,6 +331,6 @@ def get_validation_report() -> dict:
         "calibrated":       meta.get("calibrated", False),
         "top_features":     meta.get("top_features",     []),
         "shap_top_features":meta.get("shap_top_features",[]),
-        "threshold":        meta.get("threshold",  0.65),
+        "threshold":        meta.get("threshold",  0.50),
         "classification":   meta.get("classification",  {}),
     }

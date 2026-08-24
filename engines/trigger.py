@@ -25,6 +25,37 @@ def _near_zone(price: float, zone: dict, atr_15m: float) -> bool:
     return (zone["bottom"] - buffer) <= price <= (zone["top"] + buffer)
 
 
+def _price_in_zone(price: float, zone: dict) -> bool:
+    return zone["bottom"] <= price <= zone["top"]
+
+
+def _check_retest_quality(df: pd.DataFrame, zone: dict, direction: str) -> bool:
+    if len(df) < 3:
+        return False
+
+    is_long = direction == "LONG"
+    recent  = df.tail(6)
+
+    candle_in_zone = False
+    for _, c in recent.iterrows():
+        c_low  = float(c["low"])
+        c_high = float(c["high"])
+        c_open = float(c["open"])
+        c_close= float(c["close"])
+
+        if c_low <= zone["top"] and c_high >= zone["bottom"]:
+            candle_in_zone = True
+
+            if is_long:
+                if c_close > c_open:
+                    return True
+            else:
+                if c_close < c_open:
+                    return True
+
+    return candle_in_zone
+
+
 def _check_engulfing(df: pd.DataFrame, direction: str, zone: dict) -> dict | None:
     if len(df) < 2:
         return None
@@ -67,11 +98,11 @@ def _check_engulfing(df: pd.DataFrame, direction: str, zone: dict) -> dict | Non
             return None
 
     return {
-        "pattern":      "engulfing",
-        "body_ratio":   round(c_body / c_range, 3),
-        "entry_price":  round(c_c, 6),
-        "candle_high":  round(c_h, 6),
-        "candle_low":   round(c_l, 6),
+        "pattern":       "engulfing",
+        "body_ratio":    round(c_body / c_range, 3),
+        "entry_price":   round(c_c, 6),
+        "candle_high":   round(c_h, 6),
+        "candle_low":    round(c_l, 6),
         "pattern_score": 1.0,
     }
 
@@ -129,6 +160,10 @@ def detect(df_15m: pd.DataFrame, zone: dict, direction: str, atr_15m: float) -> 
 
     if not _near_zone(price, zone, atr_15m):
         return {"confirmed": False, "score": 0.0, "pattern": None, "reason": "price_outside_zone"}
+
+    retest_ok = _check_retest_quality(df_15m, zone, direction)
+    if not retest_ok:
+        return {"confirmed": False, "score": 0.0, "pattern": None, "reason": "retest_not_confirmed"}
 
     recent = df_15m.tail(SE["trigger_lookback"])
 

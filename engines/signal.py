@@ -48,8 +48,6 @@ def _get_total_trades() -> int:
 
 def _get_ml_probability(signal: dict) -> float | None:
     try:
-        if not cfg.ML_ENABLED:
-            return None
         from ml.predictor import predict_win_probability
         wconf = {
             "factors":      [],
@@ -60,6 +58,36 @@ def _get_ml_probability(signal: dict) -> float | None:
         return predict_win_probability(signal, wconf)
     except Exception:
         return None
+
+
+def _get_funding_rate_cached(coin: str) -> float:
+    try:
+        from redis_client import get_redis
+        r = get_redis()
+        if not r:
+            return 0.0
+        raw = r.get(f"funding:{coin}USDT")
+        if raw:
+            return float(raw)
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def _get_oi_trend(coin: str) -> str:
+    try:
+        from redis_client import get_redis
+        import json
+        r = get_redis()
+        if not r:
+            return "unknown"
+        raw = r.get(f"oi:{coin}USDT")
+        if not raw:
+            return "unknown"
+        data = json.loads(raw)
+        return data.get("trend", "unknown")
+    except Exception:
+        return "unknown"
 
 
 def _hard_filters_pass(
@@ -81,9 +109,9 @@ def _hard_filters_pass(
         record_scan(coin, direction, reason)
         return False, reason
 
-    zone_data    = zone_result.get("zone") or {}
-    touch_count  = int(zone_data.get("touch_count", 0) or 0)
-    max_touches  = SE["zone_max_touches"]
+    zone_data   = zone_result.get("zone") or {}
+    touch_count = int(zone_data.get("touch_count", 0) or 0)
+    max_touches = SE["zone_max_touches"]
 
     if touch_count > max_touches:
         reason = f"zone_too_many_touches_{touch_count}"
@@ -157,6 +185,18 @@ async def run(
         direction = ctx["direction"]
         alignment = ctx.get("alignment")
 
+        funding = _get_funding_rate_cached(coin)
+        if abs(funding) > 0.0005:
+            reason = "funding_extreme"
+            trace.stop(reason, f"Funding {funding:.4f} — extreme squeeze risk")
+            store_trace(trace)
+            record_scan(coin, direction, reason)
+            return {
+                **no_signal,
+                "reason":  reason,
+                "trace":   trace.to_dict(),
+            }
+
         sig_score           = SignalScore()
         sig_score.coin      = coin
         sig_score.direction = direction
@@ -210,8 +250,8 @@ async def run(
             }
 
         disp = sweep_result.get("displacement", {})
-        if not disp.get("found") and sweep_result["score"] < 0.60:
-            trace.stop("no_displacement", "Sweep without displacement and score below 0.60")
+        if not disp.get("found"):
+            trace.stop("no_displacement", "No displacement after sweep — institutional intent not confirmed")
             store_trace(trace)
             record_scan(coin, direction, "no_displacement")
             return {
@@ -289,6 +329,35 @@ async def run(
                 "trace":       trace.to_dict(),
             }
 
+        oi_trend = _get_oi_trend(coin)
+        is_long  = direction == "LONG"
+
+        if oi_trend != "unknown":
+            if is_long and oi_trend == "falling":
+                trace.stop("oi_divergence", "OI falling while price rising — fake move")
+                store_trace(trace)
+                record_scan(coin, direction, "oi_divergence")
+                return {
+                    **no_signal,
+                    "reason":      "oi_divergence",
+                    "sweep_found": True,
+                    "zone_found":  True,
+                    "direction":   direction,
+                    "trace":       trace.to_dict(),
+                }
+            if not is_long and oi_trend == "falling":
+                trace.stop("oi_divergence", "OI falling while price falling — fake move")
+                store_trace(trace)
+                record_scan(coin, direction, "oi_divergence")
+                return {
+                    **no_signal,
+                    "reason":      "oi_divergence",
+                    "sweep_found": True,
+                    "zone_found":  True,
+                    "direction":   direction,
+                    "trace":       trace.to_dict(),
+                }
+
         sig_score.add(
             "zone",
             zone_result["score"] * SCORE_WEIGHTS["zone"]["max"],
@@ -341,9 +410,8 @@ async def run(
         )
         trace.add_step("session", "SCORE", session_score, session_reason)
 
-        zone_data    = zone_result["zone"]
-        is_long      = direction == "LONG"
-        limit_entry  = zone_data["top"] if is_long else zone_data["bottom"]
+        zone_data   = zone_result["zone"]
+        limit_entry = zone_data["top"] if is_long else zone_data["bottom"]
 
         risk_result = risk.calculate(
             direction = direction,
@@ -382,7 +450,7 @@ async def run(
             "trigger_score": trigger_result["score"],
             "grade":         "A",
             "score":         sig_score.pct(),
-            "funding":       0,
+            "funding":       funding,
         })
 
         ml_score, ml_reason = score_ml(ml_probability, total_trades)
@@ -395,7 +463,7 @@ async def run(
         )
         trace.add_step("ml", "SCORE", ml_score, ml_reason)
 
-        context_score  = ctx.get("context_score", 0)
+        context_score   = ctx.get("context_score", 0)
         sig_score.total = round(sig_score.total + context_score, 3)
 
         pct   = sig_score.pct()
@@ -506,6 +574,7 @@ async def run(
             "weekly_bias":    alignment.get("weekly",    "NEUTRAL") if alignment else "NEUTRAL",
             "alignment_str":  alignment.get("alignment", "none")    if alignment else "none",
             "ml_probability": ml_probability,
+            "funding":        funding,
             "regime":         regime,
             "session":        session,
             "trace":          trace.to_dict(),
