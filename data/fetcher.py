@@ -69,10 +69,10 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
 
     try:
         if last_ts is None:
-            log.info(f"First fetch: {coin} {tf} — downloading {limit} candles")
+            log.info("First fetch: %s %s — downloading %s candles", coin, tf, limit)
             raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], limit=limit)
         else:
-            log.debug(f"Incremental fetch: {coin} {tf} since {last_ts}")
+            log.debug("Incremental fetch: %s %s since %s", coin, tf, last_ts)
             raw = await exchange.fetch_ohlcv(sym, TF_MAP[tf], since=last_ts, limit=100)
         _reset_api_fail()
     except Exception as e:
@@ -86,8 +86,7 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
         )
         df_new["timestamp"] = pd.to_datetime(df_new["timestamp"], unit="ms")
         df_new = df_new.set_index("timestamp")
-        if cfg.REQUIRE_CANDLE_CLOSE:
-            df_new = df_new.iloc[:-1]
+        df_new = df_new.iloc[:-1]
         save_candles(coin, tf, df_new)
 
     df = load_candles(coin, tf, limit=limit)
@@ -95,7 +94,7 @@ async def fetch_and_store(coin: str, tf: str, limit: int = None) -> pd.DataFrame
         raise Exception(f"No candle data available: {coin} {tf}")
 
     if tf == "1w" and len(df) < 200:
-        log.warning(f"Weekly candles for {coin}: {len(df)} — EMA200 needs 200+.")
+        log.warning("Weekly candles for %s: %s — EMA200 needs 200+.", coin, len(df))
 
     return df
 
@@ -114,10 +113,9 @@ async def get_ticker(coin: str) -> dict:
             if data:
                 import json
                 parsed = json.loads(data)
-                log.debug(f"Redis ticker hit: {key}")
                 return {"last": parsed["last"], "percentage": parsed["percentage"]}
     except Exception as e:
-        log.warning(f"Redis ticker read failed {coin}: {e}")
+        log.warning("Redis ticker read failed %s: %s", coin, e)
     return await exchange.fetch_ticker(f"{coin}/USDT")
 
 
@@ -129,15 +127,14 @@ async def get_funding_rate(coin: str) -> float:
             key  = f"funding:{coin}USDT"
             data = r.get(key)
             if data:
-                log.debug(f"Redis funding hit: {key}")
                 return float(data)
     except Exception as e:
-        log.warning(f"Redis funding read failed {coin}: {e}")
+        log.warning("Redis funding read failed %s: %s", coin, e)
     try:
         data = await exchange.fetch_funding_rate(f"{coin}/USDT")
         return float(data.get("fundingRate", 0))
     except Exception as e:
-        log.warning(f"Funding rate failed {coin}: {e}")
+        log.warning("Funding rate failed %s: %s", coin, e)
         return 0.0
 
 
@@ -149,15 +146,14 @@ async def get_open_interest(coin: str) -> float:
             key  = f"oi:{coin}USDT"
             data = r.get(key)
             if data:
-                log.debug(f"Redis OI hit: {key}")
                 return float(data)
     except Exception as e:
-        log.warning(f"Redis OI read failed {coin}: {e}")
+        log.warning("Redis OI read failed %s: %s", coin, e)
     try:
         data = await exchange.fetch_open_interest(f"{coin}/USDT")
         return float(data.get("openInterestAmount", 0))
     except Exception as e:
-        log.warning(f"OI failed {coin}: {e}")
+        log.warning("OI failed %s: %s", coin, e)
         return 0.0
 
 
@@ -169,21 +165,18 @@ async def get_oi_change(coin: str) -> float:
             key  = f"oi_change:{coin}USDT"
             data = r.get(key)
             if data:
-                log.debug(f"Redis OI change hit: {key}")
                 return float(data)
     except Exception as e:
-        log.warning(f"Redis OI change read failed {coin}: {e}")
+        log.warning("Redis OI change read failed %s: %s", coin, e)
     try:
-        hist = await exchange.fetch_open_interest_history(
-            f"{coin}/USDT", "1d", limit=2
-        )
+        hist = await exchange.fetch_open_interest_history(f"{coin}/USDT", "1d", limit=2)
         if len(hist) >= 2:
             cur  = float(hist[-1]["openInterestAmount"])
             prev = float(hist[-2]["openInterestAmount"])
             return ((cur - prev) / prev * 100) if prev > 0 else 0.0
         return 0.0
     except Exception as e:
-        log.warning(f"OI change failed {coin}: {e}")
+        log.warning("OI change failed %s: %s", coin, e)
         return 0.0
 
 
@@ -197,24 +190,23 @@ async def get_ls_ratio(coin: str) -> dict:
             if data:
                 import json
                 parsed = json.loads(data)
-                log.debug(f"Redis LS ratio hit: {key}")
                 return {"long": parsed["long"], "short": parsed["short"]}
     except Exception as e:
-        log.warning(f"Redis LS ratio read failed {coin}: {e}")
+        log.warning("Redis LS ratio read failed %s: %s", coin, e)
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 "https://fapi.binance.com/futures/data/globalLongShortAccountRatio",
                 params={"symbol": f"{coin}USDT", "period": "1h", "limit": 1},
-                timeout=5
+                timeout=5,
             )
             d = r.json()
             return {
-                "long":  float(d[0]["longAccount"]) * 100,
-                "short": float(d[0]["shortAccount"]) * 100
+                "long":  float(d[0]["longAccount"])  * 100,
+                "short": float(d[0]["shortAccount"]) * 100,
             }
     except Exception as e:
-        log.warning(f"LS ratio failed {coin}: {e}")
+        log.warning("LS ratio failed %s: %s", coin, e)
         return {"long": 50.0, "short": 50.0}
 
 
@@ -224,17 +216,17 @@ async def get_fear_greed() -> dict:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 "https://api.alternative.me/fng/?limit=1",
-                timeout=5
+                timeout=5,
             )
-            d = r.json()
+            d      = r.json()
             _last_fg = {
                 "value": int(d["data"][0]["value"]),
                 "label": d["data"][0]["value_classification"],
-                "stale": False
+                "stale": False,
             }
             return _last_fg
     except Exception as e:
-        log.warning(f"Fear greed failed: {e}")
+        log.warning("Fear greed failed: %s", e)
         return {**_last_fg, "stale": True}
 
 
@@ -242,10 +234,10 @@ async def get_news_filter() -> dict:
     try:
         async with httpx.AsyncClient() as client:
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            r = await client.get(
+            r     = await client.get(
                 f"https://finnhub.io/api/v1/calendar/economic"
                 f"?from={today}&token={cfg.FINNHUB_KEY}",
-                timeout=5
+                timeout=5,
             )
             events = r.json().get("economicCalendar", [])
 
@@ -279,7 +271,7 @@ async def get_news_filter() -> dict:
                     "impact":   "high",
                     "diff_min": round(diff_min),
                     "active":   is_active,
-                    "warning":  is_warning
+                    "warning":  is_warning,
                 })
             except Exception:
                 continue
@@ -289,20 +281,11 @@ async def get_news_filter() -> dict:
             "blocked":    blocked,
             "warning":    warning,
             "alerts":     alerts,
-            "finnhub_ok": True
+            "finnhub_ok": True,
         }
 
     except Exception as e:
-        log.warning(f"Finnhub failed: {e}")
-        try:
-            from alerts.telegram import send
-            await send(
-                f"⚠️ *Finnhub Unavailable*\n\n"
-                f"News filter degraded.\n"
-                f"Error: `{str(e)[:100]}`"
-            )
-        except Exception:
-            pass
+        log.warning("Finnhub failed: %s", e)
         return {"clear": True, "blocked": False, "warning": False, "alerts": [], "finnhub_ok": False}
 
 
@@ -317,7 +300,7 @@ async def get_15m_data(coin: str) -> pd.DataFrame:
         cache.set(cache_key, df, ttl=300)
         return df
     except Exception as e:
-        log.warning(f"15m fetch failed {coin}: {e}")
+        log.warning("15m fetch failed %s: %s", coin, e)
         return None
 
 
@@ -330,7 +313,7 @@ async def get_all_data(coin: str) -> dict:
             get_funding_rate(coin),
             get_open_interest(coin),
             get_oi_change(coin),
-            get_ls_ratio(coin)
+            get_ls_ratio(coin),
         )
     else:
         ticker, funding, oi, oi_chg, ls, news_filter = await asyncio.gather(
@@ -339,7 +322,7 @@ async def get_all_data(coin: str) -> dict:
             get_open_interest(coin),
             get_oi_change(coin),
             get_ls_ratio(coin),
-            get_news_filter()
+            get_news_filter(),
         )
         cache.set("news_filter", news_filter, ttl=300)
 
@@ -359,5 +342,5 @@ async def get_all_data(coin: str) -> dict:
         "short_ratio": ls["short"],
         "news_filter": news_filter,
         "klines":      klines,
-        "klines_15m":  df_15m
+        "klines_15m":  df_15m,
     }
