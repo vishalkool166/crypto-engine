@@ -254,7 +254,7 @@ def _check_below(
             continue
 
         vs = float(c["volume"]) / vol_ma
-        if vs < 1.2:
+        if vs < 0.8:
             continue
 
         candles_ago = len(sl) - 1 - i
@@ -272,7 +272,7 @@ def _check_below(
             (2 if not body_below else 0)
         )
 
-        if intensity < 6:
+        if intensity < 5:
             continue
 
         confirmed  = bool(float(c["close"]) > level and price > level)
@@ -333,7 +333,7 @@ def _check_above(
             continue
 
         vs = float(c["volume"]) / vol_ma
-        if vs < 1.2:
+        if vs < 0.8:
             continue
 
         candles_ago = len(sl) - 1 - i
@@ -351,7 +351,7 @@ def _check_above(
             (2 if not body_above else 0)
         )
 
-        if intensity < 6:
+        if intensity < 5:
             continue
 
         confirmed  = bool(float(c["close"]) < level and price < level)
