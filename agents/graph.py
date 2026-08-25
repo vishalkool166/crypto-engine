@@ -37,11 +37,10 @@ def _after_risk(state: SignalAgentState) -> str:
     return "continue"
 
 
-def _after_grade(state: SignalAgentState) -> str:
+def _after_grader(state: SignalAgentState) -> str:
     if not state.get("signal", True):
         return "end"
-    grade = state.get("grade", "F")
-    if grade == "F":
+    if state.get("grade", "F") == "F":
         return "end"
     return "continue"
 
@@ -177,8 +176,8 @@ def _finalize(state: SignalAgentState) -> SignalAgentState:
             "regime_mult":    regime_result.size_mult if regime_result else 1.0,
             "session":        session,
             "alignment":      alignment_dict,
-            "btc_score":      trend_result.btc_score  if trend_result else 0.0,
-            "htf_score":      trend_result.htf_score  if trend_result else 0.0,
+            "btc_score":      trend_result.btc_score     if trend_result else 0.0,
+            "htf_score":      trend_result.htf_score     if trend_result else 0.0,
             "context_score":  trend_result.context_score if trend_result else 0.0,
             "drawdown_pct":   sizing_result.drawdown_pct,
             "win_rate":       sizing_result.win_rate,
@@ -255,15 +254,15 @@ def _reject(state: SignalAgentState) -> SignalAgentState:
         "reason":      state.get("reason", "unknown"),
         "sweep_found": bool(ict_result and ict_result.sweep_score > 0) if ict_result else False,
         "zone_found":  bool(ict_result and ict_result.zone_score  > 0) if ict_result else False,
-        "sweep_score": ict_result.sweep_score   if ict_result else 0.0,
-        "zone_score":  ict_result.zone_score    if ict_result else 0.0,
+        "sweep_score": ict_result.sweep_score  if ict_result else 0.0,
+        "zone_score":  ict_result.zone_score   if ict_result else 0.0,
         "sweep":       sweep_dict,
         "zone":        zone_dict,
         "regime":      state.get("regime_label", ""),
         "trace": {
             "steps":     state.get("trace_steps", []),
-            "direction": state.get("direction", "NEUTRAL"),
-            "grade":     state.get("grade", "F"),
+            "direction": state.get("direction",   "NEUTRAL"),
+            "grade":     state.get("grade",       "F"),
             "score":     0,
         },
     }
@@ -280,7 +279,7 @@ def build_signal_graph() -> StateGraph:
     graph.add_node("reversion",   reversion_node)
     graph.add_node("ict",         ict_node)
     graph.add_node("risk",        risk_node)
-    graph.add_node("grade",       grade_node)
+    graph.add_node("grader",      grade_node)
     graph.add_node("ml",          ml_node)
     graph.add_node("sizing",      sizing_node)
     graph.add_node("finalize",    _finalize)
@@ -309,11 +308,11 @@ def build_signal_graph() -> StateGraph:
     graph.add_conditional_edges(
         "risk",
         _after_risk,
-        {"continue": "grade", "end": "reject"},
+        {"continue": "grader", "end": "reject"},
     )
     graph.add_conditional_edges(
-        "grade",
-        _after_grade,
+        "grader",
+        _after_grader,
         {"continue": "ml", "end": "reject"},
     )
     graph.add_conditional_edges(
