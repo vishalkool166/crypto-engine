@@ -387,7 +387,7 @@ class Config:
         "sweep_min_wick_atr":          0.25,
         "sweep_min_score":             0.45,
         "zone_min_width_atr":          0.15,
-        "zone_max_dist_pct":           1.0,
+        "zone_max_dist_pct":           4.0,
         "zone_max_touches":            2,
         "zone_min_score":              0.45,
         "trigger_min_body_ratio":      0.55,
