@@ -6,7 +6,7 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
-SE = cfg.SCALP_ENGINE
+HE = cfg.HYBRID_ENGINE
 
 
 def _key(coin: str) -> str:
@@ -14,7 +14,7 @@ def _key(coin: str) -> str:
 
 
 def _ttl() -> int:
-    return int(SE["coin_cooldown_hours"] * 2 * 3600)
+    return int(HE["coin_cooldown_hours"] * 2 * 3600)
 
 
 def get(coin: str) -> dict:
@@ -51,7 +51,7 @@ def set_in_trade(coin: str, trade_id: int, setup: dict) -> None:
 
 
 def set_cooldown(coin: str) -> None:
-    until = time.time() + SE["coin_cooldown_hours"] * 3600
+    until = time.time() + HE["coin_cooldown_hours"] * 3600
     save(coin, {"coin": coin, "status": "cooldown", "setup": None, "trade_id": None, "cooldown_until": until})
 
 

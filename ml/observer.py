@@ -56,10 +56,9 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
         atr   = d4h.get("atr",   0) or 0
         price = d4h.get("price", 1) or 1
 
-        raw["atr_pct"] = round(atr / price * 100, 4) if price > 0 else 0.0
-
-        vol_ma10 = d4h.get("vol_ma10", 0) or 0
-        cur_vol  = d4h.get("cur_vol",  0) or 0
+        raw["atr_pct"]    = round(atr / price * 100, 4) if price > 0 else 0.0
+        vol_ma10          = d4h.get("vol_ma10", 0) or 0
+        cur_vol           = d4h.get("cur_vol",  0) or 0
         raw["volume_ratio"] = round(cur_vol / max(vol_ma10, 0.001), 4) if vol_ma10 > 0 else 1.0
 
     except Exception as e:
@@ -68,40 +67,22 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
     try:
         swings = d4h.get("swings", {})
         price  = d4h.get("price", 0) or 0
+        lh     = swings.get("last_high")
+        ll     = swings.get("last_low")
+        ph     = swings.get("prev_high")
+        pl     = swings.get("prev_low")
 
-        lh = swings.get("last_high")
-        ll = swings.get("last_low")
-        ph = swings.get("prev_high")
-        pl = swings.get("prev_low")
-
-        if lh and price > 0:
-            raw["dist_to_swing_high_pct"] = round(abs(price - lh["price"]) / price * 100, 4)
-        else:
-            raw["dist_to_swing_high_pct"] = 0.0
-
-        if ll and price > 0:
-            raw["dist_to_swing_low_pct"] = round(abs(price - ll["price"]) / price * 100, 4)
-        else:
-            raw["dist_to_swing_low_pct"] = 0.0
+        raw["dist_to_swing_high_pct"] = round(abs(price - lh["price"]) / price * 100, 4) if lh and price > 0 else 0.0
+        raw["dist_to_swing_low_pct"]  = round(abs(price - ll["price"]) / price * 100, 4) if ll and price > 0 else 0.0
 
         if lh and ll and price > 0:
             swing_range = lh["price"] - ll["price"]
-            if swing_range > 0:
-                raw["pullback_depth_pct"] = round((lh["price"] - price) / swing_range * 100, 4)
-            else:
-                raw["pullback_depth_pct"] = 0.0
+            raw["pullback_depth_pct"] = round((lh["price"] - price) / swing_range * 100, 4) if swing_range > 0 else 0.0
         else:
             raw["pullback_depth_pct"] = 0.0
 
-        if lh and ph:
-            raw["higher_highs"] = 1 if lh["price"] > ph["price"] else 0
-        else:
-            raw["higher_highs"] = 0
-
-        if ll and pl:
-            raw["higher_lows"] = 1 if ll["price"] > pl["price"] else 0
-        else:
-            raw["higher_lows"] = 0
+        raw["higher_highs"] = 1 if (lh and ph and lh["price"] > ph["price"]) else 0
+        raw["higher_lows"]  = 1 if (ll and pl and ll["price"] > pl["price"]) else 0
 
     except Exception as e:
         log.warning("raw_features swing structure error: %s", e)
@@ -121,6 +102,8 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
 
     try:
         zone_data = signal.get("zone") or {}
+        if not isinstance(zone_data, dict):
+            zone_data = {}
 
         raw["ob_touch_count"]  = float(zone_data.get("touch_count",  0) or 0)
         raw["ob_distance_pct"] = float(zone_data.get("distance_pct", 0) or 0)
@@ -129,10 +112,7 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
         top    = float(zone_data.get("top",    0) or 0)
         bottom = float(zone_data.get("bottom", 0) or 0)
         atr    = d4h.get("atr", 0) or 1
-        if top > bottom and atr > 0:
-            raw["ob_width_atr"] = round((top - bottom) / atr, 4)
-        else:
-            raw["ob_width_atr"] = 0.0
+        raw["ob_width_atr"] = round((top - bottom) / atr, 4) if (top > bottom and atr > 0) else 0.0
 
     except Exception as e:
         log.warning("raw_features order block error: %s", e)
@@ -142,24 +122,12 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
         ema20 = d4h.get("ema20")
         ema50 = d4h.get("ema50")
 
-        if ema20 and price > 0:
-            raw["ema20_distance_pct"] = round((price - ema20) / price * 100, 4)
-        else:
-            raw["ema20_distance_pct"] = 0.0
-
-        if ema50 and price > 0:
-            raw["ema50_distance_pct"] = round((price - ema50) / price * 100, 4)
-        else:
-            raw["ema50_distance_pct"] = 0.0
-
-        raw["ema20_slope"] = float(d4h.get("slope20") or 0)
-        raw["ema50_slope"] = float(d4h.get("slope50") or 0)
-
-        adx = d4h.get("adx")
-        raw["adx"] = float(adx) if adx else 0.0
-
-        rsi = d4h.get("rsi")
-        raw["rsi"] = float(rsi) if rsi else 50.0
+        raw["ema20_distance_pct"] = round((price - ema20) / price * 100, 4) if (ema20 and price > 0) else 0.0
+        raw["ema50_distance_pct"] = round((price - ema50) / price * 100, 4) if (ema50 and price > 0) else 0.0
+        raw["ema20_slope"]        = float(d4h.get("slope20") or 0)
+        raw["ema50_slope"]        = float(d4h.get("slope50") or 0)
+        raw["adx"]                = float(d4h.get("adx") or 0)
+        raw["rsi"]                = float(d4h.get("rsi") or 50.0)
 
     except Exception as e:
         log.warning("raw_features trend error: %s", e)
@@ -176,7 +144,6 @@ def _extract_raw_features(d4h: dict, d1h: dict, d15m: dict, signal: dict) -> dic
             raw["btc_atr_pct"] = 0.0
             raw["btc_adx"]     = 0.0
             raw["btc_rsi"]     = 50.0
-
     except Exception as e:
         log.warning("raw_features btc context error: %s", e)
 
@@ -201,9 +168,15 @@ def capture(
         from ml.version_registry import ensure_version_exists
         version = ensure_version_exists()
 
-        sweep         = signal.get("sweep")        or {}
-        zone          = signal.get("zone")         or {}
+        HE            = cfg.HYBRID_ENGINE
+        sweep_data    = signal.get("sweep")        or {}
+        zone_data     = signal.get("zone")         or {}
         factor_scores = signal.get("factor_scores") or {}
+
+        if not isinstance(sweep_data, dict):
+            sweep_data = {}
+        if not isinstance(zone_data, dict):
+            zone_data = {}
 
         now         = datetime.now(timezone.utc)
         day_of_week = now.weekday()
@@ -236,19 +209,14 @@ def capture(
         open_trades_count = perf.get("open_trades", 0)
 
         thresholds = {
-            "sweep_min_score":       cfg.SCALP_ENGINE.get("sweep_min_score",       0.30),
-            "zone_min_score":        cfg.SCALP_ENGINE.get("zone_min_score",        0.40),
-            "grade_a_threshold":     cfg.SCALP_ENGINE.get("grade_a_threshold",     0.65),
-            "grade_aplus_threshold": cfg.SCALP_ENGINE.get("grade_aplus_threshold", 0.80),
-            "sweep_max_age_hours":   cfg.SCALP_ENGINE.get("sweep_max_age_hours",   12),
-            "base_risk_pct":         cfg.SCALP_ENGINE.get("base_risk_pct",         0.01),
+            "sweep_min_score":     HE.get("sweep_min_score",     0.45),
+            "zone_min_score":      HE.get("zone_min_score",      0.45),
+            "ict_min_score":       HE.get("ict_min_score",       55),
+            "grade_aplus":         HE.get("grade_aplus",         85),
+            "grade_a":             HE.get("grade_a",             68),
+            "sweep_max_age_hours": HE.get("sweep_max_age_hours", 24),
+            "base_risk_pct":       HE.get("base_risk_pct",       0.01),
         }
-
-        sweep_data = signal.get("sweep") or {}
-        if isinstance(sweep_data, dict) and "sweep" in sweep_data:
-            sweep_data = sweep_data["sweep"] or {}
-
-        zone_data = signal.get("zone") or {}
 
         raw_features = _extract_raw_features(d4h, d1h, d15m, signal)
 
@@ -317,8 +285,8 @@ def capture(
             db.add(snapshot)
 
         log.info(
-            "Snapshot captured: signal_id=%s coin=%s grade=%s version=%s raw_features=%s",
-            signal_id, signal.get("coin"), signal.get("grade"), version, len(raw_features)
+            "Snapshot captured: signal_id=%s coin=%s grade=%s version=%s",
+            signal_id, signal.get("coin"), signal.get("grade"), version,
         )
         return True
 
@@ -394,11 +362,11 @@ def _get_performance_state() -> dict:
                 date.today().year,
                 date.today().month,
                 date.today().day,
-                tzinfo=timezone.utc
+                tzinfo=timezone.utc,
             )
             today_trades = db.query(TradeModel).filter(
                 TradeModel.closed_at >= today_start,
-                TradeModel.outcome.in_(["win", "loss"])
+                TradeModel.outcome.in_(["win", "loss"]),
             ).all()
 
         daily_pnl = sum(float(t.net_pnl or t.pnl or 0) for t in today_trades)
@@ -415,14 +383,14 @@ def _get_performance_state() -> dict:
 
         wins     = sum(1 for t in closed if t.outcome == "win")
         win_rate = wins / len(closed)
+        streak   = 0
+        s_type   = None
 
-        streak      = 0
-        streak_type = None
         for t in closed:
             if streak == 0:
-                streak_type = t.outcome
-                streak      = 1
-            elif t.outcome == streak_type:
+                s_type = t.outcome
+                streak = 1
+            elif t.outcome == s_type:
                 streak += 1
             else:
                 break
@@ -432,7 +400,7 @@ def _get_performance_state() -> dict:
             with SL() as db2:
                 all_closed = db2.query(TradeModel).filter(
                     TradeModel.outcome.in_(["win", "loss"]),
-                    TradeModel.net_pnl.isnot(None)
+                    TradeModel.net_pnl.isnot(None),
                 ).order_by(TradeModel.opened_at.asc()).all()
         except Exception:
             all_closed = []
@@ -451,7 +419,7 @@ def _get_performance_state() -> dict:
             "drawdown":    round(drawdown, 4),
             "win_rate":    round(win_rate, 4),
             "streak":      streak,
-            "streak_type": streak_type,
+            "streak_type": s_type,
             "daily_pnl":   round(daily_pnl, 4),
             "open_trades": active,
         }

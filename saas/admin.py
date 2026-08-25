@@ -39,19 +39,14 @@ def _auth(request: Request):
 async def admin_overview(request: Request):
     _auth(request)
     try:
+        from config import cfg
         user_stats = get_user_stats()
 
         with get_session() as db:
             total_signals = db.query(SignalModel).count()
-            pending       = db.query(SignalModel).filter(
-                SignalModel.outcome == "pending"
-            ).count()
-            wins          = db.query(SignalModel).filter(
-                SignalModel.outcome == "win"
-            ).count()
-            losses        = db.query(SignalModel).filter(
-                SignalModel.outcome == "loss"
-            ).count()
+            pending       = db.query(SignalModel).filter(SignalModel.outcome == "pending").count()
+            wins          = db.query(SignalModel).filter(SignalModel.outcome == "win").count()
+            losses        = db.query(SignalModel).filter(SignalModel.outcome == "loss").count()
             closed        = wins + losses
             win_rate      = round(wins / closed * 100, 1) if closed > 0 else 0
 
@@ -62,10 +57,7 @@ async def admin_overview(request: Request):
                 SignalModel.outcome.in_(["win", "loss"])
             ).scalar() or 0.0
 
-            recent_users = db.query(User).order_by(
-                User.created_at.desc()
-            ).limit(5).all()
-
+            recent_users = db.query(User).order_by(User.created_at.desc()).limit(5).all()
             recent_users_list = [{
                 "id":         u.id,
                 "email":      u.email,
@@ -74,10 +66,7 @@ async def admin_overview(request: Request):
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             } for u in recent_users]
 
-            recent_audit = db.query(AuditLog).order_by(
-                AuditLog.timestamp.desc()
-            ).limit(10).all()
-
+            recent_audit = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(10).all()
             recent_audit_list = [{
                 "id":        a.id,
                 "action":    a.action,
@@ -104,23 +93,18 @@ async def admin_overview(request: Request):
         })
 
     except Exception as e:
-        log.error(f"admin_overview error: {e}")
+        log.error("admin_overview error: %s", e)
         raise HTTPException(500, str(e))
 
 
 @router.get("/admin/users")
-async def admin_users(
-    request: Request,
-    limit:   int = 50,
-    offset:  int = 0,
-    tier:    str = None,
-):
+async def admin_users(request: Request, limit: int = 50, offset: int = 0, tier: str = None):
     _auth(request)
     try:
         result = list_all_users(limit=limit, offset=offset, tier=tier)
         return JSONResponse(content=result)
     except Exception as e:
-        log.error(f"admin_users error: {e}")
+        log.error("admin_users error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -133,10 +117,7 @@ async def admin_get_user(request: Request, user_id: int):
             raise HTTPException(404, "User not found")
 
         with get_session() as db:
-            sub = db.query(Subscription).filter(
-                Subscription.user_id == user_id
-            ).first()
-
+            sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
             sub_data = None
             if sub:
                 sub_data = {
@@ -147,17 +128,12 @@ async def admin_get_user(request: Request, user_id: int):
                 }
 
         sessions = get_user_sessions(user_id)
-
-        return JSONResponse(content={
-            "user":         user,
-            "subscription": sub_data,
-            "sessions":     sessions,
-        })
+        return JSONResponse(content={"user": user, "subscription": sub_data, "sessions": sessions})
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"admin_get_user error: {e}")
+        log.error("admin_get_user error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -173,7 +149,6 @@ async def admin_update_tier(request: Request, user_id: int):
             raise HTTPException(400, f"Invalid tier. Must be one of: {valid_tiers}")
 
         result = update_user_tier(user_id, new_tier)
-
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Update failed"))
 
@@ -185,13 +160,12 @@ async def admin_update_tier(request: Request, user_id: int):
             ip      = request.client.host if request.client else "",
             success = True,
         )
-
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"admin_update_tier error: {e}")
+        log.error("admin_update_tier error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -200,26 +174,19 @@ async def admin_deactivate_user(request: Request, user_id: int):
     _auth(request)
     try:
         admin_revoke_all_user_sessions(user_id)
-
         result = deactivate_user(user_id)
         if not result.get("success"):
             raise HTTPException(400, result.get("reason", "Failed"))
 
         from auth import audit
-        audit(
-            action  = "admin_deactivate_user",
-            source  = "admin",
-            detail  = f"user:{user_id}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("admin_deactivate_user", "admin", f"user:{user_id}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"admin_deactivate_user error: {e}")
+        log.error("admin_deactivate_user error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -232,35 +199,25 @@ async def admin_reactivate_user(request: Request, user_id: int):
             raise HTTPException(400, result.get("reason", "Failed"))
 
         from auth import audit
-        audit(
-            action  = "admin_reactivate_user",
-            source  = "admin",
-            detail  = f"user:{user_id}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("admin_reactivate_user", "admin", f"user:{user_id}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"admin_reactivate_user error: {e}")
+        log.error("admin_reactivate_user error: %s", e)
         raise HTTPException(500, str(e))
 
 
 @router.get("/admin/sessions")
-async def admin_get_sessions(
-    request: Request,
-    user_id: int = None,
-    limit:   int = 100,
-):
+async def admin_get_sessions(request: Request, user_id: int = None, limit: int = 100):
     _auth(request)
     try:
         sessions = get_all_sessions_admin(user_id=user_id, limit=limit)
         return JSONResponse(content={"sessions": sessions})
     except Exception as e:
-        log.error(f"admin_get_sessions error: {e}")
+        log.error("admin_get_sessions error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -273,20 +230,14 @@ async def admin_revoke_session_endpoint(request: Request, session_id: str):
             raise HTTPException(400, result.get("reason", "Failed"))
 
         from auth import audit
-        audit(
-            action  = "admin_revoke_session",
-            source  = "admin",
-            detail  = f"session:{session_id[:16]}...",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("admin_revoke_session", "admin", f"session:{session_id[:16]}...",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"admin_revoke_session error: {e}")
+        log.error("admin_revoke_session error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -295,20 +246,13 @@ async def admin_revoke_all_sessions(request: Request, user_id: int):
     _auth(request)
     try:
         result = admin_revoke_all_user_sessions(user_id)
-
         from auth import audit
-        audit(
-            action  = "admin_revoke_all_sessions",
-            source  = "admin",
-            detail  = f"user:{user_id} revoked:{result.get('revoked', 0)}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("admin_revoke_all_sessions", "admin",
+              f"user:{user_id} revoked:{result.get('revoked', 0)}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content=result)
-
     except Exception as e:
-        log.error(f"admin_revoke_all_sessions error: {e}")
+        log.error("admin_revoke_all_sessions error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -319,7 +263,7 @@ async def admin_cleanup_sessions(request: Request):
         count = cleanup_expired_sessions()
         return JSONResponse(content={"success": True, "cleaned": count})
     except Exception as e:
-        log.error(f"admin_cleanup_sessions error: {e}")
+        log.error("admin_cleanup_sessions error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -327,6 +271,7 @@ async def admin_cleanup_sessions(request: Request):
 async def admin_stats(request: Request):
     _auth(request)
     try:
+        from config import cfg, TIER_PRICING
         user_stats = get_user_stats()
 
         with get_session() as db:
@@ -334,13 +279,8 @@ async def admin_stats(request: Request):
             week  = now - timedelta(days=7)
             month = now - timedelta(days=30)
 
-            signups_week = db.query(User).filter(
-                User.created_at >= week
-            ).count()
-
-            signups_month = db.query(User).filter(
-                User.created_at >= month
-            ).count()
+            signups_week  = db.query(User).filter(User.created_at >= week).count()
+            signups_month = db.query(User).filter(User.created_at >= month).count()
 
             active_subs = db.query(Subscription).filter(
                 Subscription.status == "active",
@@ -350,16 +290,13 @@ async def admin_stats(request: Request):
             pro_count   = db.query(User).filter(User.tier == TIER_PRO).count()
             elite_count = db.query(User).filter(User.tier == TIER_ELITE).count()
 
-            from config import TIER_PRICING
             mrr = (
                 pro_count   * TIER_PRICING[TIER_PRO]["price_monthly"] +
                 elite_count * TIER_PRICING[TIER_ELITE]["price_monthly"]
             )
 
             from database import UserSession
-            active_sessions = db.query(UserSession).filter(
-                UserSession.is_active == True
-            ).count()
+            active_sessions = db.query(UserSession).filter(UserSession.is_active == True).count()
 
         return JSONResponse(content={
             "users":           user_stats,
@@ -374,8 +311,9 @@ async def admin_stats(request: Request):
         })
 
     except Exception as e:
-        log.error(f"admin_stats error: {e}")
+        log.error("admin_stats error: %s", e)
         raise HTTPException(500, str(e))
+
 
 @router.get("/admin/demo/stats")
 async def admin_demo_stats(request: Request):
@@ -383,7 +321,6 @@ async def admin_demo_stats(request: Request):
     try:
         from database import DemoVisit
         from sqlalchemy import func
-        from datetime import datetime, timezone, timedelta
 
         now   = datetime.now(timezone.utc)
         day   = now - timedelta(days=1)
@@ -409,13 +346,10 @@ async def admin_demo_stats(request: Request):
                 func.avg(DemoVisit.duration_secs)
             ).filter(
                 DemoVisit.duration_secs != None,
-                DemoVisit.duration_secs > 0
+                DemoVisit.duration_secs > 0,
             ).scalar() or 0
 
-            recent = db.query(DemoVisit).order_by(
-                DemoVisit.visited_at.desc()
-            ).limit(20).all()
-
+            recent = db.query(DemoVisit).order_by(DemoVisit.visited_at.desc()).limit(20).all()
             recent_list = [{
                 "id":            v.id,
                 "visited_at":    v.visited_at.isoformat() if v.visited_at else None,
@@ -430,30 +364,27 @@ async def admin_demo_stats(request: Request):
         conversion_rate = round(cta_clicks / total * 100, 1) if total > 0 else 0
 
         return JSONResponse(content={
-            "total":            total,
-            "last_24h":         last_24h,
-            "last_7d":          last_7d,
-            "last_30d":         last_30d,
-            "cta_clicks":       cta_clicks,
-            "conversion_rate":  conversion_rate,
-            "mobile_count":     mobile_count,
-            "desktop_count":    total - mobile_count,
+            "total":             total,
+            "last_24h":          last_24h,
+            "last_7d":           last_7d,
+            "last_30d":          last_30d,
+            "cta_clicks":        cta_clicks,
+            "conversion_rate":   conversion_rate,
+            "mobile_count":      mobile_count,
+            "desktop_count":     total - mobile_count,
             "avg_duration_secs": round(float(avg_duration)),
-            "tier_breakdown":   tier_breakdown,
-            "recent":           recent_list,
-            "timestamp":        now.isoformat(),
+            "tier_breakdown":    tier_breakdown,
+            "recent":            recent_list,
+            "timestamp":         now.isoformat(),
         })
 
     except Exception as e:
-        log.error(f"admin_demo_stats error: {e}")
+        log.error("admin_demo_stats error: %s", e)
         raise HTTPException(500, str(e))
 
+
 @router.get("/admin/audit")
-async def admin_audit(
-    request: Request,
-    limit:   int = 100,
-    offset:  int = 0,
-):
+async def admin_audit(request: Request, limit: int = 100, offset: int = 0):
     _auth(request)
     try:
         with get_session() as db:
@@ -475,7 +406,7 @@ async def admin_audit(
         return JSONResponse(content={"total": total, "logs": result})
 
     except Exception as e:
-        log.error(f"admin_audit error: {e}")
+        log.error("admin_audit error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -499,11 +430,9 @@ async def admin_system(request: Request):
         system = await loop.run_in_executor(None, _system_stats)
         return JSONResponse(content=system)
     except Exception as e:
-        log.error(f"admin_system error: {e}")
+        log.error("admin_system error: %s", e)
         raise HTTPException(500, str(e))
 
-
-# ─── ML / Adaptation Routes ──────────────────────────────────────────────────
 
 @router.get("/admin/adaptations/history")
 async def adaptation_history(request: Request, limit: int = 20):
@@ -512,7 +441,7 @@ async def adaptation_history(request: Request, limit: int = 20):
         from ml.adapter import get_adaptation_history
         return JSONResponse(content=get_adaptation_history(limit=limit))
     except Exception as e:
-        log.error(f"adaptation_history error: {e}")
+        log.error("adaptation_history error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -523,7 +452,7 @@ async def adaptation_pending(request: Request):
         from ml.analyzer import get_pending_recommendations
         return JSONResponse(content=get_pending_recommendations())
     except Exception as e:
-        log.error(f"adaptation_pending error: {e}")
+        log.error("adaptation_pending error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -537,20 +466,14 @@ async def adaptation_approve(request: Request, rec_id: int):
             raise HTTPException(404, f"Recommendation {rec_id} not found")
 
         from auth import audit
-        audit(
-            action  = "adaptation_approve",
-            source  = "dashboard",
-            detail  = f"rec_id:{rec_id}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("adaptation_approve", "dashboard", f"rec_id:{rec_id}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content={"success": True, "rec_id": rec_id})
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"adaptation_approve error: {e}")
+        log.error("adaptation_approve error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -567,20 +490,14 @@ async def adaptation_reject(request: Request, rec_id: int):
             raise HTTPException(404, f"Recommendation {rec_id} not found")
 
         from auth import audit
-        audit(
-            action  = "adaptation_reject",
-            source  = "dashboard",
-            detail  = f"rec_id:{rec_id} reason:{reason}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("adaptation_reject", "dashboard", f"rec_id:{rec_id} reason:{reason}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content={"success": True, "rec_id": rec_id})
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"adaptation_reject error: {e}")
+        log.error("adaptation_reject error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -601,20 +518,14 @@ async def adaptation_rollback(request: Request):
             raise HTTPException(400, result.get("reason", "Rollback failed"))
 
         from auth import audit
-        audit(
-            action  = "adaptation_rollback",
-            source  = "dashboard",
-            detail  = f"parameter:{parameter}",
-            ip      = request.client.host if request.client else "",
-            success = True,
-        )
-
+        audit("adaptation_rollback", "dashboard", f"parameter:{parameter}",
+              ip=request.client.host if request.client else "", success=True)
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        log.error(f"adaptation_rollback error: {e}")
+        log.error("adaptation_rollback error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -625,7 +536,7 @@ async def adaptation_checkpoints(request: Request):
         from ml.rollback_manager import get_pending_checkpoints
         return JSONResponse(content=get_pending_checkpoints())
     except Exception as e:
-        log.error(f"adaptation_checkpoints error: {e}")
+        log.error("adaptation_checkpoints error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -636,7 +547,7 @@ async def adaptation_versions(request: Request, limit: int = 10):
         from ml.version_registry import get_version_history
         return JSONResponse(content=get_version_history(limit=limit))
     except Exception as e:
-        log.error(f"adaptation_versions error: {e}")
+        log.error("adaptation_versions error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -647,7 +558,7 @@ async def adaptation_perf_version(request: Request):
         from ml.version_registry import get_performance_by_version
         return JSONResponse(content=get_performance_by_version())
     except Exception as e:
-        log.error(f"adaptation_perf_version error: {e}")
+        log.error("adaptation_perf_version error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -656,7 +567,7 @@ async def adaptation_perf_regime(request: Request):
     _auth(request)
     try:
         from ml.regime_classifier import get_regime_performance
-        data = get_regime_performance(min_trades=1)
+        data   = get_regime_performance(min_trades=1)
         result = []
         for regime, stats in data.items():
             result.append({
@@ -671,7 +582,7 @@ async def adaptation_perf_regime(request: Request):
         result.sort(key=lambda x: x["win_rate"], reverse=True)
         return JSONResponse(content=result)
     except Exception as e:
-        log.error(f"adaptation_perf_regime error: {e}")
+        log.error("adaptation_perf_regime error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -680,32 +591,37 @@ async def adaptation_parameters(request: Request):
     _auth(request)
     try:
         from config import cfg
-        SE = cfg.SCALP_ENGINE
+        HE = cfg.HYBRID_ENGINE
         return JSONResponse(content={
-            "sweep_min_score":       SE.get("sweep_min_score",       0.30),
-            "zone_min_score":        SE.get("zone_min_score",        0.40),
-            "grade_a_threshold":     SE.get("grade_a_threshold",     0.65),
-            "grade_aplus_threshold": SE.get("grade_aplus_threshold", 0.80),
-            "grade_b_threshold":     SE.get("grade_b_threshold",     0.50),
-            "sweep_max_age_hours":   SE.get("sweep_max_age_hours",   12),
-            "sweep_min_wick_atr":    SE.get("sweep_min_wick_atr",    0.2),
-            "zone_min_width_atr":    SE.get("zone_min_width_atr",    0.15),
-            "zone_max_dist_pct":     SE.get("zone_max_dist_pct",     4.0),
-            "zone_max_touches":      SE.get("zone_max_touches",      2),
-            "trigger_min_score":     SE.get("trigger_min_score",     0.6),
-            "base_risk_pct":         SE.get("base_risk_pct",         0.01),
-            "max_risk_pct":          SE.get("max_risk_pct",          0.02),
-            "min_risk_pct":          SE.get("min_risk_pct",          0.005),
-            "daily_loss_limit_pct":  SE.get("daily_loss_limit_pct",  0.02),
-            "max_open_trades":       SE.get("max_open_trades",       3),
-            "max_leverage":          SE.get("max_leverage",          15),
-            "tp1_min_rr":            SE.get("tp1_min_rr",            1.5),
-            "tp2_min_rr":            SE.get("tp2_min_rr",            2.5),
+            "sweep_min_score":       HE.get("sweep_min_score",       0.45),
+            "zone_min_score":        HE.get("zone_min_score",        0.45),
+            "ict_min_score":         HE.get("ict_min_score",         55),
+            "grade_aplus":           HE.get("grade_aplus",           85),
+            "grade_a":               HE.get("grade_a",               68),
+            "grade_b":               HE.get("grade_b",               52),
+            "sweep_max_age_hours":   HE.get("sweep_max_age_hours",   24),
+            "sweep_min_wick_atr":    HE.get("sweep_min_wick_atr",    1.5),
+            "zone_min_width_atr":    HE.get("zone_min_width_atr",    0.15),
+            "zone_max_dist_pct":     HE.get("zone_max_dist_pct",     1.0),
+            "zone_max_touches":      HE.get("zone_max_touches",      2),
+            "trigger_min_score":     HE.get("trigger_min_score",     0.75),
+            "base_risk_pct":         HE.get("base_risk_pct",         0.01),
+            "max_risk_pct":          HE.get("max_risk_pct",          0.02),
+            "min_risk_pct":          HE.get("min_risk_pct",          0.005),
+            "daily_loss_limit_pct":  HE.get("daily_loss_limit_pct",  0.02),
+            "max_open_trades":       HE.get("max_open_trades",       2),
+            "max_leverage":          HE.get("max_leverage",          10),
+            "tp1_min_rr":            HE.get("tp1_min_rr",            2.0),
+            "tp2_min_rr":            HE.get("tp2_min_rr",            3.5),
+            "regime_adx_trending":   HE.get("regime_adx_trending",  25),
+            "regime_adx_ranging":    HE.get("regime_adx_ranging",   15),
+            "reversion_rsi_long_max":HE.get("reversion_rsi_long_max", 52),
+            "ml_threshold":          HE.get("ml_threshold",          0.50),
             "system_version":        cfg.SYSTEM_VERSION,
             "adaptation_frozen":     cfg.ADAPTATION_FROZEN,
             "ml_enabled":            cfg.ML_ENABLED,
             "trading_mode":          cfg.TRADING_MODE,
         })
     except Exception as e:
-        log.error(f"adaptation_parameters error: {e}")
+        log.error("adaptation_parameters error: %s", e)
         raise HTTPException(500, str(e))

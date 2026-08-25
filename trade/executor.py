@@ -17,6 +17,8 @@ from database import get_session, Trade as TradeModel, Signal as SignalModel
 
 log = logging.getLogger(__name__)
 
+HE = cfg.HYBRID_ENGINE
+
 CLOSE_REASONS = {
     "tp1_hit":                "Take profit reached",
     "tp2_hit":                "Take profit 2 reached",
@@ -36,13 +38,12 @@ SESSION_EXPIRY_HOURS = {
     "Asia":              1,
 }
 
-DEFAULT_EXPIRY_HOURS = cfg.SCALP_ENGINE.get("limit_order_expiry_hours", 4)
+DEFAULT_EXPIRY_HOURS = HE.get("limit_order_expiry_hours", 4)
 
 
 def _get_session_expiry() -> int:
-    from datetime import datetime, timezone
     hour = datetime.now(timezone.utc).hour
-    if 8  <= hour < 13: session = "London"
+    if 8  <= hour < 13:  session = "London"
     elif 13 <= hour < 17: session = "London/NY Overlap"
     elif 17 <= hour < 21: session = "New York"
     elif 0  <= hour < 8:  session = "Asia"
@@ -372,7 +373,6 @@ async def open_position(
     side     = "SELL" if is_short else "BUY"
     sl_side  = "BUY"  if is_short else "SELL"
     tp_side  = "BUY"  if is_short else "SELL"
-
     trade_id = 0
 
     try:
@@ -434,22 +434,21 @@ async def open_position(
         log.info(
             "Opening LIMIT: %s %s limit:%.6f qty:%s stake:%.2f lev:%dx sl:%s tp:%s expiry:%sh",
             coin, direction, entry_rounded, total_quantity,
-            stake, leverage, sl_rounded, tp1_rounded, expiry_hours
+            stake, leverage, sl_rounded, tp1_rounded, expiry_hours,
         )
 
-        raw = await _place_with_retry(
+        raw       = await _place_with_retry(
             symbol     = symbol,
             side       = side,
             order_type = "LIMIT",
             quantity   = total_quantity,
             price      = entry_rounded,
         )
-
         entry_oid = str(raw.get("orderId", ""))
 
         log.info(
             "Limit order placed: %s %s price:%.6f qty:%s order_id:%s expiry:%sh",
-            coin, direction, entry_rounded, total_quantity, entry_oid, expiry_hours
+            coin, direction, entry_rounded, total_quantity, entry_oid, expiry_hours,
         )
 
         from alerts.telegram import send
@@ -468,39 +467,39 @@ async def open_position(
 
         asyncio.create_task(
             _monitor_limit_order(
-                trade_id       = trade_id,
-                coin           = coin,
-                symbol         = symbol,
-                direction      = direction,
-                entry_oid      = entry_oid,
-                entry_rounded  = entry_rounded,
-                total_quantity = total_quantity,
-                qty_step       = qty_step,
-                sl_rounded     = sl_rounded,
-                tp1_rounded    = tp1_rounded,
-                sl_side        = sl_side,
-                tp_side        = tp_side,
-                price_precision= price_precision,
-                tick_size      = tick_size,
-                stake          = stake,
-                leverage       = leverage,
-                grade          = grade,
-                score          = score,
-                sizing_result  = sizing_result,
-                expiry_hours   = expiry_hours,
-                session        = session or "",
-                tp2            = tp2,
+                trade_id        = trade_id,
+                coin            = coin,
+                symbol          = symbol,
+                direction       = direction,
+                entry_oid       = entry_oid,
+                entry_rounded   = entry_rounded,
+                total_quantity  = total_quantity,
+                qty_step        = qty_step,
+                sl_rounded      = sl_rounded,
+                tp1_rounded     = tp1_rounded,
+                sl_side         = sl_side,
+                tp_side         = tp_side,
+                price_precision = price_precision,
+                tick_size       = tick_size,
+                stake           = stake,
+                leverage        = leverage,
+                grade           = grade,
+                score           = score,
+                sizing_result   = sizing_result,
+                expiry_hours    = expiry_hours,
+                session         = session or "",
+                tp2             = tp2,
             )
         )
 
         return {
-            "success":     True,
-            "trade_id":    trade_id,
-            "order_id":    entry_oid,
-            "limit_price": entry_rounded,
-            "quantity":    total_quantity,
-            "expiry_hours":expiry_hours,
-            "pending":     True,
+            "success":      True,
+            "trade_id":     trade_id,
+            "order_id":     entry_oid,
+            "limit_price":  entry_rounded,
+            "quantity":     total_quantity,
+            "expiry_hours": expiry_hours,
+            "pending":      True,
         }
 
     except Exception as e:
@@ -564,22 +563,8 @@ async def _monitor_limit_order(
         entry_role   = comm.get("role", "maker")
         slippage_pct = abs(fill_price - entry_rounded) / entry_rounded * 100 if entry_rounded > 0 else 0.0
 
-        sl_oid = await _place_sl(
-            symbol          = symbol,
-            side            = sl_side,
-            sl              = sl_rounded,
-            price_precision = price_precision,
-            tick_size       = tick_size,
-        )
-
-        tp1_oid = await _place_tp(
-            symbol          = symbol,
-            side            = tp_side,
-            tp              = tp1_rounded,
-            price_precision = price_precision,
-            tick_size       = tick_size,
-            label           = "TP1",
-        )
+        sl_oid  = await _place_sl(symbol, sl_side, sl_rounded, price_precision, tick_size)
+        tp1_oid = await _place_tp(symbol, tp_side, tp1_rounded, price_precision, tick_size, "TP1")
 
         _activate_trade(
             trade_id           = trade_id,
@@ -736,9 +721,9 @@ async def close_position(
         qty        = abs(float(position.get("positionAmt", 0)))
         close_side = "BUY" if is_short else "SELL"
 
-        prec      = await get_symbol_precision(symbol)
-        qty_step  = prec["step_size"]
-        qty       = _round_step(qty, qty_step)
+        prec     = await get_symbol_precision(symbol)
+        qty_step = prec["step_size"]
+        qty      = _round_step(qty, qty_step)
 
         raw        = await _place_with_retry(
             symbol      = symbol,
@@ -752,15 +737,15 @@ async def close_position(
         exit_price = float(filled.get("avgPrice") or filled.get("price") or 0)
 
         await asyncio.sleep(2.0)
-        comm            = await _get_commission(symbol, close_oid)
-        exit_fee        = float(comm.get("commission",   0))
-        exit_role       = comm.get("role", "taker")
-        realized_pnl    = float(comm.get("realized_pnl", 0))
-        entry_fee       = _get_field(trade_id, "entry_commission")
-        total_fee       = round(entry_fee + exit_fee, 8)
+        comm         = await _get_commission(symbol, close_oid)
+        exit_fee     = float(comm.get("commission",   0))
+        exit_role    = comm.get("role", "taker")
+        realized_pnl = float(comm.get("realized_pnl", 0))
+        entry_fee    = _get_field(trade_id, "entry_commission")
+        total_fee    = round(entry_fee + exit_fee, 8)
 
-        position_amt    = _get_field(trade_id, "position_size")
-        entry_price     = _get_field(trade_id, "entry_price")
+        position_amt = _get_field(trade_id, "position_size")
+        entry_price  = _get_field(trade_id, "entry_price")
 
         net_pnl = (
             round(realized_pnl - total_fee, 8) if realized_pnl != 0
@@ -774,14 +759,14 @@ async def close_position(
         )
 
         _mark_closed(
-            trade_id          = trade_id,
-            exit_price        = exit_price,
-            pnl               = net_pnl,
-            reason            = reason,
-            exit_commission   = exit_fee,
-            exit_role         = exit_role,
-            total_commission  = total_fee,
-            realized_pnl      = realized_pnl,
+            trade_id         = trade_id,
+            exit_price       = exit_price,
+            pnl              = net_pnl,
+            reason           = reason,
+            exit_commission  = exit_fee,
+            exit_role        = exit_role,
+            total_commission = total_fee,
+            realized_pnl     = realized_pnl,
         )
 
         try:
@@ -833,7 +818,7 @@ def has_open_trade(coin: str) -> bool:
         with get_session() as db:
             return db.query(TradeModel).filter(
                 TradeModel.coin      == coin,
-                TradeModel.is_active == True
+                TradeModel.is_active == True,
             ).first() is not None
     except Exception:
         return False
