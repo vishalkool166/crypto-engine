@@ -616,12 +616,20 @@ async def macro_events(request: Request):
         return JSONResponse(content=[])
 
 
+_backtest_lock: dict = {}
+
+
 @router.get("/backtest/{coin}")
 async def backtest(request: Request, coin: str):
     _auth(request)
     coin = coin.upper()
     if coin not in cfg.COINS:
         raise HTTPException(400, f"{coin} not supported")
+
+    if _backtest_lock.get(coin):
+        return JSONResponse(content={"error": f"Backtest already running for {coin}"}, status_code=429)
+
+    _backtest_lock[coin] = True
     try:
         loop   = asyncio.get_running_loop()
         result = await asyncio.wait_for(
@@ -638,29 +646,39 @@ async def backtest(request: Request, coin: str):
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
+    finally:
+        _backtest_lock[coin] = False
 
 
 @router.get("/backtest/all/run")
 async def backtest_all(request: Request):
     _auth(request)
+
+    if _backtest_lock.get("__all__"):
+        return JSONResponse(content={"error": "Backtest already running"}, status_code=429)
+
+    _backtest_lock["__all__"] = True
     loop    = asyncio.get_running_loop()
     results = []
-    for coin in cfg.COINS:
-        try:
-            r = await asyncio.wait_for(
-                loop.run_in_executor(None, lambda c=coin: run_backtest(coin=c, capital=1000, leverage=10)),
-                timeout=120.0,
-            )
-            if "error" not in r:
-                results.append(r)
-        except Exception as e:
-            log.error("Backtest error %s: %s", coin, e)
-    results.sort(key=lambda x: x.get("win_rate", 0), reverse=True)
-    return JSONResponse(content=make_serializable({
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "count":     len(results),
-        "results":   results,
-    }))
+    try:
+        for coin in cfg.COINS:
+            try:
+                r = await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda c=coin: run_backtest(coin=c, capital=1000, leverage=10)),
+                    timeout=120.0,
+                )
+                if "error" not in r:
+                    results.append(r)
+            except Exception as e:
+                log.error("Backtest error %s: %s", coin, e)
+        results.sort(key=lambda x: x.get("win_rate", 0), reverse=True)
+        return JSONResponse(content=make_serializable({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "count":     len(results),
+            "results":   results,
+        }))
+    finally:
+        _backtest_lock["__all__"] = False
 
 
 @router.get("/backtest/history/all")

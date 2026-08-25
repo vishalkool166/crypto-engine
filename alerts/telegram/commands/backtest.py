@@ -6,8 +6,17 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
+_backtest_running = False
+
 
 async def cmd_backtest(coin: str) -> None:
+    global _backtest_running
+
+    if _backtest_running:
+        await send(f"⏳ Backtest already running — please wait.")
+        return
+
+    _backtest_running = True
     from backtest.engine import run_backtest
     await send(f"⏳ Running backtest for `{coin}`...")
     try:
@@ -22,8 +31,15 @@ async def cmd_backtest(coin: str) -> None:
         if "error" in result:
             await send(f"❌ Backtest failed: `{result['error']}`")
             return
+
         bg = result.get("by_grade", {})
         pb = result.get("phase_breakdown", {})
+        wf = result.get("walk_forward", {})
+
+        train = wf.get("train", {})
+        test  = wf.get("test",  {})
+        deg   = wf.get("oos_degradation", 0)
+
         await send(
             f"📊 *Backtest — {coin}USDT*\n\n"
             f"Period: `{result.get('period_start')} → {result.get('period_end')}`\n\n"
@@ -32,7 +48,13 @@ async def cmd_backtest(coin: str) -> None:
             f"WR: `{result.get('win_rate', 0)}%` · "
             f"PnL: `${result.get('total_pnl', 0)}`\n"
             f"Max DD: `{result.get('max_drawdown', 0)}%` · "
-            f"TP1 hit: `{pb.get('tp1_hit_rate', 0)}%`\n\n"
+            f"PF: `{result.get('profit_factor', 0)}`\n\n"
+            f"*Walk-Forward:*\n"
+            f"Train: `{train.get('period','')}` → "
+            f"`{train.get('trades',0)}` trades `{train.get('win_rate',0)}%` WR\n"
+            f"Test:  `{test.get('period','')}` → "
+            f"`{test.get('trades',0)}` trades `{test.get('win_rate',0)}%` WR\n"
+            f"OOS degradation: `{deg}%`\n\n"
             f"A+: `{bg.get('A+', {}).get('win_rate', 0)}% WR` · "
             f"`{bg.get('A+', {}).get('trades', 0)} trades`\n"
             f"A:  `{bg.get('A',  {}).get('win_rate', 0)}% WR` · "
@@ -42,13 +64,14 @@ async def cmd_backtest(coin: str) -> None:
         await send("❌ Backtest timed out after 120s")
     except Exception as e:
         await send(f"❌ Backtest error: `{e}`")
+    finally:
+        _backtest_running = False
 
 
 async def cmd_backfill(coin: str | None = None) -> None:
     from backfill import (
         run_backfill, run_backfill_single,
-        get_candle_summary, purge_disabled_coins,
-        TARGET_CANDLES, TIMEFRAMES
+        get_candle_summary, TARGET_CANDLES, TIMEFRAMES
     )
 
     if coin:
@@ -91,7 +114,6 @@ async def cmd_candle_status() -> None:
         lines    = [f"📊 *Candle Status*\n"]
         complete = 0
         total    = 0
-        warnings = []
 
         for coin in cfg.COINS[:15]:
             coin_data = summary.get(coin, {})
@@ -103,7 +125,6 @@ async def cmd_candle_status() -> None:
                 data  = coin_data.get(tf, {})
                 count = data.get("count", 0)
                 tgt   = data.get("target", 0)
-                pct   = data.get("pct", 0)
 
                 if tf == "1w" and count < 200:
                     tf_parts.append(f"{tf}:⚠️{count}")
