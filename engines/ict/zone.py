@@ -113,9 +113,9 @@ def _find_ob_zone(
             touch_count = ob.get("touch_count", 0)
             touch_mult  = (
                 1.0  if touch_count == 0 else
-                0.75 if touch_count == 1 else
-                0.50 if touch_count == 2 else
-                0.30
+                0.85 if touch_count == 1 else
+                0.70 if touch_count == 2 else
+                0.50
             )
 
             score = round(_width_score(width, atr_1h) * touch_mult, 3)

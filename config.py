@@ -389,7 +389,7 @@ class Config:
         "zone_min_width_atr":          0.15,
         "zone_max_dist_pct":           4.0,
         "zone_max_touches":            2,
-        "zone_min_score":              0.45,
+        "zone_min_score":              0.25,
         "trigger_min_body_ratio":      0.55,
         "trigger_min_wick_ratio":      0.55,
         "trigger_min_score":           0.75,
