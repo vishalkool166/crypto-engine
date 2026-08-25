@@ -77,6 +77,7 @@ async def register_webhook() -> None:
                 json    = {
                     "url":          f"{cfg.DOMAIN}/webhook/telegram",
                     "secret_token": cfg.WEBHOOK_SECRET,
+                    "drop_pending_updates": True,
                 },
                 timeout = 10,
             )
