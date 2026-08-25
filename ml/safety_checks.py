@@ -1,14 +1,14 @@
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from config import cfg, ADAPTATION_CONFIG
 
 log = logging.getLogger(__name__)
 
-PILLAR_MIN_WEIGHT = 0.05
-PILLAR_MAX_WEIGHT = 0.50
-PILLAR_MAX_CHANGE = 0.05
-PILLAR_MIN_TRADES = 200
-PILLAR_MIN_FAILURES = 20
+PILLAR_MIN_WEIGHT  = 0.05
+PILLAR_MAX_WEIGHT  = 0.50
+PILLAR_MAX_CHANGE  = 0.05
+PILLAR_MIN_TRADES  = 200
+PILLAR_MIN_FAILURES= 20
 
 
 def check_all(parameter: str, current_value: float, proposed_value: float) -> dict:
@@ -64,7 +64,7 @@ def _check_frozen() -> dict:
         return {
             "pass":   False,
             "name":   "frozen_check",
-            "reason": "Adaptations are frozen — use /unfreeze to resume"
+            "reason": "Adaptations are frozen — use /unfreeze to resume",
         }
     return {"pass": True, "name": "frozen_check", "reason": ""}
 
@@ -73,13 +73,13 @@ def _check_hard_limits(parameter: str, proposed_value: float) -> dict:
     hard = ADAPTATION_CONFIG["hard_limits"]
 
     limit_map = {
-        "sweep_min_score":    ("min_sweep_score",    ">="),
-        "zone_min_score":     ("min_zone_score",     ">="),
-        "grade_a_threshold":  ("min_combined_score", ">="),
-        "sweep_max_age_hours":("max_sweep_age_hours","<="),
-        "base_risk_pct":      ("max_risk_per_trade", "<="),
-        "max_open_trades":    ("max_concurrent_trades", "<="),
-        "max_leverage":       ("max_leverage",       "<="),
+        "sweep_min_score":   ("min_sweep_score",       ">="),
+        "zone_min_score":    ("min_zone_score",        ">="),
+        "grade_a":           ("min_combined_score",    ">="),
+        "sweep_max_age_hours":("max_sweep_age_hours",  "<="),
+        "base_risk_pct":     ("max_risk_per_trade",    "<="),
+        "max_open_trades":   ("max_concurrent_trades", "<="),
+        "max_leverage":      ("max_leverage",          "<="),
     }
 
     if parameter not in limit_map:
@@ -95,14 +95,14 @@ def _check_hard_limits(parameter: str, proposed_value: float) -> dict:
         return {
             "pass":   False,
             "name":   "hard_limit_check",
-            "reason": f"{parameter} cannot go below hard limit {limit_value} (proposed {proposed_value})"
+            "reason": f"{parameter} cannot go below hard limit {limit_value} (proposed {proposed_value})",
         }
 
     if operator == "<=" and proposed_value > limit_value:
         return {
             "pass":   False,
             "name":   "hard_limit_check",
-            "reason": f"{parameter} cannot exceed hard limit {limit_value} (proposed {proposed_value})"
+            "reason": f"{parameter} cannot exceed hard limit {limit_value} (proposed {proposed_value})",
         }
 
     return {"pass": True, "name": "hard_limit_check", "reason": ""}
@@ -122,14 +122,14 @@ def _check_soft_limits(parameter: str, proposed_value: float) -> dict:
         return {
             "pass":   False,
             "name":   "soft_limit_check",
-            "reason": f"{parameter} below soft floor {lo} (proposed {proposed_value})"
+            "reason": f"{parameter} below soft floor {lo} (proposed {proposed_value})",
         }
 
     if proposed_value > hi:
         return {
             "pass":   False,
             "name":   "soft_limit_check",
-            "reason": f"{parameter} above soft ceiling {hi} (proposed {proposed_value})"
+            "reason": f"{parameter} above soft ceiling {hi} (proposed {proposed_value})",
         }
 
     return {"pass": True, "name": "soft_limit_check", "reason": ""}
@@ -151,7 +151,7 @@ def _check_change_magnitude(parameter: str, current_value: float, proposed_value
             "reason": (
                 f"{parameter} change of {actual_change*100:.1f}% exceeds "
                 f"max {max_change*100:.0f}% per cycle"
-            )
+            ),
         }
 
     return {"pass": True, "name": "magnitude_check", "reason": ""}
@@ -185,7 +185,7 @@ def _check_time_since_last_change(parameter: str) -> dict:
                     "reason": (
                         f"{parameter} changed {days_since}d ago — "
                         f"minimum {min_days}d between changes"
-                    )
+                    ),
                 }
 
         return {"pass": True, "name": "time_check", "reason": ""}
@@ -215,7 +215,7 @@ def _check_monthly_change_count() -> dict:
             return {
                 "pass":   False,
                 "name":   "monthly_limit_check",
-                "reason": f"Monthly change limit reached ({count}/{max_month} this month)"
+                "reason": f"Monthly change limit reached ({count}/{max_month} this month)",
             }
 
         return {"pass": True, "name": "monthly_limit_check", "reason": ""}
@@ -240,7 +240,7 @@ def _check_min_trades() -> dict:
             return {
                 "pass":   False,
                 "name":   "min_trades_check",
-                "reason": f"Only {count} closed trades — need {min_trades} before adapting"
+                "reason": f"Only {count} closed trades — need {min_trades} before adapting",
             }
 
         return {"pass": True, "name": "min_trades_check", "reason": ""}
@@ -257,7 +257,7 @@ def _check_drawdown_state() -> dict:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.net_pnl.isnot(None)
+                TradeModel.net_pnl.isnot(None),
             ).order_by(TradeModel.opened_at.asc()).all()
 
         if not closed:
@@ -279,7 +279,7 @@ def _check_drawdown_state() -> dict:
                 "reason": (
                     f"Current drawdown {drawdown*100:.1f}% exceeds 15% — "
                     f"no parameter changes during significant drawdown"
-                )
+                ),
             }
 
         return {"pass": True, "name": "drawdown_check", "reason": ""}
@@ -294,13 +294,13 @@ def _check_pillar_weight_bounds(pillar: str, new_weight: float) -> dict:
         return {
             "pass":   False,
             "name":   "pillar_bounds_check",
-            "reason": f"Pillar {pillar} weight {new_weight:.3f} below minimum {PILLAR_MIN_WEIGHT}"
+            "reason": f"Pillar {pillar} weight {new_weight:.3f} below minimum {PILLAR_MIN_WEIGHT}",
         }
     if new_weight > PILLAR_MAX_WEIGHT:
         return {
             "pass":   False,
             "name":   "pillar_bounds_check",
-            "reason": f"Pillar {pillar} weight {new_weight:.3f} above maximum {PILLAR_MAX_WEIGHT}"
+            "reason": f"Pillar {pillar} weight {new_weight:.3f} above maximum {PILLAR_MAX_WEIGHT}",
         }
     return {"pass": True, "name": "pillar_bounds_check", "reason": ""}
 
@@ -318,7 +318,7 @@ def _check_pillar_weight_magnitude(
             "reason": (
                 f"Pillar {pillar} weight change {change:.3f} exceeds "
                 f"max {PILLAR_MAX_CHANGE:.3f} per cycle"
-            )
+            ),
         }
     return {"pass": True, "name": "pillar_magnitude_check", "reason": ""}
 
@@ -338,7 +338,7 @@ def _check_pillar_min_trades() -> dict:
                 "reason": (
                     f"Only {count} closed trades — need {PILLAR_MIN_TRADES} "
                     f"before changing pillar weights"
-                )
+                ),
             }
 
         return {"pass": True, "name": "pillar_min_trades_check", "reason": ""}
@@ -352,8 +352,6 @@ def _check_pillar_min_failures(pillar: str) -> dict:
     try:
         from database import SessionLocal, ThesisSnapshot
 
-        valid_key = f"{pillar}_valid"
-
         with SessionLocal() as db:
             total = db.query(ThesisSnapshot).filter(
                 ThesisSnapshot.outcome.isnot(None)
@@ -363,7 +361,7 @@ def _check_pillar_min_failures(pillar: str) -> dict:
                 return {
                     "pass":   False,
                     "name":   "pillar_failures_check",
-                    "reason": f"No thesis snapshots with outcomes yet"
+                    "reason": "No thesis snapshots with outcomes yet",
                 }
 
         from database import SessionLocal as SL
@@ -384,7 +382,7 @@ def _check_pillar_min_failures(pillar: str) -> dict:
                 "reason": (
                     f"Pillar {pillar} only has {failure_count} failure events — "
                     f"need {PILLAR_MIN_FAILURES} for reliable analysis"
-                )
+                ),
             }
 
         return {"pass": True, "name": "pillar_failures_check", "reason": ""}
@@ -402,11 +400,10 @@ def _check_pillar_weight_sum(
     try:
         from ml.pillar_analyzer import get_current_weights, PILLAR_NAMES
 
-        current_weights = get_current_weights()
-        simulated       = dict(current_weights)
+        current_weights   = get_current_weights()
+        simulated         = dict(current_weights)
         simulated[pillar] = new_weight
-
-        total = sum(simulated.values())
+        total             = sum(simulated.values())
 
         if total < 0.80 or total > 1.20:
             return {
@@ -415,7 +412,7 @@ def _check_pillar_weight_sum(
                 "reason": (
                     f"Pillar weights would sum to {total:.3f} — "
                     f"must be between 0.80 and 1.20 (auto-normalized)"
-                )
+                ),
             }
 
         return {"pass": True, "name": "pillar_sum_check", "reason": ""}
@@ -426,11 +423,11 @@ def _check_pillar_weight_sum(
 
 
 def check_win_rate_improvement(
-    parameter:        str,
-    current_value:    float,
-    proposed_value:   float,
-    current_wr:       float,
-    proposed_wr:      float,
+    parameter:      str,
+    current_value:  float,
+    proposed_value: float,
+    current_wr:     float,
+    proposed_wr:    float,
 ) -> dict:
     rules       = ADAPTATION_CONFIG["change_rules"]
     min_improve = rules["min_win_rate_improvement"]
@@ -443,7 +440,7 @@ def check_win_rate_improvement(
                 f"{parameter}: proposed WR {proposed_wr*100:.1f}% vs "
                 f"current {current_wr*100:.1f}% — "
                 f"improvement {improvement*100:.1f}% below minimum {min_improve*100:.0f}%"
-            )
+            ),
         }
 
     return {
@@ -463,7 +460,7 @@ def check_drawdown_impact(
             "reason": (
                 f"Proposed change increases max drawdown from "
                 f"{current_max_dd*100:.1f}% to {proposed_max_dd*100:.1f}%"
-            )
+            ),
         }
     return {"pass": True, "reason": ""}
 
@@ -488,20 +485,19 @@ def get_safety_summary() -> dict:
                 TradeModel.outcome.in_(["win", "loss"])
             ).count()
 
-        rules = ADAPTATION_CONFIG["change_rules"]
-
+        rules        = ADAPTATION_CONFIG["change_rules"]
         pillar_ready = total_trades >= PILLAR_MIN_TRADES
 
         return {
-            "frozen":                cfg.ADAPTATION_FROZEN,
-            "changes_this_month":    changes_this_month,
-            "max_changes_month":     rules["max_parameter_changes_per_month"],
-            "total_trades":          total_trades,
-            "min_trades_required":   rules["min_trades_before_change"],
-            "ready_to_adapt":        total_trades >= rules["min_trades_before_change"],
-            "pillar_min_trades":     PILLAR_MIN_TRADES,
-            "pillar_ready":          pillar_ready,
-            "require_approval":      rules["require_human_approval"],
+            "frozen":               cfg.ADAPTATION_FROZEN,
+            "changes_this_month":   changes_this_month,
+            "max_changes_month":    rules["max_parameter_changes_per_month"],
+            "total_trades":         total_trades,
+            "min_trades_required":  rules["min_trades_before_change"],
+            "ready_to_adapt":       total_trades >= rules["min_trades_before_change"],
+            "pillar_min_trades":    PILLAR_MIN_TRADES,
+            "pillar_ready":         pillar_ready,
+            "require_approval":     rules["require_human_approval"],
         }
 
     except Exception as e:

@@ -9,21 +9,24 @@ class SignalAgentState(TypedDict):
     df_15m:          object
     df_1d:           object
     df_1w:           object
-    direction:       str
-    atr_4h:          float
-    atr_1h:          float
-    atr_15m:         float
     d4h:             dict
     d1h:             dict
     d15m:            dict
-    regime:          str
+    atr_4h:          float
+    atr_1h:          float
+    atr_15m:         float
+    regime_result:   object
+    trend_result:    object
+    reversion_result:object
+    ict_result:      object
+    risk_result:     object
+    sizing_result:   object
+    direction:       str
+    regime_label:    str
+    regime_mult:     float
+    trend_strength:  float
+    reversion_open:  bool
     session:         str
-    ctx:             dict
-    sweep_result:    dict
-    zone_result:     dict
-    trigger_result:  dict
-    risk_result:     dict
-    sizing_result:   dict
     score:           float
     grade:           str
     ml_probability:  Optional[float]

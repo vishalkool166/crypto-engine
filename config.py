@@ -142,7 +142,7 @@ ADAPTATION_CONFIG = {
         "zone_min_score":        {"min": 0.45, "max": 0.70, "current": 0.45},
         "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
         "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
-        "sweep_max_age_hours":   {"min": 2,    "max": 24,    "current": 24},
+        "sweep_max_age_hours":   {"min": 2,    "max": 24,   "current": 24},
         "base_risk_pct":         {"min": 0.005,"max": 0.015,"current": 0.010},
         "ml_threshold":          {"min": 0.45, "max": 0.70, "current": 0.50},
     },
@@ -178,7 +178,6 @@ ADAPTATION_CONFIG = {
         "run_minute": 0,
     },
     "rollback_check_hour": 6,
-
     "pillar_weights": {
         "sweep":         0.25,
         "zone":          0.25,
@@ -187,11 +186,11 @@ ADAPTATION_CONFIG = {
         "regime":        0.15,
     },
     "pillar_limits": {
-        "min_weight":        0.05,
-        "max_weight":        0.50,
-        "max_change":        0.05,
-        "min_trades":        50,
-        "min_failures":      10,
+        "min_weight":  0.05,
+        "max_weight":  0.50,
+        "max_change":  0.05,
+        "min_trades":  50,
+        "min_failures":10,
     },
     "thesis_time_limits": {
         "A+": 48.0,
@@ -240,6 +239,15 @@ REJECTION_STATS_CONFIG = {
     "daily_ttl_days": 90,
 }
 
+HYBRID_SCORE_WEIGHTS = {
+    "regime":      0.10,
+    "trend":       0.20,
+    "reversion":   0.15,
+    "ict":         0.35,
+    "btc":         0.12,
+    "session":     0.08,
+}
+
 SCORE_THRESHOLDS = {
     "trending": {
         "aplus": 85,
@@ -269,23 +277,23 @@ SCORE_THRESHOLDS = {
 }
 
 BTC_CONTEXT_SCORES = {
-    "strongly_aligned":   10,
-    "aligned":             7,
-    "neutral":             5,
-    "weakly_opposing":     0,
-    "opposing":           -4,
-    "strongly_opposing":  -8,
+    "strongly_aligned":     10,
+    "aligned":               7,
+    "neutral":               5,
+    "weakly_opposing":       0,
+    "opposing":             -4,
+    "strongly_opposing":    -8,
     "adx_strong_threshold": 30,
     "adx_moderate_threshold": 25,
-    "adx_panic_threshold": 35,
+    "adx_panic_threshold":  35,
 }
 
 HTF_ALIGNMENT_SCORES = {
-    "both_aligned":    12,
-    "one_aligned":      7,
-    "both_neutral":     4,
-    "one_opposing":    -5,
-    "both_opposing":  -10,
+    "both_aligned":   12,
+    "one_aligned":     7,
+    "both_neutral":    4,
+    "one_opposing":   -5,
+    "both_opposing": -10,
 }
 
 
@@ -360,103 +368,58 @@ class Config:
         {"min": 1000, "max": None, "leverage": 10},
     ]
 
-    B_GRADE_MARKET_SCORE_MIN = 65
-    B_GRADE_BTC_SCORE_MIN    = 4
-    B_GRADE_ENTRY_SCORE_MIN  = 50
-
-    GRADE_APLUS = 85
-    GRADE_A     = 68
-    GRADE_B     = 52
-    GRADE_C     = 38
-
-    SESSION_HARD_FILTER = True
-
-    MIN_WEEKLY_CANDLES = 200
-    MIN_DAILY_CANDLES  = 200
-    MIN_4H_CANDLES     = 200
-
-    WEIGHTS = {
-        "liquidity_sweep":     12,
-        "retest_confirmation": 12,
-        "displacement":        11,
-        "market_regime":       10,
-        "weekly_filter":       10,
-        "market_structure":     9,
-        "session_timing":       8,
-        "btc_alignment":        8,
-        "oi_behavior":          7,
-        "volume_expansion":     7,
-        "funding_extreme":      6,
-        "rsi_divergence":       4,
-        "atr_volatility":       3,
-        "rsi_context":          2,
-        "macd_histogram":       1,
-        "order_blocks":         4,
-    }
-
-    MAX_WEIGHT = sum(WEIGHTS.values())
-
-    REQUIRE_SWEEP_OR_DISPLACEMENT = True
-    REQUIRE_CANDLE_CLOSE          = True
-
-    RISK_PCT_PER_TRADE = 0.01
-
-    SCALP_ENGINE = {
-        "ema_period":                20,
-        "ema_buffer_atr_mult":       0.1,
-
-        "sweep_max_age_hours":       24,
-        "sweep_min_wick_atr":        1.5,
-        "sweep_min_score":           0.45,
-
-        "zone_min_width_atr":        0.15,
-        "zone_max_dist_atr":         4.0,
-        "zone_max_touches":          1,
-        "zone_min_score":            0.45,
-        "zone_max_dist_pct":         1.0,
-
-        "trigger_min_body_ratio":    0.55,
-        "trigger_min_wick_ratio":    0.55,
-        "trigger_min_score":         0.75,
-        "trigger_lookback":          6,
-
-        "sl_buffer_atr_mult":        1.0,
-        "sl_min_pct":                0.50,
-        "sl_max_pct":                4.0,
-
-        "tp1_min_rr":                2.0,
-        "tp2_min_rr":                3.5,
-
-        "time_stop_hours":           6,
-        "close_before_asia":         True,
-        "tp1_close_pct":             0.65,
-        "tp2_close_pct":             0.35,
-        "time_stop_after_tp1_hours": 2,
-
-        "base_risk_pct":             0.01,
-        "max_risk_pct":              0.015,
-        "min_risk_pct":              0.005,
-        "daily_loss_limit_pct":      0.02,
-        "max_open_trades":           2,
-        "max_same_direction":        1,
-        "max_leverage":              10,
-
-        "coin_cooldown_hours":       4,
-
-        "grade_aplus_threshold":     0.80,
-        "grade_a_threshold":         0.65,
-        "grade_b_threshold":         0.58,
-
-        "grade_aplus_size_mult":     1.3,
-        "grade_a_size_mult":         1.0,
-        "grade_b_size_mult":         0.7,
-
-        "kline_trigger_tf":          "1h",
-
-        "entry_order_type":          "LIMIT",
-        "limit_order_expiry_hours":  4,
-
-        "min_adx":                   15,
+    HYBRID_ENGINE = {
+        "regime_adx_trending":        25,
+        "regime_adx_ranging":         15,
+        "regime_size_trending":        1.2,
+        "regime_size_ranging":         0.8,
+        "regime_size_choppy":          0.5,
+        "regime_size_volatile":        0.3,
+        "trend_ema_buffer_atr_mult":   0.1,
+        "trend_min_adx":               20,
+        "reversion_rsi_long_max":      52,
+        "reversion_rsi_short_min":     48,
+        "reversion_rsi_extreme_long":  38,
+        "reversion_rsi_extreme_short": 62,
+        "reversion_bb_touch":          True,
+        "ict_min_score":               55,
+        "sweep_max_age_hours":         24,
+        "sweep_min_wick_atr":          1.5,
+        "sweep_min_score":             0.45,
+        "zone_min_width_atr":          0.15,
+        "zone_max_dist_pct":           1.0,
+        "zone_max_touches":            2,
+        "zone_min_score":              0.45,
+        "trigger_min_body_ratio":      0.55,
+        "trigger_min_wick_ratio":      0.55,
+        "trigger_min_score":           0.75,
+        "trigger_lookback":            6,
+        "sl_buffer_atr_mult":          1.0,
+        "sl_min_pct":                  0.50,
+        "sl_max_pct":                  4.0,
+        "tp1_min_rr":                  2.0,
+        "tp2_min_rr":                  3.5,
+        "time_stop_hours":             6,
+        "tp1_close_pct":               0.65,
+        "tp2_close_pct":               0.35,
+        "base_risk_pct":               0.01,
+        "max_risk_pct":                0.02,
+        "min_risk_pct":                0.005,
+        "daily_loss_limit_pct":        0.02,
+        "max_open_trades":             2,
+        "max_same_direction":          1,
+        "max_leverage":                10,
+        "coin_cooldown_hours":         4,
+        "grade_aplus":                 85,
+        "grade_a":                     68,
+        "grade_b":                     52,
+        "grade_aplus_size_mult":       1.3,
+        "grade_a_size_mult":           1.0,
+        "grade_b_size_mult":           0.7,
+        "entry_order_type":            "LIMIT",
+        "limit_order_expiry_hours":    4,
+        "ml_threshold":                0.50,
+        "funding_extreme_threshold":   0.0005,
     }
 
     THESIS_TIME_LIMITS = {
@@ -511,12 +474,33 @@ class Config:
 
     CAPITAL = float(os.getenv("CAPITAL", "1000"))
 
-    RS_CACHE_TTL        = RS_CONFIG["cache_ttl_seconds"]
-    RS_HIGH_TIER_PCT    = RS_CONFIG["high_tier_pct"]
-    RS_MEDIUM_TIER_PCT  = RS_CONFIG["medium_tier_pct"]
+    RS_CACHE_TTL       = RS_CONFIG["cache_ttl_seconds"]
+    RS_HIGH_TIER_PCT   = RS_CONFIG["high_tier_pct"]
+    RS_MEDIUM_TIER_PCT = RS_CONFIG["medium_tier_pct"]
 
-    TRACE_MAX_PER_COIN  = DECISION_TRACE_CONFIG["max_traces_per_coin"]
-    TRACE_REDIS_TTL     = DECISION_TRACE_CONFIG["redis_ttl_seconds"]
+    TRACE_MAX_PER_COIN = DECISION_TRACE_CONFIG["max_traces_per_coin"]
+    TRACE_REDIS_TTL    = DECISION_TRACE_CONFIG["redis_ttl_seconds"]
+
+    WEIGHTS = {
+        "liquidity_sweep":     12,
+        "retest_confirmation": 12,
+        "displacement":        11,
+        "market_regime":       10,
+        "weekly_filter":       10,
+        "market_structure":     9,
+        "session_timing":       8,
+        "btc_alignment":        8,
+        "oi_behavior":          7,
+        "volume_expansion":     7,
+        "funding_extreme":      6,
+        "rsi_divergence":       4,
+        "atr_volatility":       3,
+        "rsi_context":          2,
+        "macd_histogram":       1,
+        "order_blocks":         4,
+    }
+
+    MAX_WEIGHT = sum(WEIGHTS.values())
 
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
@@ -567,9 +551,9 @@ class Config:
         self.SYSTEM_VERSION = version
         _ensure("SYSTEM_VERSION", version)
 
-    def update_scalp_parameter(self, key: str, value) -> None:
-        if key in self.SCALP_ENGINE:
-            self.SCALP_ENGINE[key] = value
+    def update_hybrid_parameter(self, key: str, value) -> None:
+        if key in self.HYBRID_ENGINE:
+            self.HYBRID_ENGINE[key] = value
 
     def update_thesis_time_limit(self, grade: str, hours: float) -> None:
         if grade in self.THESIS_TIME_LIMITS:
@@ -630,6 +614,9 @@ class Config:
 
     def get_rs_config(self) -> dict:
         return dict(RS_CONFIG)
+
+    def get_hybrid_config(self) -> dict:
+        return dict(self.HYBRID_ENGINE)
 
 
 def _bootstrap_secrets() -> None:

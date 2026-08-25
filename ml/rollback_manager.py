@@ -39,7 +39,7 @@ def create_checkpoint(
 
         log.info(
             "Checkpoint created: id=%s param=%s review_at=%s trades trigger_wr=%.3f",
-            checkpoint_id, parameter, review_trades, trigger_wr
+            checkpoint_id, parameter, review_trades, trigger_wr,
         )
         return checkpoint_id
 
@@ -61,7 +61,6 @@ def check_all_pending() -> list:
         for checkpoint in pending:
             if current_total < checkpoint.review_at_trade_count:
                 continue
-
             result = _evaluate_checkpoint(checkpoint, current_total)
             results.append(result)
 
@@ -168,9 +167,9 @@ def manual_rollback(parameter: str, reason: str = "manual") -> dict:
                     AdaptationLog.id == log_id
                 ).first()
                 if log_entry:
-                    log_entry.rolled_back    = True
-                    log_entry.rolled_back_at = datetime.now(timezone.utc)
-                    log_entry.rollback_reason= reason
+                    log_entry.rolled_back     = True
+                    log_entry.rolled_back_at  = datetime.now(timezone.utc)
+                    log_entry.rollback_reason = reason
 
         return {
             "success":   success,
@@ -192,13 +191,13 @@ def _apply_rollback(
     reason:    str,
 ) -> bool:
     try:
-        SE = cfg.SCALP_ENGINE
+        HE = cfg.HYBRID_ENGINE
 
-        if parameter in SE:
-            SE[parameter] = old_value
+        if parameter in HE:
+            HE[parameter] = old_value
             log.info("Rollback applied: %s %s → %s", parameter, new_value, old_value)
         else:
-            log.error("Rollback failed: %s not in SCALP_ENGINE", parameter)
+            log.error("Rollback failed: %s not in HYBRID_ENGINE", parameter)
             return False
 
         from ml.version_registry import create_new_version
@@ -237,13 +236,13 @@ def get_rollback_history(limit: int = 20) -> list:
             ).order_by(AdaptationLog.rolled_back_at.desc()).limit(limit).all()
 
             return [{
-                "id":            r.id,
-                "parameter":     r.parameter,
-                "old_value":     r.old_value,
-                "new_value":     r.new_value,
-                "applied_at":    r.applied_at.isoformat()    if r.applied_at    else None,
-                "rolled_back_at":r.rolled_back_at.isoformat() if r.rolled_back_at else None,
-                "reason":        r.rollback_reason,
+                "id":             r.id,
+                "parameter":      r.parameter,
+                "old_value":      r.old_value,
+                "new_value":      r.new_value,
+                "applied_at":     r.applied_at.isoformat()     if r.applied_at     else None,
+                "rolled_back_at": r.rolled_back_at.isoformat() if r.rolled_back_at else None,
+                "reason":         r.rollback_reason,
             } for r in rows]
 
     except Exception as e:
@@ -261,16 +260,16 @@ def get_pending_checkpoints() -> list:
             current_total = _get_total_trades()
 
             return [{
-                "id":                   r.id,
-                "parameter":            r.parameter,
-                "old_value":            r.old_value,
-                "new_value":            r.new_value,
-                "baseline_win_rate":    round(r.baseline_win_rate * 100, 1),
-                "rollback_trigger_wr":  round(r.rollback_trigger_wr * 100, 1),
-                "review_at_trade_count":r.review_at_trade_count,
-                "current_trade_count":  current_total,
-                "trades_remaining":     max(0, r.review_at_trade_count - current_total),
-                "created_at":           r.created_at.isoformat() if r.created_at else None,
+                "id":                    r.id,
+                "parameter":             r.parameter,
+                "old_value":             r.old_value,
+                "new_value":             r.new_value,
+                "baseline_win_rate":     round(r.baseline_win_rate * 100, 1),
+                "rollback_trigger_wr":   round(r.rollback_trigger_wr * 100, 1),
+                "review_at_trade_count": r.review_at_trade_count,
+                "current_trade_count":   current_total,
+                "trades_remaining":      max(0, r.review_at_trade_count - current_total),
+                "created_at":            r.created_at.isoformat() if r.created_at else None,
             } for r in rows]
 
     except Exception as e:
@@ -296,9 +295,7 @@ def _get_trades_since(baseline_count: int) -> list:
             all_closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"])
             ).order_by(TradeModel.opened_at.asc()).all()
-
         return all_closed[baseline_count:]
-
     except Exception as e:
         log.error("_get_trades_since: %s", e)
         return []

@@ -5,66 +5,76 @@ log = logging.getLogger(__name__)
 
 
 def risk_node(state: SignalAgentState) -> SignalAgentState:
-    coin           = state["coin"]
-    direction      = state["direction"]
-    d4h            = state["d4h"]
-    d1h            = state["d1h"]
-    atr_15m        = state["atr_15m"]
-    sweep_result   = state["sweep_result"]
-    zone_result    = state["zone_result"]
-    trigger_result = state["trigger_result"]
+    coin       = state["coin"]
+    direction  = state["direction"]
+    d4h        = state["d4h"]
+    d1h        = state["d1h"]
+    atr_15m    = state["atr_15m"]
+    ict_result = state["ict_result"]
 
     try:
-        sweep_data = sweep_result.get("sweep") or {}
-        zone_data  = zone_result.get("zone")   or {}
-        entry      = trigger_result.get("entry_price") or d4h.get("price", 0)
+        sweep = ict_result.sweep if ict_result else None
+        zone  = ict_result.zone  if ict_result else None
 
-        from engines.risk import calculate
+        entry = float(ict_result.entry_price) if ict_result and ict_result.entry_price else 0.0
+
+        if not entry:
+            if zone:
+                is_long = direction == "LONG"
+                entry   = float(zone.top) if is_long else float(zone.bottom)
+            else:
+                entry = float(d4h.get("price") or 0)
+
+        from engines.risk.calculator import calculate
         risk_result = calculate(
             direction = direction,
             entry     = entry,
-            sweep     = sweep_data,
-            zone      = zone_data,
-            trigger   = trigger_result,
+            sweep     = sweep,
+            zone      = zone,
+            ict       = ict_result.trigger if ict_result else None,
             atr_15m   = atr_15m,
             d1h       = d1h,
             d4h       = d4h,
         )
+
         state["risk_result"] = risk_result
 
-        passed = risk_result["valid"]
+        passed = risk_result.valid
 
-        step = {
+        state["trace_steps"].append({
             "node":      "risk",
             "passed":    passed,
-            "valid":     risk_result["valid"],
-            "sl":        risk_result.get("sl",      0),
-            "tp1":       risk_result.get("tp1",     0),
-            "tp2":       risk_result.get("tp2"),
-            "sl_pct":    risk_result.get("sl_pct",  0),
-            "rr1":       risk_result.get("rr1",     0),
-            "rr2":       risk_result.get("rr2"),
-            "sl_reason": risk_result.get("sl_reason", ""),
-            "reason":    risk_result.get("reason",  "") if not passed else "",
-        }
-        state["trace_steps"].append(step)
+            "entry":     risk_result.entry,
+            "sl":        risk_result.sl,
+            "tp1":       risk_result.tp1,
+            "tp2":       risk_result.tp2,
+            "sl_pct":    risk_result.sl_pct,
+            "rr1":       risk_result.rr1,
+            "rr2":       risk_result.rr2,
+            "sl_reason": risk_result.sl_reason,
+            "reason":    risk_result.reason if not passed else "",
+        })
 
         if not passed:
             state["signal"] = False
-            state["reason"] = f"risk_invalid:{risk_result.get('reason', '')}"
+            state["reason"] = f"risk_invalid:{risk_result.reason}"
+
+            from data.rejection_stats import record_scan
+            record_scan(coin, direction, f"risk_{risk_result.reason}")
 
         log.debug(
-            "risk_node %s — passed:%s sl:%.6f tp1:%.6f rr1:%.2f",
+            "risk_node %s — passed:%s entry:%.6f sl:%.6f tp1:%.6f rr1:%.2f",
             coin, passed,
-            risk_result.get("sl",  0),
-            risk_result.get("tp1", 0),
-            risk_result.get("rr1", 0),
+            risk_result.entry,
+            risk_result.sl,
+            risk_result.tp1,
+            risk_result.rr1,
         )
 
     except Exception as e:
         log.error("risk_node %s: %s", coin, e)
         state["signal"] = False
-        state["reason"] = f"risk_node_error: {e}"
+        state["reason"] = f"risk_node_error:{e}"
         state["trace_steps"].append({
             "node":   "risk",
             "passed": False,

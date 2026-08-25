@@ -16,35 +16,38 @@ def _build_initial_state(
     df_1w:   object = None,
 ) -> SignalAgentState:
     return SignalAgentState(
-        coin            = coin,
-        balance         = balance,
-        df_4h           = df_4h,
-        df_1h           = df_1h,
-        df_15m          = df_15m,
-        df_1d           = df_1d,
-        df_1w           = df_1w,
-        direction       = "NEUTRAL",
-        atr_4h          = 0.0,
-        atr_1h          = 0.0,
-        atr_15m         = 0.0,
-        d4h             = {},
-        d1h             = {},
-        d15m            = {},
-        regime          = "",
-        session         = "",
-        ctx             = {},
-        sweep_result    = {},
-        zone_result     = {},
-        trigger_result  = {},
-        risk_result     = {},
-        sizing_result   = {},
-        score           = 0.0,
-        grade           = "F",
-        ml_probability  = None,
-        signal          = True,
-        reason          = "",
-        trace_steps     = [],
-        final_result    = {},
+        coin             = coin,
+        balance          = balance,
+        df_4h            = df_4h,
+        df_1h            = df_1h,
+        df_15m           = df_15m,
+        df_1d            = df_1d,
+        df_1w            = df_1w,
+        d4h              = {},
+        d1h              = {},
+        d15m             = {},
+        atr_4h           = 0.0,
+        atr_1h           = 0.0,
+        atr_15m          = 0.0,
+        regime_result    = None,
+        trend_result     = None,
+        reversion_result = None,
+        ict_result       = None,
+        risk_result      = None,
+        sizing_result    = None,
+        direction        = "NEUTRAL",
+        regime_label     = "",
+        regime_mult      = 1.0,
+        trend_strength   = 0.0,
+        reversion_open   = False,
+        session          = "",
+        score            = 0.0,
+        grade            = "F",
+        ml_probability   = None,
+        signal           = True,
+        reason           = "",
+        trace_steps      = [],
+        final_result     = {},
     )
 
 
@@ -73,10 +76,8 @@ async def run(
         )
 
         final_state = await graph.ainvoke(initial_state)
-
-        elapsed = round((time.time() - start) * 1000, 1)
-
-        result = final_state.get("final_result", {})
+        elapsed     = round((time.time() - start) * 1000, 1)
+        result      = final_state.get("final_result", {})
 
         if not result:
             result = {
@@ -94,9 +95,9 @@ async def run(
         log.info(
             "Signal agent complete: %s signal:%s grade:%s reason:%s elapsed:%sms",
             coin,
-            result.get("signal",    False),
-            result.get("grade",     "F"),
-            result.get("reason",    ""),
+            result.get("signal",  False),
+            result.get("grade",   "F"),
+            result.get("reason",  ""),
             elapsed,
         )
 
@@ -172,26 +173,27 @@ def format_trace_for_telegram(result: dict) -> str:
         passed = step.get("passed", False)
         icon   = "✅" if passed else "❌"
         reason = step.get("reason", "")
+        line   = f"{icon} {node.upper()}"
 
-        line = f"{icon} {node.upper()}"
-
-        if node == "context":
-            line += f" → {step.get('direction', '--')}"
-        elif node == "sweep":
-            line += f" → score:{step.get('score', 0):.3f}"
-        elif node == "zone":
-            line += f" → {step.get('zone_type', '--')} score:{step.get('score', 0):.3f}"
-        elif node == "trigger":
-            line += f" → {step.get('pattern', '--')} score:{step.get('score', 0):.3f}"
+        if node == "regime":
+            line += f" → {step.get('label', '--')} adx:{step.get('adx', 0):.1f} mult:{step.get('size_mult', 0):.2f}x"
+        elif node == "trend":
+            line += f" → {step.get('direction', '--')} align:{step.get('alignment', '--')}"
+        elif node == "reversion":
+            line += f" → rsi:{step.get('rsi', 0):.1f} score:{step.get('score', 0):.3f}"
+        elif node == "ict":
+            line += f" → sweep:{step.get('sweep_score', 0):.3f} zone:{step.get('zone_score', 0):.3f} trigger:{step.get('trigger_score', 0):.3f}"
         elif node == "risk":
-            line += f" → rr:{step.get('rr1', 0):.2f}"
+            line += f" → entry:{step.get('entry', 0):.4f} rr:{step.get('rr1', 0):.2f}"
         elif node == "grade":
             line += f" → {step.get('grade', '--')} {step.get('score', 0):.1f}%"
         elif node == "ml":
             prob = step.get("probability")
             line += f" → {f'{prob:.3f}' if prob is not None else 'skipped'}"
-        elif node == "finalize":
+        elif node == "sizing":
             line += f" → stake:${step.get('stake', 0):.2f} x{step.get('leverage', 0)}"
+        elif node == "finalize":
+            line += f" → grade:{step.get('grade', '--')} score:{step.get('score', 0):.3f}"
 
         if reason and not passed:
             line += f" ({reason})"

@@ -8,25 +8,20 @@ log = logging.getLogger(__name__)
 
 def optimize_all() -> dict:
     try:
-        from ml.performance_tracker import get_win_rate_at_threshold
-
         results = {}
 
         parameters = [
             {
                 "name":       "sweep_min_score",
                 "thresholds": list(np.arange(0.15, 0.55, 0.05)),
-                "direction":  "higher_is_better",
             },
             {
                 "name":       "zone_min_score",
                 "thresholds": list(np.arange(0.30, 0.75, 0.05)),
-                "direction":  "higher_is_better",
             },
             {
-                "name":       "grade_a_threshold",
-                "thresholds": list(np.arange(0.55, 0.80, 0.05)),
-                "direction":  "higher_is_better",
+                "name":       "grade_a",
+                "thresholds": list(np.arange(55, 80, 5)),
             },
         ]
 
@@ -66,80 +61,71 @@ def optimize_parameter(
         current_value = _get_current_value(parameter)
         current_wr    = _get_wr_at_value(wr_data, current_value)
 
-        best          = max(wr_data, key=lambda x: x["win_rate_raw"])
-        best_threshold= best["threshold"]
-        best_wr       = best["win_rate_raw"]
-
-        improvement   = best_wr - (current_wr or 0)
-
-        min_improve   = ADAPTATION_CONFIG["change_rules"]["min_win_rate_improvement"]
+        best           = max(wr_data, key=lambda x: x["win_rate_raw"])
+        best_threshold = best["threshold"]
+        best_wr        = best["win_rate_raw"]
+        improvement    = best_wr - (current_wr or 0)
+        min_improve    = ADAPTATION_CONFIG["change_rules"]["min_win_rate_improvement"]
 
         if improvement < min_improve:
-            log.info(
-                "optimize_parameter %s: best threshold %.2f WR %.1f%% — improvement %.1f%% below minimum %.1f%%",
-                parameter, best_threshold, best_wr * 100, improvement * 100, min_improve * 100
-            )
             return {
-                "parameter":       parameter,
-                "current_value":   current_value,
-                "optimal_value":   best_threshold,
-                "current_wr":      round((current_wr or 0) * 100, 1),
-                "optimal_wr":      round(best_wr * 100, 1),
-                "improvement":     round(improvement * 100, 1),
-                "data_basis":      best["trades"],
-                "recommend_change":False,
-                "reason":          f"Improvement {improvement*100:.1f}% below minimum {min_improve*100:.0f}%",
-                "all_thresholds":  wr_data,
+                "parameter":        parameter,
+                "current_value":    current_value,
+                "optimal_value":    best_threshold,
+                "current_wr":       round((current_wr or 0) * 100, 1),
+                "optimal_wr":       round(best_wr * 100, 1),
+                "improvement":      round(improvement * 100, 1),
+                "data_basis":       best["trades"],
+                "recommend_change": False,
+                "reason":           f"Improvement {improvement*100:.1f}% below minimum {min_improve*100:.0f}%",
+                "all_thresholds":   wr_data,
             }
 
         soft = ADAPTATION_CONFIG["soft_limits"].get(parameter, {})
         lo   = soft.get("min", 0)
         hi   = soft.get("max", 1)
 
-        if best_threshold < lo or best_threshold > hi:
+        if lo and hi and (best_threshold < lo or best_threshold > hi):
             return {
-                "parameter":       parameter,
-                "current_value":   current_value,
-                "optimal_value":   best_threshold,
-                "current_wr":      round((current_wr or 0) * 100, 1),
-                "optimal_wr":      round(best_wr * 100, 1),
-                "improvement":     round(improvement * 100, 1),
-                "data_basis":      best["trades"],
-                "recommend_change":False,
-                "reason":          f"Optimal value {best_threshold} outside soft limits [{lo}, {hi}]",
-                "all_thresholds":  wr_data,
+                "parameter":        parameter,
+                "current_value":    current_value,
+                "optimal_value":    best_threshold,
+                "current_wr":       round((current_wr or 0) * 100, 1),
+                "optimal_wr":       round(best_wr * 100, 1),
+                "improvement":      round(improvement * 100, 1),
+                "data_basis":       best["trades"],
+                "recommend_change": False,
+                "reason":           f"Optimal value {best_threshold} outside soft limits [{lo}, {hi}]",
+                "all_thresholds":   wr_data,
             }
 
         max_change = ADAPTATION_CONFIG["change_rules"]["max_change_pct_per_cycle"]
         if current_value > 0:
             actual_change = abs(best_threshold - current_value) / current_value
             if actual_change > max_change:
-                direction     = 1 if best_threshold > current_value else -1
-                best_threshold= round(current_value * (1 + direction * max_change), 3)
-                best_threshold= max(lo, min(hi, best_threshold))
-                log.info(
-                    "optimize_parameter %s: capped change to %.3f (max %.0f%%)",
-                    parameter, best_threshold, max_change * 100
-                )
+                direction      = 1 if best_threshold > current_value else -1
+                best_threshold = round(current_value * (1 + direction * max_change), 3)
+                if lo and hi:
+                    best_threshold = max(lo, min(hi, best_threshold))
 
         confidence = _get_confidence(best["trades"])
 
         return {
-            "parameter":       parameter,
-            "current_value":   current_value,
-            "optimal_value":   round(best_threshold, 3),
-            "current_wr":      round((current_wr or 0) * 100, 1),
-            "optimal_wr":      round(best_wr * 100, 1),
-            "improvement":     round(improvement * 100, 1),
-            "data_basis":      best["trades"],
-            "recommend_change":True,
-            "confidence":      confidence,
-            "reason":          (
+            "parameter":        parameter,
+            "current_value":    current_value,
+            "optimal_value":    round(best_threshold, 3),
+            "current_wr":       round((current_wr or 0) * 100, 1),
+            "optimal_wr":       round(best_wr * 100, 1),
+            "improvement":      round(improvement * 100, 1),
+            "data_basis":       best["trades"],
+            "recommend_change": True,
+            "confidence":       confidence,
+            "reason":           (
                 f"Threshold {best_threshold:.2f} yields {best_wr*100:.1f}% WR "
                 f"vs current {(current_wr or 0)*100:.1f}% — "
                 f"+{improvement*100:.1f}% improvement on {best['trades']} trades"
             ),
-            "all_thresholds":  wr_data,
+            "all_thresholds":   wr_data,
         }
 
     except Exception as e:
@@ -154,7 +140,7 @@ def optimize_sweep_age() -> dict | None:
         with SessionLocal() as db:
             closed = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.signal_id.isnot(None)
+                TradeModel.signal_id.isnot(None),
             ).all()
 
             signal_ids = [t.signal_id for t in closed]
@@ -214,19 +200,19 @@ def optimize_sweep_age() -> dict | None:
             return None
 
         best_bucket = max(results, key=lambda x: results[x]["win_rate"])
-        current_max = cfg.SCALP_ENGINE.get("sweep_max_age_hours", 12)
+        current_max = cfg.HYBRID_ENGINE.get("sweep_max_age_hours", 24)
 
-        age_map = {"0-3h": 3, "3-6h": 6, "6-9h": 9, "9-12h": 12, "12-24h": 24}
+        age_map     = {"0-3h": 3, "3-6h": 6, "6-9h": 9, "9-12h": 12, "12-24h": 24}
         optimal_max = age_map.get(best_bucket, current_max)
 
         return {
-            "parameter":       "sweep_max_age_hours",
-            "current_value":   current_max,
-            "optimal_value":   optimal_max,
-            "buckets":         results,
-            "best_bucket":     best_bucket,
-            "recommend_change":optimal_max != current_max,
-            "reason":          f"Best WR in {best_bucket} bucket — optimal max age {optimal_max}h",
+            "parameter":        "sweep_max_age_hours",
+            "current_value":    current_max,
+            "optimal_value":    optimal_max,
+            "buckets":          results,
+            "best_bucket":      best_bucket,
+            "recommend_change": optimal_max != current_max,
+            "reason":           f"Best WR in {best_bucket} bucket — optimal max age {optimal_max}h",
         }
 
     except Exception as e:
@@ -238,7 +224,7 @@ def optimize_session_sizing() -> dict:
     try:
         from ml.performance_tracker import get_stats_by_session
 
-        session_stats = get_stats_by_session(min_trades=5)
+        session_stats   = get_stats_by_session(min_trades=5)
         if not session_stats:
             return {}
 
@@ -317,14 +303,14 @@ def run_full_optimization() -> dict:
 
 
 def _get_current_value(parameter: str) -> float:
-    SE = cfg.SCALP_ENGINE
+    HE = cfg.HYBRID_ENGINE
     mapping = {
-        "sweep_min_score":       SE.get("sweep_min_score",       0.30),
-        "zone_min_score":        SE.get("zone_min_score",        0.40),
-        "grade_a_threshold":     SE.get("grade_a_threshold",     0.65),
-        "grade_aplus_threshold": SE.get("grade_aplus_threshold", 0.80),
-        "sweep_max_age_hours":   SE.get("sweep_max_age_hours",   12),
-        "base_risk_pct":         SE.get("base_risk_pct",         0.01),
+        "sweep_min_score":     HE.get("sweep_min_score",     0.45),
+        "zone_min_score":      HE.get("zone_min_score",      0.45),
+        "grade_a":             HE.get("grade_a",             68),
+        "grade_aplus":         HE.get("grade_aplus",         85),
+        "sweep_max_age_hours": HE.get("sweep_max_age_hours", 24),
+        "base_risk_pct":       HE.get("base_risk_pct",       0.01),
     }
     return mapping.get(parameter, 0.0)
 

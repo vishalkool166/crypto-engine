@@ -8,27 +8,32 @@ log = logging.getLogger(__name__)
 
 
 def _get_current_parameters() -> dict:
-    SE = cfg.SCALP_ENGINE
+    HE = cfg.HYBRID_ENGINE
     return {
-        "sweep_min_score":       SE.get("sweep_min_score",       0.30),
-        "zone_min_score":        SE.get("zone_min_score",        0.40),
-        "grade_a_threshold":     SE.get("grade_a_threshold",     0.65),
-        "grade_aplus_threshold": SE.get("grade_aplus_threshold", 0.80),
-        "grade_b_threshold":     SE.get("grade_b_threshold",     0.50),
-        "sweep_max_age_hours":   SE.get("sweep_max_age_hours",   12),
-        "sweep_min_wick_atr":    SE.get("sweep_min_wick_atr",    0.2),
-        "zone_min_width_atr":    SE.get("zone_min_width_atr",    0.15),
-        "zone_max_dist_pct":     SE.get("zone_max_dist_pct",     4.0),
-        "zone_max_touches":      SE.get("zone_max_touches",      2),
-        "trigger_min_score":     SE.get("trigger_min_score",     0.6),
-        "base_risk_pct":         SE.get("base_risk_pct",         0.01),
-        "max_risk_pct":          SE.get("max_risk_pct",          0.02),
-        "min_risk_pct":          SE.get("min_risk_pct",          0.005),
-        "daily_loss_limit_pct":  SE.get("daily_loss_limit_pct",  0.02),
-        "max_open_trades":       SE.get("max_open_trades",       3),
-        "max_leverage":          SE.get("max_leverage",          15),
-        "tp1_min_rr":            SE.get("tp1_min_rr",            1.5),
-        "tp2_min_rr":            SE.get("tp2_min_rr",            2.5),
+        "sweep_min_score":       HE.get("sweep_min_score",       0.45),
+        "zone_min_score":        HE.get("zone_min_score",        0.45),
+        "ict_min_score":         HE.get("ict_min_score",         55),
+        "grade_aplus":           HE.get("grade_aplus",           85),
+        "grade_a":               HE.get("grade_a",               68),
+        "grade_b":               HE.get("grade_b",               52),
+        "sweep_max_age_hours":   HE.get("sweep_max_age_hours",   24),
+        "sweep_min_wick_atr":    HE.get("sweep_min_wick_atr",    1.5),
+        "zone_min_width_atr":    HE.get("zone_min_width_atr",    0.15),
+        "zone_max_dist_pct":     HE.get("zone_max_dist_pct",     1.0),
+        "zone_max_touches":      HE.get("zone_max_touches",      2),
+        "trigger_min_score":     HE.get("trigger_min_score",     0.75),
+        "base_risk_pct":         HE.get("base_risk_pct",         0.01),
+        "max_risk_pct":          HE.get("max_risk_pct",          0.02),
+        "min_risk_pct":          HE.get("min_risk_pct",          0.005),
+        "daily_loss_limit_pct":  HE.get("daily_loss_limit_pct",  0.02),
+        "max_open_trades":       HE.get("max_open_trades",       2),
+        "max_leverage":          HE.get("max_leverage",          10),
+        "tp1_min_rr":            HE.get("tp1_min_rr",            2.0),
+        "tp2_min_rr":            HE.get("tp2_min_rr",            3.5),
+        "regime_adx_trending":   HE.get("regime_adx_trending",  25),
+        "regime_adx_ranging":    HE.get("regime_adx_ranging",   15),
+        "reversion_rsi_long_max":HE.get("reversion_rsi_long_max", 52),
+        "ml_threshold":          HE.get("ml_threshold",          0.50),
         "ml_enabled":            cfg.ML_ENABLED,
         "trading_mode":          cfg.TRADING_MODE,
         "adaptation_frozen":     cfg.ADAPTATION_FROZEN,
@@ -143,11 +148,11 @@ def restore_version(version: str, reason: str = "manual_rollback") -> bool:
                 return False
 
             params = json.loads(target.parameters_json)
+            HE     = cfg.HYBRID_ENGINE
 
-            SE = cfg.SCALP_ENGINE
             for key, value in params.items():
-                if key in SE:
-                    SE[key] = value
+                if key in HE:
+                    HE[key] = value
                 elif key == "ml_enabled":
                     cfg.ML_ENABLED = bool(value)
 

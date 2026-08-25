@@ -5,7 +5,7 @@ import time
 from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.store import save_candles
-from engines.relative_strength import rank_coins, get_scan_priority, get_rs_summary, invalidate_cache as invalidate_rs_cache
+from engines.relative_strength import rank_coins, get_rs_summary, invalidate_cache as invalidate_rs_cache
 from engines.decision_trace import store_trace, get_recent_traces, get_rejection_summary
 from data.rejection_stats import record_scan, get_total_stats, get_top_rejections
 from database import get_session, Signal as SignalModel
@@ -23,10 +23,10 @@ _cached_balance:    float = 0.0
 _balance_cached_at: float = 0.0
 _BALANCE_CACHE_TTL: float = 60.0
 
-_cached_1d: dict = {}
-_cached_1w: dict = {}
-_HTF_CACHE_TTL   = 3600.0
-_htf_cached_at:  float = 0.0
+_cached_1d:    dict  = {}
+_cached_1w:    dict  = {}
+_HTF_CACHE_TTL       = 3600.0
+_htf_cached_at:float = 0.0
 
 _scan_stats: dict = {
     "last_scan_at":    0.0,
@@ -70,28 +70,6 @@ def _get_funding_from_redis(coin: str) -> float:
         return 0.0
 
 
-def _derive_regime(result: dict, coin_status: str) -> str:
-    direction = result.get("direction", "")
-    sweep     = result.get("sweep") or {}
-    relevance = sweep.get("relevance", {}).get("label", "") if sweep else ""
-
-    if coin_status == "in_trade":
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — In Trade"
-    if result.get("signal"):
-        return (
-            f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {relevance} Sweep"
-            if relevance
-            else f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Signal"
-        )
-    if result.get("zone_found") and result.get("sweep_found"):
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Zone Active"
-    if result.get("sweep_found"):
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Sweep Detected"
-    if direction in ("LONG", "SHORT"):
-        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Scanning"
-    return "Scanning"
-
-
 def _derive_session() -> str:
     from datetime import datetime, timezone
     hour = datetime.now(timezone.utc).hour
@@ -100,6 +78,23 @@ def _derive_session() -> str:
     if 17 <= hour < 21: return "New York"
     if 0  <= hour < 8:  return "Asia"
     return "Off Hours"
+
+
+def _derive_regime_label(result: dict, coin_status: str) -> str:
+    regime    = result.get("regime", "")
+    direction = result.get("direction", "")
+
+    if coin_status == "in_trade":
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — In Trade"
+    if result.get("signal"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — {regime.title()} Signal"
+    if result.get("zone_found") and result.get("sweep_found"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Zone Active"
+    if result.get("sweep_found"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Sweep Detected"
+    if direction in ("LONG", "SHORT"):
+        return f"{'Bullish' if direction == 'LONG' else 'Bearish'} — Scanning"
+    return "Scanning"
 
 
 def _build_partial_score(result: dict) -> float:
@@ -133,23 +128,21 @@ async def _load_htf_candles() -> dict:
     if _cached_1d and (now - _htf_cached_at) < _HTF_CACHE_TTL:
         return {"1d": _cached_1d, "1w": _cached_1w}
 
-    log.info("Loading higher timeframe candles")
+    log.info("Loading HTF candles")
     new_1d = {}
     new_1w = {}
 
     for coin in cfg.COINS:
         try:
-            df_1d = await fetch_and_store(coin, "1d", limit=200)
-            new_1d[coin] = df_1d
+            new_1d[coin] = await fetch_and_store(coin, "1d", limit=200)
         except Exception as e:
-            log.warning("HTF 1D load failed %s: %s", coin, e)
+            log.warning("HTF 1D failed %s: %s", coin, e)
             new_1d[coin] = None
 
         try:
-            df_1w = await fetch_and_store(coin, "1w", limit=100)
-            new_1w[coin] = df_1w
+            new_1w[coin] = await fetch_and_store(coin, "1w", limit=100)
         except Exception as e:
-            log.warning("HTF 1W load failed %s: %s", coin, e)
+            log.warning("HTF 1W failed %s: %s", coin, e)
             new_1w[coin] = None
 
         await asyncio.sleep(0.2)
@@ -160,24 +153,20 @@ async def _load_htf_candles() -> dict:
     return {"1d": new_1d, "1w": new_1w}
 
 
-async def _get_balance() -> float:
-    try:
-        b = await get_balance()
-        return float(b.get("free", 0))
-    except Exception as e:
-        log.error("_get_balance: %s", e)
-        return 0.0
-
-
 async def _get_cached_balance() -> float:
     global _cached_balance, _balance_cached_at
     if _cached_balance > 0 and (time.time() - _balance_cached_at) < _BALANCE_CACHE_TTL:
         return _cached_balance
-    balance = await _get_balance()
-    if balance > 0:
-        _cached_balance    = balance
-        _balance_cached_at = time.time()
-    return balance
+    try:
+        b = await get_balance()
+        balance = float(b.get("free", 0))
+        if balance > 0:
+            _cached_balance    = balance
+            _balance_cached_at = time.time()
+        return balance
+    except Exception as e:
+        log.error("_get_cached_balance: %s", e)
+        return 0.0
 
 
 def _build_factor_scores(result: dict) -> dict:
@@ -187,7 +176,7 @@ def _build_factor_scores(result: dict) -> dict:
         "liquidity_sweep":     round(result.get("sweep_score",   0) * 12, 2),
         "displacement":        round(result.get("trigger_score", 0) * 11, 2),
         "retest_confirmation": round(result.get("zone_score",    0) * 12, 2),
-        "order_blocks":        round(zone.get("score", 0) * 4,            2) if zone.get("type") == "OB" else 0,
+        "order_blocks":        round(zone.get("score", 0) * 4,            2) if isinstance(zone, dict) and zone.get("type") == "OB" else 0,
         "market_structure":    round(result.get("sweep_score",   0) * 9,  2),
         "volume_expansion":    round(result.get("trigger_score", 0) * 7,  2),
         "market_regime":       8 if result.get("direction") in ("LONG", "SHORT") else 0,
@@ -214,7 +203,6 @@ def _save_signal(signal: dict) -> int | None:
 
     rr1 = signal.get("rr1", 0) or 0
     if rr1 < 2.0:
-        log.info("Signal rejected RR %.2f < 2.0: %s %s", rr1, signal.get("coin"), signal.get("direction"))
         record_scan(signal.get("coin", ""), signal.get("direction", ""), "rr_too_low")
         return None
 
@@ -259,7 +247,10 @@ def _save_signal(signal: dict) -> int | None:
                 oi_signal      = "",
                 outcome        = "pending",
                 atr_at_entry   = signal.get("atr_4h"),
-                factor_scores  = json.dumps({k: min(round(v, 2), cfg.WEIGHTS.get(k, 999)) for k, v in factor_scores.items()}),
+                factor_scores  = json.dumps({
+                    k: min(round(v, 2), cfg.WEIGHTS.get(k, 999))
+                    for k, v in factor_scores.items()
+                }),
                 market_score   = min(round(signal.get("sweep_score",   0) * 100, 2), 100.0),
                 entry_score    = min(round(signal.get("trigger_score", 0) * 100, 2), 100.0),
                 btc_score      = signal.get("btc_score", 0),
@@ -271,9 +262,8 @@ def _save_signal(signal: dict) -> int | None:
             db.flush()
             db.refresh(row)
             log.info(
-                "Signal saved ID:%s %s %s grade:%s btc_score:%.1f rr:%.2f",
-                row.id, signal["coin"], signal["direction"], signal["grade"],
-                signal.get("btc_score", 0), rr1,
+                "Signal saved ID:%s %s %s grade:%s rr:%.2f",
+                row.id, signal["coin"], signal["direction"], signal["grade"], rr1,
             )
             return row.id
     except Exception as e:
@@ -351,9 +341,7 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         elif 0  <= _hour < 8:  _session = "Asia"
         else:                   _session = "Off Hours"
 
-        _regime = signal.get("regime", "")
-        if not _regime:
-            _regime = _derive_regime(signal, "watching")
+        _regime = signal.get("regime", "ranging")
 
         sizing_result = {
             "risk_pct":      signal.get("risk_pct",      0),
@@ -391,8 +379,7 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         )
 
         if result.get("success"):
-            from engines.state import set_in_trade
-            from engines.state import get as get_coin_state
+            from engines.state import set_in_trade, get as get_coin_state
             current_state = get_coin_state(coin)
             set_in_trade(coin, result["trade_id"], current_state.get("setup", {}))
             log.info(
@@ -425,7 +412,6 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
             return
 
         import pandas as pd
-
         df_row = pd.DataFrame([{
             "timestamp": pd.Timestamp(kline["timestamp"], unit="ms"),
             "open":      kline["open"],
@@ -468,8 +454,8 @@ async def _analyze_coin(
 ) -> dict | None:
     async with _scan_semaphore:
         try:
-            from engines.state import get as get_coin_state
-            from engines.state import set_watching, set_idle
+            from engines.state import get as get_coin_state, set_watching, set_idle, is_available
+
             current = get_coin_state(coin)
 
             if current["status"] == "in_trade":
@@ -482,7 +468,6 @@ async def _analyze_coin(
                     cache.set(f"signal_{coin}", cached, ttl=1800)
                 return cached
 
-            from engines.state import is_available
             if current["status"] == "cooldown":
                 if not is_available(coin):
                     record_scan(coin, "", "cooldown")
@@ -511,23 +496,25 @@ async def _analyze_coin(
             scan_ms = round((time.time() - scan_start) * 1000, 1)
 
             if result.get("signal"):
+                sweep_raw = result.get("sweep") or {}
+                zone_raw  = result.get("zone")  or {}
                 set_watching(coin, {
                     "direction": result["direction"],
-                    "sweep":     result.get("sweep", {}),
-                    "zone":      result.get("zone",  {}),
+                    "sweep":     sweep_raw,
+                    "zone":      zone_raw,
                 })
             elif result.get("zone_found") and result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown"):
                     set_watching(coin, {
                         "direction": result["direction"],
-                        "sweep":     result.get("sweep", {}),
-                        "zone":      result.get("zone",  {}),
+                        "sweep":     result.get("sweep") or {},
+                        "zone":      result.get("zone")  or {},
                     })
             elif result.get("sweep_found"):
                 if current["status"] not in ("in_trade", "cooldown", "watching"):
                     set_watching(coin, {
                         "direction": result["direction"],
-                        "sweep":     result.get("sweep", {}),
+                        "sweep":     result.get("sweep") or {},
                         "zone":      {},
                     })
             else:
@@ -537,16 +524,46 @@ async def _analyze_coin(
             actual_state = get_coin_state(coin)
             coin_status  = actual_state["status"]
 
-            ticker  = _get_ticker_from_redis(coin)
-            funding = _get_funding_from_redis(coin)
-            price   = get_mark_price(coin) or 0
-            regime  = _derive_regime(result, coin_status)
-            session = _derive_session()
-            score   = _build_partial_score(result)
+            ticker    = _get_ticker_from_redis(coin)
+            funding   = _get_funding_from_redis(coin)
+            price     = get_mark_price(coin) or 0
+            regime    = _derive_regime_label(result, coin_status)
+            session   = _derive_session()
+            score     = _build_partial_score(result)
 
             sweep_data = result.get("sweep") or {}
             zone_data  = result.get("zone")  or {}
             alignment  = result.get("alignment") or {}
+
+            if isinstance(sweep_data, dict):
+                sweep_label    = sweep_data.get("label", "") or sweep_data.get("level_label", "")
+                sweep_age      = sweep_data.get("age_hours", 0)
+                sweep_detected = bool(sweep_data.get("type") or sweep_data.get("label"))
+                sweep_score_v  = result.get("sweep_score", 0)
+            else:
+                sweep_label    = ""
+                sweep_age      = 0
+                sweep_detected = False
+                sweep_score_v  = 0
+
+            if isinstance(zone_data, dict):
+                zone_type    = zone_data.get("type",         "—")
+                zone_top     = zone_data.get("top",           0)
+                zone_bottom  = zone_data.get("bottom",        0)
+                zone_mid     = zone_data.get("mid",           0)
+                zone_dist    = zone_data.get("distance_pct", None)
+                zone_touches = zone_data.get("touch_count",  0)
+                zone_score_v = zone_data.get("score",         0)
+                zone_desc    = zone_data.get("origin_desc",  "")
+            else:
+                zone_type    = "—"
+                zone_top     = 0
+                zone_bottom  = 0
+                zone_mid     = 0
+                zone_dist    = None
+                zone_touches = 0
+                zone_score_v = 0
+                zone_desc    = ""
 
             cache_entry = {
                 "coin":      coin,
@@ -565,26 +582,26 @@ async def _analyze_coin(
                     "funding":    funding,
                 },
                 "sweep": {
-                    "detected":  result.get("sweep_found", False),
-                    "score":     result.get("sweep_score", 0),
-                    "label":     (sweep_data.get("level_label", "") or sweep_data.get("label", "")) if sweep_data else "",
-                    "age_hours": sweep_data.get("age_hours", 0) if sweep_data else 0,
+                    "detected":  sweep_detected,
+                    "score":     sweep_score_v,
+                    "label":     sweep_label,
+                    "age_hours": sweep_age,
                 },
                 "zone": {
-                    "type":         zone_data.get("type",         "—"),
-                    "top":          zone_data.get("top",           0),
-                    "bottom":       zone_data.get("bottom",        0),
-                    "mid":          zone_data.get("mid",           0),
-                    "distance_pct": zone_data.get("distance_pct", None),
-                    "touch_count":  zone_data.get("touch_count",  0),
-                    "score":        zone_data.get("score",         0),
-                    "origin_desc":  zone_data.get("origin_desc",  ""),
+                    "type":         zone_type,
+                    "top":          zone_top,
+                    "bottom":       zone_bottom,
+                    "mid":          zone_mid,
+                    "distance_pct": zone_dist,
+                    "touch_count":  zone_touches,
+                    "score":        zone_score_v,
+                    "origin_desc":  zone_desc,
                 },
                 "alignment": {
-                    "daily":     alignment.get("daily",     "NEUTRAL"),
-                    "weekly":    alignment.get("weekly",    "NEUTRAL"),
-                    "alignment": alignment.get("alignment", "none"),
-                    "size_mult": alignment.get("size_mult", 1.0),
+                    "daily":     alignment.get("daily",     "NEUTRAL") if isinstance(alignment, dict) else "NEUTRAL",
+                    "weekly":    alignment.get("weekly",    "NEUTRAL") if isinstance(alignment, dict) else "NEUTRAL",
+                    "alignment": alignment.get("alignment", "none")    if isinstance(alignment, dict) else "none",
+                    "size_mult": alignment.get("size_mult", 1.0)       if isinstance(alignment, dict) else 1.0,
                 },
                 "narrative":   result.get("narrative", ""),
                 "regime":      regime,
@@ -598,8 +615,7 @@ async def _analyze_coin(
                 "scan_ms":     scan_ms,
                 "rs_tier":     rs_tier,
                 "trace":       result.get("trace"),
-                "score_detail":result.get("score_detail"),
-                "agent_ms":    result.get("agent_ms", 0),
+                "agent_ms":    result.get("agent_ms",    0),
                 "agent_steps": result.get("agent_steps", 0),
                 "wconf": {
                     "norm_score":   score,
@@ -682,10 +698,8 @@ async def scan_all_coins() -> list:
         medium_tier = [r["coin"] for r in ranked if r.get("tier") == "medium"]
         low_tier    = [r["coin"] for r in ranked if r.get("tier") == "low"]
 
-        log.info(
-            "RS ranking — high:%s medium:%s low:%s",
-            len(high_tier), len(medium_tier), len(low_tier)
-        )
+        log.info("RS ranking — high:%s medium:%s low:%s",
+                 len(high_tier), len(medium_tier), len(low_tier))
 
         priority_coins = high_tier + medium_tier
         deferred_coins = low_tier
@@ -698,19 +712,16 @@ async def scan_all_coins() -> list:
                 )
                 for c in priority_coins
             ],
-            return_exceptions=True
+            return_exceptions=True,
         )
 
         deferred_results = await asyncio.gather(
-            *[
-                _analyze_coin(c, balance, htf, rs_tier="low")
-                for c in deferred_coins
-            ],
-            return_exceptions=True
+            *[_analyze_coin(c, balance, htf, rs_tier="low") for c in deferred_coins],
+            return_exceptions=True,
         )
 
         all_results = list(priority_results) + list(deferred_results)
-        valid = [r for r in all_results if r and not isinstance(r, Exception)]
+        valid       = [r for r in all_results if r and not isinstance(r, Exception)]
         valid.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         scan_ms = round((time.time() - scan_start) * 1000, 1)
@@ -737,17 +748,16 @@ def _write_engine_health(results: list, scan_ms: float) -> None:
     try:
         from redis_client import get_redis
         from data.rejection_stats import get_total_stats, get_top_rejections
-        from data.cache import cache
 
         r = get_redis()
         if not r:
             return
 
-        btc_data  = cache.get_raw("btc_4h_data")
-        btc_cls   = btc_data.get("trend", {}).get("cls", "neutral") if btc_data else "neutral"
-        btc_adx   = float(btc_data.get("adx") or 0) if btc_data else 0.0
+        btc_data = cache.get_raw("btc_4h_data")
+        btc_cls  = btc_data.get("trend", {}).get("cls", "neutral") if btc_data else "neutral"
+        btc_adx  = float(btc_data.get("adx") or 0) if btc_data else 0.0
 
-        regimes = [x.get("regime", "") for x in results if x.get("regime")]
+        regimes         = [x.get("regime", "") for x in results if x.get("regime")]
         dominant_regime = max(set(regimes), key=regimes.count) if regimes else "Unknown"
 
         scores    = [x.get("score", 0) for x in results if x.get("score", 0) > 0]

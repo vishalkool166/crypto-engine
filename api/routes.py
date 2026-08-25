@@ -231,16 +231,15 @@ async def analyze(request: Request, coin: str):
         raise HTTPException(400, f"{coin} not supported")
 
     try:
-        from data.store       import load_candles
+        from data.store import load_candles
         from engines.indicators import calculate_all
-        from engines.context  import check as context_check
-        from engines.sweep    import detect as detect_sweep
-        from engines.zone     import detect as detect_zone
-        from engines.trigger  import detect as detect_trigger
-        from engines.risk     import calculate as calculate_risk
-        from engines.state    import get as get_coin_state
-        from trade.ws         import get_mark_price
-        from data.cache       import cache
+        from engines.regime.detector import detect as detect_regime
+        from engines.trend.direction import detect as detect_trend
+        from engines.reversion.timing import detect as detect_reversion
+        from engines.ict.confirmation import confirm as confirm_ict
+        from engines.risk.calculator import calculate as calculate_risk
+        from engines.scoring.scorer import build_score, assign_grade, get_session
+        from trade.ws import get_mark_price
 
         result = {
             "coin":      coin,
@@ -269,224 +268,156 @@ async def analyze(request: Request, coin: str):
 
         d4h  = calculate_all(df_4h,  timeframe="4h")
         d1h  = calculate_all(df_1h,  timeframe="1h")
-        d15m_indicators = calculate_all(df_15m, timeframe="15m")
+        d15m = calculate_all(df_15m, timeframe="15m")
 
-        atr_1h  = d1h.get("atr")  or float(df_1h["close"].iloc[-1])  * 0.01
-        atr_15m = d15m_indicators.get("atr") or float(df_15m["close"].iloc[-1]) * 0.005
+        atr_1h  = float(d1h.get("atr")  or df_1h["close"].iloc[-1]  * 0.01)
+        atr_15m = float(d15m.get("atr") or df_15m["close"].iloc[-1] * 0.005)
 
-        result["indicators"] = {
-            "price":   d4h.get("price",  0),
-            "ema20":   d4h.get("ema20",  0),
-            "ema50":   d4h.get("ema50",  0),
-            "ema200":  d4h.get("ema200", 0),
-            "atr_4h":  d4h.get("atr",   0),
-            "atr_1h":  atr_1h,
-            "atr_15m": atr_15m,
-            "adx":     d4h.get("adx",   0),
-            "rsi":     d4h.get("rsi",   0),
-            "trend":   d4h.get("trend", {}).get("label", "Unknown"),
-            "slope20": d4h.get("slope20", 0),
-            "slope50": d4h.get("slope50", 0),
+        regime = detect_regime(d4h)
+        result["regime"] = {
+            "label":      regime.label,
+            "adx":        regime.adx,
+            "atr_pct":    regime.atr_pct,
+            "size_mult":  regime.size_mult,
+            "is_trending":regime.is_trending,
+            "is_ranging": regime.is_ranging,
+            "is_choppy":  regime.is_choppy,
+            "is_volatile":regime.is_volatile,
         }
 
-        ctx = context_check(d4h, coin)
-        result["context"] = {
-            "pass":          ctx["pass"],
-            "direction":     ctx.get("direction", "NEUTRAL"),
-            "reason":        ctx.get("reason", ""),
-            "btc_score":     ctx.get("btc_score", 0),
-            "htf_score":     ctx.get("htf_score", 0),
-            "context_score": ctx.get("context_score", 0),
-            "trace":         ctx.get("trace", {}),
+        trend = detect_trend(d4h, coin)
+        result["trend"] = {
+            "passed":      trend.passed,
+            "direction":   trend.direction,
+            "adx":         trend.adx,
+            "alignment":   trend.alignment,
+            "daily_bias":  trend.daily_bias,
+            "weekly_bias": trend.weekly_bias,
+            "btc_score":   trend.btc_score,
+            "htf_score":   trend.htf_score,
+            "reason":      trend.reason,
         }
 
-        if not ctx["pass"]:
-            result["pipeline_stopped_at"] = "context"
-            result["state"]      = get_coin_state(coin)["status"]
-            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+        if not trend.passed:
+            result["pipeline_stopped_at"] = "trend"
+            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
-        direction = ctx["direction"]
+        direction = trend.direction
 
-        sweep_result = detect_sweep(df_1h, d1h, direction)
-        result["sweep"] = {
-            "detected":   sweep_result["detected"],
-            "score":      sweep_result.get("score", 0),
-            "age_hours":  (sweep_result.get("sweep") or {}).get("age_hours", 0),
-            "label":      (sweep_result.get("sweep") or {}).get("level_label", sweep_result.get("label", "--")),
-            "intensity":  (sweep_result.get("sweep") or {}).get("intensity", 0),
-            "wick_atr":   (sweep_result.get("sweep") or {}).get("wick_atr", 0),
-            "vol_ratio":  (sweep_result.get("sweep") or {}).get("vol_ratio", 0),
-            "confirmed":  sweep_result.get("confirmed", False),
-            "gate_pass":  sweep_result.get("score", 0) >= cfg.SCALP_ENGINE["sweep_min_score"],
-            "gate_min":   cfg.SCALP_ENGINE["sweep_min_score"],
+        reversion = detect_reversion(d1h, df_1h, direction)
+        result["reversion"] = {
+            "window_open": reversion.window_open,
+            "rsi":         reversion.rsi,
+            "bb_touch":    reversion.bb_touch,
+            "extreme":     reversion.extreme,
+            "score":       reversion.score,
+            "reason":      reversion.reason,
         }
 
-        if not sweep_result["detected"] or not result["sweep"]["gate_pass"]:
-            result["pipeline_stopped_at"] = "sweep"
-            result["state"]      = get_coin_state(coin)["status"]
-            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+        if not reversion.window_open:
+            result["pipeline_stopped_at"] = "reversion"
+            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
-        zone_result = detect_zone(d4h, df_4h, direction, atr_1h)
-        zone_data   = zone_result.get("zone") or {}
-        result["zone"] = {
-            "detected":     zone_result["detected"],
-            "score":        zone_result.get("score", 0),
-            "type":         zone_data.get("type", "--"),
-            "top":          zone_data.get("top", 0),
-            "bottom":       zone_data.get("bottom", 0),
-            "mid":          zone_data.get("mid", 0),
-            "distance_pct": zone_data.get("distance_pct", 0),
-            "touch_count":  zone_data.get("touch_count", 0),
-            "strength":     zone_data.get("strength", 0),
-            "origin_desc":  zone_data.get("origin_desc", ""),
-            "gate_pass":    zone_result.get("score", 0) >= cfg.SCALP_ENGINE["zone_min_score"],
-            "gate_min":     cfg.SCALP_ENGINE["zone_min_score"],
-        }
-
-        if not zone_result["detected"] or not result["zone"]["gate_pass"]:
-            result["pipeline_stopped_at"] = "zone"
-            result["state"]      = get_coin_state(coin)["status"]
-            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
-            return JSONResponse(content=make_serializable(result))
-
-        price   = d4h.get("price", 0)
-        atr_15m = d4h.get("atr", price * 0.005) * 0.3
-
-        trigger_result = detect_trigger(
+        ict = confirm_ict(
+            df_4h     = df_4h,
+            d4h       = d4h,
+            df_1h     = df_1h,
+            d1h       = d1h,
             df_15m    = df_15m,
-            zone      = zone_data,
+            d15m      = d15m,
             direction = direction,
+            atr_1h    = atr_1h,
             atr_15m   = atr_15m,
         )
-        result["trigger"] = {
-            "confirmed":   trigger_result["confirmed"],
-            "pattern":     trigger_result.get("pattern"),
-            "score":       trigger_result.get("score", 0),
-            "reason":      trigger_result.get("reason", ""),
-            "entry_price": trigger_result.get("entry_price"),
-            "vol_mult":    trigger_result.get("vol_mult", 0),
-            "gate_pass":   trigger_result["confirmed"],
-            "gate_min":    cfg.SCALP_ENGINE["trigger_min_score"],
+
+        result["ict"] = {
+            "confirmed":     ict.confirmed,
+            "score":         ict.score,
+            "sweep_score":   ict.sweep_score,
+            "zone_score":    ict.zone_score,
+            "trigger_score": ict.trigger_score,
+            "entry_price":   ict.entry_price,
+            "reason":        ict.reason,
+            "sweep_label":   ict.sweep.label     if ict.sweep else "",
+            "sweep_age":     ict.sweep.age_hours if ict.sweep else 0,
+            "zone_type":     ict.zone.type       if ict.zone  else "",
         }
 
-        if not trigger_result["confirmed"]:
-            result["pipeline_stopped_at"] = "trigger"
-            result["state"]      = get_coin_state(coin)["status"]
-            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
-            sweep_s  = sweep_result.get("score", 0)
-            zone_s   = zone_result.get("score",  0)
-            combined = round(sweep_s * 0.40 + zone_s * 0.35, 3)
-            result["partial_score"] = combined
+        if not ict.confirmed:
+            result["pipeline_stopped_at"] = "ict"
+            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
-        entry = trigger_result.get("entry_price") or d4h.get("price", 0)
+        entry = float(ict.entry_price) if ict.entry_price else float(d4h.get("price", 0))
 
-        risk_result = calculate_risk(
+        risk = calculate_risk(
             direction = direction,
             entry     = entry,
-            sweep     = (sweep_result.get("sweep") or {}),
-            zone      = zone_data,
-            trigger   = trigger_result,
+            sweep     = ict.sweep,
+            zone      = ict.zone,
+            ict       = ict.trigger,
             atr_15m   = atr_15m,
             d1h       = d1h,
             d4h       = d4h,
         )
+
         result["risk"] = {
-            "valid":      risk_result["valid"],
-            "reason":     risk_result.get("reason", ""),
-            "sl":         risk_result.get("sl"),
-            "tp1":        risk_result.get("tp1"),
-            "tp2":        risk_result.get("tp2"),
-            "sl_pct":     risk_result.get("sl_pct"),
-            "sl_dist":    risk_result.get("sl_dist"),
-            "rr1":        risk_result.get("rr1"),
-            "rr2":        risk_result.get("rr2"),
-            "tp1_label":  risk_result.get("tp1_label"),
-            "tp2_label":  risk_result.get("tp2_label"),
-            "sl_reason":  risk_result.get("sl_reason"),
+            "valid":     risk.valid,
+            "entry":     risk.entry,
+            "sl":        risk.sl,
+            "tp1":       risk.tp1,
+            "tp2":       risk.tp2,
+            "sl_pct":    risk.sl_pct,
+            "rr1":       risk.rr1,
+            "rr2":       risk.rr2,
+            "tp1_label": risk.tp1_label,
+            "tp2_label": risk.tp2_label,
+            "sl_reason": risk.sl_reason,
+            "reason":    risk.reason,
         }
 
-        if not risk_result["valid"]:
+        if not risk.valid:
             result["pipeline_stopped_at"] = "risk"
-            result["state"]      = get_coin_state(coin)["status"]
-            result["live_price"] = get_mark_price(coin) or d4h.get("price", 0)
+            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
             return JSONResponse(content=make_serializable(result))
 
-        from engines.scorer import SignalScore, assign_grade, score_session, score_ml, SCORE_WEIGHTS
-        from engines.scorer import score_btc_context, score_htf_alignment
+        session = get_session()
 
-        sig_score = SignalScore()
-        sig_score.coin      = coin
-        sig_score.direction = direction
-
-        btc_score_val = ctx.get("btc_score", 0)
-        htf_score_val = ctx.get("htf_score", 0)
-
-        sig_score.add("btc_context",   btc_score_val, SCORE_WEIGHTS["btc_context"]["max"],   True, ctx.get("trace", {}).get("btc", ""))
-        sig_score.add("htf_alignment", htf_score_val, SCORE_WEIGHTS["htf_alignment"]["max"], True, ctx.get("trace", {}).get("htf", ""))
-        sig_score.add("sweep",   sweep_result["score"]   * SCORE_WEIGHTS["sweep"]["max"],   SCORE_WEIGHTS["sweep"]["max"],   True, "")
-        sig_score.add("zone",    zone_result["score"]    * SCORE_WEIGHTS["zone"]["max"],    SCORE_WEIGHTS["zone"]["max"],    True, "")
-        sig_score.add("trigger", trigger_result["score"] * SCORE_WEIGHTS["trigger"]["max"], SCORE_WEIGHTS["trigger"]["max"], True, "")
-
-        from datetime import datetime as _dt, timezone as _tz
-        _hour = _dt.now(_tz.utc).hour
-        if 8  <= _hour < 13:  _session = "London"
-        elif 13 <= _hour < 17: _session = "London/NY Overlap"
-        elif 17 <= _hour < 21: _session = "New York"
-        elif 0  <= _hour < 8:  _session = "Asia"
-        else:                   _session = "Off Hours"
-
-        session_score, session_reason = score_session(_session)
-        sig_score.add("session", session_score, SCORE_WEIGHTS["session"]["max"], True, session_reason)
-
-        from engines.signal import _get_total_trades, _get_ml_probability
-        total_trades   = _get_total_trades()
-        ml_probability = _get_ml_probability({
-            "coin":          coin,
-            "direction":     direction,
-            "sweep_score":   sweep_result["score"],
-            "zone_score":    zone_result["score"],
-            "trigger_score": trigger_result["score"],
-            "grade":         "A",
-            "score":         sig_score.pct(),
-            "funding":       0,
-        })
-        ml_score, ml_reason = score_ml(ml_probability, total_trades)
-        sig_score.add("ml", ml_score, SCORE_WEIGHTS["ml"]["max"], True, ml_reason)
-
-        sig_score.total = round(sig_score.total + ctx.get("context_score", 0), 3)
-
-        from engines.signal import _get_regime
-        regime = _get_regime(d4h)
-        pct    = sig_score.pct()
-        grade  = assign_grade(pct, regime)
+        hs    = build_score(
+            coin          = coin,
+            direction     = direction,
+            regime_result = regime,
+            trend_result  = trend,
+            reversion     = reversion,
+            ict_result    = ict,
+            session       = session,
+        )
+        pct   = hs.pct()
+        grade = assign_grade(pct, regime.label)
 
         result["signal"] = {
             "confirmed":     True,
             "grade":         grade,
             "score_pct":     pct,
-            "score_detail":  sig_score.to_dict(),
-            "combined":      round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + trigger_result["score"] * 0.25, 3),
-            "sweep_score":   sweep_result["score"],
-            "zone_score":    zone_result["score"],
-            "trigger_score": trigger_result["score"],
-            "entry":         entry,
-            "sl":            risk_result["sl"],
-            "tp1":           risk_result["tp1"],
-            "tp2":           risk_result.get("tp2"),
-            "sl_pct":        risk_result["sl_pct"],
-            "rr1":           risk_result["rr1"],
-            "rr2":           risk_result.get("rr2"),
-            "ml_probability":ml_probability,
-            "regime":        regime,
-            "session":       _session,
+            "score_detail":  hs.to_dict(),
+            "sweep_score":   ict.sweep_score,
+            "zone_score":    ict.zone_score,
+            "trigger_score": ict.trigger_score,
+            "combined":      ict.score,
+            "entry":         risk.entry,
+            "sl":            risk.sl,
+            "tp1":           risk.tp1,
+            "tp2":           risk.tp2,
+            "rr1":           risk.rr1,
+            "regime":        regime.label,
+            "session":       session,
         }
 
         result["pipeline_stopped_at"] = None
-        result["state"]      = "signal_ready"
-        result["live_price"] = get_mark_price(coin) or entry
+        result["state"]               = "signal_ready"
+        result["live_price"]          = get_mark_price(coin) or entry
 
         cached = cache.get_raw(f"signal_{coin}")
         if cached:
@@ -497,7 +428,6 @@ async def analyze(request: Request, coin: str):
                 "state":     cached.get("state"),
                 "regime":    cached.get("regime"),
                 "session":   cached.get("session"),
-                "trace":     cached.get("trace"),
             }
 
         return JSONResponse(content=make_serializable(result))
@@ -1081,141 +1011,6 @@ async def system_disk(request: Request):
         "free_gb":  round(disk.free  / 1024 ** 3, 1),
         "pct":      round(disk.percent, 1),
     })
-
-
-@router.get("/backtest-signal/{coin}")
-async def backtest_signal(request: Request, coin: str, date: str = None):
-    _auth(request)
-    coin = coin.upper()
-    try:
-        from data.store import load_candles
-        from engines.indicators import calculate_all
-        from engines.context import check as context_check
-        from engines.sweep import detect as detect_sweep
-        from engines.zone import detect as detect_zone
-        from engines.risk import calculate as calculate_risk
-        import pandas as pd
-        import json
-
-        if not date:
-            raise HTTPException(400, "date parameter required (YYYY-MM-DD)")
-
-        from redis_client import get_redis
-        r         = get_redis()
-        cache_key = f"backtest_signal:{coin}:{date}"
-        if r and (cached := r.get(cache_key)):
-            return JSONResponse(content=json.loads(cached))
-
-        target_ts = pd.Timestamp(date, tz="UTC")
-        window    = 200
-
-        df_4h = load_candles(coin, "4h", limit=2000)
-        df_1h = load_candles(coin, "1h", limit=2000)
-
-        if df_4h is None or df_1h is None:
-            raise HTTPException(404, f"Insufficient data for {coin}")
-
-        d4h_w = df_4h[df_4h.index < target_ts].iloc[-window:]
-        d1h_w = df_1h[df_1h.index < target_ts].iloc[-window:]
-
-        if len(d4h_w) < 50 or len(d1h_w) < 50:
-            raise HTTPException(404, f"Not enough historical data for {coin} at {date}")
-
-        d4h    = calculate_all(d4h_w, timeframe="4h")
-        d1h    = calculate_all(d1h_w, timeframe="1h")
-        atr_1h = d1h.get("atr") or float(d1h_w["close"].iloc[-1]) * 0.01
-
-        ctx = context_check(d4h, coin)
-        if not ctx["pass"]:
-            result = {
-                "coin": coin, "date": date, "grade": "F",
-                "direction": "NO_DIRECTION", "score": 0,
-                "entry": None, "sl": None, "stoploss": None, "tp1": None,
-                "signal_id": f"{coin}_{date}", "reason": ctx["reason"],
-            }
-            return JSONResponse(content=make_serializable(result))
-
-        direction    = ctx["direction"]
-        sweep_result = detect_sweep(d1h_w, d1h, direction)
-
-        if not sweep_result["detected"]:
-            result = {
-                "coin": coin, "date": date, "grade": "F",
-                "direction": direction, "score": 0,
-                "entry": None, "sl": None, "stoploss": None, "tp1": None,
-                "signal_id": f"{coin}_{date}", "reason": "no_sweep",
-            }
-            return JSONResponse(content=make_serializable(result))
-
-        zone_result = detect_zone(d4h, d4h_w, direction, atr_1h)
-
-        if not zone_result["detected"]:
-            result = {
-                "coin": coin, "date": date, "grade": "F",
-                "direction": direction, "score": 0,
-                "entry": None, "sl": None, "stoploss": None, "tp1": None,
-                "signal_id": f"{coin}_{date}", "reason": "no_zone",
-            }
-            return JSONResponse(content=make_serializable(result))
-
-        price   = d4h.get("price", 0)
-        atr_15m = d4h.get("atr", price * 0.005) * 0.3
-
-        risk_result = calculate_risk(
-            direction = direction,
-            entry     = price,
-            sweep     = sweep_result["sweep"],
-            zone      = zone_result["zone"],
-            trigger   = {
-                "candle_low":  float(d4h_w.iloc[-1]["low"]),
-                "candle_high": float(d4h_w.iloc[-1]["high"]),
-            },
-            atr_15m   = atr_15m,
-            d1h       = d1h,
-            d4h       = d4h,
-        )
-
-        if not risk_result["valid"]:
-            result = {
-                "coin": coin, "date": date, "grade": "F",
-                "direction": direction, "score": 0,
-                "entry": None, "sl": None, "stoploss": None, "tp1": None,
-                "signal_id": f"{coin}_{date}", "reason": risk_result["reason"],
-            }
-            return JSONResponse(content=make_serializable(result))
-
-        from engines.scorer import assign_grade
-        from engines.signal import _get_regime
-        combined = round(sweep_result["score"] * 0.40 + zone_result["score"] * 0.35 + 0.7 * 0.25, 3)
-        regime   = _get_regime(d4h)
-        pct      = min(combined * 100, 100)
-        grade    = assign_grade(pct, regime)
-
-        result = {
-            "coin":      coin,
-            "date":      date,
-            "grade":     grade,
-            "direction": direction,
-            "score":     combined,
-            "entry":     price,
-            "sl":        risk_result["sl"],
-            "stoploss":  risk_result["sl"],
-            "tp1":       risk_result["tp1"],
-            "tp2":       risk_result["tp2"],
-            "rr1":       risk_result["rr1"],
-            "signal_id": f"{coin}_{date}",
-        }
-
-        if r:
-            r.setex(cache_key, 86400, json.dumps(make_serializable(result)))
-
-        return JSONResponse(content=make_serializable(result))
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
 
 
 @router.get("/coins/states")

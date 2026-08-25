@@ -2,11 +2,11 @@ import pandas as pd
 import logging
 from data.store import load_candles
 from engines.indicators import calculate_all
-from engines.context import check as context_check
-from engines.sweep import detect as detect_sweep
-from engines.zone import detect as detect_zone
-from engines.trigger import detect as detect_trigger
-from engines.risk import calculate as calculate_risk
+from engines.regime.detector import detect as detect_regime
+from engines.trend.direction import detect as detect_trend
+from engines.reversion.timing import detect as detect_reversion
+from engines.ict.confirmation import confirm as confirm_ict
+from engines.risk.calculator import calculate as calculate_risk
 from config import cfg, TAKER_FEE
 
 log = logging.getLogger(__name__)
@@ -15,11 +15,13 @@ WINDOW_4H  = 200
 WINDOW_1H  = 300
 WINDOW_15M = 200
 
+HE = cfg.HYBRID_ENGINE
+
 
 def _align_window(
     df:         pd.DataFrame,
     current_ts: pd.Timestamp,
-    window:     int
+    window:     int,
 ) -> pd.DataFrame:
     aligned = df[df.index < current_ts].copy()
     if len(aligned) < window:
@@ -140,12 +142,11 @@ def _calculate_pnl(
     tp1:        float,
     tp2:        float | None,
 ) -> float:
-    tp1_pct  = cfg.SCALP_ENGINE["tp1_close_pct"]
-    tp2_pct  = cfg.SCALP_ENGINE["tp2_close_pct"]
+    tp1_pct  = HE["tp1_close_pct"]
+    tp2_pct  = HE["tp2_close_pct"]
     fee_mult = TAKER_FEE * 2
-
-    # Add slippage model — 0.05% per side
     slippage = 0.0005
+
     if direction == "LONG":
         entry      = entry      * (1 + slippage)
         exit_price = exit_price * (1 - slippage)
@@ -200,26 +201,103 @@ def run_backtest(
     if df_15m is None or len(df_15m) < WINDOW_15M + 20:
         return {"error": f"Insufficient 15M data: {coin}"}
 
+    split_idx    = int(len(df_4h) * 0.70)
+    df_4h_train  = df_4h.iloc[:split_idx]
+    df_4h_test   = df_4h.iloc[split_idx:]
+
+    log.info(
+        "Walk-forward split: train=%s candles test=%s candles",
+        len(df_4h_train), len(df_4h_test),
+    )
+
+    train_result = _run_period(
+        coin     = coin,
+        df_4h    = df_4h_train,
+        df_1h    = df_1h,
+        df_15m   = df_15m,
+        capital  = capital,
+        leverage = leverage,
+        label    = "train",
+    )
+
+    test_result = _run_period(
+        coin     = coin,
+        df_4h    = df_4h_test,
+        df_1h    = df_1h,
+        df_15m   = df_15m,
+        capital  = capital,
+        leverage = leverage,
+        label    = "test",
+    )
+
+    if not train_result.get("trades") and not test_result.get("trades"):
+        return {
+            "coin":          coin,
+            "error":         "No trades generated in either period",
+            "total_signals": 0,
+            "total_trades":  0,
+        }
+
+    from backtest.report import build_report
+
+    all_trades   = (train_result.get("trades", []) + test_result.get("trades", []))
+    all_signals  = (train_result.get("signals_log", []) + test_result.get("signals_log", []))
+    final_equity = capital + sum(t["pnl"] for t in all_trades)
+
+    report = build_report(
+        coin         = coin,
+        trades       = all_trades,
+        signals_log  = all_signals,
+        capital      = capital,
+        final_equity = final_equity,
+    )
+
+    report["walk_forward"] = {
+        "train": {
+            "period":      f"{df_4h_train.index[0].date()} → {df_4h_train.index[-1].date()}",
+            "trades":      len(train_result.get("trades", [])),
+            "win_rate":    train_result.get("win_rate", 0),
+            "total_pnl":   train_result.get("total_pnl", 0),
+        },
+        "test": {
+            "period":      f"{df_4h_test.index[0].date()} → {df_4h_test.index[-1].date()}",
+            "trades":      len(test_result.get("trades", [])),
+            "win_rate":    test_result.get("win_rate", 0),
+            "total_pnl":   test_result.get("total_pnl", 0),
+        },
+        "oos_degradation": round(
+            (train_result.get("win_rate", 0) - test_result.get("win_rate", 0)), 1
+        ),
+    }
+
+    return report
+
+
+def _run_period(
+    coin:     str,
+    df_4h:    pd.DataFrame,
+    df_1h:    pd.DataFrame,
+    df_15m:   pd.DataFrame,
+    capital:  float,
+    leverage: int,
+    label:    str,
+) -> dict:
     trades           = []
     signals_log      = []
     equity           = capital
     peak_equity      = capital
-    open_trades_list = []   # tracks (open_ts, close_ts) for concurrent limit
+    open_trades_list = []
     skipped          = 0
-    SE               = cfg.SCALP_ENGINE
-    max_trades       = SE["max_open_trades"]
 
     for i in range(WINDOW_4H, len(df_4h) - 1):
         current_ts = df_4h.index[i]
 
-        # Remove trades that closed before current candle
         open_trades_list = [
             t for t in open_trades_list
             if t["close_ts"] > current_ts
         ]
 
-        # Enforce concurrent trade limit
-        if len(open_trades_list) >= max_trades:
+        if len(open_trades_list) >= HE["max_open_trades"]:
             skipped += 1
             continue
 
@@ -227,90 +305,85 @@ def run_backtest(
         d1h_w  = _align_window(df_1h,  current_ts, WINDOW_1H)
         d15m_w = _align_window(df_15m, current_ts, WINDOW_15M)
 
-        if len(d1h_w) < 100:
-            skipped += 1
-            continue
-
-        if len(d15m_w) < 20:
+        if len(d1h_w) < 100 or len(d15m_w) < 20:
             skipped += 1
             continue
 
         try:
-            d4h = calculate_all(d4h_w, timeframe="4h")
-            d1h = calculate_all(d1h_w, timeframe="1h")
+            d4h  = calculate_all(d4h_w, timeframe="4h")
+            d1h  = calculate_all(d1h_w, timeframe="1h")
             d15m = calculate_all(d15m_w, timeframe="15m")
 
-            price = d4h.get("price", 0)
+            price = float(d4h.get("price") or 0)
             if not price or price <= 0:
                 continue
 
-            ctx = context_check(d4h, coin)
-            if not ctx["pass"]:
+            d1w_stub = None
+            regime   = detect_regime(d4h, d1w_stub)
+
+            if regime.is_volatile:
+                skipped += 1
                 continue
 
-            direction = ctx["direction"]
-            atr_1h    = d1h.get("atr") or price * 0.01
+            trend = detect_trend(d4h, coin, df_1d=None, df_1w=None)
 
-            # Use actual 15M ATR now that we have real data
-            atr_15m = d15m.get("atr") or price * 0.005
-
-            sweep_result = detect_sweep(d1h_w, d1h, direction)
-            if not sweep_result["detected"]:
-                continue
-            if sweep_result["score"] < SE["sweep_min_score"]:
+            if not trend.passed:
                 continue
 
-            zone_result = detect_zone(d4h, d4h_w, direction, atr_1h)
-            if not zone_result["detected"]:
+            direction = trend.direction
+            atr_1h    = float(d1h.get("atr") or price * 0.01)
+            atr_15m   = float(d15m.get("atr") or price * 0.005)
+
+            reversion = detect_reversion(d1h, d1h_w, direction)
+
+            if not reversion.window_open:
                 continue
 
-            trigger_result = detect_trigger(
-                df_15m    = d15m_w,
-                zone      = zone_result["zone"],
+            ict = confirm_ict(
+                df_4h   = d4h_w,
+                d4h     = d4h,
+                df_1h   = d1h_w,
+                d1h     = d1h,
+                df_15m  = d15m_w,
+                d15m    = d15m,
                 direction = direction,
-                atr_15m   = atr_15m,
+                atr_1h  = atr_1h,
+                atr_15m = atr_15m,
             )
 
-            if not trigger_result["confirmed"]:
+            if not ict.confirmed:
                 continue
 
-            # Use actual trigger entry price not 4H close
-            entry  = trigger_result.get("entry_price") or price
+            entry = float(ict.entry_price) if ict.entry_price else 0.0
+            if not entry:
+                is_long = direction == "LONG"
+                zone    = ict.zone
+                if zone:
+                    entry = float(zone.top) if is_long else float(zone.bottom)
+                else:
+                    entry = price
 
-            risk_result = calculate_risk(
+            risk = calculate_risk(
                 direction = direction,
                 entry     = entry,
-                sweep     = sweep_result["sweep"],
-                zone      = zone_result["zone"],
-                trigger   = {
-                    "candle_low":  float(d15m_w.iloc[-1]["low"]),
-                    "candle_high": float(d15m_w.iloc[-1]["high"]),
-                },
+                sweep     = ict.sweep,
+                zone      = ict.zone,
+                ict       = ict.trigger,
                 atr_15m   = atr_15m,
                 d1h       = d1h,
                 d4h       = d4h,
             )
 
-            if not risk_result["valid"]:
+            if not risk.valid:
                 continue
 
-            sl     = risk_result["sl"]
-            tp1    = risk_result["tp1"]
-            tp2    = risk_result["tp2"]
-            sl_pct = risk_result["sl_pct"]
+            combined = ict.score
 
-            combined = round(
-                sweep_result["score"]   * 0.40 +
-                zone_result["score"]    * 0.35 +
-                trigger_result["score"] * 0.25,
-                3
-            )
-
-            if combined >= SE["grade_aplus_threshold"]:
+            if combined >= HE["grade_aplus"] / 100:
                 grade = "A+"
-            elif combined >= SE["grade_a_threshold"]:
+            elif combined >= HE["grade_a"] / 100:
                 grade = "A"
-            elif combined >= SE["grade_b_threshold"]:
+            elif combined >= HE["grade_b"] / 100:
                 grade = "B"
             else:
                 continue
@@ -323,7 +396,9 @@ def run_backtest(
                 "grade":     grade,
                 "direction": direction,
                 "price":     price,
+                "entry":     entry,
                 "score":     combined,
+                "regime":    regime.label,
             })
 
             sim = _simulate_trade(
@@ -331,19 +406,18 @@ def run_backtest(
                 current_ts = current_ts,
                 direction  = direction,
                 entry      = entry,
-                sl         = sl,
-                tp1        = tp1,
-                tp2        = tp2,
+                sl         = risk.sl,
+                tp1        = risk.tp1,
+                tp2        = risk.tp2,
             )
 
-            # Register open trade for concurrent limit tracking
             open_trades_list.append({
                 "open_ts":  current_ts,
                 "close_ts": sim.get("close_ts", current_ts),
             })
 
-            risk_amt = equity * SE["base_risk_pct"]
-            pos_size = risk_amt / (sl_pct / 100)
+            risk_amt = equity * HE["base_risk_pct"] * regime.size_mult
+            pos_size = risk_amt / (risk.sl_pct / 100)
 
             pnl = _calculate_pnl(
                 direction  = direction,
@@ -352,8 +426,8 @@ def run_backtest(
                 pos_size   = pos_size,
                 tp1_hit    = sim["tp1_hit"],
                 tp2_hit    = sim["tp2_hit"],
-                tp1        = tp1,
-                tp2        = tp2,
+                tp1        = risk.tp1,
+                tp2        = risk.tp2,
             )
 
             equity      += pnl
@@ -367,49 +441,43 @@ def run_backtest(
                 "coin":        coin,
                 "grade":       grade,
                 "direction":   direction,
-                "entry":       round(entry,            6),
-                "sl":          round(sl,               6),
-                "tp1":         round(tp1,              6),
-                "tp2":         round(tp2,              6) if tp2 else None,
-                "exit_price":  round(sim["exit_price"],6),
+                "entry":       round(entry,          6),
+                "sl":          round(risk.sl,        6),
+                "tp1":         round(risk.tp1,       6),
+                "tp2":         round(risk.tp2,       6) if risk.tp2 else None,
+                "exit_price":  round(sim["exit_price"], 6),
                 "outcome":     sim["outcome"],
                 "pnl":         pnl,
-                "equity":      round(equity,           4),
+                "equity":      round(equity, 4),
                 "drawdown":    drawdown,
                 "candles":     sim.get("candles"),
                 "reason":      sim.get("reason", ""),
                 "tp1_hit":     sim.get("tp1_hit", False),
                 "tp2_hit":     sim.get("tp2_hit", False),
-                "sweep_score": sweep_result["score"],
-                "zone_score":  zone_result["score"],
-                "zone_type":   zone_result["zone"].get("type", ""),
-                "sweep_age_h": sweep_result["sweep"].get("age_hours", 0) if sweep_result.get("sweep") else 0,
+                "sweep_score": ict.sweep_score,
+                "zone_score":  ict.zone_score,
                 "combined":    combined,
+                "regime":      regime.label,
+                "period":      label,
             })
 
         except Exception as e:
             log.debug("Backtest candle %s error: %s", i, e)
             continue
 
+    wins      = [t for t in trades if t["outcome"] == "win"]
+    win_rate  = round(len(wins) / len(trades) * 100, 1) if trades else 0
+    total_pnl = round(sum(t["pnl"] for t in trades), 4)
+
     log.info(
-        "Backtest complete: %s trades:%s skipped:%s equity:$%.2f",
-        coin, len(trades), skipped, equity
+        "Period %s complete: %s trades win_rate:%s%% pnl:$%.2f skipped:%s",
+        label, len(trades), win_rate, total_pnl, skipped,
     )
 
-    if not trades:
-        return {
-            "coin":          coin,
-            "total_signals": len(signals_log),
-            "total_trades":  0,
-            "skipped":       skipped,
-            "error":         "No A/A+ trades generated",
-        }
-
-    from backtest.report import build_report
-    return build_report(
-        coin         = coin,
-        trades       = trades,
-        signals_log  = signals_log,
-        capital      = capital,
-        final_equity = equity,
-    )
+    return {
+        "trades":      trades,
+        "signals_log": signals_log,
+        "win_rate":    win_rate,
+        "total_pnl":   total_pnl,
+        "skipped":     skipped,
+    }

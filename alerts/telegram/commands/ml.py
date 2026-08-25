@@ -190,17 +190,20 @@ async def cmd_version() -> None:
         current = get_current_version_record()
         history = get_version_history(limit=5)
 
-        SE    = cfg.SCALP_ENGINE
+        HE    = cfg.HYBRID_ENGINE
         lines = [
             f"⚙️ *System Version*\n",
             f"Current: `{cfg.SYSTEM_VERSION}`\n",
             f"*Active Parameters:*",
-            f"sweep_min_score:       `{SE.get('sweep_min_score', 0.30)}`",
-            f"zone_min_score:        `{SE.get('zone_min_score', 0.40)}`",
-            f"grade_a_threshold:     `{SE.get('grade_a_threshold', 0.65)}`",
-            f"grade_aplus_threshold: `{SE.get('grade_aplus_threshold', 0.80)}`",
-            f"sweep_max_age_hours:   `{SE.get('sweep_max_age_hours', 12)}`",
-            f"base_risk_pct:         `{SE.get('base_risk_pct', 0.01)}`",
+            f"sweep_min_score:     `{HE.get('sweep_min_score',     0.45)}`",
+            f"zone_min_score:      `{HE.get('zone_min_score',      0.45)}`",
+            f"ict_min_score:       `{HE.get('ict_min_score',       55)}`",
+            f"grade_aplus:         `{HE.get('grade_aplus',         85)}`",
+            f"grade_a:             `{HE.get('grade_a',             68)}`",
+            f"regime_adx_trending: `{HE.get('regime_adx_trending', 25)}`",
+            f"reversion_rsi_long:  `{HE.get('reversion_rsi_long_max', 52)}`",
+            f"sweep_max_age_hours: `{HE.get('sweep_max_age_hours', 24)}`",
+            f"base_risk_pct:       `{HE.get('base_risk_pct',       0.01)}`",
             f"",
         ]
 

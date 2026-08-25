@@ -67,9 +67,9 @@ def _apply_pillar_weight_recommendation(rec: dict) -> dict:
         from ml.safety_checks import check_pillar_weight_change
 
         safety = check_pillar_weight_change(
-            pillar        = pillar,
-            current_weight= float(rec["current_value"]),
-            new_weight    = new_weight,
+            pillar         = pillar,
+            current_weight = float(rec["current_value"]),
+            new_weight     = new_weight,
         )
 
         if not safety["pass"]:
@@ -88,10 +88,7 @@ def _apply_pillar_weight_recommendation(rec: dict) -> dict:
         )
 
         if result.get("success"):
-            log.info(
-                "Pillar weight applied: %s %.3f → %.3f",
-                pillar, rec["current_value"], new_weight
-            )
+            log.info("Pillar weight applied: %s %.3f → %.3f", pillar, rec["current_value"], new_weight)
             return {
                 "applied":     True,
                 "parameter":   parameter,
@@ -112,10 +109,10 @@ def _apply_pillar_weight_recommendation(rec: dict) -> dict:
 
 
 def _apply_recommendation(rec: dict) -> dict:
-    parameter       = rec["parameter"]
-    current_value   = float(rec["current_value"])
-    proposed_value  = float(rec["recommended_value"])
-    rec_id          = rec.get("id")
+    parameter      = rec["parameter"]
+    current_value  = float(rec["current_value"])
+    proposed_value = float(rec["recommended_value"])
+    rec_id         = rec.get("id")
 
     from ml.safety_checks import check_all, check_win_rate_improvement
 
@@ -148,8 +145,8 @@ def _apply_recommendation(rec: dict) -> dict:
         }
 
     version_before = cfg.SYSTEM_VERSION
+    success        = _update_parameter(parameter, proposed_value)
 
-    success = _update_parameter(parameter, proposed_value)
     if not success:
         return {
             "applied":   False,
@@ -202,10 +199,8 @@ def _apply_recommendation(rec: dict) -> dict:
         total_trades = total_trades,
     )
 
-    log.info(
-        "Adaptation applied: %s %s → %s version:%s",
-        parameter, current_value, proposed_value, new_version
-    )
+    log.info("Adaptation applied: %s %s → %s version:%s",
+             parameter, current_value, proposed_value, new_version)
 
     return {
         "applied":     True,
@@ -219,12 +214,12 @@ def _apply_recommendation(rec: dict) -> dict:
 
 def _update_parameter(parameter: str, value: float) -> bool:
     try:
-        SE = cfg.SCALP_ENGINE
-        if parameter in SE:
-            SE[parameter] = value
+        HE = cfg.HYBRID_ENGINE
+        if parameter in HE:
+            HE[parameter] = value
             log.info("Parameter updated: %s = %s", parameter, value)
             return True
-        log.error("Parameter not found in SCALP_ENGINE: %s", parameter)
+        log.error("Parameter not found in HYBRID_ENGINE: %s", parameter)
         return False
     except Exception as e:
         log.error("_update_parameter %s: %s", parameter, e)
