@@ -384,7 +384,7 @@ class Config:
         "reversion_bb_touch":          True,
         "ict_min_score":               55,
         "sweep_max_age_hours":         24,
-        "sweep_min_wick_atr":          1.5,
+        "sweep_min_wick_atr":          0.3,
         "sweep_min_score":             0.45,
         "zone_min_width_atr":          0.15,
         "zone_max_dist_pct":           1.0,
