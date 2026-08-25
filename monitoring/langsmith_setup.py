@@ -7,24 +7,21 @@ _langsmith_enabled = False
 
 
 def start_langsmith() -> bool:
+    tracing = os.getenv("LANGCHAIN_TRACING_V2", "false").lower()
+    if tracing != "true":
+        log.info("LangSmith tracing disabled")
+        return False
+
+    api_key = os.getenv("LANGCHAIN_API_KEY", "")
+    if not api_key:
+        log.info("LangSmith: no API key — tracing disabled")
+        return False
+
     global _langsmith_enabled
-
     try:
-        api_key  = os.getenv("LANGCHAIN_API_KEY", "")
-        project  = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
-        tracing  = os.getenv("LANGCHAIN_TRACING_V2", "false").lower()
-
-        if not api_key:
-            log.warning("LangSmith: LANGCHAIN_API_KEY not set — tracing disabled")
-            return False
-
-        if tracing != "true":
-            log.warning("LangSmith: LANGCHAIN_TRACING_V2 not true — tracing disabled")
-            return False
-
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"]    = api_key
-        os.environ["LANGCHAIN_PROJECT"]    = project
+        os.environ["LANGCHAIN_PROJECT"]    = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
         os.environ["LANGCHAIN_ENDPOINT"]   = "https://api.smith.langchain.com"
 
         from langsmith import Client
@@ -32,15 +29,12 @@ def start_langsmith() -> bool:
         client.list_projects()
 
         _langsmith_enabled = True
-
-        log.info(
-            "LangSmith tracing enabled — project: %s — dashboard: https://smith.langchain.com",
-            project
-        )
+        log.info("LangSmith tracing enabled — project: %s", os.getenv("LANGCHAIN_PROJECT"))
         return True
 
     except Exception as e:
-        log.error("LangSmith setup error: %s", e)
+        log.warning("LangSmith setup error: %s — continuing without tracing", e)
+        _langsmith_enabled = False
         return False
 
 
@@ -57,11 +51,11 @@ def get_langsmith_status() -> dict:
     project = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
     api_key = os.getenv("LANGCHAIN_API_KEY", "")
     return {
-        "enabled":   _langsmith_enabled,
-        "project":   project,
-        "url":       get_langsmith_url(),
+        "enabled":     _langsmith_enabled,
+        "project":     project,
+        "url":         get_langsmith_url(),
         "api_key_set": bool(api_key),
-        "dashboard": "https://smith.langchain.com",
+        "dashboard":   "https://smith.langchain.com",
     }
 
 
