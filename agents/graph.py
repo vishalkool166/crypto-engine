@@ -32,24 +32,6 @@ def _set_session(state: SignalAgentState) -> SignalAgentState:
     return state
 
 
-def _load_1h(state: SignalAgentState) -> SignalAgentState:
-    try:
-        from engines.core.indicators import get_indicators
-        df_1h = state.get("df_1h")
-        if df_1h is not None and len(df_1h) >= 50:
-            d1h = get_indicators(df_1h, timeframe="1h")
-            state["d1h"]    = d1h
-            state["atr_1h"] = float(d1h.get("atr") or 0)
-        else:
-            state["d1h"]    = {}
-            state["atr_1h"] = 0.0
-    except Exception as e:
-        log.error("_load_1h: %s", e)
-        state["d1h"]    = {}
-        state["atr_1h"] = 0.0
-    return state
-
-
 def _finalize(state: SignalAgentState) -> SignalAgentState:
     try:
         risk      = state["risk_result"]
@@ -128,7 +110,6 @@ def build_signal_graph() -> StateGraph:
     graph = StateGraph(SignalAgentState)
 
     graph.add_node("set_session", _set_session)
-    graph.add_node("load_1h",     _load_1h)
     graph.add_node("regime",      regime_node)
     graph.add_node("trend",       trend_node)
     graph.add_node("scorer",      grade_node)
@@ -139,8 +120,7 @@ def build_signal_graph() -> StateGraph:
 
     graph.set_entry_point("set_session")
 
-    graph.add_edge("set_session", "load_1h")
-    graph.add_edge("load_1h",     "regime")
+    graph.add_edge("set_session", "regime")
     graph.add_edge("regime",      "trend")
 
     graph.add_conditional_edges(
@@ -179,5 +159,5 @@ def get_signal_graph():
         return _compiled_graph
     graph           = build_signal_graph()
     _compiled_graph = graph.compile()
-    log.info("Signal graph compiled — 5-node pipeline active")
+    log.info("Signal graph compiled — 4-node pipeline active")
     return _compiled_graph

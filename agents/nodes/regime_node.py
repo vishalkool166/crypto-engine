@@ -10,6 +10,7 @@ def regime_node(state: SignalAgentState) -> SignalAgentState:
         from engines.regime.detector import detect
 
         df_4h = state["df_4h"]
+        df_1h = state.get("df_1h")
 
         if df_4h is None or len(df_4h) < 50:
             state["signal"] = False
@@ -19,6 +20,14 @@ def regime_node(state: SignalAgentState) -> SignalAgentState:
         d4h = get_indicators(df_4h, timeframe="4h")
         state["d4h"]    = d4h
         state["atr_4h"] = float(d4h.get("atr") or 0)
+
+        if df_1h is not None and len(df_1h) >= 50:
+            d1h = get_indicators(df_1h, timeframe="1h")
+            state["d1h"]    = d1h
+            state["atr_1h"] = float(d1h.get("atr") or 0)
+        else:
+            state["d1h"]    = {}
+            state["atr_1h"] = 0.0
 
         regime = detect(d4h)
         state["regime_result"] = regime
