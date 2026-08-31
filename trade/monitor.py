@@ -577,9 +577,11 @@ def get_performance_by_coin() -> list:
 def get_trade_history(limit: int = 20, offset: int = 0) -> list:
     try:
         with get_session() as db:
-            trades = db.query(TradeModel).order_by(
-                TradeModel.opened_at.desc()
-            ).offset(offset).limit(limit).all()
+                trades = db.query(TradeModel).filter(
+                    TradeModel.outcome != "cancelled"
+                ).order_by(
+                    TradeModel.opened_at.desc()
+                ).offset(offset).limit(limit).all()
         return [{
             "trade_id":               t.id,
             "coin":                   t.coin,
