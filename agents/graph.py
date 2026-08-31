@@ -14,7 +14,7 @@ def _after_trend(state: SignalAgentState) -> str:
     return "end" if not state.get("signal", True) else "continue"
 
 
-def _after_grade(state: SignalAgentState) -> str:
+def _after_scorer(state: SignalAgentState) -> str:
     return "end" if not state.get("signal", True) else "continue"
 
 
@@ -52,14 +52,14 @@ def _load_1h(state: SignalAgentState) -> SignalAgentState:
 
 def _finalize(state: SignalAgentState) -> SignalAgentState:
     try:
-        risk    = state["risk_result"]
-        sizing  = state["sizing_result"]
-        regime  = state["regime_result"]
-        coin    = state["coin"]
+        risk      = state["risk_result"]
+        sizing    = state["sizing_result"]
+        regime    = state["regime_result"]
+        coin      = state["coin"]
         direction = state["direction"]
-        grade   = state["grade"]
-        score   = state["score"]
-        session = state["session"]
+        grade     = state["grade"]
+        score     = state["score"]
+        session   = state["session"]
 
         state["final_result"] = {
             "signal":    True,
@@ -131,7 +131,7 @@ def build_signal_graph() -> StateGraph:
     graph.add_node("load_1h",     _load_1h)
     graph.add_node("regime",      regime_node)
     graph.add_node("trend",       trend_node)
-    graph.add_node("grade",       grade_node)
+    graph.add_node("scorer",      grade_node)
     graph.add_node("risk",        risk_node)
     graph.add_node("sizing",      sizing_node)
     graph.add_node("finalize",    _finalize)
@@ -146,11 +146,11 @@ def build_signal_graph() -> StateGraph:
     graph.add_conditional_edges(
         "trend",
         _after_trend,
-        {"continue": "grade", "end": "reject"},
+        {"continue": "scorer", "end": "reject"},
     )
     graph.add_conditional_edges(
-        "grade",
-        _after_grade,
+        "scorer",
+        _after_scorer,
         {"continue": "risk", "end": "reject"},
     )
     graph.add_conditional_edges(
