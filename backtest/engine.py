@@ -1,44 +1,25 @@
 import pandas as pd
 import logging
 from data.store import load_candles
-from engines.indicators import calculate_all
+from engines.core.indicators import get_indicators
 from engines.regime.detector import detect as detect_regime
 from engines.trend.direction import detect as detect_trend
-from engines.reversion.timing import detect as detect_reversion
-from engines.ict.confirmation import confirm as confirm_ict
-from engines.risk.calculator import calculate as calculate_risk
+from engines.core.risk import calculate_risk
 from config import cfg, TAKER_FEE
 
 log = logging.getLogger(__name__)
 
-WINDOW_4H  = 200
-WINDOW_1H  = 300
-WINDOW_15M = 200
-
-HE = cfg.HYBRID_ENGINE
-
-
-def _align_window(
-    df:         pd.DataFrame,
-    current_ts: pd.Timestamp,
-    window:     int,
-) -> pd.DataFrame:
-    aligned = df[df.index < current_ts].copy()
-    if len(aligned) < window:
-        return aligned
-    return aligned.iloc[-window:]
-
 
 def _simulate_trade(
-    df_4h:      pd.DataFrame,
-    current_ts: pd.Timestamp,
-    direction:  str,
-    entry:      float,
-    sl:         float,
-    tp1:        float,
-    tp2:        float | None,
+    df:        pd.DataFrame,
+    current_i: int,
+    direction: str,
+    entry:     float,
+    sl:        float,
+    tp1:       float,
+    tp2:       float,
 ) -> dict:
-    future  = df_4h[df_4h.index > current_ts].head(120)
+    future  = df.iloc[current_i:current_i + 40]
     is_long = direction == "LONG"
     tp1_hit = False
 
@@ -47,8 +28,6 @@ def _simulate_trade(
             "outcome":    "timeout",
             "exit_price": entry,
             "candles":    0,
-            "close_ts":   current_ts,
-            "reason":     "insufficient_future_data",
             "tp1_hit":    False,
             "tp2_hit":    False,
         }
@@ -59,128 +38,33 @@ def _simulate_trade(
 
         sl_hit  = (l <= sl)  if is_long else (h >= sl)
         tp1_now = (h >= tp1) if is_long else (l <= tp1)
-        tp2_now = tp2 and ((h >= tp2) if is_long else (l <= tp2))
+        tp2_now = (h >= tp2) if is_long else (l <= tp2)
 
         if not tp1_hit:
             if sl_hit and tp1_now:
-                return {
-                    "outcome":    "loss",
-                    "exit_price": sl,
-                    "candles":    j + 1,
-                    "close_ts":   ts,
-                    "reason":     "sl_gap",
-                    "tp1_hit":    False,
-                    "tp2_hit":    False,
-                }
+                return {"outcome": "loss", "exit_price": sl, "candles": j+1, "tp1_hit": False, "tp2_hit": False}
             if sl_hit:
-                return {
-                    "outcome":    "loss",
-                    "exit_price": sl,
-                    "candles":    j + 1,
-                    "close_ts":   ts,
-                    "reason":     "sl_hit",
-                    "tp1_hit":    False,
-                    "tp2_hit":    False,
-                }
+                return {"outcome": "loss", "exit_price": sl, "candles": j+1, "tp1_hit": False, "tp2_hit": False}
             if tp1_now:
                 tp1_hit = True
                 sl      = entry
                 if not tp2:
-                    return {
-                        "outcome":    "win",
-                        "exit_price": tp1,
-                        "candles":    j + 1,
-                        "close_ts":   ts,
-                        "reason":     "tp1_hit",
-                        "tp1_hit":    True,
-                        "tp2_hit":    False,
-                    }
+                    return {"outcome": "win", "exit_price": tp1, "candles": j+1, "tp1_hit": True, "tp2_hit": False}
                 continue
         else:
             if tp2_now:
-                return {
-                    "outcome":    "win",
-                    "exit_price": tp2,
-                    "candles":    j + 1,
-                    "close_ts":   ts,
-                    "reason":     "tp2_hit",
-                    "tp1_hit":    True,
-                    "tp2_hit":    True,
-                }
+                return {"outcome": "win", "exit_price": tp2, "candles": j+1, "tp1_hit": True, "tp2_hit": True}
             if (l <= sl) if is_long else (h >= sl):
-                return {
-                    "outcome":    "win",
-                    "exit_price": entry,
-                    "candles":    j + 1,
-                    "close_ts":   ts,
-                    "reason":     "tp1_be_stop",
-                    "tp1_hit":    True,
-                    "tp2_hit":    False,
-                }
+                return {"outcome": "win", "exit_price": entry, "candles": j+1, "tp1_hit": True, "tp2_hit": False}
 
     last_close = float(future.iloc[-1]["close"])
-    close_ts   = future.index[-1]
-    outcome    = "win" if tp1_hit else "timeout"
     return {
-        "outcome":    outcome,
+        "outcome":    "win" if tp1_hit else "timeout",
         "exit_price": last_close,
         "candles":    len(future),
-        "close_ts":   close_ts,
-        "reason":     f"timeout_{len(future)}_candles",
         "tp1_hit":    tp1_hit,
         "tp2_hit":    False,
     }
-
-
-def _calculate_pnl(
-    direction:  str,
-    entry:      float,
-    exit_price: float,
-    pos_size:   float,
-    tp1_hit:    bool,
-    tp2_hit:    bool,
-    tp1:        float,
-    tp2:        float | None,
-) -> float:
-    tp1_pct  = HE["tp1_close_pct"]
-    tp2_pct  = HE["tp2_close_pct"]
-    fee_mult = TAKER_FEE * 2
-    slippage = 0.0005
-
-    if direction == "LONG":
-        entry      = entry      * (1 + slippage)
-        exit_price = exit_price * (1 - slippage)
-        if tp1: tp1 = tp1 * (1 - slippage)
-        if tp2: tp2 = tp2 * (1 - slippage)
-    else:
-        entry      = entry      * (1 - slippage)
-        exit_price = exit_price * (1 + slippage)
-        if tp1: tp1 = tp1 * (1 + slippage)
-        if tp2: tp2 = tp2 * (1 + slippage)
-
-    if tp2_hit and tp2:
-        if direction == "LONG":
-            gross = (
-                (tp1 - entry) / entry * pos_size * tp1_pct +
-                (tp2 - entry) / entry * pos_size * tp2_pct
-            )
-        else:
-            gross = (
-                (entry - tp1) / entry * pos_size * tp1_pct +
-                (entry - tp2) / entry * pos_size * tp2_pct
-            )
-    elif tp1_hit:
-        if direction == "LONG":
-            gross = (tp1 - entry) / entry * pos_size * tp1_pct
-        else:
-            gross = (entry - tp1) / entry * pos_size * tp1_pct
-    else:
-        if direction == "LONG":
-            gross = (exit_price - entry) / entry * pos_size
-        else:
-            gross = (entry - exit_price) / entry * pos_size
-
-    return round(gross - pos_size * fee_mult, 4)
 
 
 def run_backtest(
@@ -190,294 +74,195 @@ def run_backtest(
 ) -> dict:
     log.info("Backtest started: %s", coin)
 
-    df_4h  = load_candles(coin, "4h",  limit=2000)
-    df_1h  = load_candles(coin, "1h",  limit=5000)
-    df_15m = load_candles(coin, "15m", limit=20000)
+    df_4h = load_candles(coin, "4h", limit=2000)
+    df_1h = load_candles(coin, "1h", limit=5000)
 
-    if df_4h is None or len(df_4h) < WINDOW_4H + 50:
+    if df_4h is None or len(df_4h) < 250:
         return {"error": f"Insufficient 4H data: {coin}"}
-    if df_1h is None or len(df_1h) < WINDOW_1H + 50:
+    if df_1h is None or len(df_1h) < 50:
         return {"error": f"Insufficient 1H data: {coin}"}
-    if df_15m is None or len(df_15m) < WINDOW_15M + 20:
-        return {"error": f"Insufficient 15M data: {coin}"}
 
-    split_idx    = int(len(df_4h) * 0.70)
-    df_4h_train  = df_4h.iloc[:split_idx]
-    df_4h_test   = df_4h.iloc[split_idx:]
+    HE     = cfg.HYBRID_ENGINE
+    trades = []
+    equity = capital
 
-    log.info(
-        "Walk-forward split: train=%s candles test=%s candles",
-        len(df_4h_train), len(df_4h_test),
-    )
+    for i in range(220, len(df_4h) - 40):
+        window_4h = df_4h.iloc[i-220:i]
+        window_1h = df_1h[df_1h.index < df_4h.index[i]].tail(300)
 
-    train_result = _run_period(
-        coin     = coin,
-        df_4h    = df_4h_train,
-        df_1h    = df_1h,
-        df_15m   = df_15m,
-        capital  = capital,
-        leverage = leverage,
-        label    = "train",
-    )
-
-    test_result = _run_period(
-        coin     = coin,
-        df_4h    = df_4h_test,
-        df_1h    = df_1h,
-        df_15m   = df_15m,
-        capital  = capital,
-        leverage = leverage,
-        label    = "test",
-    )
-
-    if not train_result.get("trades") and not test_result.get("trades"):
-        return {
-            "coin":          coin,
-            "error":         "No trades generated in either period",
-            "total_signals": 0,
-            "total_trades":  0,
-        }
-
-    from backtest.report import build_report
-
-    all_trades   = (train_result.get("trades", []) + test_result.get("trades", []))
-    all_signals  = (train_result.get("signals_log", []) + test_result.get("signals_log", []))
-    final_equity = capital + sum(t["pnl"] for t in all_trades)
-
-    report = build_report(
-        coin         = coin,
-        trades       = all_trades,
-        signals_log  = all_signals,
-        capital      = capital,
-        final_equity = final_equity,
-    )
-
-    report["walk_forward"] = {
-        "train": {
-            "period":      f"{df_4h_train.index[0].date()} → {df_4h_train.index[-1].date()}",
-            "trades":      len(train_result.get("trades", [])),
-            "win_rate":    train_result.get("win_rate", 0),
-            "total_pnl":   train_result.get("total_pnl", 0),
-        },
-        "test": {
-            "period":      f"{df_4h_test.index[0].date()} → {df_4h_test.index[-1].date()}",
-            "trades":      len(test_result.get("trades", [])),
-            "win_rate":    test_result.get("win_rate", 0),
-            "total_pnl":   test_result.get("total_pnl", 0),
-        },
-        "oos_degradation": round(
-            (train_result.get("win_rate", 0) - test_result.get("win_rate", 0)), 1
-        ),
-    }
-
-    return report
-
-
-def _run_period(
-    coin:     str,
-    df_4h:    pd.DataFrame,
-    df_1h:    pd.DataFrame,
-    df_15m:   pd.DataFrame,
-    capital:  float,
-    leverage: int,
-    label:    str,
-) -> dict:
-    trades           = []
-    signals_log      = []
-    equity           = capital
-    peak_equity      = capital
-    open_trades_list = []
-    skipped          = 0
-
-    for i in range(WINDOW_4H, len(df_4h) - 1):
-        current_ts = df_4h.index[i]
-
-        open_trades_list = [
-            t for t in open_trades_list
-            if t["close_ts"] > current_ts
-        ]
-
-        if len(open_trades_list) >= HE["max_open_trades"]:
-            skipped += 1
-            continue
-
-        d4h_w  = df_4h.iloc[i - WINDOW_4H:i].copy()
-        d1h_w  = _align_window(df_1h,  current_ts, WINDOW_1H)
-        d15m_w = _align_window(df_15m, current_ts, WINDOW_15M)
-
-        if len(d1h_w) < 100 or len(d15m_w) < 20:
-            skipped += 1
+        if len(window_1h) < 50:
             continue
 
         try:
-            d4h  = calculate_all(d4h_w, timeframe="4h")
-            d1h  = calculate_all(d1h_w, timeframe="1h")
-            d15m = calculate_all(d15m_w, timeframe="15m")
-
-            price = float(d4h.get("price") or 0)
-            if not price or price <= 0:
-                continue
-
-            d1w_stub = None
-            regime   = detect_regime(d4h, d1w_stub)
-
-            if regime.is_volatile:
-                skipped += 1
-                continue
-
-            trend = detect_trend(d4h, coin, df_1d=None, df_1w=None)
-
-            if not trend.passed:
-                continue
-
-            direction = trend.direction
-            atr_1h    = float(d1h.get("atr") or price * 0.01)
-            atr_15m   = float(d15m.get("atr") or price * 0.005)
-
-            reversion = detect_reversion(d1h, d1h_w, direction)
-
-            if not reversion.window_open:
-                continue
-
-            ict = confirm_ict(
-                df_4h   = d4h_w,
-                d4h     = d4h,
-                df_1h   = d1h_w,
-                d1h     = d1h,
-                df_15m  = d15m_w,
-                d15m    = d15m,
-                direction = direction,
-                atr_1h  = atr_1h,
-                atr_15m = atr_15m,
-            )
-
-            if not ict.confirmed:
-                continue
-
-            entry = float(ict.entry_price) if ict.entry_price else 0.0
-            if not entry:
-                is_long = direction == "LONG"
-                zone    = ict.zone
-                if zone:
-                    entry = float(zone.top) if is_long else float(zone.bottom)
-                else:
-                    entry = price
-
-            risk = calculate_risk(
-                direction = direction,
-                entry     = entry,
-                sweep     = ict.sweep,
-                zone      = ict.zone,
-                ict       = ict.trigger,
-                atr_15m   = atr_15m,
-                d1h       = d1h,
-                d4h       = d4h,
-            )
-
-            if not risk.valid:
-                continue
-
-            combined = ict.score
-
-            if combined >= HE["grade_aplus"] / 100:
-                grade = "A+"
-            elif combined >= HE["grade_a"] / 100:
-                grade = "A"
-            elif combined >= HE["grade_b"] / 100:
-                grade = "B"
-            else:
-                continue
-
-            if grade not in ("A+", "A"):
-                continue
-
-            signals_log.append({
-                "date":      str(current_ts.date()),
-                "grade":     grade,
-                "direction": direction,
-                "price":     price,
-                "entry":     entry,
-                "score":     combined,
-                "regime":    regime.label,
-            })
-
-            sim = _simulate_trade(
-                df_4h      = df_4h,
-                current_ts = current_ts,
-                direction  = direction,
-                entry      = entry,
-                sl         = risk.sl,
-                tp1        = risk.tp1,
-                tp2        = risk.tp2,
-            )
-
-            open_trades_list.append({
-                "open_ts":  current_ts,
-                "close_ts": sim.get("close_ts", current_ts),
-            })
-
-            risk_amt = equity * HE["base_risk_pct"] * regime.size_mult
-            pos_size = risk_amt / (risk.sl_pct / 100)
-
-            pnl = _calculate_pnl(
-                direction  = direction,
-                entry      = entry,
-                exit_price = sim["exit_price"],
-                pos_size   = pos_size,
-                tp1_hit    = sim["tp1_hit"],
-                tp2_hit    = sim["tp2_hit"],
-                tp1        = risk.tp1,
-                tp2        = risk.tp2,
-            )
-
-            equity      += pnl
-            peak_equity  = max(peak_equity, equity)
-            drawdown     = round(
-                (peak_equity - equity) / peak_equity * 100, 2
-            ) if peak_equity > 0 else 0
-
-            trades.append({
-                "date":        str(current_ts.date()),
-                "coin":        coin,
-                "grade":       grade,
-                "direction":   direction,
-                "entry":       round(entry,          6),
-                "sl":          round(risk.sl,        6),
-                "tp1":         round(risk.tp1,       6),
-                "tp2":         round(risk.tp2,       6) if risk.tp2 else None,
-                "exit_price":  round(sim["exit_price"], 6),
-                "outcome":     sim["outcome"],
-                "pnl":         pnl,
-                "equity":      round(equity, 4),
-                "drawdown":    drawdown,
-                "candles":     sim.get("candles"),
-                "reason":      sim.get("reason", ""),
-                "tp1_hit":     sim.get("tp1_hit", False),
-                "tp2_hit":     sim.get("tp2_hit", False),
-                "sweep_score": ict.sweep_score,
-                "zone_score":  ict.zone_score,
-                "combined":    combined,
-                "regime":      regime.label,
-                "period":      label,
-            })
-
-        except Exception as e:
-            log.debug("Backtest candle %s error: %s", i, e)
+            d4h = get_indicators(window_4h, timeframe="4h")
+            d1h = get_indicators(window_1h, timeframe="1h")
+        except Exception:
             continue
 
-    wins      = [t for t in trades if t["outcome"] == "win"]
-    win_rate  = round(len(wins) / len(trades) * 100, 1) if trades else 0
-    total_pnl = round(sum(t["pnl"] for t in trades), 4)
+        regime = detect_regime(d4h)
+        if regime.is_volatile:
+            continue
 
-    log.info(
-        "Period %s complete: %s trades win_rate:%s%% pnl:$%.2f skipped:%s",
-        label, len(trades), win_rate, total_pnl, skipped,
-    )
+        trend = detect_trend(d4h, coin)
+        if not trend.passed:
+            continue
 
-    return {
-        "trades":      trades,
-        "signals_log": signals_log,
-        "win_rate":    win_rate,
-        "total_pnl":   total_pnl,
-        "skipped":     skipped,
+        price     = d4h["price"]
+        ema50     = d4h["ema50"]
+        adx       = d4h["adx"]
+        atr       = d4h["atr"]
+        vol_ratio = d4h["vol_ratio"]
+        direction = trend.direction
+
+        near_ema50 = abs(price - ema50) <= atr * HE.get("ema50_atr_mult", 3.0)
+        if not near_ema50:
+            continue
+
+        last      = window_4h.iloc[-1]
+        o         = float(last["open"])
+        c         = float(last["close"])
+        h         = float(last["high"])
+        l         = float(last["low"])
+        rng       = h - l
+        body_ratio= abs(c-o)/rng if rng > 0 else 0
+        bull      = c > o
+
+        if body_ratio < HE.get("body_ratio_min", 0.5):
+            continue
+        if direction == "LONG"  and not bull: continue
+        if direction == "SHORT" and bull:     continue
+        if vol_ratio < HE.get("volume_ratio_min", 0.8):
+            continue
+
+        swing_level = d4h["swing_low"] if direction == "LONG" else d4h["swing_high"]
+
+        risk = calculate_risk(
+            direction   = direction,
+            entry       = price,
+            swing_level = swing_level,
+            atr         = atr,
+        )
+
+        if not risk.valid:
+            continue
+
+        from engines.scoring.scorer import score as calc_score
+        rsi       = d1h["rsi"]
+        score_res = calc_score(adx, rsi, vol_ratio, direction, regime.label)
+
+        if score_res.grade == "F":
+            continue
+
+        risk_amt      = equity * HE.get("base_risk_pct", 0.01) * regime.size_mult
+        pos_size      = risk_amt / (risk.sl_pct / 100)
+        fee_mult      = TAKER_FEE * 2
+
+        sim = _simulate_trade(
+            df        = df_4h,
+            current_i = i,
+            direction = direction,
+            entry     = risk.entry,
+            sl        = risk.sl,
+            tp1       = risk.tp1,
+            tp2       = risk.tp2,
+        )
+
+        if sim["outcome"] == "timeout":
+            continue
+
+        if sim["outcome"] == "win":
+            pnl = round(pos_size * (risk.sl_pct / 100) * risk.rr1 - pos_size * fee_mult, 4)
+        else:
+            pnl = round(-(pos_size * (risk.sl_pct / 100)) - pos_size * fee_mult, 4)
+
+        equity += pnl
+
+        trades.append({
+            "date":      str(df_4h.index[i].date()),
+            "coin":      coin,
+            "grade":     score_res.grade,
+            "direction": direction,
+            "entry":     round(risk.entry, 6),
+            "sl":        round(risk.sl,    6),
+            "tp1":       round(risk.tp1,   6),
+            "exit":      round(sim["exit_price"], 6),
+            "outcome":   sim["outcome"],
+            "pnl":       pnl,
+            "equity":    round(equity, 4),
+            "tp1_hit":   sim["tp1_hit"],
+            "regime":    regime.label,
+        })
+
+    if not trades:
+        return {
+            "coin":         coin,
+            "error":        "No trades generated",
+            "total_signals":0,
+            "total_trades": 0,
+        }
+
+    wins     = [t for t in trades if t["outcome"] == "win"]
+    losses   = [t for t in trades if t["outcome"] == "loss"]
+    total    = len(trades)
+    win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0
+    pnls     = [t["pnl"] for t in trades]
+    total_pnl= round(sum(pnls), 4)
+
+    gross_p  = sum(p for p in pnls if p > 0)
+    gross_l  = abs(sum(p for p in pnls if p < 0))
+    pf       = round(gross_p / gross_l, 2) if gross_l > 0 else 0
+
+    peak   = capital
+    max_dd = 0.0
+    eq     = capital
+    for t in trades:
+        eq += t["pnl"]
+        if eq > peak:
+            peak = eq
+        dd = (peak - eq) / peak * 100 if peak > 0 else 0
+        if dd > max_dd:
+            max_dd = dd
+
+    by_grade = {}
+    for g in ("A+", "A", "B"):
+        gt = [t for t in trades if t["grade"] == g]
+        gw = [t for t in gt    if t["outcome"] == "win"]
+        by_grade[g] = {
+            "trades":   len(gt),
+            "wins":     len(gw),
+            "win_rate": round(len(gw)/len(gt)*100, 1) if gt else 0,
+            "pnl":      round(sum(t["pnl"] for t in gt), 4),
+        }
+
+    period_start = trades[0]["date"]  if trades else "--"
+    period_end   = trades[-1]["date"] if trades else "--"
+
+    from backtest.report import _save_to_db
+    report = {
+        "coin":          coin,
+        "period_start":  period_start,
+        "period_end":    period_end,
+        "capital":       capital,
+        "final_equity":  round(equity, 4),
+        "total_return":  round((equity - capital) / capital * 100, 2),
+        "total_signals": total,
+        "aplus_signals": by_grade.get("A+", {}).get("trades", 0),
+        "a_signals":     by_grade.get("A",  {}).get("trades", 0),
+        "total_trades":  total,
+        "wins":          len(wins),
+        "losses":        len(losses),
+        "win_rate":      win_rate,
+        "total_pnl":     total_pnl,
+        "best_trade":    round(max(pnls), 4),
+        "worst_trade":   round(min(pnls), 4),
+        "avg_trade":     round(sum(pnls)/total, 4) if total > 0 else 0,
+        "max_drawdown":  round(max_dd, 2),
+        "profit_factor": pf,
+        "by_grade":      by_grade,
+        "trades":        trades,
+        "walk_forward":  {},
     }
+
+    _save_to_db(report, coin)
+    log.info("Backtest complete: %s WR:%s%% PnL:$%s Trades:%s", coin, win_rate, total_pnl, total)
+    return report
