@@ -223,28 +223,24 @@ def get_signals_data() -> dict:
         for r in cached_results:
             market = r.get("market", {})
             sig    = r.get("signal", {})
-            expl   = r.get("explanation", {})
 
             radar.append({
-                "coin":           r.get("coin",      "--"),
-                "grade":          r.get("grade",     "--"),
-                "direction":      r.get("direction", "--"),
-                "score":          r.get("score",     0),
-                "state":          r.get("state",     "idle"),
-                "sweep":          r.get("sweep",     {}),
-                "zone":           r.get("zone",      {}),
-                "price":          market.get("price",    0),
-                "change":         market.get("change24", 0),
-                "change_pos":     market.get("change_pos", True),
-                "funding":        round(market.get("funding", 0) * 100, 4),
-                "tradeable":      r.get("grade") in ["A+", "A"] and
-                                  r.get("direction") in ["LONG", "SHORT"],
-                "confidence":     expl.get("confidence_label", ""),
-                "ml_probability": r.get("ml_probability"),
-                "actual_rr":      r.get("actual_rr", 0),
-                "regime":         r.get("regime",  "--"),
-                "session":        r.get("session", "--"),
-                "timestamp":      r.get("cached_at"),
+                "coin":       r.get("coin",      "--"),
+                "grade":      r.get("grade",     "--"),
+                "direction":  r.get("direction", "--"),
+                "score":      r.get("score",     0),
+                "state":      r.get("state",     "idle"),
+                "price":      market.get("price",    0),
+                "change":     market.get("change24", 0),
+                "change_pos": market.get("change_pos", True),
+                "funding":    round(market.get("funding", 0) * 100, 4),
+                "tradeable":  r.get("grade") in ["A+", "A", "B"] and
+                              r.get("direction") in ["LONG", "SHORT"],
+                "regime":     r.get("regime",  "--"),
+                "adx":        r.get("adx",     0),
+                "rsi":        r.get("rsi",     0),
+                "reason":     r.get("reason",  ""),
+                "timestamp":  r.get("cached_at"),
             })
 
         queue = []
@@ -255,29 +251,23 @@ def get_signals_data() -> dict:
         ]
 
         for r in tradeable[:5]:
-            sig  = r.get("signal", {})
-            expl = r.get("explanation", {})
+            sig = r.get("signal", {})
             queue.append({
-                "coin":             r.get("coin",      "--"),
-                "grade":            r.get("grade",     "?"),
-                "direction":        r.get("direction", "?"),
-                "score":            r.get("score",     0),
-                "state":            r.get("state",     "idle"),
-                "sweep":            r.get("sweep",     {}),
-                "zone":             r.get("zone",      {}),
-                "entry":            sig.get("entry"),
-                "sl":               sig.get("sl"),
-                "tp1":              sig.get("tp1"),
-                "sl_pct":           sig.get("sl_pct",    0),
-                "risk_amt":         sig.get("risk_amt",  0),
-                "stake":            sig.get("stake",     0),
-                "leverage":         sig.get("leverage",  10),
-                "regime":           r.get("regime",  "--"),
-                "session":          r.get("session", "--"),
-                "thesis":           expl.get("thesis", ""),
-                "confidence_label": expl.get("confidence_label", ""),
-                "ml_probability":   r.get("ml_probability"),
-                "actual_rr":        r.get("actual_rr", 0),
+                "coin":      r.get("coin",      "--"),
+                "grade":     r.get("grade",     "?"),
+                "direction": r.get("direction", "?"),
+                "score":     r.get("score",     0),
+                "state":     r.get("state",     "idle"),
+                "entry":     sig.get("entry"),
+                "sl":        sig.get("sl"),
+                "tp1":       sig.get("tp1"),
+                "sl_pct":    sig.get("sl_pct",   0),
+                "risk_amt":  sig.get("risk_amt", 0),
+                "stake":     sig.get("stake",    0),
+                "leverage":  sig.get("leverage", 10),
+                "regime":    r.get("regime",    "--"),
+                "adx":       r.get("adx",       0),
+                "rsi":       r.get("rsi",       0),
             })
 
         result = {

@@ -14,9 +14,12 @@ def grade_node(state: SignalAgentState) -> SignalAgentState:
         regime    = state["regime_result"]
 
         adx       = float(d4h.get("adx")       or 0)
-        rsi       = float(d1h.get("rsi")       or 50)
         vol_ratio = float(d4h.get("vol_ratio") or 1.0)
         session   = get_session()
+
+        rsi = float(d1h.get("rsi") or 0)
+        if not rsi:
+            rsi = float(d4h.get("rsi") or 50)
 
         state["session"] = session
 
