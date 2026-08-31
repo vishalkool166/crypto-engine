@@ -19,7 +19,6 @@ from alerts.scanner import scan_all_coins, get_db_stats
 from data.cache import cache
 from data.fetcher import get_fear_greed, get_news_filter
 from backtest.engine import run_backtest
-from backtest.factor_analysis import run_factor_analysis
 from scheduler import get_next_scan_epoch
 from config import cfg
 from auth import is_authenticated, audit
@@ -222,221 +221,6 @@ async def dashboard_coin_detail(request: Request, coin: str):
         raise HTTPException(500, str(e))
 
 
-@router.get("/analyze/{coin}")
-@limiter.limit("10/minute")
-async def analyze(request: Request, coin: str):
-    _auth(request)
-    coin = coin.upper()
-    if coin not in cfg.COINS:
-        raise HTTPException(400, f"{coin} not supported")
-
-    try:
-        from data.store import load_candles
-        from engines.indicators import calculate_all
-        from engines.regime.detector import detect as detect_regime
-        from engines.trend.direction import detect as detect_trend
-        from engines.reversion.timing import detect as detect_reversion
-        from engines.ict.confirmation import confirm as confirm_ict
-        from engines.risk.calculator import calculate as calculate_risk
-        from engines.scoring.scorer import build_score, assign_grade, get_session
-        from trade.ws import get_mark_price
-
-        result = {
-            "coin":      coin,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-        df_4h  = load_candles(coin, "4h",  limit=200)
-        df_1h  = load_candles(coin, "1h",  limit=300)
-        df_15m = load_candles(coin, "15m", limit=200)
-
-        result["candles"] = {
-            "4h":  len(df_4h)  if df_4h  is not None else 0,
-            "1h":  len(df_1h)  if df_1h  is not None else 0,
-            "15m": len(df_15m) if df_15m is not None else 0,
-        }
-
-        if df_4h is None or len(df_4h) < 50:
-            result["error"] = "Insufficient 4H candles"
-            return JSONResponse(content=make_serializable(result))
-        if df_1h is None or len(df_1h) < 50:
-            result["error"] = "Insufficient 1H candles"
-            return JSONResponse(content=make_serializable(result))
-        if df_15m is None or len(df_15m) < 20:
-            result["error"] = "Insufficient 15M candles"
-            return JSONResponse(content=make_serializable(result))
-
-        d4h  = calculate_all(df_4h,  timeframe="4h")
-        d1h  = calculate_all(df_1h,  timeframe="1h")
-        d15m = calculate_all(df_15m, timeframe="15m")
-
-        atr_1h  = float(d1h.get("atr")  or df_1h["close"].iloc[-1]  * 0.01)
-        atr_15m = float(d15m.get("atr") or df_15m["close"].iloc[-1] * 0.005)
-
-        regime = detect_regime(d4h)
-        result["regime"] = {
-            "label":      regime.label,
-            "adx":        regime.adx,
-            "atr_pct":    regime.atr_pct,
-            "size_mult":  regime.size_mult,
-            "is_trending":regime.is_trending,
-            "is_ranging": regime.is_ranging,
-            "is_choppy":  regime.is_choppy,
-            "is_volatile":regime.is_volatile,
-        }
-
-        trend = detect_trend(d4h, coin)
-        result["trend"] = {
-            "passed":      trend.passed,
-            "direction":   trend.direction,
-            "adx":         trend.adx,
-            "alignment":   trend.alignment,
-            "daily_bias":  trend.daily_bias,
-            "weekly_bias": trend.weekly_bias,
-            "btc_score":   trend.btc_score,
-            "htf_score":   trend.htf_score,
-            "reason":      trend.reason,
-        }
-
-        if not trend.passed:
-            result["pipeline_stopped_at"] = "trend"
-            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
-            return JSONResponse(content=make_serializable(result))
-
-        direction = trend.direction
-
-        reversion = detect_reversion(d1h, df_1h, direction)
-        result["reversion"] = {
-            "window_open": reversion.window_open,
-            "rsi":         reversion.rsi,
-            "bb_touch":    reversion.bb_touch,
-            "extreme":     reversion.extreme,
-            "score":       reversion.score,
-            "reason":      reversion.reason,
-        }
-
-        if not reversion.window_open:
-            result["pipeline_stopped_at"] = "reversion"
-            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
-            return JSONResponse(content=make_serializable(result))
-
-        ict = confirm_ict(
-            df_4h     = df_4h,
-            d4h       = d4h,
-            df_1h     = df_1h,
-            d1h       = d1h,
-            df_15m    = df_15m,
-            d15m      = d15m,
-            direction = direction,
-            atr_1h    = atr_1h,
-            atr_15m   = atr_15m,
-        )
-
-        result["ict"] = {
-            "confirmed":     ict.confirmed,
-            "score":         ict.score,
-            "sweep_score":   ict.sweep_score,
-            "zone_score":    ict.zone_score,
-            "trigger_score": ict.trigger_score,
-            "entry_price":   ict.entry_price,
-            "reason":        ict.reason,
-            "sweep_label":   ict.sweep.label     if ict.sweep else "",
-            "sweep_age":     ict.sweep.age_hours if ict.sweep else 0,
-            "zone_type":     ict.zone.type       if ict.zone  else "",
-        }
-
-        if not ict.confirmed:
-            result["pipeline_stopped_at"] = "ict"
-            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
-            return JSONResponse(content=make_serializable(result))
-
-        entry = float(ict.entry_price) if ict.entry_price else float(d4h.get("price", 0))
-
-        risk = calculate_risk(
-            direction = direction,
-            entry     = entry,
-            sweep     = ict.sweep,
-            zone      = ict.zone,
-            ict       = ict.trigger,
-            atr_15m   = atr_15m,
-            d1h       = d1h,
-            d4h       = d4h,
-        )
-
-        result["risk"] = {
-            "valid":     risk.valid,
-            "entry":     risk.entry,
-            "sl":        risk.sl,
-            "tp1":       risk.tp1,
-            "tp2":       risk.tp2,
-            "sl_pct":    risk.sl_pct,
-            "rr1":       risk.rr1,
-            "rr2":       risk.rr2,
-            "tp1_label": risk.tp1_label,
-            "tp2_label": risk.tp2_label,
-            "sl_reason": risk.sl_reason,
-            "reason":    risk.reason,
-        }
-
-        if not risk.valid:
-            result["pipeline_stopped_at"] = "risk"
-            result["live_price"]          = get_mark_price(coin) or d4h.get("price", 0)
-            return JSONResponse(content=make_serializable(result))
-
-        session = get_session()
-
-        hs    = build_score(
-            coin          = coin,
-            direction     = direction,
-            regime_result = regime,
-            trend_result  = trend,
-            reversion     = reversion,
-            ict_result    = ict,
-            session       = session,
-        )
-        pct   = hs.pct()
-        grade = assign_grade(pct, regime.label)
-
-        result["signal"] = {
-            "confirmed":     True,
-            "grade":         grade,
-            "score_pct":     pct,
-            "score_detail":  hs.to_dict(),
-            "sweep_score":   ict.sweep_score,
-            "zone_score":    ict.zone_score,
-            "trigger_score": ict.trigger_score,
-            "combined":      ict.score,
-            "entry":         risk.entry,
-            "sl":            risk.sl,
-            "tp1":           risk.tp1,
-            "tp2":           risk.tp2,
-            "rr1":           risk.rr1,
-            "regime":        regime.label,
-            "session":       session,
-        }
-
-        result["pipeline_stopped_at"] = None
-        result["state"]               = "signal_ready"
-        result["live_price"]          = get_mark_price(coin) or entry
-
-        cached = cache.get_raw(f"signal_{coin}")
-        if cached:
-            result["cache"] = {
-                "grade":     cached.get("grade"),
-                "score":     cached.get("score"),
-                "direction": cached.get("direction"),
-                "state":     cached.get("state"),
-                "regime":    cached.get("regime"),
-                "session":   cached.get("session"),
-            }
-
-        return JSONResponse(content=make_serializable(result))
-
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
 @router.get("/scan")
 @limiter.limit("1/minute")
 async def scan(request: Request):
@@ -474,25 +258,21 @@ async def get_signals(
         if outcome:
             q = q.filter(SignalModel.outcome == outcome.lower())
         return JSONResponse(content=[{
-            "id":           s.id,
-            "timestamp":    s.timestamp.isoformat() if s.timestamp else None,
-            "coin":         s.coin,
-            "direction":    s.direction,
-            "grade":        s.grade,
-            "score":        s.score,
-            "signal_type":  s.signal_type,
-            "entry":        s.entry,
-            "sl":           s.sl,
-            "tp1":          s.tp1,
-            "risk_amt":     s.risk_amt,
-            "regime":       s.regime,
-            "session":      s.session,
-            "outcome":      s.outcome,
-            "exit_price":   s.exit_price,
-            "pnl":          s.pnl,
-            "market_score": s.market_score,
-            "entry_score":  s.entry_score,
-            "btc_score":    s.btc_score,
+            "id":          s.id,
+            "timestamp":   s.timestamp.isoformat() if s.timestamp else None,
+            "coin":        s.coin,
+            "direction":   s.direction,
+            "grade":       s.grade,
+            "score":       s.score,
+            "signal_type": s.signal_type,
+            "entry":       s.entry,
+            "sl":          s.sl,
+            "tp1":         s.tp1,
+            "risk_amt":    s.risk_amt,
+            "outcome":     s.outcome,
+            "exit_price":  s.exit_price,
+            "pnl":         s.pnl,
+            "market":      s.market,
         } for s in q.limit(limit).all()])
     except Exception as e:
         log.error(traceback.format_exc())
@@ -524,7 +304,6 @@ async def signals_latest(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -551,7 +330,6 @@ async def signals_active(request: Request):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -579,7 +357,6 @@ async def coins_active():
             pairs = [f"{r.coin}/USDT:USDT" for r in db.query(CoinConfig).filter(CoinConfig.enabled == True).all()]
         return JSONResponse(content={"pairs": pairs, "refresh_period": 1800})
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -644,7 +421,6 @@ async def backtest(request: Request, coin: str):
     except HTTPException:
         raise
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
     finally:
         _backtest_lock[coin] = False
@@ -698,7 +474,7 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
 async def health(request: Request):
     if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
         return JSONResponse(content=_health_cache["data"])
-    from ml.eligibility import get_ml_status
+
     from trade.sync import get_sync_status
     from alerts.scanner import get_engine_health
     from data.rejection_stats import get_top_rejections
@@ -725,7 +501,6 @@ async def health(request: Request):
         "coins_count":      len(cfg.COINS),
         "grades":           cfg.MIN_GRADE_TO_TRADE,
         "redis_connected":  redis_ok,
-        "ml_status":        get_ml_status(),
         "sync_status":      await get_sync_status(),
         "engine_health":    get_engine_health(),
         "top_rejections":   get_top_rejections(3),
@@ -747,7 +522,6 @@ async def sync_outcomes(request: Request):
         invalidate_all()
         return JSONResponse(content=result)
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -755,10 +529,9 @@ async def sync_outcomes(request: Request):
 async def mode_status(request: Request):
     _auth(request)
     return JSONResponse(content={
-        "mode":         "live" if not cfg.PAPER_TRADING else "paper",
-        "paper":        cfg.PAPER_TRADING,
-        "grades":       cfg.MIN_GRADE_TO_TRADE,
-        "b_grade_live": False,
+        "mode":   "live" if not cfg.PAPER_TRADING else "paper",
+        "paper":  cfg.PAPER_TRADING,
+        "grades": cfg.MIN_GRADE_TO_TRADE,
     })
 
 
@@ -786,23 +559,10 @@ async def mode_toggle(request: Request):
         await close_exchange()
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
         invalidate_all()
-        return JSONResponse(content={"success": True, "mode": new_mode, "grades": cfg.MIN_GRADE_TO_TRADE})
+        return JSONResponse(content={"success": True, "mode": new_mode})
     except HTTPException:
         raise
     except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
-@router.get("/analysis/factors")
-async def factor_analysis(request: Request):
-    _auth(request)
-    try:
-        loop   = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, run_factor_analysis)
-        return JSONResponse(content=make_serializable(result))
-    except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -843,7 +603,6 @@ async def toggle_coin(request: Request):
         audit("coin_toggle", "api", f"{coin} enabled:{enabled}", ip=request.client.host if request.client else "")
         return JSONResponse(content={"success": True, "coin": coin, "enabled": enabled})
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -869,7 +628,6 @@ async def add_coin(request: Request):
             if f"{coin}/USDT" not in markets and f"{coin}/USDT:USDT" not in markets:
                 return JSONResponse(status_code=400, content={"success": False, "reason": f"{coin} not found on Binance Futures"})
         except Exception as e:
-            log.warning("Binance validation failed for %s: %s", coin, e)
             return JSONResponse(status_code=500, content={"success": False, "reason": f"Could not validate {coin}"})
         with SessionLocal() as db:
             existing = db.query(CoinConfig).filter(CoinConfig.coin == coin).first()
@@ -878,19 +636,16 @@ async def add_coin(request: Request):
                 db.commit()
                 msg = f"{coin} re-enabled"
             else:
-                db.add(CoinConfig(coin=coin, enabled=True, tier=1, source="manual"))
+                db.add(CoinConfig(coin=coin, enabled=True, tier=1, source="manual", market="crypto"))
                 db.commit()
                 msg = f"{coin} added"
         cfg.COINS = []
         from api.dashboard import _invalidate
         _invalidate("universe")
         asyncio.create_task(_backfill_coin(coin))
-        if coin not in cfg._FALLBACK_COINS:
-            cfg._FALLBACK_COINS.append(coin)
         audit("coin_add", "api", msg, ip=request.client.host if request.client else "")
         return JSONResponse(content={"success": True, "coin": coin, "message": msg})
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -907,12 +662,9 @@ async def remove_coin(request: Request, coin: str):
         cfg.COINS = []
         from api.dashboard import _invalidate
         _invalidate("universe")
-        if coin in cfg._FALLBACK_COINS:
-            cfg._FALLBACK_COINS.remove(coin)
         audit("coin_delete", "api", f"deleted:{coin}", ip=request.client.host if request.client else "")
         return JSONResponse(content={"success": True, "coin": coin})
     except Exception as e:
-        log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
 
 
@@ -927,7 +679,6 @@ async def validate_coin(request: Request, coin: str):
             return JSONResponse(content={"valid": False, "reason": f"{coin} not found"})
         return JSONResponse(content={"valid": True, "coin": coin})
     except Exception as e:
-        log.error("Coin validate error: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -951,7 +702,6 @@ async def get_candles(request: Request, coin: str, tf: str):
             "high": c.high, "low": c.low, "close": c.close, "volume": c.volume,
         } for c in reversed(candles)])
     except Exception as e:
-        log.error("Candles error %s %s: %s", coin, tf, e)
         raise HTTPException(500, str(e))
 
 
@@ -966,8 +716,6 @@ async def proxy_binance_agg_trades(request: Request, symbol: str, limit: int = 1
                 timeout=10.0,
             )
             return JSONResponse(content=res.json())
-    except httpx.TimeoutException:
-        raise HTTPException(504, "Binance API timeout")
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -1013,8 +761,6 @@ async def docker_purge(request: Request):
         if result.returncode == 0:
             return JSONResponse(content={"success": True, "output": result.stdout, "freed_mb": freed_mb})
         return JSONResponse(status_code=500, content={"success": False, "reason": result.stderr or "Failed"})
-    except subprocess.TimeoutExpired:
-        raise HTTPException(408, "Docker purge timed out")
     except Exception as e:
         raise HTTPException(500, str(e))
 
@@ -1054,18 +800,6 @@ async def coins_states(request: Request):
         ))
         return JSONResponse(content=make_serializable(result))
     except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
-
-@router.get("/engine/ml/validation")
-async def ml_validation(request: Request):
-    _auth(request)
-    try:
-        from ml.trainer import get_validation_report
-        return JSONResponse(content=get_validation_report())
-    except Exception as e:
-        log.error("ml_validation: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -1076,7 +810,6 @@ async def monthly_report(request: Request, year: int = None, month: int = None):
         from reports.monthly_report import generate_monthly_report
         return JSONResponse(content=make_serializable(generate_monthly_report(year, month)))
     except Exception as e:
-        log.error("monthly_report: %s", e)
         raise HTTPException(500, str(e))
 
 
@@ -1087,115 +820,6 @@ async def monthly_report_history(request: Request, months: int = 3):
         from reports.monthly_report import get_last_n_months
         return JSONResponse(content=make_serializable(get_last_n_months(months)))
     except Exception as e:
-        log.error("monthly_report_history: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@router.get("/engine/filter-report")
-async def filter_report(request: Request):
-    _auth(request)
-    try:
-        from reports.filter_analysis import run_filter_analysis
-        return JSONResponse(content=make_serializable(run_filter_analysis()))
-    except Exception as e:
-        log.error("filter_report: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@router.post("/content/generate")
-async def generate_content(request: Request):
-    from saas.middleware import get_current_user
-    from config import tier_meets_minimum, TIER_ELITE
-
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(401, "Authentication required")
-    if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
-        raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
-
-    try:
-        params    = dict(request.query_params)
-        coin      = params.get("coin", "")
-        post_type = params.get("type", "market")
-
-        if not cfg.GROQ_API_KEY:
-            raise HTTPException(503, "Groq not configured")
-
-        from groq import AsyncGroq
-        client = AsyncGroq(api_key=cfg.GROQ_API_KEY)
-
-        if post_type == "signal" and coin:
-            cached    = None
-            narrative = ""
-            try:
-                cached = cache.get_raw(f"signal_{coin}")
-            except Exception:
-                pass
-            if cached:
-                narrative = cached.get("narrative", "") or cached.get("explanation", {}).get("thesis", "")
-
-            prompt = f"""You are a sharp crypto analyst with dry wit.
-
-Signal data:
-Coin: {coin}USDT
-{narrative[:500] if narrative else "Active setup detected"}
-
-Write a tweet about this setup. Rules:
-- Under 280 characters
-- Sharp, witty, slightly sarcastic
-- Factually grounded in the data
-- No hashtags
-- No emojis
-- Sounds like a smart human trader
-- Get to the point immediately
-- Do not start with "Just" or "So"
-
-Output only the tweet text. Nothing else."""
-
-        else:
-            market_context = []
-            for c in cfg.COINS[:5]:
-                cached = cache.get_raw(f"signal_{c}")
-                if cached:
-                    price  = cached.get("market", {}).get("price",    0)
-                    change = cached.get("market", {}).get("change24", 0)
-                    state  = cached.get("state", "idle")
-                    if price:
-                        market_context.append(f"{c}: ${price:.4f} ({change:+.2f}%) [{state}]")
-
-            context_str = "\n".join(market_context) if market_context else "Market scanning"
-
-            prompt = f"""You are a sharp crypto analyst with dry wit.
-
-Current market snapshot:
-{context_str}
-
-Write a market commentary tweet. Rules:
-- Under 280 characters
-- Sharp, witty, slightly sarcastic
-- Based on the actual data above
-- No hashtags
-- No emojis
-- Sounds like a smart human trader
-- Get to the point immediately
-- Do not start with "Just" or "So"
-
-Output only the tweet text. Nothing else."""
-
-        response = await client.chat.completions.create(
-            model       = "llama-3.3-70b-versatile",
-            messages    = [{"role": "user", "content": prompt}],
-            max_tokens  = 100,
-            temperature = 0.8,
-        )
-
-        text = response.choices[0].message.content.strip().strip('"').strip("'")
-        return JSONResponse(content={"text": text, "coin": coin, "type": post_type})
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("Content generate error: %s", e)
         raise HTTPException(500, str(e))
 
 
