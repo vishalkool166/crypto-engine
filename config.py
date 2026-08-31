@@ -126,105 +126,50 @@ TIER_PRICING = {
     },
 }
 
-ADAPTATION_CONFIG = {
-    "hard_limits": {
-        "max_risk_per_trade":    0.02,
-        "max_daily_loss":        0.02,
-        "max_concurrent_trades": 2,
-        "max_leverage":          10,
-        "min_sweep_score":       0.45,
-        "min_zone_score":        0.45,
-        "min_combined_score":    0.50,
-        "max_sweep_age_hours":   4,
-    },
-    "soft_limits": {
-        "sweep_min_score":       {"min": 0.45, "max": 0.70, "current": 0.45},
-        "zone_min_score":        {"min": 0.45, "max": 0.70, "current": 0.45},
-        "grade_a_threshold":     {"min": 0.55, "max": 0.75, "current": 0.65},
-        "grade_aplus_threshold": {"min": 0.70, "max": 0.90, "current": 0.80},
-        "sweep_max_age_hours":   {"min": 2,    "max": 24,   "current": 24},
-        "base_risk_pct":         {"min": 0.005,"max": 0.015,"current": 0.010},
-        "ml_threshold":          {"min": 0.45, "max": 0.70, "current": 0.50},
-    },
-    "change_rules": {
-        "min_trades_before_change":        50,
-        "min_win_rate_improvement":        0.03,
-        "max_change_pct_per_cycle":        0.20,
-        "min_days_between_changes":        7,
-        "max_parameter_changes_per_month": 3,
-        "rollback_review_trades":          20,
-        "rollback_trigger_drop":           0.05,
-        "require_human_approval":          True,
-    },
-    "regime_thresholds": {
-        "min_trades_for_regime":      200,
-        "min_trades_per_regime":      10,
-        "avoid_below_win_rate":       0.40,
-        "reduce_size_below_win_rate": 0.50,
-    },
-    "ml_thresholds": {
-        "min_trades_for_training": 50,
-        "retrain_every_n_trades":  25,
-        "min_cv_auc":              0.55,
-    },
-    "analyzer_schedule": {
-        "run_day":    "sunday",
-        "run_hour":   0,
-        "run_minute": 0,
-    },
-    "adapter_schedule": {
-        "run_day":    "sunday",
-        "run_hour":   1,
-        "run_minute": 0,
-    },
-    "rollback_check_hour": 6,
-    "pillar_weights": {
-        "sweep":         0.25,
-        "zone":          0.25,
-        "structure":     0.20,
-        "btc_alignment": 0.15,
-        "regime":        0.15,
-    },
-    "pillar_limits": {
-        "min_weight":  0.05,
-        "max_weight":  0.50,
-        "max_change":  0.05,
-        "min_trades":  50,
-        "min_failures":10,
-    },
-    "thesis_time_limits": {
-        "A+": 48.0,
-        "A":  32.0,
-        "B":  16.0,
-    },
-    "thesis_thresholds": {
-        "hold":         0.80,
-        "monitor":      0.60,
-        "tighten":      0.40,
-        "prepare_exit": 0.20,
-        "exit":         0.00,
-    },
+HYBRID_SCORE_WEIGHTS = {
+    "regime":  0.20,
+    "trend":   0.40,
+    "scoring": 0.40,
+}
+
+SCORE_THRESHOLDS = {
+    "trending": {"aplus": 80, "a": 65, "b": 50},
+    "ranging":  {"aplus": 80, "a": 65, "b": 50},
+    "choppy":   {"aplus": 80, "a": 65, "b": 50},
+    "volatile": {"aplus": 80, "a": 65, "b": 50},
+    "default":  {"aplus": 80, "a": 65, "b": 50},
+}
+
+BTC_CONTEXT_SCORES = {
+    "strongly_aligned":       10,
+    "aligned":                 7,
+    "neutral":                 5,
+    "weakly_opposing":         0,
+    "opposing":               -4,
+    "strongly_opposing":      -8,
+    "adx_strong_threshold":   30,
+    "adx_moderate_threshold": 25,
+    "adx_panic_threshold":    35,
+}
+
+HTF_ALIGNMENT_SCORES = {
+    "both_aligned":   12,
+    "one_aligned":     7,
+    "both_neutral":    4,
+    "one_opposing":   -5,
+    "both_opposing": -10,
 }
 
 RS_CONFIG = {
-    "cache_ttl_seconds":   900,
-    "refresh_interval_m":  15,
-    "high_tier_pct":       0.33,
-    "medium_tier_pct":     0.33,
+    "cache_ttl_seconds":  900,
+    "refresh_interval_m": 15,
+    "high_tier_pct":      0.33,
+    "medium_tier_pct":    0.33,
     "score_weights": {
         "relative_strength": 0.35,
         "volume_expansion":  0.25,
         "adx":               0.25,
         "momentum":          0.15,
-    },
-    "score_caps": {
-        "rs_max":       20,
-        "rs_min":      -20,
-        "vol_max":      15,
-        "vol_min":     -10,
-        "adx_max":      15,
-        "momentum_max": 15,
-        "momentum_min":-15,
     },
 }
 
@@ -237,63 +182,6 @@ DECISION_TRACE_CONFIG = {
 REJECTION_STATS_CONFIG = {
     "live_ttl_days":  7,
     "daily_ttl_days": 90,
-}
-
-HYBRID_SCORE_WEIGHTS = {
-    "regime":      0.10,
-    "trend":       0.20,
-    "reversion":   0.15,
-    "ict":         0.35,
-    "btc":         0.12,
-    "session":     0.08,
-}
-
-SCORE_THRESHOLDS = {
-    "trending": {
-        "aplus": 85,
-        "a":     68,
-        "b":     52,
-    },
-    "ranging": {
-        "aplus": 78,
-        "a":     62,
-        "b":     48,
-    },
-    "choppy": {
-        "aplus": 88,
-        "a":     72,
-        "b":     56,
-    },
-    "volatile": {
-        "aplus": 90,
-        "a":     75,
-        "b":     58,
-    },
-    "default": {
-        "aplus": 85,
-        "a":     68,
-        "b":     52,
-    },
-}
-
-BTC_CONTEXT_SCORES = {
-    "strongly_aligned":     10,
-    "aligned":               7,
-    "neutral":               5,
-    "weakly_opposing":       0,
-    "opposing":             -4,
-    "strongly_opposing":    -8,
-    "adx_strong_threshold": 30,
-    "adx_moderate_threshold": 25,
-    "adx_panic_threshold":  35,
-}
-
-HTF_ALIGNMENT_SCORES = {
-    "both_aligned":   12,
-    "one_aligned":     7,
-    "both_neutral":    4,
-    "one_opposing":   -5,
-    "both_opposing": -10,
 }
 
 
@@ -345,18 +233,18 @@ class Config:
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
     ML_MIN_TRADES = 50
-    ML_ENABLED    = True
+    ML_ENABLED    = False
 
     TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
     TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
     TWITTER_ACCESS_TOKEN  = os.getenv("TWITTER_ACCESS_TOKEN", "")
     TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
-    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "True").lower() == "true"
+    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "False").lower() == "true"
     CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
     _FALLBACK_COINS: list = []
 
-    TIMEFRAMES = ["1w", "1d", "4h", "1h"]
+    TIMEFRAMES = ["1d", "4h", "1h"]
 
     TRADING_MODE  = os.getenv("TRADING_MODE", "paper")
     PAPER_TRADING = TRADING_MODE != "live"
@@ -369,39 +257,16 @@ class Config:
     ]
 
     HYBRID_ENGINE = {
-        "regime_adx_trending":        25,
-        "regime_adx_ranging":         15,
-        "regime_size_trending":        1.2,
-        "regime_size_ranging":         0.8,
-        "regime_size_choppy":          0.5,
-        "regime_size_volatile":        0.3,
+        "trend_min_adx":               18,
         "trend_ema_buffer_atr_mult":   0.05,
-        "trend_min_adx":               15,
-        "reversion_rsi_long_max":      52,
-        "reversion_rsi_short_min":     48,
-        "reversion_rsi_extreme_long":  38,
-        "reversion_rsi_extreme_short": 62,
-        "reversion_bb_touch":          True,
-        "ict_min_score":               55,
-        "sweep_max_age_hours":         24,
-        "sweep_min_wick_atr":          0.25,
-        "sweep_min_score":             0.45,
-        "zone_min_width_atr":          0.15,
-        "zone_max_dist_pct":           4.0,
-        "zone_max_touches":            2,
-        "zone_min_score":              0.25,
-        "trigger_min_body_ratio":      0.55,
-        "trigger_min_wick_ratio":      0.55,
-        "trigger_min_score":           0.75,
-        "trigger_lookback":            6,
-        "sl_buffer_atr_mult":          1.0,
-        "sl_min_pct":                  0.50,
-        "sl_max_pct":                  4.0,
-        "tp1_min_rr":                  2.0,
-        "tp2_min_rr":                  3.5,
-        "time_stop_hours":             6,
-        "tp1_close_pct":               0.65,
-        "tp2_close_pct":               0.35,
+        "ema50_atr_mult":              3.0,
+        "body_ratio_min":              0.5,
+        "volume_ratio_min":            0.8,
+        "sl_buffer_atr_mult":          0.5,
+        "sl_min_pct":                  0.3,
+        "sl_max_pct":                  5.0,
+        "tp1_min_rr":                  2.5,
+        "tp2_min_rr":                  4.0,
         "base_risk_pct":               0.01,
         "max_risk_pct":                0.02,
         "min_risk_pct":                0.005,
@@ -410,41 +275,24 @@ class Config:
         "max_same_direction":          1,
         "max_leverage":                10,
         "coin_cooldown_hours":         4,
-        "grade_aplus":                 85,
-        "grade_a":                     68,
-        "grade_b":                     52,
+        "grade_aplus":                 80,
+        "grade_a":                     65,
+        "grade_b":                     50,
         "grade_aplus_size_mult":       1.3,
         "grade_a_size_mult":           1.0,
         "grade_b_size_mult":           0.7,
         "entry_order_type":            "LIMIT",
         "limit_order_expiry_hours":    4,
-        "ml_threshold":                0.50,
+        "regime_adx_trending":         25,
+        "regime_adx_ranging":          20,
+        "regime_size_trending":        1.0,
+        "regime_size_ranging":         0.7,
+        "regime_size_choppy":          0.5,
+        "regime_size_volatile":        0.3,
         "funding_extreme_threshold":   0.0005,
     }
 
-    THESIS_TIME_LIMITS = {
-        "A+": 48.0,
-        "A":  32.0,
-        "B":  16.0,
-    }
-
-    THESIS_THRESHOLDS = {
-        "hold":         0.80,
-        "monitor":      0.60,
-        "tighten":      0.40,
-        "prepare_exit": 0.20,
-        "exit":         0.00,
-    }
-
-    PILLAR_WEIGHTS_DEFAULT = {
-        "sweep":         0.25,
-        "zone":          0.25,
-        "structure":     0.20,
-        "btc_alignment": 0.15,
-        "regime":        0.15,
-    }
-
-    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "1.0.0")
+    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "2.0.0")
     ADAPTATION_FROZEN = os.getenv("ADAPTATION_FROZEN", "False").lower() == "true"
 
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -482,22 +330,9 @@ class Config:
     TRACE_REDIS_TTL    = DECISION_TRACE_CONFIG["redis_ttl_seconds"]
 
     WEIGHTS = {
-        "liquidity_sweep":     12,
-        "retest_confirmation": 12,
-        "displacement":        11,
-        "market_regime":       10,
-        "weekly_filter":       10,
-        "market_structure":     9,
-        "session_timing":       8,
-        "btc_alignment":        8,
-        "oi_behavior":          7,
-        "volume_expansion":     7,
-        "funding_extreme":      6,
-        "rsi_divergence":       4,
-        "atr_volatility":       3,
-        "rsi_context":          2,
-        "macd_histogram":       1,
-        "order_blocks":         4,
+        "momentum":      40,
+        "trend":         30,
+        "volume":        30,
     }
 
     MAX_WEIGHT = sum(WEIGHTS.values())
@@ -514,7 +349,10 @@ class Config:
         try:
             from database import SessionLocal, CoinConfig
             with SessionLocal() as db:
-                rows = db.query(CoinConfig).filter(CoinConfig.enabled == True).all()
+                rows = db.query(CoinConfig).filter(
+                    CoinConfig.enabled == True,
+                    CoinConfig.market  == "crypto",
+                ).all()
                 if rows:
                     _coins_cache      = [r.coin for r in rows]
                     _coins_cache_time = time.time()
@@ -555,55 +393,15 @@ class Config:
         if key in self.HYBRID_ENGINE:
             self.HYBRID_ENGINE[key] = value
 
-    def update_thesis_time_limit(self, grade: str, hours: float) -> None:
-        if grade in self.THESIS_TIME_LIMITS:
-            self.THESIS_TIME_LIMITS[grade] = hours
-
-    def update_thesis_threshold(self, level: str, value: float) -> None:
-        if level in self.THESIS_THRESHOLDS:
-            self.THESIS_THRESHOLDS[level] = value
-
-    def get_thesis_time_limit(self, grade: str) -> float:
-        return self.THESIS_TIME_LIMITS.get(grade, 32.0)
-
-    def get_thesis_threshold(self, level: str) -> float:
-        return self.THESIS_THRESHOLDS.get(level, 0.60)
-
-    def get_adaptation_config(self) -> dict:
-        return ADAPTATION_CONFIG
-
-    def get_soft_limit(self, parameter: str) -> dict | None:
-        return ADAPTATION_CONFIG["soft_limits"].get(parameter)
-
-    def get_hard_limits(self) -> dict:
-        return ADAPTATION_CONFIG["hard_limits"]
-
-    def get_change_rules(self) -> dict:
-        return ADAPTATION_CONFIG["change_rules"]
-
-    def get_pillar_weights(self) -> dict:
-        try:
-            from ml.pillar_analyzer import get_current_weights
-            return get_current_weights()
-        except Exception:
-            return dict(self.PILLAR_WEIGHTS_DEFAULT)
-
-    def get_thesis_time_limits(self) -> dict:
-        return dict(self.THESIS_TIME_LIMITS)
-
-    def get_thesis_thresholds(self) -> dict:
-        return dict(self.THESIS_THRESHOLDS)
+    def get_hybrid_config(self) -> dict:
+        return dict(self.HYBRID_ENGINE)
 
     def get_score_thresholds(self, regime: str = "default") -> dict:
         r = (regime or "").lower()
-        if "trend" in r:
-            return SCORE_THRESHOLDS["trending"]
-        if "rang" in r:
-            return SCORE_THRESHOLDS["ranging"]
-        if "chop" in r:
-            return SCORE_THRESHOLDS["choppy"]
-        if "volat" in r or "panic" in r:
-            return SCORE_THRESHOLDS["volatile"]
+        if "trend" in r: return SCORE_THRESHOLDS["trending"]
+        if "rang"  in r: return SCORE_THRESHOLDS["ranging"]
+        if "chop"  in r: return SCORE_THRESHOLDS["choppy"]
+        if "volat" in r: return SCORE_THRESHOLDS["volatile"]
         return SCORE_THRESHOLDS["default"]
 
     def get_btc_context_scores(self) -> dict:
@@ -614,9 +412,6 @@ class Config:
 
     def get_rs_config(self) -> dict:
         return dict(RS_CONFIG)
-
-    def get_hybrid_config(self) -> dict:
-        return dict(self.HYBRID_ENGINE)
 
 
 def _bootstrap_secrets() -> None:
@@ -666,8 +461,8 @@ def _bootstrap_secrets() -> None:
         changed = True
 
     if not os.getenv("SYSTEM_VERSION"):
-        _ensure("SYSTEM_VERSION", "1.0.0")
-        cfg.SYSTEM_VERSION = "1.0.0"
+        _ensure("SYSTEM_VERSION", "2.0.0")
+        cfg.SYSTEM_VERSION = "2.0.0"
         changed = True
 
     if changed:

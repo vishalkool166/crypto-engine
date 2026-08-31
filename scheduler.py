@@ -25,36 +25,12 @@ async def job_monitor():
         log.error("job_monitor: %s", e)
 
 
-async def job_scalp_manager():
-    try:
-        from trade.scalp_manager import run_cycle
-        await run_cycle()
-    except Exception as e:
-        log.error("job_scalp_manager: %s", e)
-
-
-async def job_ml_check():
-    try:
-        from ml.eligibility import check_and_train_if_ready
-        check_and_train_if_ready()
-    except Exception as e:
-        log.error("job_ml_check: %s", e)
-
-
 async def job_cooldown_tick():
     try:
         from engines.state import tick_cooldowns
         tick_cooldowns()
     except Exception as e:
         log.error("job_cooldown_tick: %s", e)
-
-
-async def job_purge_content():
-    try:
-        from content.approval_flow import purge_old_content
-        purge_old_content(days=7)
-    except Exception as e:
-        log.error("job_purge_content: %s", e)
 
 
 async def job_session_cleanup():
@@ -86,63 +62,9 @@ async def job_rag_reindex():
         results = run_incremental_index()
         total   = sum(results.values())
         if total > 0:
-            log.info("RAG incremental index: %s new chunks — %s", total, results)
+            log.info("RAG incremental index: %s new chunks", total)
     except Exception as e:
         log.error("job_rag_reindex: %s", e)
-
-
-async def job_analyzer():
-    try:
-        from ml.analyzer import run
-        result = run()
-        log.info(
-            "Analyzer complete — status:%s recommendations:%s",
-            result.get("status"),
-            len(result.get("recommendations", [])),
-        )
-    except Exception as e:
-        log.error("job_analyzer: %s", e)
-
-
-async def job_pillar_analyzer():
-    try:
-        from ml.pillar_analyzer import run
-        result = run()
-        log.info(
-            "Pillar analyzer complete — status:%s recommendations:%s",
-            result.get("status"),
-            len(result.get("recommendations", [])),
-        )
-    except Exception as e:
-        log.error("job_pillar_analyzer: %s", e)
-
-
-async def job_adapter():
-    try:
-        from ml.adapter import run
-        result = run()
-        log.info(
-            "Adapter complete — status:%s applied:%s",
-            result.get("status"),
-            result.get("applied", 0),
-        )
-    except Exception as e:
-        log.error("job_adapter: %s", e)
-
-
-async def job_rollback_checker():
-    try:
-        from ml.rollback_manager import check_all_pending
-        results = check_all_pending()
-        for r in results:
-            log.info(
-                "Rollback check: param=%s action=%s post_wr=%s",
-                r.get("parameter"),
-                r.get("action"),
-                r.get("post_change_wr"),
-            )
-    except Exception as e:
-        log.error("job_rollback_checker: %s", e)
 
 
 async def job_version_ensure():
@@ -181,9 +103,6 @@ async def job_performance_summary():
             else "➡️"
         )
 
-        from data.rejection_stats import get_summary_line
-        rejection_line = get_summary_line()
-
         await send(
             f"📊 *Daily Performance Summary*\n\n"
             f"Total trades:   `{total}`\n"
@@ -193,7 +112,6 @@ async def job_performance_summary():
             f"Max drawdown:   `{dd:.1f}%`\n\n"
             f"{trend_emoji} Recent trend: `{t_trend}`\n"
             f"Recent WR (20): `{r_wr:.1f}%`\n\n"
-            f"Engine: `{rejection_line}`\n\n"
             f"System version: `{__import__('config').cfg.SYSTEM_VERSION}`"
         )
 
@@ -235,6 +153,40 @@ async def job_binance_sync_unsynced():
         log.error("job_binance_sync_unsynced: %s", e)
 
 
+async def job_monthly_report():
+    try:
+        from reports.monthly_report import send_monthly_report_telegram
+        await send_monthly_report_telegram()
+    except Exception as e:
+        log.error("job_monthly_report: %s", e)
+
+
+async def job_funding_rates():
+    try:
+        from data.fetcher import get_funding_rate
+        from redis_client import get_redis
+        from config import cfg
+        r = get_redis()
+        if not r:
+            return
+        for coin in cfg.COINS:
+            try:
+                rate = await get_funding_rate(coin)
+                r.setex(f"funding:{coin}USDT", 3600, str(rate))
+            except Exception as e:
+                log.warning("funding rate %s: %s", coin, e)
+    except Exception as e:
+        log.error("job_funding_rates: %s", e)
+
+
+async def job_rs_refresh():
+    try:
+        from engines.relative_strength import invalidate_cache
+        invalidate_cache()
+    except Exception as e:
+        log.error("job_rs_refresh: %s", e)
+
+
 async def job_thesis_snapshot_cleanup():
     try:
         from ml.pillar_analyzer import cleanup_old_snapshots
@@ -262,57 +214,6 @@ async def job_update_thesis_outcomes():
 
     except Exception as e:
         log.error("job_update_thesis_outcomes: %s", e)
-
-
-async def job_monthly_report():
-    try:
-        from reports.monthly_report import send_monthly_report_telegram
-        await send_monthly_report_telegram()
-    except Exception as e:
-        log.error("job_monthly_report: %s", e)
-
-
-async def job_filter_analysis():
-    try:
-        from reports.filter_analysis import send_filter_report_telegram
-        await send_filter_report_telegram()
-    except Exception as e:
-        log.error("job_filter_analysis: %s", e)
-
-
-async def job_rs_refresh():
-    try:
-        from engines.relative_strength import invalidate_cache
-        invalidate_cache()
-    except Exception as e:
-        log.error("job_rs_refresh: %s", e)
-
-
-async def job_funding_rates():
-    try:
-        from data.fetcher import get_funding_rate
-        from redis_client import get_redis
-        from config import cfg
-        r = get_redis()
-        if not r:
-            return
-        for coin in cfg.COINS:
-            try:
-                rate = await get_funding_rate(coin)
-                r.setex(f"funding:{coin}USDT", 3600, str(rate))
-            except Exception as e:
-                log.warning("funding rate %s: %s", coin, e)
-    except Exception as e:
-        log.error("job_funding_rates: %s", e)
-
-
-async def job_htf_cache_refresh():
-    try:
-        from alerts.scanner import _load_htf_candles
-        await _load_htf_candles()
-        log.info("HTF cache refreshed")
-    except Exception as e:
-        log.error("job_htf_cache_refresh: %s", e)
 
 
 def get_next_scan_time() -> str:
@@ -365,27 +266,9 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
-        job_scalp_manager,
-        trigger          = IntervalTrigger(minutes=30),
-        id               = "scalp_manager",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_ml_check,
-        trigger          = IntervalTrigger(hours=1),
-        id               = "ml_check",
-        replace_existing = True,
-    )
-    scheduler.add_job(
         job_cooldown_tick,
         trigger          = IntervalTrigger(minutes=30),
         id               = "cooldown_tick",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_purge_content,
-        trigger          = CronTrigger(hour=3, minute=0, timezone="UTC"),
-        id               = "purge_content",
         replace_existing = True,
     )
     scheduler.add_job(
@@ -398,30 +281,6 @@ def start_scheduler():
         job_rag_reindex,
         trigger          = IntervalTrigger(minutes=30),
         id               = "rag_reindex",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_analyzer,
-        trigger          = CronTrigger(day_of_week="sun", hour=0, minute=0, timezone="UTC"),
-        id               = "analyzer",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_pillar_analyzer,
-        trigger          = CronTrigger(day_of_week="sun", hour=0, minute=30, timezone="UTC"),
-        id               = "pillar_analyzer",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_adapter,
-        trigger          = CronTrigger(day_of_week="sun", hour=1, minute=0, timezone="UTC"),
-        id               = "adapter",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_rollback_checker,
-        trigger          = CronTrigger(hour=6, minute=0, timezone="UTC"),
-        id               = "rollback_checker",
         replace_existing = True,
     )
     scheduler.add_job(
@@ -461,6 +320,24 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
+        job_monthly_report,
+        trigger          = CronTrigger(day=1, hour=9, minute=0, timezone="UTC"),
+        id               = "monthly_report",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_funding_rates,
+        trigger          = IntervalTrigger(hours=1),
+        id               = "funding_rates",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_rs_refresh,
+        trigger          = IntervalTrigger(minutes=15),
+        id               = "rs_refresh",
+        replace_existing = True,
+    )
+    scheduler.add_job(
         job_thesis_snapshot_cleanup,
         trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
         id               = "thesis_snapshot_cleanup",
@@ -472,52 +349,9 @@ def start_scheduler():
         id               = "update_thesis_outcomes",
         replace_existing = True,
     )
-    scheduler.add_job(
-        job_monthly_report,
-        trigger          = CronTrigger(day=1, hour=9, minute=0, timezone="UTC"),
-        id               = "monthly_report",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_filter_analysis,
-        trigger          = CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="UTC"),
-        id               = "filter_analysis",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_rs_refresh,
-        trigger          = IntervalTrigger(minutes=15),
-        id               = "rs_refresh",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_funding_rates,
-        trigger          = IntervalTrigger(hours=1),
-        id               = "funding_rates",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_htf_cache_refresh,
-        trigger          = IntervalTrigger(hours=1),
-        id               = "htf_cache_refresh",
-        replace_existing = True,
-    )
 
     scheduler.start()
-    log.info(
-        "Scheduler started — "
-        "scan:15m — btc:30m — monitor:30s — scalp_mgr:30m — "
-        "ml:1h — cooldown:30m — purge:03:00 UTC — sessions:1h — "
-        "rag_reindex:30m — "
-        "analyzer:Sun 00:00 UTC — pillar_analyzer:Sun 00:30 UTC — "
-        "adapter:Sun 01:00 UTC — rollback:daily 06:00 UTC — "
-        "version:6h — performance:daily 08:00 UTC — "
-        "morning_brief:08:00 IST — evening_brief:20:00 IST — "
-        "binance_snapshot:15m — binance_sync:1h — "
-        "thesis_cleanup:04:00 UTC — thesis_outcomes:30m — "
-        "monthly_report:1st 09:00 UTC — filter_analysis:Sun 02:00 UTC — "
-        "rs_refresh:15m — funding_rates:1h — htf_cache:1h"
-    )
+    log.info("Scheduler started")
 
 
 def stop_scheduler():
