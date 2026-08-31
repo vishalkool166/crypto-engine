@@ -182,6 +182,17 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
         if await has_open_trade_or_position(coin):
             return
 
+        from database import get_session, Trade as TradeModel
+        with get_session() as db:
+            pending = db.query(TradeModel).filter(
+                TradeModel.coin    == coin,
+                TradeModel.state   == "pending",
+                TradeModel.outcome == "pending",
+            ).first()
+            if pending:
+                log.info("_execute_trade: %s already has pending trade", coin)
+                return
+
         session = _derive_session()
         regime  = signal.get("regime", "ranging")
 
