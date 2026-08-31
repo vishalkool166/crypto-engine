@@ -141,6 +141,12 @@ def _get_4h_direction(
     if price < ema20 - buffer and ema20 < ema50:
         return "SHORT"
 
+    if price < ema20 - buffer * 2:
+        return "SHORT"
+
+    if price > ema20 + buffer * 2:
+        return "LONG"
+
     return "NEUTRAL"
 
 
