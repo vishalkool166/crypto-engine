@@ -184,10 +184,62 @@ async def job_indian_orb_setup():
         from engines.indian.data import is_orb_ready
         if not is_orb_ready():
             return
-        from engines.indian.scanner import setup_orb
+        from engines.indian.scanner import setup_orb, _get_day_range_so_far
+        from engines.indian.instruments import get_instrument
+        from engines.indian.strategy import MIN_ORB_SIZE, MAX_ORB_SIZE, MIN_DAY_RANGE
+        from alerts.telegram import send
+        from config import cfg
+
         result = setup_orb()
-        if result:
-            log.info("Indian ORB setup: %s", {k: f"{v['high']:.2f}-{v['low']:.2f}" for k, v in result.items()})
+
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = get_instrument(name)
+            if not inst:
+                continue
+
+            day_range = _get_day_range_so_far(inst["token"])
+
+            if not result or name not in result:
+                await send(
+                    f"🇮🇳 *{name} Day Setup*\n\n"
+                    f"❌ ORB not available\n\n"
+                    f"Status: `Skipping today`"
+                )
+                continue
+
+            orb       = result[name]
+            orb_size  = orb["size"]
+
+            orb_ok  = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
+            day_ok  = day_range >= MIN_DAY_RANGE
+
+            orb_emoji = "✅" if orb_ok  else "❌"
+            day_emoji = "✅" if day_ok  else "❌"
+
+            if orb_ok and day_ok:
+                status = "Watching for breakout from 10am"
+            else:
+                reasons = []
+                if not orb_ok:
+                    if orb_size < MIN_ORB_SIZE:
+                        reasons.append(f"ORB too tight ({orb_size:.0f} pts)")
+                    else:
+                        reasons.append(f"ORB too wide ({orb_size:.0f} pts)")
+                if not day_ok:
+                    reasons.append(f"Day range too small ({day_range:.0f} pts)")
+                status = "Skipping today — " + " + ".join(reasons)
+
+            await send(
+                f"🇮🇳 *{name} Day Setup*\n\n"
+                f"ORB High:  `{orb['high']:.2f}`\n"
+                f"ORB Low:   `{orb['low']:.2f}`\n"
+                f"ORB Range: `{orb_size:.0f} pts` {orb_emoji}\n"
+                f"Day Range: `{day_range:.0f} pts` {day_emoji}\n\n"
+                f"Status: `{status}`"
+            )
+
+            log.info("Indian ORB setup: %s high=%.2f low=%.2f size=%.2f", name, orb["high"], orb["low"], orb_size)
+
     except Exception as e:
         log.error("job_indian_orb_setup: %s", e)
 
@@ -219,8 +271,101 @@ async def job_indian_track():
 async def job_indian_close():
     try:
         from engines.indian.tracker import track_outcomes
+        from engines.indian.scanner import get_today_signals, get_orb_levels
+        from engines.indian.strategy import MIN_DAY_RANGE
+        from engines.indian.instruments import get_instrument
+        from engines.indian.scanner import _get_day_range_so_far
+        from alerts.telegram import send
+        from config import cfg
+        from database import SessionLocal, Signal as SignalModel
+
         await track_outcomes()
         log.info("Indian market close: forced outcome check")
+
+        for name in cfg.INDIAN_INSTRUMENTS:
+            today_signals = get_today_signals()
+
+            if not today_signals:
+                inst      = get_instrument(name)
+                day_range = _get_day_range_so_far(inst["token"]) if inst else 0
+
+                if day_range < MIN_DAY_RANGE:
+                    reason = f"Day range too small ({day_range:.0f} pts)"
+                else:
+                    orb = get_orb_levels(name)
+                    if not orb:
+                        reason = "ORB not available"
+                    else:
+                        reason = "No breakout today"
+
+                await send(
+                    f"🇮🇳 *{name} End of Day*\n\n"
+                    f"No signal today\n"
+                    f"Reason: `{reason}`"
+                )
+                continue
+
+            with SessionLocal() as db:
+                from datetime import date, timezone, datetime as dt
+                today_start = dt(
+                    date.today().year,
+                    date.today().month,
+                    date.today().day,
+                    tzinfo=timezone.utc,
+                )
+                closed = db.query(SignalModel).filter(
+                    SignalModel.market    == "indian",
+                    SignalModel.timestamp >= today_start,
+                    SignalModel.outcome.in_(["win", "loss", "timeout"]),
+                ).all()
+
+                pending = db.query(SignalModel).filter(
+                    SignalModel.market    == "indian",
+                    SignalModel.timestamp >= today_start,
+                    SignalModel.outcome   == "pending",
+                ).all()
+
+                month_start = dt(
+                    date.today().year,
+                    date.today().month,
+                    1,
+                    tzinfo=timezone.utc,
+                )
+                month_sigs = db.query(SignalModel).filter(
+                    SignalModel.market    == "indian",
+                    SignalModel.timestamp >= month_start,
+                    SignalModel.outcome.in_(["win", "loss"]),
+                ).all()
+
+            month_pts = sum(float(s.pnl or 0) for s in month_sigs)
+
+            if not closed and pending:
+                await send(
+                    f"🇮🇳 *{name} End of Day*\n\n"
+                    f"Signal fired but still pending\n"
+                    f"Check manually on AngelOne\n\n"
+                    f"This month: `{month_pts:+.0f} pts`"
+                )
+                continue
+
+            lines = [f"🇮🇳 *{name} End of Day*\n"]
+
+            for s in closed:
+                pnl    = float(s.pnl or 0)
+                emoji  = "✅" if s.outcome == "win" else "❌" if s.outcome == "loss" else "⏱️"
+                rupees = round(pnl * 15, 0)
+                sign   = "+" if rupees >= 0 else ""
+                lines.append(
+                    f"{emoji} {s.direction} `{s.outcome.upper()}` "
+                    f"`{pnl:+.0f} pts` = `₹{sign}{rupees:.0f}`"
+                )
+
+            today_pts = sum(float(s.pnl or 0) for s in closed)
+            lines.append(f"\nToday: `{today_pts:+.0f} pts`")
+            lines.append(f"This month: `{month_pts:+.0f} pts`")
+
+            await send("\n".join(lines))
+
     except Exception as e:
         log.error("job_indian_close: %s", e)
 
