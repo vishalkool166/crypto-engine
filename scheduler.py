@@ -179,6 +179,52 @@ async def job_rs_refresh():
         log.error("job_rs_refresh: %s", e)
 
 
+async def job_indian_orb_setup():
+    try:
+        from engines.indian.data import is_orb_ready
+        if not is_orb_ready():
+            return
+        from engines.indian.scanner import setup_orb
+        result = setup_orb()
+        if result:
+            log.info("Indian ORB setup: %s", {k: f"{v['high']:.2f}-{v['low']:.2f}" for k, v in result.items()})
+    except Exception as e:
+        log.error("job_indian_orb_setup: %s", e)
+
+
+async def job_indian_scan():
+    try:
+        from engines.indian.data import is_orb_ready
+        if not is_orb_ready():
+            return
+        from engines.indian.scanner import scan_all
+        signals = await scan_all()
+        if signals:
+            log.info("Indian scan: %s signals fired", len(signals))
+    except Exception as e:
+        log.error("job_indian_scan: %s", e)
+
+
+async def job_indian_track():
+    try:
+        from engines.indian.data import is_market_open
+        if not is_market_open():
+            return
+        from engines.indian.tracker import track_outcomes
+        await track_outcomes()
+    except Exception as e:
+        log.error("job_indian_track: %s", e)
+
+
+async def job_indian_close():
+    try:
+        from engines.indian.tracker import track_outcomes
+        await track_outcomes()
+        log.info("Indian market close: forced outcome check")
+    except Exception as e:
+        log.error("job_indian_close: %s", e)
+
+
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -294,9 +340,33 @@ def start_scheduler():
         id               = "rs_refresh",
         replace_existing = True,
     )
+    scheduler.add_job(
+        job_indian_orb_setup,
+        trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id               = "indian_orb_setup",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_scan,
+        trigger          = IntervalTrigger(minutes=5),
+        id               = "indian_scan",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_track,
+        trigger          = IntervalTrigger(minutes=5),
+        id               = "indian_track",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_close,
+        trigger          = CronTrigger(hour=9, minute=45, timezone="UTC"),
+        id               = "indian_close",
+        replace_existing = True,
+    )
 
     scheduler.start()
-    log.info("Scheduler started")
+    log.info("Scheduler started — Indian market jobs active")
 
 
 def stop_scheduler():

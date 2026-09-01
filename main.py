@@ -313,6 +313,16 @@ async def lifespan(app: FastAPI):
     log.info("Binance WebSocket streams started")
 
     try:
+        from engines.indian.auth import init_indian_session
+        indian_ok = await init_indian_session()
+        if indian_ok:
+            from engines.indian.instruments import refresh_instruments
+            refresh_instruments()
+            log.info("Indian market initialized")
+    except Exception as e:
+        log.warning("Indian market init failed: %s", e)
+
+    try:
         from trade.reconciler import reconcile_on_startup
         await reconcile_on_startup()
         log.info("Startup reconciliation complete")
