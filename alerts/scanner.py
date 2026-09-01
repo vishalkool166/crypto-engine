@@ -144,6 +144,8 @@ def _save_signal(signal: dict) -> int | None:
                 day_of_week    = now.weekday(),
                 hour_of_day    = now.hour,
                 system_version = cfg.SYSTEM_VERSION,
+                regime         = signal.get("regime", ""),
+                session        = signal.get("session", ""),
             )
             db.add(row)
             db.flush()
