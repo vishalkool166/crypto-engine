@@ -91,7 +91,11 @@ class Signal(Base):
     hour_of_day    = Column(Integer, nullable=True)
     volatility_regime = Column(String, nullable=True)
     system_version = Column(String, nullable=True)
-    market         = Column(String, default="crypto")
+    market     = Column(String, default="crypto")
+    instrument = Column(String, nullable=True)
+    orb_high   = Column(Float, nullable=True)
+    orb_low    = Column(Float, nullable=True)
+    orb_size   = Column(Float, nullable=True)
 
 
 class Trade(Base):
@@ -779,6 +783,10 @@ def init_db():
         ],
         "signals": [
             "market TEXT DEFAULT 'crypto'",
+            "instrument TEXT",
+            "orb_high FLOAT",
+            "orb_low FLOAT",
+            "orb_size FLOAT",
         ],
         "coin_config": [
             "market TEXT DEFAULT 'crypto'",
@@ -812,3 +820,6 @@ def init_db():
 
 
 init_db()
+
+
+

@@ -312,6 +312,14 @@ class Config:
     OAUTH_JWT_SECRET = os.getenv("OAUTH_JWT_SECRET", "")
     OAUTH_JWT_EXPIRY = int(os.getenv("OAUTH_JWT_EXPIRY_HOURS", "168"))
 
+    ANGELONE_CLIENT_ID   = os.getenv("ANGELONE_CLIENT_ID",   "")
+    ANGELONE_API_KEY     = os.getenv("ANGELONE_API_KEY",     "")
+    ANGELONE_PASSWORD    = os.getenv("ANGELONE_PASSWORD",    "")
+    ANGELONE_TOTP_SECRET = os.getenv("ANGELONE_TOTP_SECRET", "")
+
+    INDIAN_INSTRUMENTS: list = ["BANKNIFTY"]
+
+
     SESSION_COOKIE_NAME     = "se_user_token"
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SECURE   = True
@@ -478,3 +486,4 @@ def _bootstrap_secrets() -> None:
 
 
 cfg = Config()
+
