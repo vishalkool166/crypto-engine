@@ -40,11 +40,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     from alerts.telegram.commands.content     import (
         cmd_brief, cmd_pending, cmd_show_post, cmd_discard,
     )
-    from alerts.telegram.commands.ml          import (
-        cmd_ml, cmd_adaptations, cmd_freeze, cmd_unfreeze,
-        cmd_rollback, cmd_approve, cmd_reject,
-        cmd_version, cmd_analysis,
-    )
+
     from alerts.telegram.commands.backtest    import (
         cmd_backtest, cmd_backfill, cmd_candle_status,
     )
@@ -152,18 +148,11 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         "/grade":       cmd_grade,
         "/mode":        cmd_mode,
         "/brief":       cmd_brief,
-        "/ml":          cmd_ml,
         "/trades":      cmd_trades,
         "/balance":     cmd_balance,
         "/profit":      cmd_profit,
         "/health":      cmd_health,
         "/pending":     cmd_pending,
-        "/adaptations": cmd_adaptations,
-        "/freeze":      cmd_freeze,
-        "/unfreeze":    cmd_unfreeze,
-        "/version":     cmd_version,
-        "/performance": cmd_performance,
-        "/analysis":    cmd_analysis,
         "/candles":     cmd_candle_status,
         "/india":       cmd_india,
         "/orb":         cmd_orb,
@@ -184,3 +173,5 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     except Exception as e:
         log.error("Chatbot error: %s", e)
         await send("AI unavailable. Try /help for commands.")
+
+
