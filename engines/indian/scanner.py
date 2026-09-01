@@ -1,10 +1,10 @@
 import logging
 import json
-import time
 from datetime import datetime, timezone, timedelta
 from engines.indian.data import (
     is_market_open, is_orb_ready,
     get_orb_candle, get_ltp, get_avg_volume,
+    fetch_candles,
 )
 from engines.indian.instruments import get_instrument
 from engines.indian.strategy import analyze
@@ -31,6 +31,21 @@ def _reset_if_new_day():
         _signals_today = {}
         _last_date     = today
         log.info("Indian scanner: new day reset — %s", today)
+
+
+def _get_day_range_so_far(token: str) -> float:
+    try:
+        now       = datetime.now(IST)
+        today     = now.strftime("%Y-%m-%d")
+        from_date = f"{today} 09:15"
+        to_date   = now.strftime("%Y-%m-%d %H:%M")
+        df        = fetch_candles(token, "15m", from_date, to_date)
+        if df is None or df.empty:
+            return 0.0
+        return round(float(df["high"].max()) - float(df["low"].min()), 2)
+    except Exception as e:
+        log.error("_get_day_range_so_far: %s", e)
+        return 0.0
 
 
 def setup_orb() -> dict:
@@ -107,7 +122,7 @@ async def scan_all() -> list:
 
         orb = get_orb_levels(name)
         if not orb:
-            log.warning("No ORB levels for %s — run setup_orb first", name)
+            log.warning("No ORB levels for %s", name)
             continue
 
         inst = get_instrument(name)
@@ -119,14 +134,21 @@ async def scan_all() -> list:
             log.warning("Could not get LTP for %s", name)
             continue
 
-        avg_vol = get_avg_volume(inst["token"], days=10)
+        now        = datetime.now(IST)
+        c_hour     = now.hour
+        c_minute   = now.minute
+        day_range  = _get_day_range_so_far(inst["token"])
+        avg_vol    = get_avg_volume(inst["token"], days=10)
 
         signal = analyze(
             instrument     = name,
             orb_high       = orb["high"],
             orb_low        = orb["low"],
             current_price  = price,
-            current_volume = orb["volume"],
+            current_hour   = c_hour,
+            current_minute = c_minute,
+            day_range      = day_range,
+            current_volume = 0,
             avg_volume     = avg_vol,
         )
 
