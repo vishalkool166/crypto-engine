@@ -342,7 +342,7 @@ def start_scheduler():
     )
     scheduler.add_job(
         job_indian_orb_setup,
-        trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
+        trigger          = CronTrigger(hour=4, minute=5, timezone="UTC"),
         id               = "indian_orb_setup",
         replace_existing = True,
     )
