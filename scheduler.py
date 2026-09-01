@@ -67,14 +67,6 @@ async def job_rag_reindex():
         log.error("job_rag_reindex: %s", e)
 
 
-async def job_version_ensure():
-    try:
-        from ml.version_registry import ensure_version_exists
-        ensure_version_exists()
-    except Exception as e:
-        log.error("job_version_ensure: %s", e)
-
-
 async def job_performance_summary():
     try:
         from ml.performance_tracker import get_overall_stats, get_recent_trend
@@ -187,35 +179,6 @@ async def job_rs_refresh():
         log.error("job_rs_refresh: %s", e)
 
 
-async def job_thesis_snapshot_cleanup():
-    try:
-        from ml.pillar_analyzer import cleanup_old_snapshots
-        count = cleanup_old_snapshots(keep_per_trade=200)
-        if count:
-            log.info("ThesisSnapshot cleanup: %s deleted", count)
-    except Exception as e:
-        log.error("job_thesis_snapshot_cleanup: %s", e)
-
-
-async def job_update_thesis_outcomes():
-    try:
-        from database import SessionLocal, Trade as TradeModel
-        from trade.thesis_tracker import update_snapshot_outcome
-
-        with SessionLocal() as db:
-            recently_closed = db.query(TradeModel).filter(
-                TradeModel.outcome.in_(["win", "loss"]),
-                TradeModel.closed_at.isnot(None),
-            ).order_by(TradeModel.closed_at.desc()).limit(50).all()
-
-        for trade in recently_closed:
-            pnl = float(trade.binance_net_pnl or trade.net_pnl or trade.pnl or 0)
-            update_snapshot_outcome(trade.id, trade.outcome, pnl)
-
-    except Exception as e:
-        log.error("job_update_thesis_outcomes: %s", e)
-
-
 def get_next_scan_time() -> str:
     now     = datetime.now(timezone.utc)
     minute  = now.minute
@@ -284,12 +247,6 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
-        job_version_ensure,
-        trigger          = IntervalTrigger(hours=6),
-        id               = "version_ensure",
-        replace_existing = True,
-    )
-    scheduler.add_job(
         job_performance_summary,
         trigger          = CronTrigger(hour=8, minute=0, timezone="UTC"),
         id               = "performance_summary",
@@ -335,18 +292,6 @@ def start_scheduler():
         job_rs_refresh,
         trigger          = IntervalTrigger(minutes=15),
         id               = "rs_refresh",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_thesis_snapshot_cleanup,
-        trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
-        id               = "thesis_snapshot_cleanup",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_update_thesis_outcomes,
-        trigger          = IntervalTrigger(minutes=30),
-        id               = "update_thesis_outcomes",
         replace_existing = True,
     )
 
