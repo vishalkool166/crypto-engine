@@ -28,9 +28,13 @@ def calculate_risk(
     buffer  = atr * 0.5
 
     if is_long:
-        sl = swing_level - buffer
+        if swing_level >= entry:
+            return _invalid("swing_low_above_entry")
+        sl        = round(swing_level - buffer, 6)
     else:
-        sl = swing_level + buffer
+        if swing_level <= entry:
+            return _invalid("swing_high_below_entry")
+        sl        = round(swing_level + buffer, 6)
 
     if is_long and sl >= entry:
         return _invalid("sl_above_entry")
