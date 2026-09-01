@@ -110,6 +110,11 @@ def _save_signal(signal: dict) -> int | None:
                 from trade.executor import has_open_trade
                 if has_open_trade(signal["coin"]):
                     return None
+                if (
+                    existing.entry and signal.get("entry") and
+                    abs(float(existing.entry) - float(signal["entry"])) / float(existing.entry) < 0.005
+                ):
+                    return existing.id
                 existing.outcome = "expired"
 
             from datetime import datetime, timezone
