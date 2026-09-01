@@ -65,28 +65,6 @@ def _round_step(quantity: float, step_size: float) -> float:
     return round(math.floor(quantity / step_size) * step_size, precision)
 
 
-def _deviation_check(
-    signal_entry:  float,
-    current_price: float,
-    sl:            float,
-    direction:     str,
-) -> tuple[bool, str]:
-    if not signal_entry or not current_price or not sl:
-        return False, "Missing price data"
-    sl_distance = abs(signal_entry - sl) / signal_entry
-    max_adverse = sl_distance * ENTRY_DEVIATION_MULT
-    deviation   = (
-        (current_price - signal_entry) / signal_entry if direction == "SHORT"
-        else (signal_entry - current_price) / signal_entry
-    )
-    if deviation > max_adverse:
-        return False, (
-            f"Price moved {deviation*100:.2f}% adverse for {direction} "
-            f"(max {max_adverse*100:.2f}%)"
-        )
-    return True, ""
-
-
 @retry(
     retry   = retry_if_exception_type(httpx.NetworkError),
     stop    = stop_after_attempt(3),
@@ -310,19 +288,6 @@ def _mark_closed(
                 trade.duration_hours = round(
                     (datetime.now(timezone.utc) - opened).total_seconds() / 3600, 2
                 )
-
-            try:
-                from trade.thesis_tracker import get_thesis, get_pillar_states_json
-                thesis = get_thesis(trade_id)
-                if thesis:
-                    trade.thesis_strength_at_close  = thesis.thesis_strength
-                    trade.thesis_pillars_at_close   = get_pillar_states_json(trade_id)
-                    trade.thesis_exit_reason        = thesis.action_reason
-                    trade.captured_move_pct_at_exit = thesis.captured_move_pct
-                    trade.expected_move_pct         = thesis.expected_move_pct
-                    trade.velocity_at_close         = thesis.velocity
-            except Exception:
-                pass
 
             if trade.signal_id:
                 sig = db.query(SignalModel).filter(SignalModel.id == trade.signal_id).first()
@@ -608,34 +573,6 @@ async def _monitor_limit_order(
             sizing_result      = sizing_result,
         )
 
-        try:
-            from trade.thesis_tracker import create_thesis
-            signal_data = {
-                "sweep_score":   float(sizing_result.get("sweep_score",   0) if sizing_result else 0),
-                "zone_score":    float(sizing_result.get("zone_score",    0) if sizing_result else 0),
-                "trigger_score": float(sizing_result.get("trigger_score", 0) if sizing_result else 0),
-                "grade":         grade,
-                "score":         score,
-            }
-            create_thesis(
-                trade_id    = trade_id,
-                coin        = coin,
-                direction   = direction,
-                grade       = grade,
-                entry_price = fill_price,
-                sl_price    = sl_rounded,
-                tp1_price   = tp1_rounded,
-                tp2_price   = tp2,
-                regime      = "",
-                session     = session,
-                signal_data = signal_data,
-            )
-        except Exception as e:
-            log.error("Thesis create error: %s", e)
-
-        from ml.version_registry import tag_trade
-        tag_trade(trade_id)
-
         from alerts.telegram import send
         mode      = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
         emoji     = "📈" if direction == "LONG" else "📉"
@@ -682,13 +619,6 @@ async def _place_sl(
             return algo_id
     except Exception as e:
         log.error("SL order failed %s: %s", symbol, e)
-        from alerts.telegram import send
-        coin = symbol.replace("USDT", "")
-        await send(
-            f"⚠️ *SL Order Failed — {coin}*\n\n"
-            f"Could not place SL at `{sl}`\n"
-            f"Position is unprotected — place SL manually immediately."
-        )
     return None
 
 
@@ -798,12 +728,6 @@ async def close_position(
         try:
             from ml.outcome_recorder import record
             asyncio.create_task(record(trade_id))
-        except Exception as _oe:
-            log.error("outcome_recorder failed trade_id=%s: %s", trade_id, _oe)
-
-        try:
-            from trade.thesis_tracker import remove_thesis
-            remove_thesis(trade_id)
         except Exception:
             pass
 
