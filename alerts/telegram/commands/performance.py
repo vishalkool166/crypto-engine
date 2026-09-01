@@ -1,100 +1,217 @@
 import logging
-from datetime import date, datetime, timezone
-from alerts.telegram.client     import send
-from alerts.telegram.formatters import now_ist, now_ist_full, get_stats, grade_block
+from datetime import date, datetime, timezone, timedelta
+from alerts.telegram.client import send
 from config import cfg
 
 log = logging.getLogger(__name__)
 
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _now_ist() -> str:
+    return datetime.now(IST).strftime("%I:%M %p IST")
+
+
+def _now_ist_full() -> str:
+    return datetime.now(IST).strftime("%d %b %Y · %I:%M %p IST")
+
+
+def _grade_emoji(grade: str) -> str:
+    return {"A+": "🏆", "A": "⭐", "B": "👀"}.get(grade, "📊")
+
+
+def _dir_emoji(direction: str) -> str:
+    return "📈" if direction == "LONG" else "📉"
+
 
 async def cmd_pnl() -> None:
-    stats = get_stats()
+    from alerts.scanner import get_db_stats
+
+    stats    = get_db_stats()
+    total    = stats.get("total_pnl", 0)
+    closed   = stats.get("closed",   0)
+    wins     = stats.get("wins",     0)
+    losses   = stats.get("losses",   0)
+    win_rate = stats.get("win_rate",  0)
+
+    pnl_emoji = "💚" if total >= 0 else "🔴"
+    pnl_sign  = "+" if total >= 0 else ""
+
     await send(
-        f"💰 *PnL Report*\n\n"
-        f"Total:   `{stats.get('closed', 0) + stats.get('pending', 0)}` signals\n"
-        f"Wins:    `{stats.get('wins', 0)}` · Losses: `{stats.get('losses', 0)}`\n"
-        f"WR:      `{stats.get('win_rate', 0)}%`\n"
-        f"PnL:     `${stats.get('total_pnl', 0)}`\n"
+        f"💰 *PnL Report*\n"
+        f"🕐 `{_now_ist()}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{pnl_emoji} Total PnL:  `{pnl_sign}${total:.2f}`\n"
+        f"🎯 Win Rate:  `{win_rate}%`\n"
+        f"📊 Closed:    `{closed}` trades\n"
+        f"✅ Wins:      `{wins}`\n"
+        f"❌ Losses:    `{losses}`\n"
     )
 
 
 async def cmd_daily() -> None:
-    from database import SessionLocal, Signal as SignalModel
-    stats        = get_stats()
+    from database import SessionLocal, Trade as TradeModel
+    from alerts.scanner import get_db_stats
+
+    stats        = get_db_stats()
     today_pnl    = 0.0
     today_trades = 0
+    today_wins   = 0
+    today_losses = 0
+
     try:
+        today_start = datetime(
+            date.today().year,
+            date.today().month,
+            date.today().day,
+            tzinfo=timezone.utc
+        )
         with SessionLocal() as db:
-            sigs = db.query(SignalModel).filter(
-                SignalModel.timestamp >= date.today().isoformat(),
-                SignalModel.outcome.in_(["win", "loss"])
+            trades = db.query(TradeModel).filter(
+                TradeModel.closed_at >= today_start,
+                TradeModel.outcome.in_(["win", "loss"])
             ).all()
-            today_pnl    = sum(float(s.pnl or 0) for s in sigs)
-            today_trades = len(sigs)
+            today_pnl    = sum(float(t.net_pnl or t.pnl or 0) for t in trades)
+            today_trades = len(trades)
+            today_wins   = sum(1 for t in trades if t.outcome == "win")
+            today_losses = sum(1 for t in trades if t.outcome == "loss")
     except Exception:
         pass
-    pnl_str = f"+${today_pnl:.4f}" if today_pnl >= 0 else f"-${abs(today_pnl):.4f}"
+
+    pnl_emoji = "💚" if today_pnl >= 0 else "🔴"
+    pnl_sign  = "+" if today_pnl >= 0 else ""
+    all_pnl   = stats.get("total_pnl", 0)
+    all_sign  = "+" if all_pnl >= 0 else ""
+
     await send(
-        f"📅 *Daily Summary*\n_{now_ist_full()}_\n\n"
-        f"Today: `{today_trades}` trades · `{pnl_str}`\n\n"
-        f"All-time: `{stats.get('total', 0)}` signals · `{stats.get('closed', 0)}` closed\n"
-        f"Wins: `{stats.get('wins', 0)}` · Losses: `{stats.get('losses', 0)}`\n"
-        f"WR: `{stats.get('win_rate', 0)}%` · PnL: `${stats.get('total_pnl', 0)}`\n"
+        f"📅 *Daily Summary*\n"
+        f"🕐 `{_now_ist_full()}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"*Today:*\n"
+        f"📊 Trades:    `{today_trades}`\n"
+        f"✅ Wins:      `{today_wins}`\n"
+        f"❌ Losses:    `{today_losses}`\n"
+        f"{pnl_emoji} PnL:       `{pnl_sign}${today_pnl:.4f}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"*All Time:*\n"
+        f"📊 Signals:   `{stats.get('total', 0)}`\n"
+        f"📈 Closed:    `{stats.get('closed', 0)}`\n"
+        f"🎯 Win Rate:  `{stats.get('win_rate', 0)}%`\n"
+        f"💰 PnL:       `{all_sign}${all_pnl:.2f}`\n"
     )
 
 
 async def cmd_stats() -> None:
-    stats = get_stats()
+    from alerts.scanner import get_db_stats
+
+    stats = get_db_stats()
     if not stats:
         await send("📊 No stats yet.")
         return
-    bg = stats.get("by_grade", {})
+
+    bg       = stats.get("by_grade", {})
+    total    = stats.get("total_pnl", 0)
+    pnl_sign = "+" if total >= 0 else ""
+    pnl_emoji= "💚" if total >= 0 else "🔴"
+
+    def grade_line(grade: str) -> str:
+        g    = bg.get(grade, {})
+        tot  = g.get("total",    0)
+        wr   = g.get("win_rate", 0)
+        pnl  = g.get("total_pnl", 0)
+        sign = "+" if pnl >= 0 else ""
+        emoji= _grade_emoji(grade)
+        if tot == 0:
+            return f"{emoji} `{grade}`:  No trades yet"
+        return f"{emoji} `{grade}`:  `{tot}` trades  `{wr}%` WR  `{sign}${pnl:.2f}`"
+
     await send(
-        f"📊 *All Time Stats*\n_{now_ist()}_\n\n"
-        f"Total: `{stats.get('total', 0)}` · Closed: `{stats.get('closed', 0)}`\n"
-        f"Wins: `{stats.get('wins', 0)}` · Losses: `{stats.get('losses', 0)}`\n"
-        f"WR: `{stats.get('win_rate', 0)}%` · PnL: `${stats.get('total_pnl', 0)}`\n\n"
-        f"{grade_block('A+', bg.get('A+', {}))}\n"
-        f"{grade_block('A',  bg.get('A',  {}))}\n"
-        f"{grade_block('B',  bg.get('B',  {}))}"
+        f"📊 *All Time Stats*\n"
+        f"🕐 `{_now_ist()}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📈 Total:     `{stats.get('total',   0)}` signals\n"
+        f"✅ Closed:    `{stats.get('closed',  0)}`\n"
+        f"⏳ Pending:   `{stats.get('pending', 0)}`\n"
+        f"🎯 Win Rate:  `{stats.get('win_rate', 0)}%`\n"
+        f"{pnl_emoji} PnL:       `{pnl_sign}${total:.2f}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"*By Grade:*\n"
+        f"{grade_line('A+')}\n"
+        f"{grade_line('A')}\n"
+        f"{grade_line('B')}\n"
     )
 
 
 async def cmd_grade() -> None:
-    bg = get_stats().get("by_grade", {})
+    from alerts.scanner import get_db_stats
+
+    bg = get_db_stats().get("by_grade", {})
+
+    def grade_block(grade: str) -> str:
+        g     = bg.get(grade, {})
+        tot   = g.get("total",    0)
+        wins  = g.get("wins",     0)
+        losses= g.get("losses",   0)
+        wr    = g.get("win_rate", 0)
+        pnl   = g.get("total_pnl", 0)
+        sign  = "+" if pnl >= 0 else ""
+        emoji = _grade_emoji(grade)
+        if tot == 0:
+            return f"{emoji} *Grade {grade}*\nNo trades yet\n"
+        return (
+            f"{emoji} *Grade {grade}*\n"
+            f"📊 Trades:   `{tot}`\n"
+            f"✅ Wins:     `{wins}`\n"
+            f"❌ Losses:   `{losses}`\n"
+            f"🎯 Win Rate: `{wr}%`\n"
+            f"💰 PnL:      `{sign}${pnl:.2f}`\n"
+        )
+
     await send(
-        f"🏆 *Grade Accuracy*\n\n"
-        f"{grade_block('A+', bg.get('A+', {}))}\n"
-        f"{grade_block('A',  bg.get('A',  {}))}\n"
-        f"{grade_block('B',  bg.get('B',  {}))}\n"
+        f"🏆 *Grade Accuracy*\n"
+        f"🕐 `{_now_ist()}`\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{grade_block('A+')}\n"
+        f"{grade_block('A')}\n"
+        f"{grade_block('B')}\n"
         f"_Minimum 50 trades for reliable data_"
     )
 
 
 async def cmd_history() -> None:
-    from database import get_session, Signal as SignalModel
-    from datetime import timezone as tz
-    IST = timezone(timezone.utc.utcoffset(None) or __import__('datetime').timedelta(hours=5, minutes=30))
+    from database import get_session, Trade as TradeModel
+
     try:
-        from datetime import timedelta
-        IST = timezone(timedelta(hours=5, minutes=30))
         with get_session() as db:
-            signals = db.query(SignalModel).filter(
-                SignalModel.outcome.in_(["win", "loss"])
-            ).order_by(SignalModel.timestamp.desc()).limit(5).all()
-        if not signals:
-            await send("📜 No closed signals yet.")
+            trades = db.query(TradeModel).filter(
+                TradeModel.outcome.in_(["win", "loss"])
+            ).order_by(TradeModel.opened_at.desc()).limit(5).all()
+
+        if not trades:
+            await send("📜 No closed trades yet.")
             return
-        lines = [f"📜 *Last 5 Signals*\n_{now_ist()}_\n"]
-        for s in signals:
-            pnl_str = f"+${s.pnl:.4f}" if (s.pnl or 0) >= 0 else f"-${abs(s.pnl or 0):.4f}"
-            ts_ist  = s.timestamp.astimezone(IST).strftime("%d %b %I:%M %p") if s.timestamp else "--"
+
+        lines = [
+            f"📜 *Last 5 Trades*\n"
+            f"🕐 `{_now_ist()}`\n"
+        ]
+
+        for t in trades:
+            pnl       = float(t.net_pnl or t.pnl or 0)
+            pnl_str   = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
+            pnl_emoji = "💚" if pnl >= 0 else "🔴"
+            outcome   = "✅" if t.outcome == "win" else "❌"
+            d_emoji   = _dir_emoji(t.direction)
+            g_emoji   = _grade_emoji(t.grade or "--")
+            ts_ist    = t.opened_at.astimezone(IST).strftime("%d %b %I:%M %p") if t.opened_at else "--"
+
             lines.append(
-                f"{'✅' if s.outcome == 'win' else '❌'} "
-                f"{'📈' if s.direction == 'LONG' else '📉'} "
-                f"`{s.coin}` {s.direction} Grade `{s.grade}` — `{pnl_str}`\n_{ts_ist} IST_\n"
+                f"\n{outcome} {d_emoji} *{t.coin}* {g_emoji} `{t.grade}`\n"
+                f"{pnl_emoji} `{pnl_str}`  ·  _{ts_ist} IST_"
             )
+
         await send("\n".join(lines))
+
     except Exception as e:
         log.error("cmd_history error: %s", e)
         await send("❌ Could not fetch history.")
@@ -104,50 +221,53 @@ async def cmd_performance() -> None:
     try:
         from ml.performance_tracker import (
             get_overall_stats, get_stats_by_session,
-            get_stats_by_version, get_recent_trend,
+            get_recent_trend,
         )
+
         overall  = get_overall_stats(min_trades=1)
         sessions = get_stats_by_session(min_trades=3)
-        versions = get_stats_by_version()
         trend    = get_recent_trend(window=20)
 
         if overall.get("error"):
             await send(f"📊 *Performance*\n\n{overall['error']}")
             return
 
-        lines = [
-            f"📊 *Performance Report*\n_{now_ist()}_\n",
-            f"*Overall:*",
-            f"Trades: `{overall.get('total', 0)}` · WR: `{overall.get('win_rate', 0):.1f}%`",
-            f"PnL: `${overall.get('total_pnl', 0):.2f}` · PF: `{overall.get('profit_factor', 0)}`",
-            f"Max DD: `{overall.get('max_drawdown', 0):.1f}%`",
-            f"",
-        ]
+        total    = overall.get("total",          0)
+        wr       = overall.get("win_rate",        0)
+        pnl      = overall.get("total_pnl",       0)
+        pf       = overall.get("profit_factor",   0)
+        dd       = overall.get("max_drawdown",    0)
+        t_trend  = trend.get("trend",             "unknown")
+        r_wr     = trend.get("recent_win_rate",   0)
 
-        t_trend     = trend.get("trend", "unknown")
-        trend_emoji = "📈" if t_trend == "improving" else "📉" if t_trend == "degrading" else "➡️"
-        lines.append(
-            f"{trend_emoji} Recent trend: `{t_trend}` "
-            f"(last 20 trades: `{trend.get('recent_win_rate', 0):.1f}%`)\n"
+        pnl_sign  = "+" if pnl >= 0 else ""
+        pnl_emoji = "💚" if pnl >= 0 else "🔴"
+
+        trend_emoji = (
+            "📈" if t_trend == "improving"  else
+            "📉" if t_trend == "degrading"  else
+            "➡️"
         )
 
-        if sessions:
-            lines.append(f"*By Session:*")
-            for session, stats in sessions.items():
-                lines.append(
-                    f"  {session}: `{stats.get('win_rate', 0):.1f}%` WR "
-                    f"({stats.get('total', 0)} trades)"
-                )
-            lines.append("")
+        lines = [
+            f"📊 *Performance Report*\n"
+            f"🕐 `{_now_ist()}`\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"*Overall:*\n"
+            f"📊 Trades:    `{total}`\n"
+            f"🎯 Win Rate:  `{wr:.1f}%`\n"
+            f"{pnl_emoji} PnL:       `{pnl_sign}${pnl:.2f}`\n"
+            f"📈 PF:        `{pf}`\n"
+            f"📉 Max DD:    `{dd:.1f}%`\n\n"
+            f"{trend_emoji} *Trend:* `{t_trend}` (last 20: `{r_wr:.1f}%`)\n"
+        ]
 
-        if len(versions) > 1:
-            lines.append(f"*By Version:*")
-            for v in versions[-3:]:
-                lines.append(
-                    f"  `{v.get('version', '--')}`: "
-                    f"`{v.get('win_rate', 0):.1f}%` WR "
-                    f"({v.get('total', 0)} trades)"
-                )
+        if sessions:
+            lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━\n*By Session:*")
+            for session, s in sessions.items():
+                swr = s.get("win_rate", 0)
+                st  = s.get("total",    0)
+                lines.append(f"  ⏰ `{session}`: `{swr:.1f}%` WR ({st} trades)")
 
         await send("\n".join(lines))
 

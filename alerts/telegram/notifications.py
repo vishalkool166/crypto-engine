@@ -1,27 +1,26 @@
 import logging
 from collections import deque
 from datetime import datetime, timezone, timedelta
-from alerts.telegram.client     import send
-from alerts.telegram.formatters import now_ist, get_stats, get_in_trade_count
+from alerts.telegram.client import send
 from config import cfg
 
 log = logging.getLogger(__name__)
 
-IST             = timezone(timedelta(hours=5, minutes=30))
-_sent_signals:  deque = deque(maxlen=100)
-_skip_reasons:  dict  = {}
-_SKIP_TTL               = 3600
+IST            = timezone(timedelta(hours=5, minutes=30))
+_sent_signals: deque = deque(maxlen=100)
+_SKIP_TTL              = 3600
 
 
-def _is_skipped(coin: str) -> bool:
-    ts = _skip_reasons.get(coin)
-    if ts is None:
-        return False
-    import time
-    if time.time() - ts > _SKIP_TTL:
-        del _skip_reasons[coin]
-        return False
-    return True
+def _now_ist() -> str:
+    return datetime.now(IST).strftime("%I:%M %p IST")
+
+
+def _grade_emoji(grade: str) -> str:
+    return {"A+": "🏆", "A": "⭐", "B": "👀"}.get(grade, "📊")
+
+
+def _dir_emoji(direction: str) -> str:
+    return "📈" if direction == "LONG" else "📉"
 
 
 async def send_signal(signal: dict, coin: str, regime: str, session: str) -> None:
@@ -29,7 +28,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
         return
     if signal.get("direction") not in ("LONG", "SHORT"):
         return
-    if not signal.get("entry") or _is_skipped(coin):
+    if not signal.get("entry"):
         return
 
     sig_key = (
@@ -52,36 +51,33 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
     risk_amt  = signal.get("risk_amt",  0)
     pos_size  = signal.get("pos_size",  0)
     rr1       = signal.get("rr1",       0)
-    narrative = signal.get("narrative", "")
+    rr2       = signal.get("rr2",       0)
 
-    emoji      = "🏆" if grade == "A+" else "✅" if grade == "A" else "👀"
-    dir_emoji  = "📈" if direction == "LONG" else "📉"
-    grade_note = "_Grade B — paper mode only_\n\n" if grade == "B" else ""
+    g_emoji   = _grade_emoji(grade)
+    d_emoji   = _dir_emoji(direction)
+    mode      = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
 
     msg = (
-        f"{emoji} *Grade {grade} — {direction}*\n"
+        f"{g_emoji} *Grade {grade} Signal — {coin}USDT*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"*{coin}USDT — {dir_emoji} {direction}*\n"
-        f"Score:   `{score:.2f}`\n"
-        f"Version: `{cfg.SYSTEM_VERSION}`\n"
-        f"Time:    `{now_ist()}`\n\n"
+        f"{d_emoji} *{direction}*  ·  Score `{score:.1f}`  ·  {mode}\n"
+        f"🕐 `{_now_ist()}`\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Entry:   `{entry:.4f}`\n"
-        f"SL:      `{sl:.4f}` ({sl_pct:.2f}%)\n"
-        f"TP1:     `{tp1:.4f}` ({rr1:.1f}R)\n"
+        f"🎯 Entry:    `{entry:.4f}`\n"
+        f"🛑 SL:       `{sl:.4f}` ({sl_pct:.2f}%)\n"
+        f"✅ TP1:      `{tp1:.4f}` ({rr1:.1f}R)\n"
     )
 
     if tp2:
-        rr2  = signal.get("rr2", 0)
-        msg += f"TP2:     `{tp2:.4f}` ({rr2:.1f}R)\n"
+        msg += f"🚀 TP2:      `{tp2:.4f}` ({rr2:.1f}R)\n"
 
     msg += (
         f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Risk:    `${risk_amt:.2f}`\n"
-        f"Size:    `${pos_size:.2f}`\n\n"
-        f"{grade_note}"
-        f"{narrative}\n\n"
-        f"_Signal forwarded to execution engine._"
+        f"💰 Risk:     `${risk_amt:.2f}`\n"
+        f"📦 Size:     `${pos_size:.2f}`\n"
+        f"📍 Regime:   `{regime or '--'}`\n"
+        f"⏰ Session:  `{session or '--'}`\n\n"
+        f"_Forwarded to execution engine_"
     )
 
     await send(msg)
@@ -90,57 +86,65 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
 async def send_scan_summary(results: list) -> None:
     from scheduler import get_next_scan_time
     from engines.state import get as get_coin_state
+    from database import SessionLocal
+    from database import Trade as TradeModel
 
-    next_scan      = get_next_scan_time()
-    total          = len(results)
-    watching       = [r for r in results if r.get("state") == "watching"]
-    idle           = [r for r in results if r.get("state") == "idle"]
-    tradeable      = [
+    next_scan = get_next_scan_time()
+    mode      = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER"
+
+    try:
+        with SessionLocal() as db:
+            in_trade_count = db.query(TradeModel).filter(
+                TradeModel.is_active == True
+            ).count()
+    except Exception:
+        in_trade_count = 0
+
+    live = [
         r for r in results
-        if r.get("grade") in ("A+", "A")
+        if r.get("grade") in ("A+", "A", "B")
         and r.get("direction") in ("LONG", "SHORT")
+        and r.get("score", 0) > 0
     ]
-    in_trade_count = get_in_trade_count()
 
-    if tradeable:
+    watching = [r for r in results if r.get("state") == "watching"]
+
+    if live:
         lines = [
-            f"🎯 *Signal Fired — {now_ist()}*\n"
-            f"{len(tradeable)} signal(s) confirmed\n"
+            f"🎯 *Signal Fired — {_now_ist()}*\n"
+            f"`{len(live)}` signal(s) confirmed\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
         ]
-        for r in tradeable[:3]:
-            direction = r.get("direction", "--")
-            dir_emoji = "📈" if direction == "LONG" else "📉"
+        for r in live[:3]:
+            g_emoji = _grade_emoji(r.get("grade", "--"))
+            d_emoji = _dir_emoji(r.get("direction", "--"))
             lines.append(
-                f"{dir_emoji} *{r['coin']}* — `{direction}` "
-                f"Grade `{r.get('grade', '--')}` "
-                f"Score `{r.get('score', 0):.2f}`\n"
+                f"{g_emoji} *{r['coin']}*  {d_emoji} `{r.get('direction', '--')}`  "
+                f"Score `{r.get('score', 0):.1f}`"
             )
-        lines.append(f"\nNext scan: `{next_scan}`")
+        lines.append(f"\n🕐 Next scan: `{next_scan}`")
         await send("\n".join(lines))
         return
 
+    watching_count = len(watching)
+    idle_count     = len(results) - watching_count - in_trade_count
+
     lines = [
-        f"🔍 *Scan Complete — {now_ist()}*\n"
+        f"🔍 *Scan Complete — {_now_ist()}*\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"Total coins:  `{total}`\n"
-        f"Watching:     `{len(watching)}`\n"
-        f"In trade:     `{in_trade_count}`\n"
-        f"Idle:         `{len(idle)}`\n"
+        f"📊 Coins scanned:  `{len(results)}`\n"
+        f"⚡ Watching:       `{watching_count}`\n"
+        f"🔥 In trade:       `{in_trade_count}`\n"
+        f"😴 Idle:           `{idle_count}`\n"
     ]
 
     if watching:
-        lines.append("\n*⚡ Watching Zones:*")
+        lines.append(f"\n*⚡ Active Watches:*")
         for r in watching[:3]:
-            s         = get_coin_state(r["coin"])
-            setup     = s.get("setup") or {}
-            direction = setup.get("direction", "--")
-            zone      = setup.get("zone", {}) or {}
-            dist      = zone.get("distance_pct", 0)
-            dir_emoji = "📈" if direction == "LONG" else "📉"
+            d_emoji = _dir_emoji(r.get("direction", "--"))
             lines.append(
-                f"{dir_emoji} `{r['coin']}` — `{direction}` · `{dist:.2f}%` from zone"
+                f"  {d_emoji} `{r['coin']}` — Score `{r.get('score', 0):.1f}`"
             )
 
-    lines.append(f"\nNext scan: `{next_scan}`")
+    lines.append(f"\n{mode}  ·  🕐 Next: `{next_scan}`")
     await send("\n".join(lines))
