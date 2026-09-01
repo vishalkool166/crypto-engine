@@ -312,6 +312,13 @@ async def lifespan(app: FastAPI):
     await start_ws()
     log.info("Binance WebSocket streams started")
 
+    try:
+        from trade.reconciler import reconcile_on_startup
+        await reconcile_on_startup()
+        log.info("Startup reconciliation complete")
+    except Exception as e:
+        log.warning("Startup reconciliation error: %s", e)
+
     await _start_langsmith()
     await _start_rag_indexer()
 
