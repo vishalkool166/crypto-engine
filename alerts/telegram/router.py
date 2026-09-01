@@ -49,6 +49,9 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         cmd_backtest, cmd_backfill, cmd_candle_status,
     )
     from alerts.telegram.commands.help        import cmd_help
+    from alerts.telegram.commands.indian     import (
+        cmd_india, cmd_orb, cmd_indianstats,
+    )
 
     t = text.lower().strip()
 
@@ -162,6 +165,9 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         "/performance": cmd_performance,
         "/analysis":    cmd_analysis,
         "/candles":     cmd_candle_status,
+        "/india":       cmd_india,
+        "/orb":         cmd_orb,
+        "/indianstats": cmd_indianstats,
     }
 
     if t.startswith("/"):

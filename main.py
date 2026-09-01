@@ -16,6 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from api.routes       import router, build_dashboard_payload
 from api.trading      import router as trading_router
 from api.engine_health import router as engine_health_router
+from api.indian        import router as indian_router
 from saas.admin       import router as admin_router
 from database         import init_db
 from scheduler        import start_scheduler, stop_scheduler
@@ -1048,6 +1049,7 @@ app.include_router(router,               prefix="/api")
 app.include_router(trading_router,       prefix="/api")
 app.include_router(admin_router,         prefix="/api")
 app.include_router(engine_health_router, prefix="/api")
+app.include_router(indian_router,         prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os
