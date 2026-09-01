@@ -563,7 +563,33 @@ async def _monitor_limit_order(
         entry_role   = comm.get("role", "maker")
         slippage_pct = abs(fill_price - entry_rounded) / entry_rounded * 100 if entry_rounded > 0 else 0.0
 
-        sl_oid  = await _place_sl(symbol, sl_side, sl_rounded, price_precision, tick_size)
+        sl_oid = await _place_sl(symbol, sl_side, sl_rounded, price_precision, tick_size)
+
+        if not sl_oid:
+            log.error("SL placement failed for %s — closing position immediately", coin)
+            try:
+                close_side = "BUY" if direction == "SHORT" else "SELL"
+                await _place_with_retry(
+                    symbol      = symbol,
+                    side        = close_side,
+                    order_type  = "MARKET",
+                    quantity    = total_quantity,
+                    reduce_only = True,
+                )
+                log.info("Emergency close executed for %s", coin)
+            except Exception as ce:
+                log.error("Emergency close failed %s: %s", coin, ce)
+            _cancel_pending_trade(trade_id)
+            from alerts.telegram import send
+            await send(
+                f"🚨 *SL Failed — Position Closed*\n\n"
+                f"`{coin}` {direction}\n"
+                f"Stop loss could not be placed.\n"
+                f"Position closed immediately to protect capital.\n"
+                f"Entry was: `{fill_price:.6f}`"
+            )
+            return
+
         tp1_oid = await _place_tp(symbol, tp_side, tp1_rounded, price_precision, tick_size, "TP1")
 
         _activate_trade(
