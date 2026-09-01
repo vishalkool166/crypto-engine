@@ -2,7 +2,7 @@ import pandas as pd
 import ta
 import numpy as np
 from typing import Optional
-from engines.orderblocks import detect_order_blocks
+
 
 
 def calculate_all(df: pd.DataFrame, timeframe: str = "4h") -> dict:
@@ -46,7 +46,7 @@ def calculate_all(df: pd.DataFrame, timeframe: str = "4h") -> dict:
     swings         = _find_swings(df, lookback=200, pivot_bars=swing_lookback)
     structure      = _detect_structure(df, swings)
     fvgs           = _detect_fvg(df)
-    ob_data        = detect_order_blocks(df, atr or price * 0.015, lookback=50)
+    ob_data        = {"bull_obs": [], "bear_obs": [], "nearest_bull": None, "nearest_bear": None, "score": 0, "has_bull": False, "has_bear": False}
     vp             = _volume_profile(df, bins=50)
     divergence     = _detect_divergence(df, rsi_series)
     last5          = _last5(df)
