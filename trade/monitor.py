@@ -77,11 +77,7 @@ def _duration_str(opened_at: str | None, closed_at: datetime | None = None) -> s
         return "—"
 
 
-def _calc_live_pnl(
-    position_amt: float,
-    entry_price:  float,
-    mark_price:   float,
-) -> float:
+def _calc_live_pnl(position_amt: float, entry_price: float, mark_price: float) -> float:
     if not position_amt or not entry_price or not mark_price:
         return 0.0
     return round(position_amt * (mark_price - entry_price), 4)
@@ -107,36 +103,14 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
 
     profit_abs   = _calc_live_pnl(position_amt, entry, mark_price)
     profit_ratio = round(profit_abs / margin, 4) if margin > 0 else 0.0
-    pnl_source   = "binance_ws"
 
-    funding      = float(trade.get("funding_fees_paid") or 0)
-    total_fee    = float(trade.get("total_commission")  or 0)
-    net_live     = round(profit_abs - total_fee - funding, 4)
+    funding   = float(trade.get("funding_fees_paid") or 0)
+    total_fee = float(trade.get("total_commission")  or 0)
+    net_live  = round(profit_abs - total_fee - funding, 4)
 
     liquidation_price = float(trade.get("binance_liq_price") or 0)
     if not liquidation_price and position:
         liquidation_price = float(position.get("liquidationPrice", 0) or 0)
-
-    health = None
-    try:
-        from trade.health_monitor import get_health_from_redis
-        health = get_health_from_redis(coin)
-    except Exception:
-        pass
-
-    thesis_summary = None
-    try:
-        from trade.thesis_tracker import get_thesis_summary
-        thesis_summary = get_thesis_summary(trade["id"])
-    except Exception:
-        pass
-
-    binance_record = None
-    try:
-        from trade.binance_sync import get_binance_record
-        binance_record = get_binance_record(trade["id"])
-    except Exception:
-        pass
 
     return {
         "trade_id":                trade["id"],
@@ -148,10 +122,8 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "is_open":                 True,
         "entry_price":             entry,
         "actual_fill_entry":       float(trade.get("actual_fill_entry") or entry),
-        "binance_entry_price":     binance_record.get("entry_avg_price") if binance_record else None,
         "current_price":           mark_price,
         "exit_price":              None,
-        "actual_fill_exit":        None,
         "sl_price":                trade.get("sl_price"),
         "tp1_price":               trade.get("tp1_price"),
         "sl_signal":               trade.get("sl_price"),
@@ -166,10 +138,8 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "profit_abs":              profit_abs,
         "profit_ratio":            profit_ratio,
         "net_pnl_live":            net_live,
-        "pnl_source":              pnl_source,
         "pnl":                     None,
         "unrealized_pnl":          profit_abs,
-        "unrealized_pnl_source":   pnl_source,
         "entry_commission":        float(trade.get("entry_commission") or 0),
         "exit_commission":         0.0,
         "total_commission":        total_fee,
@@ -189,9 +159,9 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
         "outcome":                 "pending",
         "close_reason":            None,
         "tp1_hit":                 trade.get("tp1_hit", False),
-        "health":                  health,
-        "thesis":                  thesis_summary,
-        "binance":                 binance_record,
+        "health":                  None,
+        "thesis":                  None,
+        "binance":                 None,
         "regime_at_entry":         trade.get("regime_at_entry",  "--"),
         "session_at_entry":        trade.get("session_at_entry", "--"),
         "score_at_entry":          trade.get("score_at_entry",   0),
@@ -217,11 +187,7 @@ async def get_open_positions_enriched() -> list:
         log.error("get_positions error: %s", e)
         positions = []
 
-    position_map = {
-        p.get("symbol", "").replace("USDT", ""): p
-        for p in positions
-    }
-
+    position_map      = {p.get("symbol", "").replace("USDT", ""): p for p in positions}
     enriched          = [_enrich_trade(t, position_map) for t in db_trades]
     _position_cache   = {t["trade_id"]: t for t in enriched}
     _cache_updated_at = now
@@ -259,17 +225,15 @@ async def _update_funding_fees(db_trades: list) -> None:
                         float(t.exit_commission  or 0) +
                         abs(total), 8
                     )
-                    log.info("Funding updated: %s total:%.6f", coin, total)
         except Exception as e:
             log.error("_update_funding_fees %s: %s", coin, e)
 
 
 def _determine_exit_reason(trade: dict, exit_price: float) -> str:
-    entry        = float(trade.get("entry_price") or 0)
-    sl           = float(trade.get("sl_price")    or 0)
-    tp           = float(trade.get("tp1_price")   or 0)
-    is_short     = trade.get("direction", "LONG") == "SHORT"
-    position_amt = float(trade.get("position_size") or 0)
+    entry    = float(trade.get("entry_price") or 0)
+    sl       = float(trade.get("sl_price")    or 0)
+    tp       = float(trade.get("tp1_price")   or 0)
+    is_short = trade.get("direction", "LONG") == "SHORT"
 
     if not entry:
         return "exchange_closed"
@@ -342,18 +306,6 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
         asyncio.create_task(_record_trade_outcome(trade_id))
         asyncio.create_task(_sync_close_on_detect(trade_id, coin, trade["direction"], exit_price))
 
-        try:
-            from trade.thesis_tracker import remove_thesis
-            remove_thesis(trade_id)
-        except Exception:
-            pass
-
-        try:
-            from trade.health_monitor import clear_health_state
-            clear_health_state(coin)
-        except Exception:
-            pass
-
         pnl_str = f"+${pnl:.4f}" if pnl >= 0 else f"-${abs(pnl):.4f}"
 
         from alerts.telegram import send
@@ -383,41 +335,6 @@ async def _sync_close_on_detect(trade_id: int, coin: str, direction: str, exit_p
         log.error("_sync_close_on_detect trade_id=%s: %s", trade_id, e)
 
 
-async def _ensure_thesis_for_all(db_trades: list) -> None:
-    for trade in db_trades:
-        try:
-            from trade.thesis_tracker import get_thesis
-            if get_thesis(trade["id"]):
-                continue
-            from trade.exit_manager import initialize_thesis_for_trade, load_signal_data_for_trade
-            signal_data = {}
-            if trade.get("signal_id"):
-                signal_data = await load_signal_data_for_trade(trade["id"], trade["signal_id"])
-            await initialize_thesis_for_trade(trade, signal_data)
-        except Exception as e:
-            log.error("_ensure_thesis_for_all trade_id=%s: %s", trade["id"], e)
-
-
-async def _update_thesis_snapshots(db_trades: list) -> None:
-    for trade in db_trades:
-        try:
-            from trade.thesis_tracker import get_thesis, evaluate
-            thesis = get_thesis(trade["id"])
-            if not thesis:
-                continue
-            await evaluate(trade["id"], trade)
-        except Exception as e:
-            log.error("_update_thesis_snapshots trade_id=%s: %s", trade["id"], e)
-
-
-async def _update_health_checks(db_trades: list) -> None:
-    try:
-        from trade.health_monitor import run_health_checks
-        await run_health_checks()
-    except Exception as e:
-        log.error("_update_health_checks: %s", e)
-
-
 async def run_monitor_cycle() -> None:
     db_trades = _get_open_trades_from_db()
     if not db_trades:
@@ -433,9 +350,6 @@ async def run_monitor_cycle() -> None:
     enriched          = [_enrich_trade(t, position_map) for t in db_trades]
     _position_cache.update({t["trade_id"]: t for t in enriched})
 
-    await _ensure_thesis_for_all(db_trades)
-    await _update_thesis_snapshots(db_trades)
-    await _update_health_checks(db_trades)
     await _detect_exchange_closed_trades(db_trades, positions)
     await _update_funding_fees(db_trades)
 
@@ -577,11 +491,11 @@ def get_performance_by_coin() -> list:
 def get_trade_history(limit: int = 20, offset: int = 0) -> list:
     try:
         with get_session() as db:
-                trades = db.query(TradeModel).filter(
-                    TradeModel.outcome != "cancelled"
-                ).order_by(
-                    TradeModel.opened_at.desc()
-                ).offset(offset).limit(limit).all()
+            trades = db.query(TradeModel).filter(
+                TradeModel.outcome != "cancelled"
+            ).order_by(
+                TradeModel.opened_at.desc()
+            ).offset(offset).limit(limit).all()
         return [{
             "trade_id":               t.id,
             "coin":                   t.coin,
@@ -631,11 +545,6 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
             "mae":                    t.mae,
             "mfe":                    t.mfe,
             "duration_hours":         t.duration_hours,
-            "thesis_strength":        t.thesis_strength_at_close,
-            "thesis_exit_reason":     t.thesis_exit_reason,
-            "captured_move_pct":      t.captured_move_pct_at_exit,
-            "expected_move_pct":      t.expected_move_pct,
-            "velocity_at_close":      t.velocity_at_close,
             "binance_synced":         t.binance_synced,
             "binance_wallet_at_open": t.binance_wallet_at_open,
             "binance_wallet_at_close":t.binance_wallet_at_close,
