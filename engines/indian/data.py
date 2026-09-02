@@ -1,4 +1,5 @@
 import logging
+import time
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from engines.indian.auth import get_api
@@ -32,7 +33,7 @@ def is_orb_ready() -> bool:
     now = datetime.now(IST)
     if now.weekday() >= 5:
         return False
-    orb_ready = now.replace(hour=9, minute=30, second=0, microsecond=0)
+    orb_ready    = now.replace(hour=9,  minute=30, second=0, microsecond=0)
     market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
     return orb_ready <= now <= market_close
 
@@ -44,6 +45,8 @@ def fetch_candles(
     to_date:   str,
 ) -> pd.DataFrame | None:
     try:
+        time.sleep(1)
+
         api = get_api()
         if not api:
             log.error("AngelOne API not available")
@@ -88,6 +91,8 @@ def fetch_candles(
 
 def get_ltp(token: str) -> float | None:
     try:
+        time.sleep(0.5)
+
         api = get_api()
         if not api:
             return None
