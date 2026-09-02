@@ -83,6 +83,44 @@ def _calc_live_pnl(position_amt: float, entry_price: float, mark_price: float) -
     return round(position_amt * (mark_price - entry_price), 4)
 
 
+def _save_journey_snapshot(trade: dict, mark_price: float) -> None:
+    try:
+        from database import get_session, TradeJourney
+
+        trade_id    = trade["id"]
+        entry_price = float(trade.get("entry_price") or 0)
+        direction   = trade.get("direction", "LONG")
+        sl_price    = float(trade.get("sl_price")  or 0)
+        tp1_price   = float(trade.get("tp1_price") or 0)
+        position_amt= float(trade.get("position_size") or 0)
+        is_long     = direction == "LONG"
+
+        if not entry_price or not mark_price:
+            return
+
+        pnl_pts = round(mark_price - entry_price, 6) if is_long else round(entry_price - mark_price, 6)
+        pnl_pct = round(pnl_pts / entry_price * 100, 4) if entry_price > 0 else 0.0
+
+        with get_session() as db:
+            db.add(TradeJourney(
+                trade_id    = trade_id,
+                market      = "crypto",
+                coin        = trade.get("coin", ""),
+                direction   = direction,
+                price       = mark_price,
+                pnl_pts     = pnl_pts,
+                pnl_pct     = pnl_pct,
+                is_entry    = False,
+                is_exit     = False,
+                entry_price = entry_price,
+                sl_price    = sl_price if sl_price > 0 else None,
+                tp_price    = tp1_price if tp1_price > 0 else None,
+            ))
+
+    except Exception as e:
+        log.error("_save_journey_snapshot trade_id=%s: %s", trade.get("id"), e)
+
+
 def _enrich_trade(trade: dict, position_map: dict) -> dict:
     coin         = trade["coin"]
     position     = position_map.get(coin)
@@ -200,6 +238,10 @@ def invalidate_position_cache() -> None:
     _cache_updated_at = 0.0
 
 
+_last_snapshot_time: dict = {}
+SNAPSHOT_INTERVAL_SECS = 60
+
+
 async def _update_funding_fees(db_trades: list) -> None:
     for trade in db_trades:
         trade_id  = trade["id"]
@@ -273,6 +315,39 @@ async def _record_trade_outcome(trade_id: int) -> None:
         log.error("_record_trade_outcome trade_id=%s: %s", trade_id, e)
 
 
+async def _save_exit_journey_snapshot(trade: dict, exit_price: float) -> None:
+    try:
+        from database import get_session, TradeJourney
+
+        trade_id    = trade["id"]
+        entry_price = float(trade.get("entry_price") or 0)
+        direction   = trade.get("direction", "LONG")
+        sl_price    = float(trade.get("sl_price")  or 0)
+        tp1_price   = float(trade.get("tp1_price") or 0)
+        is_long     = direction == "LONG"
+
+        pnl_pts = round(exit_price - entry_price, 6) if is_long else round(entry_price - exit_price, 6)
+        pnl_pct = round(pnl_pts / entry_price * 100, 4) if entry_price > 0 else 0.0
+
+        with get_session() as db:
+            db.add(TradeJourney(
+                trade_id    = trade_id,
+                market      = "crypto",
+                coin        = trade.get("coin", ""),
+                direction   = direction,
+                price       = exit_price,
+                pnl_pts     = pnl_pts,
+                pnl_pct     = pnl_pct,
+                is_entry    = False,
+                is_exit     = True,
+                entry_price = entry_price,
+                sl_price    = sl_price  if sl_price  > 0 else None,
+                tp_price    = tp1_price if tp1_price > 0 else None,
+            ))
+    except Exception as e:
+        log.error("_save_exit_journey_snapshot: %s", e)
+
+
 async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> None:
     active_coins = {
         p.get("symbol", "").replace("USDT", "")
@@ -300,6 +375,7 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
             position_amt = position_amt,
         )
 
+        await _save_exit_journey_snapshot(trade, exit_price)
         _mark_closed(trade_id, exit_price, pnl, exit_reason)
         invalidate_position_cache()
 
@@ -311,9 +387,9 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
         from alerts.telegram import send
         await send(
             f"{'✅' if pnl >= 0 else '❌'} *{coin} {trade['direction']} Closed*\n\n"
-            f"Reason: `{exit_reason}`\n"
-            f"Exit:   `${exit_price:.6f}`\n"
-            f"PnL:    `{pnl_str}`"
+            f"📝 Reason: `{exit_reason}`\n"
+            f"💲 Exit:   `${exit_price:.6f}`\n"
+            f"{'💚' if pnl >= 0 else '🔴'} PnL:    `{pnl_str}`"
         )
 
         from events import emit
@@ -336,6 +412,8 @@ async def _sync_close_on_detect(trade_id: int, coin: str, direction: str, exit_p
 
 
 async def run_monitor_cycle() -> None:
+    global _last_snapshot_time
+
     db_trades = _get_open_trades_from_db()
     if not db_trades:
         return
@@ -349,6 +427,17 @@ async def run_monitor_cycle() -> None:
     position_map      = {p.get("symbol", "").replace("USDT", ""): p for p in positions}
     enriched          = [_enrich_trade(t, position_map) for t in db_trades]
     _position_cache.update({t["trade_id"]: t for t in enriched})
+
+    now = time.time()
+    for trade in db_trades:
+        trade_id = trade["id"]
+        last_snap = _last_snapshot_time.get(trade_id, 0)
+        if now - last_snap >= SNAPSHOT_INTERVAL_SECS:
+            from trade.ws import get_mark_price
+            mark_price = get_mark_price(trade["coin"])
+            if mark_price:
+                _save_journey_snapshot(trade, mark_price)
+                _last_snapshot_time[trade_id] = now
 
     await _detect_exchange_closed_trades(db_trades, positions)
     await _update_funding_fees(db_trades)
@@ -580,3 +669,27 @@ def stop_monitor() -> None:
 
 def is_monitor_running() -> bool:
     return _monitor_running
+
+
+def get_trade_journey(trade_id: int) -> list:
+    try:
+        from database import SessionLocal, TradeJourney
+        with SessionLocal() as db:
+            snapshots = db.query(TradeJourney).filter(
+                TradeJourney.trade_id == trade_id,
+                TradeJourney.market   == "crypto",
+            ).order_by(TradeJourney.timestamp.asc()).all()
+        return [{
+            "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
+            "price":      s.price,
+            "pnl_pts":    s.pnl_pts,
+            "pnl_pct":    s.pnl_pct,
+            "is_entry":   s.is_entry,
+            "is_exit":    s.is_exit,
+            "entry_price":s.entry_price,
+            "sl_price":   s.sl_price,
+            "tp_price":   s.tp_price,
+        } for s in snapshots]
+    except Exception as e:
+        log.error("get_trade_journey: %s", e)
+        return []

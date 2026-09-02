@@ -27,6 +27,7 @@ async def indian_status(request: Request):
         from engines.indian.scanner import get_orb_levels, get_today_signals
         from engines.indian.instruments import get_instruments
         from engines.indian.strategy import MIN_DAY_RANGE, MIN_ORB_SIZE, MAX_ORB_SIZE
+        from engines.indian.tracker import get_open_signals_with_pnl
         from config import cfg
 
         now          = datetime.now(IST)
@@ -34,6 +35,7 @@ async def indian_status(request: Request):
         orb_ready    = is_orb_ready()
         instruments  = get_instruments()
         today_signals= get_today_signals()
+        open_signals = get_open_signals_with_pnl()
         rate_limited = _is_rate_limited()
         refresh_age  = get_last_refresh_age()
 
@@ -62,6 +64,7 @@ async def indian_status(request: Request):
             "ltps":           ltps,
             "signals_today":  len(today_signals),
             "signals":        today_signals,
+            "open_signals":   open_signals,
             "rate_limited":   rate_limited,
             "data_age_secs":  refresh_age,
             "min_day_range":  MIN_DAY_RANGE,
@@ -128,6 +131,18 @@ async def indian_signals(request: Request, limit: int = 50):
 
     except Exception as e:
         log.error("indian_signals error: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.get("/indian/signals/{signal_id}/journey")
+async def indian_signal_journey(request: Request, signal_id: int):
+    _auth(request)
+    try:
+        from engines.indian.tracker import get_signal_journey
+        journey = get_signal_journey(signal_id)
+        return JSONResponse(content={"signal_id": signal_id, "journey": journey})
+    except Exception as e:
+        log.error("indian_signal_journey error: %s", e)
         raise HTTPException(500, str(e))
 
 

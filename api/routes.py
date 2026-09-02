@@ -802,6 +802,15 @@ async def coins_states(request: Request):
     except Exception as e:
         raise HTTPException(500, str(e))
 
+@router.get("/trades/{trade_id}/journey")
+async def trade_journey(request: Request, trade_id: int):
+    _auth(request)
+    try:
+        from trade.monitor import get_trade_journey
+        journey = get_trade_journey(trade_id)
+        return JSONResponse(content={"trade_id": trade_id, "journey": journey})
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 @router.get("/engine/monthly-report")
 async def monthly_report(request: Request, year: int = None, month: int = None):

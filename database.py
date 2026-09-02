@@ -731,6 +731,26 @@ class PillarWeightHistory(Base):
     rolled_back_at          = Column(DateTime, nullable=True)
 
 
+
+
+class TradeJourney(Base):
+    __tablename__ = "trade_journey"
+
+    id          = Column(Integer, primary_key=True)
+    trade_id    = Column(Integer, nullable=False, index=True)
+    market      = Column(String, default="crypto")
+    coin        = Column(String, nullable=False)
+    direction   = Column(String, nullable=False)
+    timestamp   = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    price       = Column(Float, nullable=False)
+    pnl_pts     = Column(Float, nullable=True)
+    pnl_pct     = Column(Float, nullable=True)
+    is_entry    = Column(Boolean, default=False)
+    is_exit     = Column(Boolean, default=False)
+    entry_price = Column(Float, nullable=False)
+    sl_price    = Column(Float, nullable=True)
+    tp_price    = Column(Float, nullable=True)
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -760,6 +780,9 @@ def init_db():
             "binance_wallet_at_close FLOAT",
             "binance_synced BOOLEAN DEFAULT 0",
             "binance_synced_at DATETIME",
+            "market TEXT DEFAULT 'crypto'",
+        ],
+        "trade_journey": [
             "market TEXT DEFAULT 'crypto'",
         ],
         "trade_outcomes": [

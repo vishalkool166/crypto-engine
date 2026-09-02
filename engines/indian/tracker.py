@@ -10,14 +10,42 @@ log = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
+def _save_journey_snapshot(signal_id: int, coin: str, direction: str, price: float, entry_price: float, sl_price: float, tp_price: float, is_entry: bool = False, is_exit: bool = False) -> None:
+    try:
+        from database import get_session, TradeJourney
+        is_long = direction == "LONG"
+        if is_long:
+            pnl_pts = round(price - entry_price, 2)
+        else:
+            pnl_pts = round(entry_price - price, 2)
+        pnl_pct = round(pnl_pts / entry_price * 100, 4) if entry_price > 0 else 0.0
+        with get_session() as db:
+            db.add(TradeJourney(
+                trade_id    = signal_id,
+                market      = "indian",
+                coin        = coin,
+                direction   = direction,
+                price       = price,
+                pnl_pts     = pnl_pts,
+                pnl_pct     = pnl_pct,
+                is_entry    = is_entry,
+                is_exit     = is_exit,
+                entry_price = entry_price,
+                sl_price    = sl_price,
+                tp_price    = tp_price,
+            ))
+    except Exception as e:
+        log.error("_save_journey_snapshot: %s", e)
+
+
 async def track_outcomes() -> None:
     try:
         from database import SessionLocal, Signal as SignalModel
 
         with SessionLocal() as db:
             open_signals = db.query(SignalModel).filter(
-                SignalModel.market   == "indian",
-                SignalModel.outcome  == "pending",
+                SignalModel.market  == "indian",
+                SignalModel.outcome == "pending",
             ).all()
 
         if not open_signals:
@@ -38,7 +66,10 @@ async def _check_signal(signal) -> None:
         if not inst:
             return
 
-        price = get_ltp(inst["token"])
+        from engines.indian.data import get_ltp_from_redis
+        price = get_ltp_from_redis(inst["token"])
+        if not price:
+            price = get_ltp(inst["token"])
         if not price:
             return
 
@@ -50,6 +81,16 @@ async def _check_signal(signal) -> None:
 
         if not entry or not sl or not tp1:
             return
+
+        _save_journey_snapshot(
+            signal_id   = signal.id,
+            coin        = signal.instrument or signal.coin,
+            direction   = direction,
+            price       = price,
+            entry_price = entry,
+            sl_price    = sl,
+            tp_price    = tp1,
+        )
 
         outcome    = None
         exit_price = None
@@ -70,12 +111,32 @@ async def _check_signal(signal) -> None:
                 exit_price = tp1
 
         if outcome:
+            _save_journey_snapshot(
+                signal_id   = signal.id,
+                coin        = signal.instrument or signal.coin,
+                direction   = direction,
+                price       = exit_price,
+                entry_price = entry,
+                sl_price    = sl,
+                tp_price    = tp1,
+                is_exit     = True,
+            )
             await _close_signal(signal.id, outcome, exit_price, "tp1_hit" if outcome == "win" else "sl_hit")
             return
 
-        now = datetime.now(IST)
+        now              = datetime.now(IST)
         force_close_time = now.replace(hour=15, minute=15, second=0, microsecond=0)
         if now >= force_close_time:
+            _save_journey_snapshot(
+                signal_id   = signal.id,
+                coin        = signal.instrument or signal.coin,
+                direction   = direction,
+                price       = price,
+                entry_price = entry,
+                sl_price    = sl,
+                tp_price    = tp1,
+                is_exit     = True,
+            )
             await _close_signal(signal.id, "timeout", price, "time_stop")
 
     except Exception as e:
@@ -91,7 +152,7 @@ async def _close_signal(signal_id: int, outcome: str, exit_price: float, reason:
             if not signal:
                 return
 
-            entry = float(signal.entry or 0)
+            entry   = float(signal.entry or 0)
             is_long = signal.direction == "LONG"
 
             if entry > 0 and exit_price:
@@ -134,15 +195,20 @@ async def _send_outcome_alert(
     try:
         from alerts.telegram import send
 
-        emoji = "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏱️"
-        sign  = "+" if pnl_pts >= 0 else ""
+        RUPEES_PER_POINT = 30
+        rupees           = round(pnl_pts * RUPEES_PER_POINT)
+        emoji            = "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏱️"
+        pnl_emoji        = "💚" if pnl_pts >= 0 else "🔴"
+        sign             = "+" if pnl_pts >= 0 else ""
+        r_sign           = "+" if rupees >= 0 else ""
 
         await send(
             f"{emoji} *{instrument} {direction} Closed*\n\n"
-            f"Outcome:  `{outcome.upper()}`\n"
-            f"Exit:     `{exit_price:.2f}`\n"
-            f"PnL:      `{sign}{pnl_pts:.2f} points`\n"
-            f"Reason:   `{reason}`\n\n"
+            f"📊 Outcome:  `{outcome.upper()}`\n"
+            f"💲 Exit:     `{exit_price:.2f}`\n"
+            f"{pnl_emoji} Points:   `{sign}{pnl_pts:.0f} pts`\n"
+            f"💰 Rupees:   `{r_sign}₹{abs(rupees):,}` / lot\n"
+            f"📝 Reason:   `{reason}`\n\n"
             f"_Signal #{signal_id} — Paper tracking_"
         )
     except Exception as e:
@@ -168,14 +234,14 @@ def get_performance() -> dict:
         total    = len(signals)
         win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0
 
-        pnls     = [float(s.pnl or 0) for s in signals]
-        total_pts= round(sum(pnls), 2)
-        avg_win  = round(sum(float(s.pnl or 0) for s in wins)   / len(wins),   2) if wins   else 0
-        avg_loss = round(sum(float(s.pnl or 0) for s in losses) / len(losses), 2) if losses else 0
+        pnls      = [float(s.pnl or 0) for s in signals]
+        total_pts = round(sum(pnls), 2)
+        avg_win   = round(sum(float(s.pnl or 0) for s in wins)   / len(wins),   2) if wins   else 0
+        avg_loss  = round(sum(float(s.pnl or 0) for s in losses) / len(losses), 2) if losses else 0
 
-        gross_p  = sum(p for p in pnls if p > 0)
-        gross_l  = abs(sum(p for p in pnls if p < 0))
-        pf       = round(gross_p / gross_l, 2) if gross_l > 0 else 0
+        gross_p = sum(p for p in pnls if p > 0)
+        gross_l = abs(sum(p for p in pnls if p < 0))
+        pf      = round(gross_p / gross_l, 2) if gross_l > 0 else 0
 
         by_day = {}
         day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
@@ -222,3 +288,112 @@ def get_performance() -> dict:
     except Exception as e:
         log.error("get_performance error: %s", e)
         return {}
+
+
+def get_open_signals_with_pnl() -> list:
+    try:
+        from database import SessionLocal, Signal as SignalModel
+        from engines.indian.data import get_ltp_from_redis
+        from engines.indian.instruments import get_instrument
+        from datetime import date
+
+        today_start = datetime(
+            date.today().year,
+            date.today().month,
+            date.today().day,
+            tzinfo=timezone.utc,
+        )
+
+        with SessionLocal() as db:
+            signals = db.query(SignalModel).filter(
+                SignalModel.market   == "indian",
+                SignalModel.outcome  == "pending",
+            ).all()
+
+        result = []
+        for s in signals:
+            inst  = get_instrument(s.instrument or s.coin)
+            price = get_ltp_from_redis(inst["token"]) if inst else None
+
+            entry   = float(s.entry or 0)
+            sl      = float(s.sl    or 0)
+            tp1     = float(s.tp1   or 0)
+            is_long = s.direction == "LONG"
+
+            live_pnl_pts = None
+            progress_pct = None
+
+            if price and entry:
+                if is_long:
+                    live_pnl_pts = round(price - entry, 2)
+                else:
+                    live_pnl_pts = round(entry - price, 2)
+
+                sl_dist  = abs(entry - sl)
+                tp_dist  = abs(tp1   - entry)
+                cur_dist = abs(price - entry)
+
+                if tp_dist > 0:
+                    progress_pct = round(min(100, cur_dist / tp_dist * 100), 1)
+
+            opened_at = s.timestamp
+            duration  = None
+            if opened_at:
+                if opened_at.tzinfo is None:
+                    opened_at = opened_at.replace(tzinfo=timezone.utc)
+                diff     = datetime.now(timezone.utc) - opened_at
+                mins     = int(diff.total_seconds() / 60)
+                hrs      = mins // 60
+                duration = f"{hrs}h {mins % 60}m" if hrs > 0 else f"{mins}m"
+
+            result.append({
+                "id":           s.id,
+                "instrument":   s.instrument or s.coin,
+                "direction":    s.direction,
+                "entry":        entry,
+                "sl":           sl,
+                "tp1":          tp1,
+                "current_price":price,
+                "live_pnl_pts": live_pnl_pts,
+                "live_rupees":  round(live_pnl_pts * 30, 0) if live_pnl_pts is not None else None,
+                "progress_pct": progress_pct,
+                "orb_high":     float(s.orb_high or 0),
+                "orb_low":      float(s.orb_low  or 0),
+                "orb_size":     float(s.orb_size  or 0),
+                "duration":     duration,
+                "timestamp":    s.timestamp.isoformat() if s.timestamp else None,
+                "outcome":      s.outcome,
+            })
+
+        return result
+
+    except Exception as e:
+        log.error("get_open_signals_with_pnl: %s", e)
+        return []
+
+
+def get_signal_journey(signal_id: int) -> list:
+    try:
+        from database import SessionLocal, TradeJourney
+
+        with SessionLocal() as db:
+            snapshots = db.query(TradeJourney).filter(
+                TradeJourney.trade_id == signal_id,
+                TradeJourney.market   == "indian",
+            ).order_by(TradeJourney.timestamp.asc()).all()
+
+        return [{
+            "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
+            "price":      s.price,
+            "pnl_pts":    s.pnl_pts,
+            "pnl_pct":    s.pnl_pct,
+            "is_entry":   s.is_entry,
+            "is_exit":    s.is_exit,
+            "entry_price":s.entry_price,
+            "sl_price":   s.sl_price,
+            "tp_price":   s.tp_price,
+        } for s in snapshots]
+
+    except Exception as e:
+        log.error("get_signal_journey: %s", e)
+        return []
