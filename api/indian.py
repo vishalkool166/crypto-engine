@@ -19,21 +19,37 @@ def _auth(request: Request) -> None:
 async def indian_status(request: Request):
     _auth(request)
     try:
-        from engines.indian.data import is_market_open, is_orb_ready
+        from engines.indian.data import (
+            is_market_open, is_orb_ready,
+            get_day_range_from_redis, get_ltp_from_redis,
+            get_last_refresh_age, _is_rate_limited,
+        )
         from engines.indian.scanner import get_orb_levels, get_today_signals
         from engines.indian.instruments import get_instruments
+        from engines.indian.strategy import MIN_DAY_RANGE, MIN_ORB_SIZE, MAX_ORB_SIZE
+        from config import cfg
 
         now          = datetime.now(IST)
         market_open  = is_market_open()
         orb_ready    = is_orb_ready()
         instruments  = get_instruments()
         today_signals= get_today_signals()
+        rate_limited = _is_rate_limited()
+        refresh_age  = get_last_refresh_age()
 
         orb_data = {}
-        for name in instruments:
+        for name in cfg.INDIAN_INSTRUMENTS:
             orb = get_orb_levels(name)
             if orb:
                 orb_data[name] = orb
+
+        day_ranges = {}
+        ltps       = {}
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if inst:
+                day_ranges[name] = get_day_range_from_redis(inst["token"])
+                ltps[name]       = get_ltp_from_redis(inst["token"])
 
         return JSONResponse(content={
             "market_open":    market_open,
@@ -42,8 +58,15 @@ async def indian_status(request: Request):
             "date":           now.strftime("%Y-%m-%d"),
             "instruments":    instruments,
             "orb_levels":     orb_data,
+            "day_ranges":     day_ranges,
+            "ltps":           ltps,
             "signals_today":  len(today_signals),
             "signals":        today_signals,
+            "rate_limited":   rate_limited,
+            "data_age_secs":  refresh_age,
+            "min_day_range":  MIN_DAY_RANGE,
+            "min_orb_size":   MIN_ORB_SIZE,
+            "max_orb_size":   MAX_ORB_SIZE,
         })
     except Exception as e:
         log.error("indian_status error: %s", e)
@@ -55,7 +78,6 @@ async def indian_orb(request: Request):
     _auth(request)
     try:
         from engines.indian.scanner import get_orb_levels
-        from engines.indian.instruments import get_instruments
         from config import cfg
 
         result = {}
@@ -144,4 +166,33 @@ async def indian_scan_now(request: Request):
         })
     except Exception as e:
         log.error("indian_scan_now error: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@router.post("/indian/refresh")
+async def indian_refresh(request: Request):
+    _auth(request)
+    try:
+        from engines.indian.data import refresh_indian_data, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if _is_rate_limited():
+            return JSONResponse(content={
+                "success":      False,
+                "rate_limited": True,
+                "reason":       "AngelOne rate limited — try again in 2 minutes",
+            })
+
+        instruments = get_instruments()
+        results     = {}
+
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if inst:
+                results[name] = refresh_indian_data(inst["token"], name)
+
+        return JSONResponse(content={"success": True, "results": results})
+    except Exception as e:
+        log.error("indian_refresh error: %s", e)
         raise HTTPException(500, str(e))

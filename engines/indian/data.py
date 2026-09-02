@@ -1,5 +1,6 @@
 import logging
 import time
+import json
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from engines.indian.auth import get_api
@@ -18,6 +19,60 @@ INTERVAL_MAP = {
     "1h":  "ONE_HOUR",
     "1d":  "ONE_DAY",
 }
+
+REDIS_TTL_LTP       = 360
+REDIS_TTL_DAY_RANGE = 360
+REDIS_TTL_RATE_LIMIT= 120
+
+
+def _redis():
+    try:
+        from redis_client import get_redis
+        return get_redis()
+    except Exception:
+        return None
+
+
+def _is_rate_limited() -> bool:
+    try:
+        r = _redis()
+        if not r:
+            return False
+        return bool(r.get("indian:rate_limited"))
+    except Exception:
+        return False
+
+
+def _set_rate_limited():
+    try:
+        r = _redis()
+        if r:
+            r.setex("indian:rate_limited", REDIS_TTL_RATE_LIMIT, "1")
+            log.warning("AngelOne rate limit detected — pausing for %ss", REDIS_TTL_RATE_LIMIT)
+    except Exception:
+        pass
+
+
+def _set_last_refresh():
+    try:
+        r = _redis()
+        if r:
+            r.set("indian:last_refresh", str(time.time()))
+    except Exception:
+        pass
+
+
+def get_last_refresh_age() -> float:
+    try:
+        r = _redis()
+        if not r:
+            return 999.0
+        val = r.get("indian:last_refresh")
+        if not val:
+            return 999.0
+        return round(time.time() - float(val), 0)
+    except Exception:
+        return 999.0
 
 
 def is_market_open() -> bool:
@@ -45,6 +100,10 @@ def fetch_candles(
     to_date:   str,
 ) -> pd.DataFrame | None:
     try:
+        if _is_rate_limited():
+            log.warning("fetch_candles skipped — rate limited")
+            return None
+
         time.sleep(1)
 
         api = get_api()
@@ -63,7 +122,10 @@ def fetch_candles(
         })
 
         if not data.get("status") or not data.get("data"):
-            log.warning("No candle data: %s", data.get("message"))
+            msg = data.get("message", "")
+            if "rate" in msg.lower() or "access" in msg.lower():
+                _set_rate_limited()
+            log.warning("No candle data: %s", msg)
             return None
 
         rows = []
@@ -89,8 +151,29 @@ def fetch_candles(
         return None
 
 
-def get_ltp(token: str) -> float | None:
+def get_ltp_from_redis(token: str) -> float | None:
     try:
+        r = _redis()
+        if not r:
+            return None
+        val = r.get(f"indian:ltp:{token}")
+        if val:
+            return float(val)
+        return None
+    except Exception:
+        return None
+
+
+def get_ltp(token: str) -> float | None:
+    cached = get_ltp_from_redis(token)
+    if cached:
+        return cached
+
+    try:
+        if _is_rate_limited():
+            log.warning("get_ltp skipped — rate limited")
+            return None
+
         time.sleep(0.5)
 
         api = get_api()
@@ -110,12 +193,104 @@ def get_ltp(token: str) -> float | None:
         })
 
         if data.get("status") and data.get("data"):
-            return float(data["data"][-1][4])
+            price = float(data["data"][-1][4])
+            try:
+                r = _redis()
+                if r:
+                    r.setex(f"indian:ltp:{token}", REDIS_TTL_LTP, str(price))
+            except Exception:
+                pass
+            return price
+
+        msg = data.get("message", "")
+        if "rate" in msg.lower() or "access" in msg.lower():
+            _set_rate_limited()
         return None
 
     except Exception as e:
         log.error("get_ltp error: %s", e)
         return None
+
+
+def get_day_range_from_redis(token: str) -> float:
+    try:
+        r = _redis()
+        if not r:
+            return 0.0
+        val = r.get(f"indian:day_range:{token}")
+        if val:
+            return float(val)
+        return 0.0
+    except Exception:
+        return 0.0
+
+
+def store_day_range(token: str, day_range: float) -> None:
+    try:
+        r = _redis()
+        if r:
+            r.setex(f"indian:day_range:{token}", REDIS_TTL_DAY_RANGE, str(day_range))
+    except Exception:
+        pass
+
+
+def store_ltp(token: str, price: float) -> None:
+    try:
+        r = _redis()
+        if r:
+            r.setex(f"indian:ltp:{token}", REDIS_TTL_LTP, str(price))
+    except Exception:
+        pass
+
+
+def refresh_indian_data(token: str, name: str) -> dict:
+    result = {
+        "name":       name,
+        "token":      token,
+        "ltp":        None,
+        "day_range":  0.0,
+        "success":    False,
+        "rate_limited": False,
+    }
+
+    if _is_rate_limited():
+        result["rate_limited"] = True
+        log.warning("refresh_indian_data skipped — rate limited")
+        return result
+
+    try:
+        now       = datetime.now(IST)
+        today     = now.strftime("%Y-%m-%d")
+        from_date = f"{today} 09:15"
+        to_date   = now.strftime("%Y-%m-%d %H:%M")
+
+        df = fetch_candles(token, "15m", from_date, to_date)
+
+        if df is not None and not df.empty:
+            ltp       = float(df["close"].iloc[-1])
+            day_high  = float(df["high"].max())
+            day_low   = float(df["low"].min())
+            day_range = round(day_high - day_low, 2)
+
+            store_ltp(token, ltp)
+            store_day_range(token, day_range)
+            _set_last_refresh()
+
+            result["ltp"]       = ltp
+            result["day_range"] = day_range
+            result["success"]   = True
+
+            log.info(
+                "Indian data refreshed: %s ltp=%.2f day_range=%.2f",
+                name, ltp, day_range
+            )
+        else:
+            log.warning("refresh_indian_data: no candle data for %s", name)
+
+    except Exception as e:
+        log.error("refresh_indian_data %s: %s", name, e)
+
+    return result
 
 
 def get_orb_candle(token: str) -> dict | None:

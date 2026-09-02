@@ -191,6 +191,39 @@ async def job_indian_refresh_session():
     except Exception as e:
         log.error("job_indian_refresh_session: %s", e)
 
+async def job_indian_data_refresh():
+    try:
+        from engines.indian.data import is_market_open, refresh_indian_data, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if not is_market_open():
+            return
+
+        if _is_rate_limited():
+            log.warning("job_indian_data_refresh: rate limited — skipping")
+            return
+
+        instruments = get_instruments()
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if not inst:
+                continue
+            result = refresh_indian_data(inst["token"], name)
+            if result.get("rate_limited"):
+                log.warning("job_indian_data_refresh: rate limited after %s", name)
+                break
+            if result.get("success"):
+                log.debug(
+                    "Indian data refreshed: %s ltp=%.2f range=%.2f",
+                    name,
+                    result.get("ltp", 0),
+                    result.get("day_range", 0),
+                )
+
+    except Exception as e:
+        log.error("job_indian_data_refresh: %s", e)
+
 
 async def job_indian_orb_setup():
     try:
@@ -502,6 +535,12 @@ def start_scheduler():
         job_indian_refresh_session,
         trigger          = CronTrigger(hour=3, minute=30, timezone="UTC"),
         id               = "indian_refresh_session",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_data_refresh,
+        trigger          = IntervalTrigger(minutes=5),
+        id               = "indian_data_refresh",
         replace_existing = True,
     )
     scheduler.add_job(

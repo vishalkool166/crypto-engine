@@ -34,15 +34,23 @@ def _reset_if_new_day():
 
 
 def _get_day_range_so_far(token: str) -> float:
+    from engines.indian.data import get_day_range_from_redis
+    cached = get_day_range_from_redis(token)
+    if cached > 0:
+        return cached
     try:
         now       = datetime.now(IST)
         today     = now.strftime("%Y-%m-%d")
         from_date = f"{today} 09:15"
         to_date   = now.strftime("%Y-%m-%d %H:%M")
-        df        = fetch_candles(token, "15m", from_date, to_date)
+        from engines.indian.data import fetch_candles
+        df = fetch_candles(token, "15m", from_date, to_date)
         if df is None or df.empty:
             return 0.0
-        return round(float(df["high"].max()) - float(df["low"].min()), 2)
+        day_range = round(float(df["high"].max()) - float(df["low"].min()), 2)
+        from engines.indian.data import store_day_range
+        store_day_range(token, day_range)
+        return day_range
     except Exception as e:
         log.error("_get_day_range_so_far: %s", e)
         return 0.0
@@ -130,6 +138,9 @@ async def scan_all() -> list:
             continue
 
         price = get_ltp(inst["token"])
+        if not price:
+            from engines.indian.data import get_ltp_from_redis
+            price = get_ltp_from_redis(inst["token"])
         if not price:
             log.warning("Could not get LTP for %s", name)
             continue
