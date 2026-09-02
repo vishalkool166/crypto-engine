@@ -1,5 +1,4 @@
 import logging
-import os
 import time
 from config import cfg
 
@@ -7,7 +6,7 @@ log = logging.getLogger(__name__)
 
 _api        = None
 _session_at = 0.0
-_SESSION_TTL = 23 * 3600
+_SESSION_TTL = 20 * 3600
 
 
 def _login():
@@ -41,8 +40,17 @@ def _login():
 def get_api():
     global _api, _session_at
     if _api is None or (time.time() - _session_at) > _SESSION_TTL:
+        log.info("AngelOne session expired or missing — re-logging in")
         _login()
     return _api
+
+
+def refresh_session():
+    global _api, _session_at
+    log.info("Forcing AngelOne session refresh")
+    _api        = None
+    _session_at = 0.0
+    return _login()
 
 
 async def init_indian_session() -> bool:

@@ -178,6 +178,19 @@ async def job_rs_refresh():
     except Exception as e:
         log.error("job_rs_refresh: %s", e)
 
+async def job_indian_refresh_session():
+    try:
+        from engines.indian.auth import refresh_session
+        from engines.indian.instruments import refresh_instruments
+        api = refresh_session()
+        if api:
+            refresh_instruments()
+            log.info("AngelOne session refreshed")
+        else:
+            log.error("AngelOne session refresh failed")
+    except Exception as e:
+        log.error("job_indian_refresh_session: %s", e)
+
 
 async def job_indian_orb_setup():
     try:
@@ -483,6 +496,12 @@ def start_scheduler():
         job_rs_refresh,
         trigger          = IntervalTrigger(minutes=15),
         id               = "rs_refresh",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_refresh_session,
+        trigger          = CronTrigger(hour=3, minute=30, timezone="UTC"),
+        id               = "indian_refresh_session",
         replace_existing = True,
     )
     scheduler.add_job(
