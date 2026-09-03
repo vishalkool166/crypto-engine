@@ -87,13 +87,12 @@ def _save_journey_snapshot(trade: dict, mark_price: float) -> None:
     try:
         from database import get_session, TradeJourney
 
-        trade_id    = trade["id"]
-        entry_price = float(trade.get("entry_price") or 0)
-        direction   = trade.get("direction", "LONG")
-        sl_price    = float(trade.get("sl_price")  or 0)
-        tp1_price   = float(trade.get("tp1_price") or 0)
-        position_amt= float(trade.get("position_size") or 0)
-        is_long     = direction == "LONG"
+        trade_id     = trade["id"]
+        entry_price  = float(trade.get("entry_price") or 0)
+        direction    = trade.get("direction", "LONG")
+        sl_price     = float(trade.get("sl_price")  or 0)
+        tp1_price    = float(trade.get("tp1_price") or 0)
+        is_long      = direction == "LONG"
 
         if not entry_price or not mark_price:
             return
@@ -113,12 +112,27 @@ def _save_journey_snapshot(trade: dict, mark_price: float) -> None:
                 is_entry    = False,
                 is_exit     = False,
                 entry_price = entry_price,
-                sl_price    = sl_price if sl_price > 0 else None,
+                sl_price    = sl_price  if sl_price  > 0 else None,
                 tp_price    = tp1_price if tp1_price > 0 else None,
             ))
 
     except Exception as e:
         log.error("_save_journey_snapshot trade_id=%s: %s", trade.get("id"), e)
+
+
+def _get_fallback_price(coin: str) -> float:
+    try:
+        from redis_client import get_redis
+        import json
+        r = get_redis()
+        if not r:
+            return 0.0
+        raw = r.get(f"ticker:{coin}USDT")
+        if raw:
+            return float(json.loads(raw).get("last", 0))
+    except Exception:
+        pass
+    return 0.0
 
 
 def _enrich_trade(trade: dict, position_map: dict) -> dict:
@@ -136,6 +150,8 @@ def _enrich_trade(trade: dict, position_map: dict) -> dict:
 
     if not mark_price and position:
         mark_price = float(position.get("markPrice") or position.get("entryPrice") or entry)
+    if not mark_price:
+        mark_price = _get_fallback_price(coin)
     if not mark_price:
         mark_price = entry
 
@@ -430,11 +446,15 @@ async def run_monitor_cycle() -> None:
 
     now = time.time()
     for trade in db_trades:
-        trade_id = trade["id"]
+        trade_id  = trade["id"]
         last_snap = _last_snapshot_time.get(trade_id, 0)
         if now - last_snap >= SNAPSHOT_INTERVAL_SECS:
             from trade.ws import get_mark_price
             mark_price = get_mark_price(trade["coin"])
+            if not mark_price:
+                mark_price = _get_fallback_price(trade["coin"])
+            if not mark_price:
+                mark_price = float(trade.get("entry_price") or 0)
             if mark_price:
                 _save_journey_snapshot(trade, mark_price)
                 _last_snapshot_time[trade_id] = now
