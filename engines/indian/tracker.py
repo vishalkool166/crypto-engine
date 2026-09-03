@@ -1,7 +1,7 @@
 import logging
 import json
 from datetime import datetime, timezone, timedelta
-from engines.indian.data import get_ltp, is_market_open
+from engines.indian.data import get_ltp_live, is_market_open
 from engines.indian.instruments import get_instrument
 from config import cfg
 
@@ -69,7 +69,8 @@ async def _check_signal(signal) -> None:
         from engines.indian.data import get_ltp_from_redis
         price = get_ltp_from_redis(inst["token"])
         if not price:
-            price = get_ltp(inst["token"])
+            ltp_data = get_ltp_live(inst["token"])
+            price    = ltp_data["ltp"] if ltp_data else None
         if not price:
             return
 
@@ -295,9 +296,9 @@ def get_open_signals_with_pnl() -> list:
         from database import SessionLocal, Signal as SignalModel
         from engines.indian.data import get_ltp_from_redis
         from engines.indian.instruments import get_instrument
-        from datetime import date
+        from datetime import date, timezone, datetime as dt
 
-        today_start = datetime(
+        today_start = dt(
             date.today().year,
             date.today().month,
             date.today().day,
@@ -329,7 +330,6 @@ def get_open_signals_with_pnl() -> list:
                 else:
                     live_pnl_pts = round(entry - price, 2)
 
-                sl_dist  = abs(entry - sl)
                 tp_dist  = abs(tp1   - entry)
                 cur_dist = abs(price - entry)
 

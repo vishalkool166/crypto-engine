@@ -3,7 +3,7 @@ import json
 from datetime import datetime, timezone, timedelta
 from engines.indian.data import (
     is_market_open, is_orb_ready,
-    get_orb_candle, get_ltp, get_avg_volume,
+    get_orb_candle, get_ltp_live, get_avg_volume,
     fetch_candles,
 )
 from engines.indian.instruments import get_instrument
@@ -137,10 +137,11 @@ async def scan_all() -> list:
         if not inst:
             continue
 
-        price = get_ltp(inst["token"])
+        from engines.indian.data import get_ltp_from_redis
+        price = get_ltp_from_redis(inst["token"])
         if not price:
-            from engines.indian.data import get_ltp_from_redis
-            price = get_ltp_from_redis(inst["token"])
+            ltp_data = get_ltp_live(inst["token"])
+            price    = ltp_data["ltp"] if ltp_data else None
         if not price:
             log.warning("Could not get LTP for %s", name)
             continue
