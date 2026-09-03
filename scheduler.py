@@ -178,18 +178,85 @@ async def job_rs_refresh():
     except Exception as e:
         log.error("job_rs_refresh: %s", e)
 
+
 async def job_indian_refresh_session():
+    from alerts.telegram import send
+
+    max_attempts = 3
+    wait_seconds = 60
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            from engines.indian.auth import refresh_session, is_session_valid
+            log.info("AngelOne session refresh attempt %s/%s", attempt, max_attempts)
+
+            api = refresh_session()
+
+            if api and is_session_valid():
+                from engines.indian.instruments import refresh_instruments
+                refresh_instruments()
+                log.info("AngelOne session refreshed successfully on attempt %s", attempt)
+                return
+
+            log.warning(
+                "AngelOne session refresh failed attempt %s/%s",
+                attempt, max_attempts
+            )
+
+            if attempt < max_attempts:
+                import asyncio
+                log.info("Waiting %ss before retry...", wait_seconds)
+                await asyncio.sleep(wait_seconds)
+
+        except Exception as e:
+            log.error("job_indian_refresh_session attempt %s: %s", attempt, e)
+            if attempt < max_attempts:
+                import asyncio
+                await asyncio.sleep(wait_seconds)
+
+    log.error("AngelOne session refresh failed after %s attempts", max_attempts)
     try:
-        from engines.indian.auth import refresh_session
-        from engines.indian.instruments import refresh_instruments
-        api = refresh_session()
-        if api:
-            refresh_instruments()
-            log.info("AngelOne session refreshed")
-        else:
-            log.error("AngelOne session refresh failed")
+        await send(
+            f"🚨 *AngelOne Session Failed*\n\n"
+            f"All {max_attempts} login attempts failed.\n"
+            f"Indian market signals disabled.\n\n"
+            f"Check credentials in .env\n"
+            f"Run `/india` to verify status"
+        )
     except Exception as e:
-        log.error("job_indian_refresh_session: %s", e)
+        log.error("Failed to send Telegram alert: %s", e)
+
+
+async def job_indian_session_backup():
+    try:
+        from engines.indian.auth import is_session_valid, refresh_session
+        from engines.indian.instruments import refresh_instruments
+
+        if is_session_valid():
+            log.debug("AngelOne backup check — session still valid")
+            return
+
+        log.warning("AngelOne backup check — session invalid, attempting recovery")
+
+        api = refresh_session()
+        if api and is_session_valid():
+            refresh_instruments()
+            log.info("AngelOne session recovered by backup job")
+            try:
+                from alerts.telegram import send
+                await send(
+                    "✅ *AngelOne Session Recovered*\n\n"
+                    "Backup session check restored the connection.\n"
+                    "Indian market signals active."
+                )
+            except Exception:
+                pass
+        else:
+            log.error("AngelOne backup session recovery also failed")
+
+    except Exception as e:
+        log.error("job_indian_session_backup: %s", e)
+
 
 async def job_indian_data_refresh():
     try:
@@ -253,8 +320,8 @@ async def job_indian_orb_setup():
                 )
                 continue
 
-            orb       = result[name]
-            orb_size  = orb["size"]
+            orb      = result[name]
+            orb_size = orb["size"]
 
             orb_ok  = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
             day_ok  = day_range >= MIN_DAY_RANGE
@@ -284,7 +351,10 @@ async def job_indian_orb_setup():
                 f"Status: `{status}`"
             )
 
-            log.info("Indian ORB setup: %s high=%.2f low=%.2f size=%.2f", name, orb["high"], orb["low"], orb_size)
+            log.info(
+                "Indian ORB setup: %s high=%.2f low=%.2f size=%.2f",
+                name, orb["high"], orb["low"], orb_size
+            )
 
     except Exception as e:
         log.error("job_indian_orb_setup: %s", e)
@@ -535,6 +605,12 @@ def start_scheduler():
         job_indian_refresh_session,
         trigger          = CronTrigger(hour=3, minute=30, timezone="UTC"),
         id               = "indian_refresh_session",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_session_backup,
+        trigger          = CronTrigger(hour=4, minute=0, timezone="UTC"),
+        id               = "indian_session_backup",
         replace_existing = True,
     )
     scheduler.add_job(
