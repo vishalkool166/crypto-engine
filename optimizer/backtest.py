@@ -1,355 +1,306 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 import logging
 import ta
 
 log = logging.getLogger(__name__)
 
 
-def get_indicators(df: pd.DataFrame) -> dict:
-    close = df["close"]
-    high  = df["high"]
-    low   = df["low"]
-    vol   = df["volume"]
+def prepare_indicators(df_4h: pd.DataFrame, df_1h: pd.DataFrame = None) -> pd.DataFrame:
+    log.info("    Calculating indicators for %s candles...", len(df_4h))
 
-    def _last(series):
-        if series is None or len(series) == 0:
-            return 0.0
-        val = series.iloc[-1]
-        return float(val) if not pd.isna(val) else 0.0
+    df = df_4h.copy()
 
-    ema20  = ta.trend.ema_indicator(close, window=20)
-    ema50  = ta.trend.ema_indicator(close, window=50)
-    ema200 = ta.trend.ema_indicator(close, window=200)
-    rsi    = ta.momentum.rsi(close, window=14)
-    adx    = ta.trend.adx(high, low, close, window=14)
-    atr    = ta.volatility.average_true_range(high, low, close, window=14)
+    close  = df["close"]
+    high   = df["high"]
+    low    = df["low"]
+    volume = df["volume"]
 
-    vol_ma20  = float(vol.rolling(20).mean().iloc[-1]) if len(vol) >= 20 else 1.0
-    cur_vol   = float(vol.iloc[-1])
-    vol_ratio = round(cur_vol / vol_ma20, 3) if vol_ma20 > 0 else 1.0
+    log.info("    Computing EMAs...")
+    df["ema20"]  = ta.trend.ema_indicator(close, window=20)
+    df["ema50"]  = ta.trend.ema_indicator(close, window=50)
+    df["ema200"] = ta.trend.ema_indicator(close, window=200)
 
-    price = float(close.iloc[-1])
-    atr_v = _last(atr)
+    log.info("    Computing ADX...")
+    df["adx"] = ta.trend.adx(high, low, close, window=14)
 
-    def _swing_high(lookback=50):
-        sl = df.tail(lookback)
-        n  = len(sl)
-        for i in range(n - 2, 1, -1):
-            h = float(sl["high"].iloc[i])
-            if h > float(sl["high"].iloc[i-1]) and h > float(sl["high"].iloc[i+1]):
-                return h
-        return float(df["high"].max())
+    log.info("    Computing ATR...")
+    df["atr"] = ta.volatility.average_true_range(high, low, close, window=14)
 
-    def _swing_low(lookback=50):
-        sl = df.tail(lookback)
-        n  = len(sl)
-        for i in range(n - 2, 1, -1):
-            l = float(sl["low"].iloc[i])
-            if l < float(sl["low"].iloc[i-1]) and l < float(sl["low"].iloc[i+1]):
-                return l
-        return float(df["low"].min())
+    log.info("    Computing RSI on 4h...")
+    df["rsi_4h"] = ta.momentum.rsi(close, window=14)
 
-    return {
-        "price":       price,
-        "ema20":       _last(ema20),
-        "ema50":       _last(ema50),
-        "ema200":      _last(ema200),
-        "rsi":         _last(rsi),
-        "adx":         _last(adx),
-        "atr":         atr_v,
-        "atr_pct":     round(atr_v / price * 100, 4) if price > 0 else 0.0,
-        "vol_ratio":   vol_ratio,
-        "swing_high":  _swing_high(),
-        "swing_low":   _swing_low(),
-    }
+    log.info("    Computing Volume ratio...")
+    df["vol_ma20"]  = volume.rolling(20).mean()
+    df["vol_ratio"] = df["vol_ma20"].apply(
+        lambda x: 0.0 if pd.isna(x) or x == 0 else 1.0
+    )
+    df["vol_ratio"] = volume / df["vol_ma20"].replace(0, np.nan)
+    df["vol_ratio"] = df["vol_ratio"].fillna(1.0)
 
+    log.info("    Computing ATR pct...")
+    df["atr_pct"] = (df["atr"] / close * 100).fillna(0.0)
 
-def check_signal(d4h: dict, d1h: dict, config: dict) -> dict:
-    price  = d4h["price"]
-    ema20  = d4h["ema20"]
-    ema50  = d4h["ema50"]
-    ema200 = d4h["ema200"]
-    adx    = d4h["adx"]
-    atr    = d4h["atr"]
-    atr_pct= d4h["atr_pct"]
-    vol    = d4h["vol_ratio"]
-    rsi    = d1h["rsi"] if d1h else d4h["rsi"]
+    log.info("    Computing swing highs/lows...")
+    df["swing_high"] = _rolling_swing_high(df, lookback=50)
+    df["swing_low"]  = _rolling_swing_low(df,  lookback=50)
 
-    adx_min     = config["adx_min"]
-    rsi_max_long= config["rsi_max_long"]
-    atr_pct_max = config["atr_pct_max"]
-    vol_min     = config["vol_min"]
-
-    if atr_pct > atr_pct_max:
-        return {"signal": False, "reason": "volatile"}
-
-    if adx < adx_min:
-        return {"signal": False, "reason": "adx_too_low"}
-
-    if not price or not ema200:
-        return {"signal": False, "reason": "missing_indicators"}
-
-    if price > ema200:
-        direction = "LONG"
-    elif price < ema200:
-        direction = "SHORT"
-    else:
-        return {"signal": False, "reason": "ema_neutral"}
-
-    buffer = atr * 0.05
-    if direction == "LONG":
-        strict  = price > ema20 + buffer and ema20 > ema50
-        relaxed = price > ema20 + buffer * 2
-        if not strict and not relaxed:
-            return {"signal": False, "reason": "ema_neutral"}
-    else:
-        strict  = price < ema20 - buffer and ema20 < ema50
-        relaxed = price < ema20 - buffer * 2
-        if not strict and not relaxed:
-            return {"signal": False, "reason": "ema_neutral"}
-
-    if vol < vol_min:
-        return {"signal": False, "reason": "low_volume"}
-
-    if direction == "LONG" and rsi > rsi_max_long:
-        return {"signal": False, "reason": "rsi_too_high"}
-    if direction == "SHORT" and rsi < (100 - rsi_max_long):
-        return {"signal": False, "reason": "rsi_too_low"}
-
-    swing_level = d4h["swing_low"] if direction == "LONG" else d4h["swing_high"]
-    sl_buffer   = atr * 0.5
-
-    if direction == "LONG":
-        sl = swing_level - sl_buffer
-        if sl >= price:
-            return {"signal": False, "reason": "sl_invalid"}
-    else:
-        sl = swing_level + sl_buffer
-        if sl <= price:
-            return {"signal": False, "reason": "sl_invalid"}
-
-    sl_dist = abs(price - sl)
-    sl_pct  = sl_dist / price * 100
-
-    if sl_pct < 0.3:
-        return {"signal": False, "reason": "sl_too_tight"}
-    if sl_pct > 5.0:
-        return {"signal": False, "reason": "sl_too_wide"}
-
-    tp1 = price + sl_dist * 2.5 if direction == "LONG" else price - sl_dist * 2.5
-    tp2 = price + sl_dist * 4.0 if direction == "LONG" else price - sl_dist * 4.0
-
-    return {
-        "signal":    True,
-        "direction": direction,
-        "entry":     price,
-        "sl":        round(sl,  6),
-        "tp1":       round(tp1, 6),
-        "tp2":       round(tp2, 6),
-        "sl_pct":    round(sl_pct, 3),
-        "rr1":       2.5,
-        "adx":       adx,
-        "rsi":       rsi,
-        "vol":       vol,
-        "atr_pct":   atr_pct,
-        "reason":    "",
-    }
-
-
-def simulate_trade(
-    df_4h:     pd.DataFrame,
-    bar_index: int,
-    direction: str,
-    entry:     float,
-    sl:        float,
-    tp1:       float,
-    tp2:       float,
-) -> dict:
-    future  = df_4h.iloc[bar_index:bar_index + 60]
-    is_long = direction == "LONG"
-    tp1_hit = False
-
-    if len(future) < 2:
-        return {
-            "outcome":    "timeout",
-            "exit_price": entry,
-            "candles":    0,
-            "tp1_hit":    False,
-            "pnl_r":      0.0,
-        }
-
-    sl_dist = abs(entry - sl)
-
-    for j, (_, c) in enumerate(future.iterrows()):
-        h = float(c["high"])
-        l = float(c["low"])
-
-        sl_hit  = (l <= sl)  if is_long else (h >= sl)
-        tp1_now = (h >= tp1) if is_long else (l <= tp1)
-        tp2_now = (h >= tp2) if is_long else (l <= tp2)
-
-        if not tp1_hit:
-            if sl_hit and tp1_now:
-                return {
-                    "outcome":    "loss",
-                    "exit_price": sl,
-                    "candles":    j + 1,
-                    "tp1_hit":    False,
-                    "pnl_r":      -1.0,
-                }
-            if sl_hit:
-                return {
-                    "outcome":    "loss",
-                    "exit_price": sl,
-                    "candles":    j + 1,
-                    "tp1_hit":    False,
-                    "pnl_r":      -1.0,
-                }
-            if tp1_now:
-                tp1_hit = True
-                sl      = entry
-                if not tp2:
-                    return {
-                        "outcome":    "win",
-                        "exit_price": tp1,
-                        "candles":    j + 1,
-                        "tp1_hit":    True,
-                        "pnl_r":      2.5,
-                    }
-                continue
-        else:
-            if tp2_now:
-                return {
-                    "outcome":    "win",
-                    "exit_price": tp2,
-                    "candles":    j + 1,
-                    "tp1_hit":    True,
-                    "pnl_r":      4.0,
-                }
-            sl_hit_be = (l <= sl) if is_long else (h >= sl)
-            if sl_hit_be:
-                return {
-                    "outcome":    "win",
-                    "exit_price": entry,
-                    "candles":    j + 1,
-                    "tp1_hit":    True,
-                    "pnl_r":      0.0,
-                }
-
-    last_close = float(future.iloc[-1]["close"])
-    if tp1_hit:
-        pnl_r = round((last_close - entry) / sl_dist, 2) if is_long else round((entry - last_close) / sl_dist, 2)
-        return {
-            "outcome":    "win",
-            "exit_price": last_close,
-            "candles":    len(future),
-            "tp1_hit":    True,
-            "pnl_r":      max(0.0, pnl_r),
-        }
-
-    return {
-        "outcome":    "timeout",
-        "exit_price": last_close,
-        "candles":    len(future),
-        "tp1_hit":    False,
-        "pnl_r":      0.0,
-    }
-
-
-def run_backtest(
-    df_4h:  pd.DataFrame,
-    df_1h:  pd.DataFrame,
-    config: dict,
-    coin:   str = "",
-) -> dict:
-
-    if df_4h is None or len(df_4h) < 250:
-        return {"error": f"Insufficient 4h data: {len(df_4h) if df_4h is not None else 0}"}
-
-    trades      = []
-    rejections  = {}
-    min_bars    = 220
-
-    for i in range(min_bars, len(df_4h) - 60):
-        window_4h = df_4h.iloc[i - min_bars:i]
-
-        ts_4h = df_4h.index[i]
-        if df_1h is not None:
-            window_1h = df_1h[df_1h.index <= ts_4h].tail(300)
-            if len(window_1h) < 50:
-                window_1h = None
-        else:
-            window_1h = None
-
-        try:
-            d4h = get_indicators(window_4h)
-            d1h = get_indicators(window_1h) if window_1h is not None and len(window_1h) >= 50 else None
-        except Exception:
-            continue
-
-        result = check_signal(d4h, d1h, config)
-
-        if not result["signal"]:
-            reason = result.get("reason", "unknown")
-            rejections[reason] = rejections.get(reason, 0) + 1
-            continue
-
-        sim = simulate_trade(
-            df_4h     = df_4h,
-            bar_index = i,
-            direction = result["direction"],
-            entry     = result["entry"],
-            sl        = result["sl"],
-            tp1       = result["tp1"],
-            tp2       = result["tp2"],
+    if df_1h is not None and len(df_1h) >= 50:
+        log.info("    Computing RSI on 1h and merging...")
+        rsi_1h = ta.momentum.rsi(df_1h["close"], window=14)
+        rsi_1h_df = rsi_1h.rename("rsi_1h").to_frame()
+        rsi_1h_df.index = pd.to_datetime(rsi_1h_df.index, utc=True)
+        df.index = pd.to_datetime(df.index, utc=True)
+        df = df.merge(
+            rsi_1h_df,
+            left_index  = True,
+            right_index = True,
+            how         = "left",
         )
+        df["rsi"] = df["rsi_1h"].fillna(df["rsi_4h"])
+        log.info("    1h RSI merged successfully")
+    else:
+        df["rsi"] = df["rsi_4h"]
+        log.info("    Using 4h RSI (no 1h data)")
 
-        if sim["outcome"] == "timeout":
+    df = df.dropna(subset=["ema200", "adx", "atr", "rsi"])
+    df = df.iloc[220:]
+
+    log.info("    Indicators ready — %s usable bars", len(df))
+    return df
+
+
+def _rolling_swing_high(df: pd.DataFrame, lookback: int = 50) -> pd.Series:
+    return df["high"].rolling(window=lookback, min_periods=lookback).max()
+
+
+def _rolling_swing_low(df: pd.DataFrame, lookback: int = 50) -> pd.Series:
+    return df["low"].rolling(window=lookback, min_periods=lookback).min()
+
+
+def apply_filters_vectorized(df: pd.DataFrame, config: dict) -> pd.DataFrame:
+    adx_min      = config["adx_min"]
+    rsi_max_long = config["rsi_max_long"]
+    atr_pct_max  = config["atr_pct_max"]
+    vol_min      = config["vol_min"]
+
+    price  = df["close"].values
+    ema20  = df["ema20"].values
+    ema50  = df["ema50"].values
+    ema200 = df["ema200"].values
+    adx    = df["adx"].values
+    atr    = df["atr"].values
+    atr_pct= df["atr_pct"].values
+    rsi    = df["rsi"].values
+    vol    = df["vol_ratio"].values
+    s_high = df["swing_high"].values
+    s_low  = df["swing_low"].values
+
+    not_volatile = atr_pct <= atr_pct_max
+    adx_ok       = adx >= adx_min
+    vol_ok       = vol >= vol_min
+
+    long_direction  = price > ema200
+    short_direction = price < ema200
+
+    buffer     = atr * 0.05
+    long_ema   = ((price > ema20 + buffer) & (ema20 > ema50)) | (price > ema20 + buffer * 2)
+    short_ema  = ((price < ema20 - buffer) & (ema20 < ema50)) | (price < ema20 - buffer * 2)
+
+    rsi_long_ok  = rsi <= rsi_max_long
+    rsi_short_ok = rsi >= (100 - rsi_max_long)
+
+    sl_buffer   = atr * 0.5
+    sl_long     = s_low  - sl_buffer
+    sl_short    = s_high + sl_buffer
+
+    sl_long_dist  = np.abs(price - sl_long)
+    sl_short_dist = np.abs(price - sl_short)
+
+    sl_long_pct  = np.where(price > 0, sl_long_dist  / price * 100, 0)
+    sl_short_pct = np.where(price > 0, sl_short_dist / price * 100, 0)
+
+    sl_long_valid  = (sl_long_pct  >= 0.3) & (sl_long_pct  <= 5.0) & (sl_long  < price)
+    sl_short_valid = (sl_short_pct >= 0.3) & (sl_short_pct <= 5.0) & (sl_short > price)
+
+    long_signal = (
+        not_volatile &
+        adx_ok       &
+        vol_ok       &
+        long_direction &
+        long_ema     &
+        rsi_long_ok  &
+        sl_long_valid
+    )
+
+    short_signal = (
+        not_volatile  &
+        adx_ok        &
+        vol_ok        &
+        short_direction &
+        short_ema     &
+        rsi_short_ok  &
+        sl_short_valid
+    )
+
+    result = df.copy()
+    result["signal"]    = np.where(long_signal, "LONG", np.where(short_signal, "SHORT", ""))
+    result["sl"]        = np.where(long_signal, sl_long,  np.where(short_signal, sl_short,  0.0))
+    result["sl_pct"]    = np.where(long_signal, sl_long_pct, np.where(short_signal, sl_short_pct, 0.0))
+    result["tp1"]       = np.where(
+        long_signal,
+        price + sl_long_dist  * 2.5,
+        np.where(short_signal, price - sl_short_dist * 2.5, 0.0)
+    )
+    result["tp2"]       = np.where(
+        long_signal,
+        price + sl_long_dist  * 4.0,
+        np.where(short_signal, price - sl_short_dist * 4.0, 0.0)
+    )
+
+    signals_only = result[result["signal"] != ""].copy()
+    return signals_only
+
+
+def simulate_trades_vectorized(
+    signals_df: pd.DataFrame,
+    full_df:    pd.DataFrame,
+) -> list:
+    if signals_df.empty:
+        return []
+
+    trades     = []
+    full_high  = full_df["high"].values
+    full_low   = full_df["low"].values
+    full_close = full_df["close"].values
+    full_index = list(full_df.index)
+
+    for _, row in signals_df.iterrows():
+        try:
+            bar_idx   = full_index.index(row.name)
+        except ValueError:
             continue
+
+        direction = row["signal"]
+        entry     = float(row["close"])
+        sl        = float(row["sl"])
+        tp1       = float(row["tp1"])
+        tp2       = float(row["tp2"])
+        is_long   = direction == "LONG"
+
+        future_high  = full_high [bar_idx:bar_idx + 60]
+        future_low   = full_low  [bar_idx:bar_idx + 60]
+        future_close = full_close[bar_idx:bar_idx + 60]
+
+        if len(future_high) < 2:
+            continue
+
+        sl_dist  = abs(entry - sl)
+        outcome  = None
+        exit_p   = entry
+        tp1_hit  = False
+        pnl_r    = 0.0
+
+        for j in range(len(future_high)):
+            h = future_high[j]
+            l = future_low[j]
+
+            if not tp1_hit:
+                sl_hit  = (l <= sl)  if is_long else (h >= sl)
+                tp1_now = (h >= tp1) if is_long else (l <= tp1)
+
+                if sl_hit and tp1_now:
+                    outcome = "loss"
+                    exit_p  = sl
+                    pnl_r   = -1.0
+                    break
+                if sl_hit:
+                    outcome = "loss"
+                    exit_p  = sl
+                    pnl_r   = -1.0
+                    break
+                if tp1_now:
+                    tp1_hit = True
+                    sl      = entry
+                    tp2_now = (h >= tp2) if is_long else (l <= tp2)
+                    if tp2_now:
+                        outcome = "win"
+                        exit_p  = tp2
+                        pnl_r   = 4.0
+                        break
+                    continue
+            else:
+                tp2_now = (h >= tp2) if is_long else (l <= tp2)
+                sl_be   = (l <= sl)  if is_long else (h >= sl)
+
+                if tp2_now:
+                    outcome = "win"
+                    exit_p  = tp2
+                    pnl_r   = 4.0
+                    break
+                if sl_be:
+                    outcome = "win"
+                    exit_p  = entry
+                    pnl_r   = 0.0
+                    break
+
+        if outcome is None:
+            if tp1_hit:
+                last_close = future_close[-1]
+                pnl_r      = round(
+                    (last_close - entry) / sl_dist if is_long
+                    else (entry - last_close) / sl_dist,
+                    2
+                )
+                outcome = "win"
+                exit_p  = last_close
+            else:
+                continue
 
         trades.append({
-            "date":      str(df_4h.index[i].date()),
-            "coin":      coin,
-            "direction": result["direction"],
-            "entry":     result["entry"],
-            "sl":        result["sl"],
-            "tp1":       result["tp1"],
-            "exit":      sim["exit_price"],
-            "outcome":   sim["outcome"],
-            "pnl_r":     sim["pnl_r"],
-            "tp1_hit":   sim["tp1_hit"],
-            "adx":       result["adx"],
-            "rsi":       result["rsi"],
-            "vol":       result["vol"],
-            "atr_pct":   result["atr_pct"],
+            "date":      str(row.name.date()) if hasattr(row.name, "date") else str(row.name),
+            "direction": direction,
+            "entry":     round(entry,  6),
+            "sl":        round(sl,     6),
+            "tp1":       round(tp1,    6),
+            "exit":      round(exit_p, 6),
+            "outcome":   outcome,
+            "pnl_r":     round(pnl_r,  2),
+            "tp1_hit":   tp1_hit,
+            "adx":       round(float(row["adx"]),     2),
+            "rsi":       round(float(row["rsi"]),     2),
+            "vol":       round(float(row["vol_ratio"]),2),
+            "atr_pct":   round(float(row["atr_pct"]), 2),
         })
 
+    return trades
+
+
+def calculate_stats(trades: list, config: dict, coin: str) -> dict:
     if not trades:
         return {
-            "coin":           coin,
-            "config":         config,
-            "total_signals":  0,
-            "wins":           0,
-            "losses":         0,
-            "win_rate":       0.0,
-            "profit_factor":  0.0,
-            "avg_rr":         0.0,
-            "total_r":        0.0,
-            "rejections":     rejections,
-            "trades":         [],
+            "coin":          coin,
+            "config":        config,
+            "total_signals": 0,
+            "wins":          0,
+            "losses":        0,
+            "win_rate":      0.0,
+            "profit_factor": 0.0,
+            "avg_rr":        0.0,
+            "total_r":       0.0,
+            "score":         -1.0,
         }
 
-    wins     = [t for t in trades if t["outcome"] == "win"]
-    losses   = [t for t in trades if t["outcome"] == "loss"]
-    total    = len(trades)
-    win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0
+    wins   = [t for t in trades if t["outcome"] == "win"]
+    losses = [t for t in trades if t["outcome"] == "loss"]
+    total  = len(trades)
 
-    gross_p = sum(t["pnl_r"] for t in wins)
-    gross_l = abs(sum(t["pnl_r"] for t in losses))
-    pf      = round(gross_p / gross_l, 2) if gross_l > 0 else 0.0
-    avg_rr  = round(sum(t["pnl_r"] for t in trades) / total, 2) if total > 0 else 0.0
-    total_r = round(sum(t["pnl_r"] for t in trades), 2)
+    win_rate = round(len(wins) / total * 100, 1) if total > 0 else 0.0
+    gross_p  = sum(t["pnl_r"] for t in wins)
+    gross_l  = abs(sum(t["pnl_r"] for t in losses))
+    pf       = round(gross_p / gross_l, 2) if gross_l > 0 else 0.0
+    avg_rr   = round(sum(t["pnl_r"] for t in trades) / total, 2) if total > 0 else 0.0
+    total_r  = round(sum(t["pnl_r"] for t in trades), 2)
 
     return {
         "coin":          coin,
@@ -361,6 +312,21 @@ def run_backtest(
         "profit_factor": pf,
         "avg_rr":        avg_rr,
         "total_r":       total_r,
-        "rejections":    rejections,
         "trades":        trades,
     }
+
+
+def run_backtest(
+    df_4h:      pd.DataFrame,
+    df_1h:      pd.DataFrame,
+    config:     dict,
+    coin:       str = "",
+    prepped_df: pd.DataFrame = None,
+) -> dict:
+    if prepped_df is None:
+        log.error("prepped_df is required — call prepare_indicators first")
+        return {"error": "prepped_df required"}
+
+    signals_df = apply_filters_vectorized(prepped_df, config)
+    trades     = simulate_trades_vectorized(signals_df, prepped_df)
+    return calculate_stats(trades, config, coin)
