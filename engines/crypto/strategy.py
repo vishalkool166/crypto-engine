@@ -86,7 +86,7 @@ def analyze(
         if not is_momentum_candle(last_candle, min_body_ratio=0.5):
             return _no_signal(coin, "weak_candle")
 
-        if vol_ratio < 0.8:
+        if vol_ratio < 0.5:
             return _no_signal(coin, "low_volume")
 
         swing_level = d4h["swing_low"] if direction == "LONG" else d4h["swing_high"]

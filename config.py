@@ -261,7 +261,7 @@ class Config:
         "trend_ema_buffer_atr_mult":   0.05,
         "ema50_atr_mult":              3.0,
         "body_ratio_min":              0.5,
-        "volume_ratio_min":            0.8,
+        "volume_ratio_min":            0.5,
         "sl_buffer_atr_mult":          0.5,
         "sl_min_pct":                  0.3,
         "sl_max_pct":                  5.0,

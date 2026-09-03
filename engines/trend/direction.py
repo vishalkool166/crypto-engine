@@ -26,7 +26,7 @@ def detect(d4h: dict, coin: str) -> TrendResult:
     adx    = float(d4h.get("adx")    or 0)
     atr    = float(d4h.get("atr")    or price * 0.01)
 
-    min_adx = cfg.HYBRID_ENGINE.get("trend_min_adx", 20)
+    min_adx = cfg.HYBRID_ENGINE.get("trend_min_adx", 18)
     buffer  = atr * cfg.HYBRID_ENGINE.get("trend_ema_buffer_atr_mult", 0.05)
 
     if adx < min_adx:
