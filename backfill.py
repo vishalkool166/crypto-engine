@@ -10,11 +10,11 @@ log = logging.getLogger(__name__)
 TIMEFRAMES = ["1w", "1d", "4h", "1h", "15m"]
 
 TARGET_CANDLES = {
-    "1w":  500,
-    "1d":  1000,
-    "4h":  5000,
-    "1h":  5000,
-    "15m": 2000,
+    "1w":  250,
+    "1d":  250,
+    "4h":  350,
+    "1h":  350,
+    "15m": 250,
 }
 
 SLEEP_BETWEEN = 0.5
@@ -64,7 +64,7 @@ async def backfill_coin(exchange, coin: str, tf: str, target: int):
     from sqlalchemy import and_
 
     current_count = get_candle_count(coin, tf)
-    log.info(f"{coin} {tf}: currently {current_count} candles")
+    log.info(f"{coin} {tf}: currently {current_count} candles (target={target})")
 
     if current_count >= target:
         log.info(f"{coin} {tf}: already has {current_count} candles — skipping")
@@ -186,8 +186,8 @@ def get_candle_summary() -> dict:
         for coin in coins:
             summary[coin] = {}
             for tf in TIMEFRAMES:
-                count = get_candle_count(coin, tf)
-                target = TARGET_CANDLES.get(tf, 1000)
+                count  = get_candle_count(coin, tf)
+                target = TARGET_CANDLES.get(tf, 250)
                 summary[coin][tf] = {
                     "count":    count,
                     "target":   target,
@@ -243,7 +243,7 @@ async def run_backfill(coins: list = None, purge_disabled: bool = True):
 
         for coin in coins:
             for tf in TIMEFRAMES:
-                target = TARGET_CANDLES.get(tf, 3000)
+                target = TARGET_CANDLES.get(tf, 250)
                 try:
                     await backfill_coin(exchange, coin, tf, target)
                 except Exception as e:
@@ -253,11 +253,11 @@ async def run_backfill(coins: list = None, purge_disabled: bool = True):
 
         log.info("Backfill complete")
 
-        summary = get_candle_summary()
+        summary    = get_candle_summary()
         incomplete = []
         for coin, tfs in summary.items():
             for tf, data in tfs.items():
-                if not data["complete"] and tf not in ("1w",):
+                if not data["complete"]:
                     incomplete.append(f"{coin} {tf}: {data['count']}/{data['target']}")
 
         if incomplete:
@@ -285,7 +285,7 @@ async def run_backfill_single(coin: str):
     try:
         log.info(f"Backfilling single coin: {coin}")
         for tf in TIMEFRAMES:
-            target = TARGET_CANDLES.get(tf, 3000)
+            target = TARGET_CANDLES.get(tf, 250)
             try:
                 await backfill_coin(exchange, coin, tf, target)
             except Exception as e:

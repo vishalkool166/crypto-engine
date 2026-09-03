@@ -6,6 +6,14 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
+CANDLE_CAPS = {
+    "1w":  250,
+    "1d":  250,
+    "4h":  350,
+    "1h":  350,
+    "15m": 250,
+}
+
 
 def save_candles(
     coin:      str,
@@ -44,13 +52,53 @@ def save_candles(
 
         saved = result.rowcount
         if saved > 0:
-            log.info(f"Saved {saved} new candles: {coin} {timeframe}")
+            log.info("Saved %s new candles: %s %s", saved, coin, timeframe)
+
+        _purge_old_candles(coin, timeframe, db)
 
     except Exception as e:
-        log.error(f"Save candles error {coin} {timeframe}: {e}")
+        log.error("Save candles error %s %s: %s", coin, timeframe, e)
         db.rollback()
     finally:
         db.close()
+
+
+def _purge_old_candles(coin: str, timeframe: str, db) -> None:
+    try:
+        cap = CANDLE_CAPS.get(timeframe)
+        if not cap:
+            return
+
+        total = db.query(Candle).filter(
+            and_(
+                Candle.coin      == coin,
+                Candle.timeframe == timeframe,
+            )
+        ).count()
+
+        if total <= cap:
+            return
+
+        excess = total - cap
+
+        oldest = db.query(Candle).filter(
+            and_(
+                Candle.coin      == coin,
+                Candle.timeframe == timeframe,
+            )
+        ).order_by(
+            Candle.timestamp.asc()
+        ).limit(excess).all()
+
+        for row in oldest:
+            db.delete(row)
+
+        db.commit()
+        log.info("Purged %s old candles: %s %s (cap=%s)", excess, coin, timeframe, cap)
+
+    except Exception as e:
+        log.error("Purge candles error %s %s: %s", coin, timeframe, e)
+        db.rollback()
 
 
 def load_candles(
@@ -60,6 +108,9 @@ def load_candles(
 ) -> pd.DataFrame:
     db = SessionLocal()
     try:
+        cap   = CANDLE_CAPS.get(timeframe)
+        limit = min(limit, cap) if cap else limit
+
         rows = db.query(Candle).filter(
             and_(
                 Candle.coin      == coin,
@@ -85,7 +136,7 @@ def load_candles(
         return df
 
     except Exception as e:
-        log.error(f"Load candles error {coin} {timeframe}: {e}")
+        log.error("Load candles error %s %s: %s", coin, timeframe, e)
         return None
     finally:
         db.close()
@@ -109,7 +160,7 @@ def get_last_timestamp(
         return row.timestamp if row else None
 
     except Exception as e:
-        log.error(f"Get last ts error: {e}")
+        log.error("Get last ts error: %s", e)
         return None
     finally:
         db.close()
@@ -130,7 +181,7 @@ def has_enough_data(
         ).count()
         return count >= minimum
     except Exception as e:
-        log.error(f"Has enough data error: {e}")
+        log.error("Has enough data error: %s", e)
         return False
     finally:
         db.close()
@@ -149,7 +200,64 @@ def get_candle_count(
             )
         ).count()
     except Exception as e:
-        log.error(f"Count error: {e}")
+        log.error("Count error: %s", e)
         return 0
     finally:
         db.close()
+
+
+def purge_all_beyond_caps() -> dict:
+    results = {}
+    try:
+        from database import SessionLocal, Candle
+        from sqlalchemy import distinct
+
+        with SessionLocal() as db:
+            pairs = db.query(
+                distinct(Candle.coin),
+                Candle.timeframe
+            ).all()
+
+        total_purged = 0
+        for coin, timeframe in pairs:
+            cap = CANDLE_CAPS.get(timeframe)
+            if not cap:
+                continue
+
+            with SessionLocal() as db:
+                total = db.query(Candle).filter(
+                    and_(
+                        Candle.coin      == coin,
+                        Candle.timeframe == timeframe,
+                    )
+                ).count()
+
+                if total <= cap:
+                    continue
+
+                excess = total - cap
+
+                oldest = db.query(Candle).filter(
+                    and_(
+                        Candle.coin      == coin,
+                        Candle.timeframe == timeframe,
+                    )
+                ).order_by(
+                    Candle.timestamp.asc()
+                ).limit(excess).all()
+
+                for row in oldest:
+                    db.delete(row)
+
+                db.commit()
+                total_purged += excess
+                results[f"{coin}_{timeframe}"] = excess
+                log.info("Purged %s candles: %s %s", excess, coin, timeframe)
+
+        log.info("Total purged: %s candles across %s pairs", total_purged, len(results))
+        results["total"] = total_purged
+        return results
+
+    except Exception as e:
+        log.error("purge_all_beyond_caps error: %s", e)
+        return {"error": str(e)}
