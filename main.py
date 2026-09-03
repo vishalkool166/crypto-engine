@@ -319,9 +319,15 @@ async def lifespan(app: FastAPI):
         if indian_ok:
             from engines.indian.instruments import refresh_instruments
             refresh_instruments()
-            log.info("Indian market initialized")
+            log.info("Indian market session initialized")
     except Exception as e:
         log.warning("Indian market init failed: %s", e)
+
+    try:
+        from engines.indian.startup import recover_missed_jobs
+        await recover_missed_jobs()
+    except Exception as e:
+        log.warning("Indian startup recovery failed: %s", e)
 
     try:
         from trade.reconciler import reconcile_on_startup
@@ -1019,6 +1025,18 @@ async def langsmith_status(request: Request):
         raise HTTPException(500, str(e))
 
 
+@app.get("/api/indian/startup-status")
+async def indian_startup_status(request: Request):
+    from auth import is_authenticated
+    if not is_authenticated(request):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        from engines.indian.startup import get_startup_status
+        return JSONResponse(content=await get_startup_status())
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
     await websocket.accept()
@@ -1049,7 +1067,7 @@ app.include_router(router,               prefix="/api")
 app.include_router(trading_router,       prefix="/api")
 app.include_router(admin_router,         prefix="/api")
 app.include_router(engine_health_router, prefix="/api")
-app.include_router(indian_router,         prefix="/api")
+app.include_router(indian_router,        prefix="/api")
 
 from fastapi.responses import FileResponse
 import os as _os

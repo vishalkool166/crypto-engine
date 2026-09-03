@@ -180,8 +180,6 @@ async def job_rs_refresh():
 
 
 async def job_indian_refresh_session():
-    from alerts.telegram import send
-
     max_attempts = 3
     wait_seconds = 60
 
@@ -195,17 +193,13 @@ async def job_indian_refresh_session():
             if api and is_session_valid():
                 from engines.indian.instruments import refresh_instruments
                 refresh_instruments()
-                log.info("AngelOne session refreshed successfully on attempt %s", attempt)
+                log.info("AngelOne session refreshed on attempt %s", attempt)
                 return
 
-            log.warning(
-                "AngelOne session refresh failed attempt %s/%s",
-                attempt, max_attempts
-            )
+            log.warning("AngelOne session refresh failed attempt %s/%s", attempt, max_attempts)
 
             if attempt < max_attempts:
                 import asyncio
-                log.info("Waiting %ss before retry...", wait_seconds)
                 await asyncio.sleep(wait_seconds)
 
         except Exception as e:
@@ -216,6 +210,7 @@ async def job_indian_refresh_session():
 
     log.error("AngelOne session refresh failed after %s attempts", max_attempts)
     try:
+        from alerts.telegram import send
         await send(
             f"🚨 *AngelOne Session Failed*\n\n"
             f"All {max_attempts} login attempts failed.\n"
@@ -233,7 +228,6 @@ async def job_indian_session_backup():
         from engines.indian.instruments import refresh_instruments
 
         if is_session_valid():
-            log.debug("AngelOne backup check — session still valid")
             return
 
         log.warning("AngelOne backup check — session invalid, attempting recovery")
@@ -256,6 +250,31 @@ async def job_indian_session_backup():
 
     except Exception as e:
         log.error("job_indian_session_backup: %s", e)
+
+
+async def job_indian_session_heartbeat():
+    try:
+        from engines.indian.data import is_market_open
+        if not is_market_open():
+            return
+
+        from engines.indian.auth import is_session_valid, refresh_session
+        from engines.indian.instruments import refresh_instruments
+
+        if is_session_valid():
+            return
+
+        log.warning("Session heartbeat: session invalid — recovering")
+
+        api = refresh_session()
+        if api and is_session_valid():
+            refresh_instruments()
+            log.info("Session heartbeat: recovered successfully")
+        else:
+            log.error("Session heartbeat: recovery failed")
+
+    except Exception as e:
+        log.error("job_indian_session_heartbeat: %s", e)
 
 
 async def job_indian_data_refresh():
@@ -614,6 +633,12 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
+        job_indian_session_heartbeat,
+        trigger          = IntervalTrigger(minutes=30),
+        id               = "indian_session_heartbeat",
+        replace_existing = True,
+    )
+    scheduler.add_job(
         job_indian_data_refresh,
         trigger          = IntervalTrigger(minutes=5),
         id               = "indian_data_refresh",
@@ -633,7 +658,7 @@ def start_scheduler():
     )
     scheduler.add_job(
         job_indian_track,
-        trigger          = IntervalTrigger(minutes=5),
+        trigger          = IntervalTrigger(minutes=5, start_date="2000-01-01 00:00:02"),
         id               = "indian_track",
         replace_existing = True,
     )

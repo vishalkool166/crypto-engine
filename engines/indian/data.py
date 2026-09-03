@@ -4,6 +4,7 @@ import json
 import pandas as pd
 from datetime import datetime, timezone, timedelta
 from engines.indian.auth import get_api
+from engines.indian.api_limits import RATE_LIMIT_WAIT_SECONDS
 
 log = logging.getLogger(__name__)
 
@@ -20,9 +21,9 @@ INTERVAL_MAP = {
     "1d":  "ONE_DAY",
 }
 
-REDIS_TTL_LTP       = 360
-REDIS_TTL_DAY_RANGE = 360
-REDIS_TTL_RATE_LIMIT= 120
+REDIS_TTL_LTP        = 360
+REDIS_TTL_DAY_RANGE  = 360
+REDIS_TTL_RATE_LIMIT = RATE_LIMIT_WAIT_SECONDS
 
 
 def _redis():
@@ -48,9 +49,22 @@ def _set_rate_limited():
         r = _redis()
         if r:
             r.setex("indian:rate_limited", REDIS_TTL_RATE_LIMIT, "1")
-            log.warning("AngelOne rate limit detected — pausing for %ss", REDIS_TTL_RATE_LIMIT)
+            log.warning(
+                "AngelOne rate limit detected — pausing for %ss",
+                REDIS_TTL_RATE_LIMIT
+            )
     except Exception:
         pass
+
+
+def _is_rate_limit_error(message: str) -> bool:
+    msg = (message or "").lower()
+    return any(phrase in msg for phrase in [
+        "exceeding access rate",
+        "rate limit",
+        "too many requests",
+        "access denied",
+    ])
 
 
 def _set_last_refresh():
@@ -93,12 +107,70 @@ def is_orb_ready() -> bool:
     return orb_ready <= now <= market_close
 
 
+def get_ltp_live(token: str, exchange: str = "NFO") -> dict | None:
+    """
+    Use getLtpData endpoint for live price during market hours.
+    Rate limit: 10/second, 500/minute, 5000/hour.
+    Returns: ltp, open, high, low, close, volume
+    Much safer than getCandleData for frequent polling.
+    """
+    try:
+        if _is_rate_limited():
+            log.warning("get_ltp_live skipped — rate limited")
+            return None
+
+        api = get_api()
+        if not api:
+            log.error("get_ltp_live: AngelOne API not available")
+            return None
+
+        resp = api.ltpData(
+            exchange   = exchange,
+            tradingsymbol = "",
+            symboltoken   = token,
+        )
+
+        if not resp.get("status"):
+            msg = resp.get("message", "")
+            if _is_rate_limit_error(msg):
+                _set_rate_limited()
+                log.warning("get_ltp_live rate limited: %s", msg)
+            else:
+                log.warning("get_ltp_live failed: %s", msg)
+            return None
+
+        data = resp.get("data", {})
+        if not data:
+            return None
+
+        result = {
+            "ltp":    float(data.get("ltp",   0)),
+            "open":   float(data.get("open",  0)),
+            "high":   float(data.get("high",  0)),
+            "low":    float(data.get("low",   0)),
+            "close":  float(data.get("close", 0)),
+            "volume": float(data.get("tradingSymbol", 0)),
+        }
+
+        return result
+
+    except Exception as e:
+        log.error("get_ltp_live error: %s", e)
+        return None
+
+
 def fetch_candles(
     token:     str,
     interval:  str,
     from_date: str,
     to_date:   str,
 ) -> pd.DataFrame | None:
+    """
+    Use getCandleData endpoint.
+    Rate limit: 3/second, 180/minute, 5000/hour.
+    USE ONLY for ORB setup once per day at 9:35 IST.
+    Do NOT use for live price polling — use get_ltp_live() instead.
+    """
     try:
         if _is_rate_limited():
             log.warning("fetch_candles skipped — rate limited")
@@ -108,7 +180,7 @@ def fetch_candles(
 
         api = get_api()
         if not api:
-            log.error("AngelOne API not available")
+            log.error("fetch_candles: AngelOne API not available")
             return None
 
         angel_interval = INTERVAL_MAP.get(interval, "FIFTEEN_MINUTE")
@@ -123,9 +195,11 @@ def fetch_candles(
 
         if not data.get("status") or not data.get("data"):
             msg = data.get("message", "")
-            if "rate" in msg.lower() or "access" in msg.lower():
+            if _is_rate_limit_error(msg):
                 _set_rate_limited()
-            log.warning("No candle data: %s", msg)
+                log.warning("fetch_candles rate limited: %s", msg)
+            else:
+                log.warning("fetch_candles no data: %s", msg)
             return None
 
         rows = []
@@ -164,54 +238,6 @@ def get_ltp_from_redis(token: str) -> float | None:
         return None
 
 
-def get_ltp(token: str) -> float | None:
-    cached = get_ltp_from_redis(token)
-    if cached:
-        return cached
-
-    try:
-        if _is_rate_limited():
-            log.warning("get_ltp skipped — rate limited")
-            return None
-
-        time.sleep(0.5)
-
-        api = get_api()
-        if not api:
-            return None
-
-        now       = datetime.now(IST)
-        from_date = (now - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M")
-        to_date   = now.strftime("%Y-%m-%d %H:%M")
-
-        data = api.getCandleData({
-            "exchange":    "NFO",
-            "symboltoken": token,
-            "interval":    "ONE_MINUTE",
-            "fromdate":    from_date,
-            "todate":      to_date,
-        })
-
-        if data.get("status") and data.get("data"):
-            price = float(data["data"][-1][4])
-            try:
-                r = _redis()
-                if r:
-                    r.setex(f"indian:ltp:{token}", REDIS_TTL_LTP, str(price))
-            except Exception:
-                pass
-            return price
-
-        msg = data.get("message", "")
-        if "rate" in msg.lower() or "access" in msg.lower():
-            _set_rate_limited()
-        return None
-
-    except Exception as e:
-        log.error("get_ltp error: %s", e)
-        return None
-
-
 def get_day_range_from_redis(token: str) -> float:
     try:
         r = _redis()
@@ -244,12 +270,17 @@ def store_ltp(token: str, price: float) -> None:
 
 
 def refresh_indian_data(token: str, name: str) -> dict:
+    """
+    Refresh live price and day range using getLtpData endpoint.
+    Called every 5 minutes during market hours.
+    Uses getLtpData (500/min limit) not getCandleData (180/min limit).
+    """
     result = {
-        "name":       name,
-        "token":      token,
-        "ltp":        None,
-        "day_range":  0.0,
-        "success":    False,
+        "name":         name,
+        "token":        token,
+        "ltp":          None,
+        "day_range":    0.0,
+        "success":      False,
         "rate_limited": False,
     }
 
@@ -259,17 +290,12 @@ def refresh_indian_data(token: str, name: str) -> dict:
         return result
 
     try:
-        now       = datetime.now(IST)
-        today     = now.strftime("%Y-%m-%d")
-        from_date = f"{today} 09:15"
-        to_date   = now.strftime("%Y-%m-%d %H:%M")
+        ltp_data = get_ltp_live(token)
 
-        df = fetch_candles(token, "15m", from_date, to_date)
-
-        if df is not None and not df.empty:
-            ltp       = float(df["close"].iloc[-1])
-            day_high  = float(df["high"].max())
-            day_low   = float(df["low"].min())
+        if ltp_data:
+            ltp       = ltp_data["ltp"]
+            day_high  = ltp_data["high"]
+            day_low   = ltp_data["low"]
             day_range = round(day_high - day_low, 2)
 
             store_ltp(token, ltp)
@@ -280,12 +306,15 @@ def refresh_indian_data(token: str, name: str) -> dict:
             result["day_range"] = day_range
             result["success"]   = True
 
-            log.info(
-                "Indian data refreshed: %s ltp=%.2f day_range=%.2f",
+            log.debug(
+                "Indian data refreshed via getLtpData: %s ltp=%.2f day_range=%.2f",
                 name, ltp, day_range
             )
+
         else:
-            log.warning("refresh_indian_data: no candle data for %s", name)
+            if _is_rate_limited():
+                result["rate_limited"] = True
+            log.warning("refresh_indian_data: getLtpData returned no data for %s", name)
 
     except Exception as e:
         log.error("refresh_indian_data %s: %s", name, e)
@@ -294,6 +323,10 @@ def refresh_indian_data(token: str, name: str) -> dict:
 
 
 def get_orb_candle(token: str) -> dict | None:
+    """
+    Fetch the 9:15-9:30 opening range candle.
+    Uses getCandleData — called ONCE per day at 9:35 IST only.
+    """
     try:
         now       = datetime.now(IST)
         today     = now.strftime("%Y-%m-%d")
@@ -320,6 +353,11 @@ def get_orb_candle(token: str) -> dict | None:
 
 
 def get_avg_volume(token: str, days: int = 10) -> float:
+    """
+    Fetch average daily volume over last N days.
+    Uses getCandleData with 1d interval.
+    Called once during ORB setup — not during live trading.
+    """
     try:
         now       = datetime.now(IST)
         from_date = (now - timedelta(days=days + 5)).strftime("%Y-%m-%d 09:15")
