@@ -108,7 +108,7 @@ async def chat(user_message: str) -> str:
         ]
 
         response = await _client.chat.completions.create(
-            model       = "llama-3.1-70b-versatile",
+            model       = "groq/compound-mini",
             messages    = messages,
             max_tokens  = 400,
             temperature = 0.4,
