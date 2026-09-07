@@ -126,38 +126,11 @@ TIER_PRICING = {
     },
 }
 
-HYBRID_SCORE_WEIGHTS = {
-    "regime":  0.20,
-    "trend":   0.40,
-    "scoring": 0.40,
-}
-
+# Grade thresholds — simple flat values used by scorer.py
 SCORE_THRESHOLDS = {
-    "trending": {"aplus": 80, "a": 65, "b": 50},
-    "ranging":  {"aplus": 80, "a": 65, "b": 50},
-    "choppy":   {"aplus": 80, "a": 65, "b": 50},
-    "volatile": {"aplus": 80, "a": 65, "b": 50},
-    "default":  {"aplus": 80, "a": 65, "b": 50},
-}
-
-BTC_CONTEXT_SCORES = {
-    "strongly_aligned":       10,
-    "aligned":                 7,
-    "neutral":                 5,
-    "weakly_opposing":         0,
-    "opposing":               -4,
-    "strongly_opposing":      -8,
-    "adx_strong_threshold":   30,
-    "adx_moderate_threshold": 25,
-    "adx_panic_threshold":    35,
-}
-
-HTF_ALIGNMENT_SCORES = {
-    "both_aligned":   12,
-    "one_aligned":     7,
-    "both_neutral":    4,
-    "one_opposing":   -5,
-    "both_opposing": -10,
+    "aplus": 80,
+    "a":     65,
+    "b":     50,
 }
 
 RS_CONFIG = {
@@ -319,7 +292,6 @@ class Config:
 
     INDIAN_INSTRUMENTS: list = ["BANKNIFTY"]
 
-
     SESSION_COOKIE_NAME     = "se_user_token"
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SECURE   = True
@@ -338,9 +310,9 @@ class Config:
     TRACE_REDIS_TTL    = DECISION_TRACE_CONFIG["redis_ttl_seconds"]
 
     WEIGHTS = {
-        "momentum":      40,
-        "trend":         30,
-        "volume":        30,
+        "momentum": 40,
+        "trend":    30,
+        "volume":   30,
     }
 
     MAX_WEIGHT = sum(WEIGHTS.values())
@@ -404,19 +376,8 @@ class Config:
     def get_hybrid_config(self) -> dict:
         return dict(self.HYBRID_ENGINE)
 
-    def get_score_thresholds(self, regime: str = "default") -> dict:
-        r = (regime or "").lower()
-        if "trend" in r: return SCORE_THRESHOLDS["trending"]
-        if "rang"  in r: return SCORE_THRESHOLDS["ranging"]
-        if "chop"  in r: return SCORE_THRESHOLDS["choppy"]
-        if "volat" in r: return SCORE_THRESHOLDS["volatile"]
-        return SCORE_THRESHOLDS["default"]
-
-    def get_btc_context_scores(self) -> dict:
-        return dict(BTC_CONTEXT_SCORES)
-
-    def get_htf_alignment_scores(self) -> dict:
-        return dict(HTF_ALIGNMENT_SCORES)
+    def get_score_thresholds(self) -> dict:
+        return dict(SCORE_THRESHOLDS)
 
     def get_rs_config(self) -> dict:
         return dict(RS_CONFIG)
@@ -486,4 +447,3 @@ def _bootstrap_secrets() -> None:
 
 
 cfg = Config()
-

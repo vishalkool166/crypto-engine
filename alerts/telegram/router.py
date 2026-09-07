@@ -40,12 +40,11 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     from alerts.telegram.commands.content     import (
         cmd_brief, cmd_pending, cmd_show_post, cmd_discard,
     )
-
     from alerts.telegram.commands.backtest    import (
         cmd_backtest, cmd_backfill, cmd_candle_status,
     )
     from alerts.telegram.commands.help        import cmd_help
-    from alerts.telegram.commands.indian     import (
+    from alerts.telegram.commands.indian      import (
         cmd_india, cmd_orb, cmd_indianstats,
     )
 
@@ -99,33 +98,6 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
             await send("⚠️ Usage: `/discard 5`")
         return
 
-    if t.startswith("/rollback"):
-        parts = t.split()
-        param = parts[1] if len(parts) > 1 else ""
-        if param:
-            await cmd_rollback(param)
-        else:
-            await send("⚠️ Usage: `/rollback sweep_min_score`")
-        return
-
-    if t.startswith("/approve"):
-        parts  = t.split()
-        rec_id = parts[1] if len(parts) > 1 else ""
-        if rec_id:
-            await cmd_approve(rec_id)
-        else:
-            await send("⚠️ Usage: `/approve 5`")
-        return
-
-    if t.startswith("/reject"):
-        parts  = t.split()
-        rec_id = parts[1] if len(parts) > 1 else ""
-        if rec_id:
-            await cmd_reject(rec_id)
-        else:
-            await send("⚠️ Usage: `/reject 5`")
-        return
-
     if t.startswith("#") and len(t) > 1:
         try:
             await cmd_show_post(int(t.replace("#", "").strip()))
@@ -157,6 +129,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         "/india":       cmd_india,
         "/orb":         cmd_orb,
         "/indianstats": cmd_indianstats,
+        "/performance": cmd_performance,
     }
 
     if t.startswith("/"):
@@ -173,5 +146,3 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
     except Exception as e:
         log.error("Chatbot error: %s", e)
         await send("AI unavailable. Try /help for commands.")
-
-

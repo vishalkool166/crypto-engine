@@ -6,23 +6,23 @@ from datetime import datetime, timezone, timedelta
 log = logging.getLogger(__name__)
 
 REJECTION_KEYS = [
+    "adx_too_low",
     "ema_neutral",
-    "btc_context",
-    "htf_alignment",
-    "no_sweep",
-    "sweep_score_low",
-    "no_zone",
-    "zone_score_low",
-    "no_trigger",
-    "trigger_score_low",
+    "grade_f",
+    "grade_filter",
+    "volatile_regime",
+    "missing_indicators",
+    "not_near_ema50",
+    "no_bullish_candle",
+    "no_bearish_candle",
+    "weak_candle",
+    "low_volume",
     "risk_sl_tight",
     "risk_sl_wide",
     "risk_rr_low",
     "risk_invalid",
-    "grade_filter",
-    "ml_filter",
     "session_filter",
-    "combined_score_low",
+    "ml_filter",
     "max_open_trades",
     "daily_loss_limit",
     "loss_pause",
@@ -30,10 +30,10 @@ REJECTION_KEYS = [
     "cooldown",
 ]
 
-_PREFIX = "rejections"
+_PREFIX       = "rejections"
 _DAILY_PREFIX = "rejections:daily"
-_TTL_LIVE = 86400 * 7
-_TTL_DAILY = 86400 * 90
+_TTL_LIVE     = 86400 * 7
+_TTL_DAILY    = 86400 * 90
 
 
 def _redis():
@@ -92,11 +92,11 @@ def get_total_stats() -> dict:
     if not r:
         return {}
     try:
-        raw = r.hgetall(f"{_PREFIX}:total")
+        raw   = r.hgetall(f"{_PREFIX}:total")
         scans = r.hgetall(f"{_PREFIX}:scans")
-        total_scans = int(scans.get("total", 0))
+        total_scans   = int(scans.get("total",   0))
         total_signals = int(scans.get("signals", 0))
-        counts = {k: int(v) for k, v in raw.items()}
+        counts        = {k: int(v) for k, v in raw.items()}
         total_rejections = sum(counts.values())
         result = {}
         for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True):
@@ -128,10 +128,10 @@ def get_daily_stats(days: int = 7) -> list:
             if not raw:
                 continue
             counts = {k: int(v) for k, v in raw.items()}
-            total = sum(counts.values())
+            total  = sum(counts.values())
             result.append({
-                "date":    day,
-                "total":   total,
+                "date":      day,
+                "total":     total,
                 "by_reason": dict(sorted(counts.items(), key=lambda x: x[1], reverse=True)),
             })
         return result
@@ -146,11 +146,11 @@ def get_weekly_stats() -> dict:
         return {}
     try:
         week = _week_key()
-        raw = r.hgetall(f"{_PREFIX}:weekly:{week}")
+        raw  = r.hgetall(f"{_PREFIX}:weekly:{week}")
         if not raw:
             return {}
         counts = {k: int(v) for k, v in raw.items()}
-        total = sum(counts.values())
+        total  = sum(counts.values())
         result = {}
         for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True):
             result[k] = {
@@ -176,7 +176,7 @@ def get_coin_stats(coin: str) -> dict:
         if not raw:
             return {}
         counts = {k: int(v) for k, v in raw.items()}
-        total = sum(counts.values())
+        total  = sum(counts.values())
         result = {}
         for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True):
             result[k] = {
@@ -194,7 +194,7 @@ def get_coin_stats(coin: str) -> dict:
 
 
 def get_top_rejections(limit: int = 5) -> list:
-    stats = get_total_stats()
+    stats     = get_total_stats()
     by_reason = stats.get("by_reason", {})
     return [
         {"reason": k, **v}
@@ -216,12 +216,12 @@ def reset_stats() -> None:
 
 
 def get_summary_line() -> str:
-    stats = get_total_stats()
+    stats      = get_total_stats()
     if not stats:
         return "No rejection data"
-    top = get_top_rejections(1)
+    top        = get_top_rejections(1)
     top_reason = top[0]["reason"] if top else "none"
-    top_pct = top[0]["pct"] if top else 0
+    top_pct    = top[0]["pct"]    if top else 0
     return (
         f"Scans:{stats['total_scans']} "
         f"Signals:{stats['total_signals']} "
