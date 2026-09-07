@@ -28,7 +28,7 @@ itsdangerous>=2.0.0
 langchain==0.3.7
 langchain-groq==0.2.1
 langchain-community==0.3.7
-chromadb==0.5.18
+chromadb==0.6.0
 sentence-transformers==3.3.1
 smartapi-python
 logzero
