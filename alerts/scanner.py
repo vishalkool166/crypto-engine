@@ -284,9 +284,6 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 result["db_id"] = db_id
                 _write_redis(coin, result, db_id)
 
-                from ml.version_registry import tag_signal
-                tag_signal(db_id)
-
                 session = _derive_session()
                 await send_signal(result, coin, result.get("grade", ""), session)
                 await _execute_trade(coin, result, db_id)
