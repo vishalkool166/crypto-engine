@@ -668,6 +668,12 @@ def start_scheduler():
         id               = "indian_close",
         replace_existing = True,
     )
+    scheduler.add_job(
+        job_journey_cleanup,
+        trigger          = CronTrigger(hour=0, minute=0, timezone="UTC"),
+        id               = "journey_cleanup",
+        replace_existing = True,
+    )
 
     scheduler.start()
     log.info("Scheduler started — Indian market jobs active")
@@ -676,3 +682,12 @@ def start_scheduler():
 def stop_scheduler():
     scheduler.shutdown()
     log.info("Scheduler stopped")
+
+async def job_journey_cleanup():
+    try:
+        from trade.monitor import downsample_journey_snapshots
+        results = downsample_journey_snapshots()
+        if results:
+            log.info("Journey cleanup: %s trades downsampled — %s", len(results), results)
+    except Exception as e:
+        log.error("job_journey_cleanup: %s", e)

@@ -713,3 +713,94 @@ def get_trade_journey(trade_id: int) -> list:
     except Exception as e:
         log.error("get_trade_journey: %s", e)
         return []
+
+def downsample_journey_snapshots() -> dict:
+    try:
+        from database import SessionLocal, TradeJourney, Trade as TradeModel
+
+        db = SessionLocal()
+        results = {}
+
+        try:
+            trade_ids = [
+                r[0] for r in db.query(TradeJourney.trade_id).distinct().all()
+            ]
+
+            for trade_id in trade_ids:
+                snapshots = db.query(TradeJourney).filter(
+                    TradeJourney.trade_id == trade_id
+                ).order_by(TradeJourney.timestamp.asc()).all()
+
+                total = len(snapshots)
+                if total <= 100:
+                    continue
+
+                trade = db.query(TradeModel).filter(
+                    TradeModel.id == trade_id
+                ).first()
+
+                duration_hours = 0.0
+                if trade and trade.opened_at and trade.closed_at:
+                    opened = trade.opened_at
+                    closed = trade.closed_at
+                    if opened.tzinfo is None:
+                        opened = opened.replace(tzinfo=timezone.utc)
+                    if closed.tzinfo is None:
+                        closed = closed.replace(tzinfo=timezone.utc)
+                    duration_hours = (closed - opened).total_seconds() / 3600
+                elif trade and trade.opened_at:
+                    opened = trade.opened_at
+                    if opened.tzinfo is None:
+                        opened = opened.replace(tzinfo=timezone.utc)
+                    duration_hours = (datetime.now(timezone.utc) - opened).total_seconds() / 3600
+
+                if duration_hours < 2:
+                    target = 50
+                elif duration_hours < 12:
+                    target = 75
+                elif duration_hours < 48:
+                    target = 100
+                else:
+                    target = 150
+
+                if total <= target:
+                    continue
+
+                keep_every = total // target
+                to_delete  = []
+
+                for i, s in enumerate(snapshots):
+                    if s.is_entry or s.is_exit:
+                        continue
+                    if i % keep_every != 0:
+                        to_delete.append(s.id)
+
+                if to_delete:
+                    db.query(TradeJourney).filter(
+                        TradeJourney.id.in_(to_delete)
+                    ).delete(synchronize_session=False)
+                    db.commit()
+
+                remaining = db.query(TradeJourney).filter(
+                    TradeJourney.trade_id == trade_id
+                ).count()
+
+                results[trade_id] = {
+                    "before": total,
+                    "after":  remaining,
+                    "duration_hours": round(duration_hours, 1),
+                }
+
+                log.info(
+                    "Journey downsampled: trade_id=%s %s→%s (%.1fh)",
+                    trade_id, total, remaining, duration_hours
+                )
+
+        finally:
+            db.close()
+
+        return results
+
+    except Exception as e:
+        log.error("downsample_journey_snapshots: %s", e)
+        return {}
