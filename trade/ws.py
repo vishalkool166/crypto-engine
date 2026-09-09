@@ -280,7 +280,7 @@ async def _handle_order_update(data: dict) -> None:
         status       = order.get("X", "")
         order_type   = order.get("o", "")
         side         = order.get("S", "")
-        avg_price    = float(order.get("ap", 0) or order.get("p", 0))
+        avg_price    = float(order.get("ap", 0) or order.get("sp", 0) or order.get("p", 0))
         filled_qty   = float(order.get("z", 0))
         reduce_only  = order.get("R", False)
         close_pos    = order.get("cp", False)
@@ -453,7 +453,6 @@ async def _handle_reduce_order_filled(
     try:
         from database import get_session, Trade as TradeModel, Signal as SignalModel
         from trade.monitor import invalidate_position_cache
-        from trade.health_monitor import clear_health_state
         from trade.executor import _calc_pnl, _mark_closed, CLOSE_REASONS
         from engines.state import set_cooldown, set_idle
 
@@ -471,15 +470,16 @@ async def _handle_reduce_order_filled(
                 log.debug("No active trade for %s order:%s", coin, order_id)
                 return
 
-            trade_id   = trade.id
-            direction  = trade.direction
-            entry      = float(trade.entry_price   or 0)
-            margin     = float(trade.margin_used   or 0)
-            leverage   = int(trade.leverage        or 1)
-            entry_fee  = float(trade.entry_commission or 0)
-            sl_oid     = str(trade.sl_order_id     or "")
-            tp1_oid    = str(trade.tp1_order_id    or "")
-            is_long    = direction == "LONG"
+            trade_id     = trade.id
+            direction    = trade.direction
+            entry        = float(trade.entry_price    or 0)
+            margin       = float(trade.margin_used    or 0)
+            leverage     = int(trade.leverage         or 1)
+            entry_fee    = float(trade.entry_commission or 0)
+            sl_oid       = str(trade.sl_order_id      or "")
+            tp1_oid      = str(trade.tp1_order_id     or "")
+            position_amt = float(trade.position_size  or 0)
+            is_long      = direction == "LONG"
 
         reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, entry, exit_price, is_long)
         total_fee = round(entry_fee + commission, 8)
@@ -487,12 +487,11 @@ async def _handle_reduce_order_filled(
         net_pnl = (
             round(realized_pnl - commission, 8) if realized_pnl != 0
             else _calc_pnl(
-                direction  = direction,
-                entry      = entry,
-                exit_price = exit_price,
-                margin     = margin,
-                leverage   = leverage,
-                commission = total_fee,
+                direction    = direction,
+                entry        = entry,
+                exit_price   = exit_price,
+                position_amt = position_amt,
+                commission   = total_fee,
             )
         )
 
@@ -518,7 +517,6 @@ async def _handle_reduce_order_filled(
         )
 
         invalidate_position_cache()
-        clear_health_state(coin)
 
         asyncio.create_task(
             _sync_close_async(
