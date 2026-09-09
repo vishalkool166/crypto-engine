@@ -279,6 +279,7 @@ async def _handle_order_update(data: dict) -> None:
         order_id     = str(order.get("i", ""))
         status       = order.get("X", "")
         order_type   = order.get("o", "")
+        orig_type    = order.get("ot", "")
         side         = order.get("S", "")
         avg_price    = float(order.get("ap", 0) or order.get("sp", 0) or order.get("p", 0))
         filled_qty   = float(order.get("z", 0))
@@ -301,6 +302,7 @@ async def _handle_order_update(data: dict) -> None:
             "filled_qty":       filled_qty,
             "coin":             coin,
             "order_type":       order_type,
+            "orig_type":        orig_type,
             "side":             side,
             "timestamp":        time.time(),
             "raw":              order,
@@ -312,6 +314,7 @@ async def _handle_order_update(data: dict) -> None:
                 symbol       = symbol,
                 order_id     = order_id,
                 order_type   = order_type,
+                orig_type    = orig_type,
                 exit_price   = avg_price,
                 filled_qty   = filled_qty,
                 commission   = commission,
@@ -442,8 +445,9 @@ async def _handle_reduce_order_filled(
     symbol:       str,
     order_id:     str,
     order_type:   str,
-    exit_price:   float,
-    filled_qty:   float,
+    orig_type:    str   = "",
+    exit_price:   float = 0.0,
+    filled_qty:   float = 0.0,
     commission:   float = 0.0,
     comm_asset:   str   = "USDT",
     is_maker:     bool  = False,
@@ -473,15 +477,13 @@ async def _handle_reduce_order_filled(
             trade_id     = trade.id
             direction    = trade.direction
             entry        = float(trade.entry_price    or 0)
-            margin       = float(trade.margin_used    or 0)
-            leverage     = int(trade.leverage         or 1)
             entry_fee    = float(trade.entry_commission or 0)
             sl_oid       = str(trade.sl_order_id      or "")
             tp1_oid      = str(trade.tp1_order_id     or "")
             position_amt = float(trade.position_size  or 0)
             is_long      = direction == "LONG"
 
-        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, entry, exit_price, is_long)
+        reason    = _exit_reason(order_type, order_id, sl_oid, tp1_oid, entry, exit_price, is_long, orig_type)
         total_fee = round(entry_fee + commission, 8)
 
         net_pnl = (
@@ -627,17 +629,21 @@ def _exit_reason(
     entry:      float = 0.0,
     exit_price: float = 0.0,
     is_long:    bool  = True,
+    orig_type:  str   = "",
 ) -> str:
     if order_id == tp1_oid:
         return "tp1_hit"
     if order_id == sl_oid:
         return "sl_hit"
 
-    ot = order_type.upper()
+    ot  = order_type.upper()
+    oot = orig_type.upper()
 
-    if "STOP"        in ot: return "sl_hit"
-    if "TAKE_PROFIT" in ot: return "tp1_hit"
-    if "LIQUIDATION" in ot: return "liquidated"
+    if "STOP"        in oot: return "sl_hit"
+    if "TAKE_PROFIT" in oot: return "tp1_hit"
+    if "STOP"        in ot:  return "sl_hit"
+    if "TAKE_PROFIT" in ot:  return "tp1_hit"
+    if "LIQUIDATION" in ot:  return "liquidated"
 
     if entry > 0 and exit_price > 0:
         if is_long:

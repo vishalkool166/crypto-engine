@@ -605,7 +605,7 @@ async def _place_sl(
     if tick_size and tick_size > 0:
         sl = _round_tick(sl, tick_size)
     try:
-        order   = await place_algo_order(
+        order    = await place_algo_order(
             symbol          = symbol,
             side            = side,
             order_type      = "STOP_MARKET",
@@ -613,10 +613,12 @@ async def _place_sl(
             price_precision = price_precision,
             close_position  = True,
         )
-        algo_id = str(order.get("algoId", ""))
-        if algo_id and algo_id != "0":
-            log.info("SL placed: %s sl:%s algoId:%s", symbol, sl, algo_id)
-            return algo_id
+        order_id = str(order.get("orderId", ""))
+        algo_id  = str(order.get("algoId",  ""))
+        ref_id   = order_id if order_id and order_id != "0" else algo_id
+        if ref_id and ref_id != "0":
+            log.info("SL placed: %s sl:%s orderId:%s algoId:%s", symbol, sl, order_id, algo_id)
+            return ref_id
     except Exception as e:
         log.error("SL order failed %s: %s", symbol, e)
     return None
@@ -633,7 +635,7 @@ async def _place_tp(
     if tick_size and tick_size > 0:
         tp = _round_tick(tp, tick_size)
     try:
-        order   = await place_algo_order(
+        order    = await place_algo_order(
             symbol          = symbol,
             side            = side,
             order_type      = "TAKE_PROFIT_MARKET",
@@ -641,10 +643,12 @@ async def _place_tp(
             price_precision = price_precision,
             close_position  = True,
         )
-        algo_id = str(order.get("algoId", ""))
-        if algo_id and algo_id != "0":
-            log.info("%s placed: %s tp:%s algoId:%s", label, symbol, tp, algo_id)
-            return algo_id
+        order_id = str(order.get("orderId", ""))
+        algo_id  = str(order.get("algoId",  ""))
+        ref_id   = order_id if order_id and order_id != "0" else algo_id
+        if ref_id and ref_id != "0":
+            log.info("%s placed: %s tp:%s orderId:%s algoId:%s", label, symbol, tp, order_id, algo_id)
+            return ref_id
     except Exception as e:
         log.error("%s order failed %s: %s", label, symbol, e)
     return None
