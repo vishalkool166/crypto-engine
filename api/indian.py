@@ -27,12 +27,8 @@ async def indian_status(request: Request):
         )
         from engines.indian.scanner import get_orb_levels, get_today_signals
         from engines.indian.instruments import get_instruments
-        from engines.indian.strategy import (
-            MIN_ORB_SIZE, MAX_ORB_SIZE,
-            MIN_PRE_RANGE, MIN_PREV_RANGE,
-        )
         from engines.indian.tracker import get_open_signals_with_pnl
-        from config import cfg
+        from config import cfg, get_indian_instrument_config, INDIAN_INSTRUMENTS_CONFIG
 
         now          = datetime.now(IST)
         market_open  = is_market_open()
@@ -43,16 +39,18 @@ async def indian_status(request: Request):
         rate_limited = _is_rate_limited()
         refresh_age  = get_last_refresh_age()
 
-        orb_data    = {}
-        day_ranges  = {}
-        ltps        = {}
-        pre_ranges  = {}
-        prev_ranges = {}
+        orb_data            = {}
+        day_ranges          = {}
+        ltps                = {}
+        pre_ranges          = {}
+        prev_ranges         = {}
+        instruments_config  = {}
 
         for name in cfg.INDIAN_INSTRUMENTS:
             orb = get_orb_levels(name)
             if orb:
                 orb_data[name] = orb
+
             inst = instruments.get(name)
             if inst:
                 day_ranges[name]  = get_day_range_from_redis(inst["token"])
@@ -60,26 +58,40 @@ async def indian_status(request: Request):
                 pre_ranges[name]  = get_pre_range_from_redis(inst["token"])
                 prev_ranges[name] = get_prev_range_from_redis(inst["token"])
 
+            inst_cfg = get_indian_instrument_config(name)
+            instruments_config[name] = {
+                "direction":      inst_cfg.get("direction",      "SHORT"),
+                "min_orb":        inst_cfg.get("min_orb",        200),
+                "max_orb":        inst_cfg.get("max_orb",        350),
+                "min_pre_range":  inst_cfg.get("min_pre_range",  300),
+                "min_prev_range": inst_cfg.get("min_prev_range", 600),
+                "sl_mult":        inst_cfg.get("sl_mult",        0.3),
+                "tp_mult":        inst_cfg.get("tp_mult",        1.0),
+                "entry_start_h":  inst_cfg.get("entry_start_h",  11),
+                "entry_end_h":    inst_cfg.get("entry_end_h",    12),
+                "skip_weeks":     inst_cfg.get("skip_weeks",     [3]),
+                "lot_size":       inst_cfg.get("lot_size",       30),
+                "time_exit_h":    inst_cfg.get("time_exit_h",    14),
+                "time_exit_m":    inst_cfg.get("time_exit_m",    30),
+            }
+
         return JSONResponse(content={
-            "market_open":     market_open,
-            "orb_ready":       orb_ready,
-            "time_ist":        now.strftime("%I:%M %p IST"),
-            "date":            now.strftime("%Y-%m-%d"),
-            "instruments":     instruments,
-            "orb_levels":      orb_data,
-            "day_ranges":      day_ranges,
-            "ltps":            ltps,
-            "pre_ranges":      pre_ranges,
-            "prev_ranges":     prev_ranges,
-            "signals_today":   len(today_signals),
-            "signals":         today_signals,
-            "open_signals":    open_signals,
-            "rate_limited":    rate_limited,
-            "data_age_secs":   refresh_age,
-            "min_orb_size":    MIN_ORB_SIZE,
-            "max_orb_size":    MAX_ORB_SIZE,
-            "min_pre_range":   MIN_PRE_RANGE,
-            "min_prev_range":  MIN_PREV_RANGE,
+            "market_open":        market_open,
+            "orb_ready":          orb_ready,
+            "time_ist":           now.strftime("%I:%M %p IST"),
+            "date":               now.strftime("%Y-%m-%d"),
+            "instruments":        instruments,
+            "orb_levels":         orb_data,
+            "day_ranges":         day_ranges,
+            "ltps":               ltps,
+            "pre_ranges":         pre_ranges,
+            "prev_ranges":        prev_ranges,
+            "instruments_config": instruments_config,
+            "signals_today":      len(today_signals),
+            "signals":            today_signals,
+            "open_signals":       open_signals,
+            "rate_limited":       rate_limited,
+            "data_age_secs":      refresh_age,
         })
     except Exception as e:
         log.error("indian_status error: %s", e)
