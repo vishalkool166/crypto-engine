@@ -24,11 +24,9 @@ def detect(d4h: dict, coin: str) -> TrendResult:
     ema50  = float(d4h.get("ema50")  or 0)
     ema200 = float(d4h.get("ema200") or 0)
     adx    = float(d4h.get("adx")    or 0)
-    atr    = float(d4h.get("atr")    or price * 0.01)
 
     coin_cfg = get_coin_config(coin)
     min_adx  = coin_cfg.get("adx", cfg.HYBRID_ENGINE.get("trend_min_adx", 18))
-    buffer   = atr * cfg.HYBRID_ENGINE.get("trend_ema_buffer_atr_mult", 0.05)
 
     if adx < min_adx:
         record_scan(coin, "NEUTRAL", "adx_too_low")
@@ -47,18 +45,12 @@ def detect(d4h: dict, coin: str) -> TrendResult:
         return _rejected("ema_neutral", adx, ema20, ema50, ema200)
 
     if ema20 and ema50:
-        if direction == "LONG":
-            strict  = price > ema20 + buffer and ema20 > ema50
-            relaxed = price > ema20 + buffer * 2
-            if not strict and not relaxed:
-                record_scan(coin, "NEUTRAL", "ema_neutral")
-                return _rejected("ema_neutral", adx, ema20, ema50, ema200)
-        else:
-            strict  = price < ema20 - buffer and ema20 < ema50
-            relaxed = price < ema20 - buffer * 2
-            if not strict and not relaxed:
-                record_scan(coin, "NEUTRAL", "ema_neutral")
-                return _rejected("ema_neutral", adx, ema20, ema50, ema200)
+        if direction == "LONG" and ema20 < ema50:
+            record_scan(coin, "NEUTRAL", "ema_neutral")
+            return _rejected("ema_neutral", adx, ema20, ema50, ema200)
+        if direction == "SHORT" and ema20 > ema50:
+            record_scan(coin, "NEUTRAL", "ema_neutral")
+            return _rejected("ema_neutral", adx, ema20, ema50, ema200)
 
     return TrendResult(
         direction = direction,

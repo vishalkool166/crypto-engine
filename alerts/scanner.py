@@ -393,6 +393,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "signal":    result if result.get("signal") else {},
                 "regime":    result.get("regime", ""),
                 "reason":    result.get("reason", ""),
+                "adx"   :    result.get("adx", 0),
                 "market": {
                     "price":      price,
                     "change24":   ticker["change24"],
