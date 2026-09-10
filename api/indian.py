@@ -23,10 +23,14 @@ async def indian_status(request: Request):
             is_market_open, is_orb_ready,
             get_day_range_from_redis, get_ltp_from_redis,
             get_last_refresh_age, _is_rate_limited,
+            get_pre_range_from_redis, get_prev_range_from_redis,
         )
         from engines.indian.scanner import get_orb_levels, get_today_signals
         from engines.indian.instruments import get_instruments
-        from engines.indian.strategy import MIN_DAY_RANGE, MIN_ORB_SIZE, MAX_ORB_SIZE
+        from engines.indian.strategy import (
+            MIN_ORB_SIZE, MAX_ORB_SIZE,
+            MIN_PRE_RANGE, MIN_PREV_RANGE,
+        )
         from engines.indian.tracker import get_open_signals_with_pnl
         from config import cfg
 
@@ -39,37 +43,43 @@ async def indian_status(request: Request):
         rate_limited = _is_rate_limited()
         refresh_age  = get_last_refresh_age()
 
-        orb_data = {}
+        orb_data    = {}
+        day_ranges  = {}
+        ltps        = {}
+        pre_ranges  = {}
+        prev_ranges = {}
+
         for name in cfg.INDIAN_INSTRUMENTS:
             orb = get_orb_levels(name)
             if orb:
                 orb_data[name] = orb
-
-        day_ranges = {}
-        ltps       = {}
-        for name in cfg.INDIAN_INSTRUMENTS:
             inst = instruments.get(name)
             if inst:
-                day_ranges[name] = get_day_range_from_redis(inst["token"])
-                ltps[name]       = get_ltp_from_redis(inst["token"])
+                day_ranges[name]  = get_day_range_from_redis(inst["token"])
+                ltps[name]        = get_ltp_from_redis(inst["token"])
+                pre_ranges[name]  = get_pre_range_from_redis(inst["token"])
+                prev_ranges[name] = get_prev_range_from_redis(inst["token"])
 
         return JSONResponse(content={
-            "market_open":    market_open,
-            "orb_ready":      orb_ready,
-            "time_ist":       now.strftime("%I:%M %p IST"),
-            "date":           now.strftime("%Y-%m-%d"),
-            "instruments":    instruments,
-            "orb_levels":     orb_data,
-            "day_ranges":     day_ranges,
-            "ltps":           ltps,
-            "signals_today":  len(today_signals),
-            "signals":        today_signals,
-            "open_signals":   open_signals,
-            "rate_limited":   rate_limited,
-            "data_age_secs":  refresh_age,
-            "min_day_range":  MIN_DAY_RANGE,
-            "min_orb_size":   MIN_ORB_SIZE,
-            "max_orb_size":   MAX_ORB_SIZE,
+            "market_open":     market_open,
+            "orb_ready":       orb_ready,
+            "time_ist":        now.strftime("%I:%M %p IST"),
+            "date":            now.strftime("%Y-%m-%d"),
+            "instruments":     instruments,
+            "orb_levels":      orb_data,
+            "day_ranges":      day_ranges,
+            "ltps":            ltps,
+            "pre_ranges":      pre_ranges,
+            "prev_ranges":     prev_ranges,
+            "signals_today":   len(today_signals),
+            "signals":         today_signals,
+            "open_signals":    open_signals,
+            "rate_limited":    rate_limited,
+            "data_age_secs":   refresh_age,
+            "min_orb_size":    MIN_ORB_SIZE,
+            "max_orb_size":    MAX_ORB_SIZE,
+            "min_pre_range":   MIN_PRE_RANGE,
+            "min_prev_range":  MIN_PREV_RANGE,
         })
     except Exception as e:
         log.error("indian_status error: %s", e)
