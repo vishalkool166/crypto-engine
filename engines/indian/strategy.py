@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import logging
+from config import get_indian_instrument_config
 
 log = logging.getLogger(__name__)
 
@@ -61,45 +62,70 @@ def analyze(
     avg_volume:    float = 0,
 ) -> ORBSignal:
     try:
+        inst_cfg = get_indian_instrument_config(instrument)
+
+        direction       = inst_cfg.get("direction",      "SHORT")
+        min_orb         = inst_cfg.get("min_orb",        MIN_ORB_SIZE)
+        max_orb         = inst_cfg.get("max_orb",        MAX_ORB_SIZE)
+        sl_mult         = inst_cfg.get("sl_mult",        SL_MULT)
+        tp_mult         = inst_cfg.get("tp_mult",        TP_MULT)
+        tp2_mult        = inst_cfg.get("tp2_mult",       TP2_MULT)
+        entry_buffer    = inst_cfg.get("entry_buffer",   ENTRY_BUFFER)
+        min_pre         = inst_cfg.get("min_pre_range",  MIN_PRE_RANGE)
+        min_prev        = inst_cfg.get("min_prev_range", MIN_PREV_RANGE)
+        skip_weeks      = inst_cfg.get("skip_weeks",     SKIP_WEEKS)
+        entry_start_h   = inst_cfg.get("entry_start_h",  ENTRY_START_H)
+        entry_end_h     = inst_cfg.get("entry_end_h",    ENTRY_END_H)
+
         now      = datetime.now(IST)
         week     = get_week_of_month(now.date())
         orb_size = round(orb_high - orb_low, 2)
 
-        if week in SKIP_WEEKS:
+        if week in skip_weeks:
             return _no(instrument, f'skip_week_{week}', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if orb_size < MIN_ORB_SIZE:
+        if orb_size < min_orb:
             return _no(instrument, f'orb_too_tight:{orb_size:.0f}', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if orb_size > MAX_ORB_SIZE:
+        if orb_size > max_orb:
             return _no(instrument, f'orb_too_wide:{orb_size:.0f}', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if current_hour < ENTRY_START_H:
+        if current_hour < entry_start_h:
             return _no(instrument, 'before_entry_window', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if current_hour > ENTRY_END_H or (current_hour == ENTRY_END_H and current_minute > 0):
+        if current_hour > entry_end_h or (current_hour == entry_end_h and current_minute > 0):
             return _no(instrument, 'after_entry_window', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if pre_range < MIN_PRE_RANGE and prev_range < MIN_PREV_RANGE:
+        if pre_range < min_pre and prev_range < min_prev:
             return _no(
                 instrument,
-                f'low_volatility:pre={pre_range:.0f}<{MIN_PRE_RANGE}_prev={prev_range:.0f}<{MIN_PREV_RANGE}',
+                f'low_volatility:pre={pre_range:.0f}<{min_pre}_prev={prev_range:.0f}<{min_prev}',
                 orb_high, orb_low, orb_size, pre_range, prev_range, week
             )
 
-        short_entry = orb_low - ENTRY_BUFFER
+        if direction == 'SHORT':
+            entry_trigger = orb_low - entry_buffer
+            if current_price > entry_trigger:
+                return _no(instrument, 'no_breakdown', orb_high, orb_low, orb_size, pre_range, prev_range, week)
+        else:
+            entry_trigger = orb_high + entry_buffer
+            if current_price < entry_trigger:
+                return _no(instrument, 'no_breakout', orb_high, orb_low, orb_size, pre_range, prev_range, week)
 
-        if current_price > short_entry:
-            return _no(instrument, 'no_breakdown', orb_high, orb_low, orb_size, pre_range, prev_range, week)
+        sl_pts  = round(orb_size * sl_mult)
+        tp_pts  = round(orb_size * tp_mult)
+        tp2_pts = round(orb_size * tp2_mult)
 
-        sl_pts  = round(orb_size * SL_MULT)
-        tp_pts  = round(orb_size * TP_MULT)
-        tp2_pts = round(orb_size * TP2_MULT)
+        entry = current_price
 
-        entry   = current_price
-        sl      = round(entry + sl_pts,  2)
-        tp1     = round(entry - tp_pts,  2)
-        tp2     = round(entry - tp2_pts, 2)
+        if direction == 'SHORT':
+            sl  = round(entry + sl_pts,  2)
+            tp1 = round(entry - tp_pts,  2)
+            tp2 = round(entry - tp2_pts, 2)
+        else:
+            sl  = round(entry - sl_pts,  2)
+            tp1 = round(entry + tp_pts,  2)
+            tp2 = round(entry + tp2_pts, 2)
 
         sl_dist = abs(entry - sl)
         rr1     = round(abs(tp1 - entry) / sl_dist, 2) if sl_dist > 0 else 0
@@ -108,7 +134,7 @@ def analyze(
         return ORBSignal(
             signal     = True,
             instrument = instrument,
-            direction  = 'SHORT',
+            direction  = direction,
             entry      = entry,
             sl         = sl,
             tp1        = tp1,

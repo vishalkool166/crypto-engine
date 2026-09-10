@@ -174,6 +174,41 @@ CIRCUIT_BREAKER_CONFIG = {
     'size_mult_level5':        0.0,
 }
 
+INDIAN_INSTRUMENTS_CONFIG = {
+    'BANKNIFTY': {
+        'direction':     'SHORT',
+        'min_orb':       200,
+        'max_orb':       350,
+        'sl_mult':       0.3,
+        'tp_mult':       1.0,
+        'entry_buffer':  10,
+        'min_pre_range': 300,
+        'min_prev_range':600,
+        'skip_weeks':    [3],
+        'entry_start_h': 11,
+        'entry_end_h':   12,
+        'time_exit_h':   14,
+        'time_exit_m':   30,
+        'lot_size':      30,
+    },
+    'FINNIFTY': {
+        'direction':     'LONG',
+        'min_orb':       100,
+        'max_orb':       250,
+        'sl_mult':       0.25,
+        'tp_mult':       1.0,
+        'entry_buffer':  10,
+        'min_pre_range': 200,
+        'min_prev_range':400,
+        'skip_weeks':    [3],
+        'entry_start_h': 11,
+        'entry_end_h':   12,
+        'time_exit_h':   14,
+        'time_exit_m':   30,
+        'lot_size':      60,
+    },
+}
+
 RS_CONFIG = {
     "cache_ttl_seconds":  900,
     "refresh_interval_m": 15,
@@ -229,6 +264,10 @@ def get_coin_config(coin: str) -> dict:
         'skip_after_loss': False,
         'tier':            2,
     })
+
+
+def get_indian_instrument_config(instrument: str) -> dict:
+    return INDIAN_INSTRUMENTS_CONFIG.get(instrument, INDIAN_INSTRUMENTS_CONFIG['BANKNIFTY'])
 
 
 class Config:
@@ -342,7 +381,7 @@ class Config:
     ANGELONE_PASSWORD    = os.getenv("ANGELONE_PASSWORD",    "")
     ANGELONE_TOTP_SECRET = os.getenv("ANGELONE_TOTP_SECRET", "")
 
-    INDIAN_INSTRUMENTS: list = ["BANKNIFTY"]
+    INDIAN_INSTRUMENTS: list = ["BANKNIFTY", "FINNIFTY"]
 
     SESSION_COOKIE_NAME     = "se_user_token"
     SESSION_COOKIE_HTTPONLY = True
@@ -403,6 +442,9 @@ class Config:
 
     def get_coin_config(self, coin: str) -> dict:
         return get_coin_config(coin)
+
+    def get_indian_instrument_config(self, instrument: str) -> dict:
+        return get_indian_instrument_config(instrument)
 
     def is_admin_email(self, email: str) -> bool:
         return email.strip().lower() in [e.lower() for e in self.ADMIN_EMAILS]

@@ -3,7 +3,7 @@ import re
 import time
 import requests
 from datetime import datetime
-from config import cfg
+from config import cfg, INDIAN_INSTRUMENTS_CONFIG
 
 log = logging.getLogger(__name__)
 
@@ -16,6 +16,11 @@ MONTH_MAP = {
     "JAN": 1, "FEB": 2, "MAR": 3, "APR": 4,
     "MAY": 5, "JUN": 6, "JUL": 7, "AUG": 8,
     "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+}
+
+INSTRUMENT_NAMES = {
+    "BANKNIFTY": "BANKNIFTY",
+    "FINNIFTY":  "FINNIFTY",
 }
 
 
@@ -76,22 +81,26 @@ def refresh_instruments() -> dict:
 
     result = {}
     for name in cfg.INDIAN_INSTRUMENTS:
-        s = _find_nearest(scrips, name)
+        instrument_name = INSTRUMENT_NAMES.get(name, name)
+        s = _find_nearest(scrips, instrument_name)
         if s:
+            inst_cfg = INDIAN_INSTRUMENTS_CONFIG.get(name, {})
             result[name] = {
-                "name":     name,
-                "symbol":   s.get("symbol"),
-                "token":    s.get("token"),
-                "exchange": "NFO",
-                "lot_size": int(s.get("lotsize", 1)),
-                "tick":     float(s.get("tick_size", 0.05)),
+                "name":      name,
+                "symbol":    s.get("symbol"),
+                "token":     s.get("token"),
+                "exchange":  "NFO",
+                "lot_size":  int(s.get("lotsize", inst_cfg.get("lot_size", 1))),
+                "tick":      float(s.get("tick_size", 0.05)),
+                "direction": inst_cfg.get("direction", "SHORT"),
             }
             log.info(
-                "Instrument: %s symbol=%s token=%s lot=%s",
+                "Instrument: %s symbol=%s token=%s lot=%s direction=%s",
                 name,
                 s.get("symbol"),
                 s.get("token"),
                 s.get("lotsize"),
+                inst_cfg.get("direction", "SHORT"),
             )
         else:
             log.warning("Instrument not found: %s", name)
