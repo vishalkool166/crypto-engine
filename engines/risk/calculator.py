@@ -37,14 +37,13 @@ def calculate(
     is_long = direction == "LONG"
     buffer  = atr * 0.5
 
-    coin_cfg  = get_coin_config(coin) if coin else {}
-    sl_mult   = coin_cfg.get("sl", 1.0)
-    tp_mult   = coin_cfg.get("tp", 2.5)
+    coin_cfg = get_coin_config(coin) if coin else {}
+    tp_mult  = coin_cfg.get("tp", 2.5)
 
     if rr1 is None:
-        rr1 = sl_mult * tp_mult
+        rr1 = tp_mult
     if rr2 is None:
-        rr2 = rr1 * 1.5
+        rr2 = tp_mult * 1.5
 
     if is_long:
         sl        = round(swing_level - buffer, 6)
@@ -75,7 +74,8 @@ def calculate(
 
     actual_rr1 = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0.0
 
-    if actual_rr1 < HE.get("tp1_min_rr", 2.0):
+    min_rr = coin_cfg.get("tp", HE.get("tp1_min_rr", 1.5))
+    if actual_rr1 < min_rr * 0.9:
         return _invalid(f"rr_too_low:{actual_rr1:.2f}")
 
     return RiskResult(

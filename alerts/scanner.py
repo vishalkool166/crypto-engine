@@ -389,11 +389,11 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "grade":     result.get("grade", "--") if result.get("signal") else "--",
                 "direction": result.get("direction", "--"),
                 "score":     result.get("score", 0),
+                "adx"   :    result.get("adx", 0),
                 "state":     coin_status,
                 "signal":    result if result.get("signal") else {},
                 "regime":    result.get("regime", ""),
                 "reason":    result.get("reason", ""),
-                "adx"   :    result.get("adx", 0),
                 "market": {
                     "price":      price,
                     "change24":   ticker["change24"],
