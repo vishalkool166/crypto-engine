@@ -15,11 +15,17 @@ def _now_ist() -> str:
 
 async def cmd_india() -> None:
     try:
-        from engines.indian.data import is_market_open, is_orb_ready
+        from engines.indian.data import (
+            is_market_open, is_orb_ready,
+            get_pre_range_from_redis, get_prev_range_from_redis,
+        )
         from engines.indian.scanner import get_orb_levels, get_today_signals
         from engines.indian.instruments import get_instruments
-        from engines.indian.strategy import MIN_DAY_RANGE, MIN_ORB_SIZE, MAX_ORB_SIZE
-        from engines.indian.scanner import _get_day_range_so_far
+        from engines.indian.strategy import (
+            MIN_ORB_SIZE, MAX_ORB_SIZE,
+            MIN_PRE_RANGE, MIN_PREV_RANGE,
+            SL_MULT, TP_MULT,
+        )
         from config import cfg
 
         now         = datetime.now(IST)
@@ -40,29 +46,27 @@ async def cmd_india() -> None:
         ]
 
         for name in cfg.INDIAN_INSTRUMENTS:
-            inst = instruments.get(name)
-            orb  = get_orb_levels(name)
+            inst       = instruments.get(name)
+            orb        = get_orb_levels(name)
+            pre_range  = get_pre_range_from_redis(inst["token"])  if inst else 0.0
+            prev_range = get_prev_range_from_redis(inst["token"]) if inst else 0.0
+            vol_ok     = pre_range >= MIN_PRE_RANGE or prev_range >= MIN_PREV_RANGE
 
             lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━\n*{name}*")
 
             if orb:
-                orb_size = orb.get("size", 0)
-                orb_ok   = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
-                orb_emoji= "✅" if orb_ok else "❌"
+                orb_size  = orb.get("size", 0)
+                orb_ok    = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
+                orb_emoji = "✅" if orb_ok else "❌"
+                vol_emoji = "✅" if vol_ok else "⏳"
 
                 lines.append(
-                    f"📊 ORB High:  `{orb['high']:.2f}`\n"
-                    f"📊 ORB Low:   `{orb['low']:.2f}`\n"
-                    f"{orb_emoji} ORB Range: `{orb_size:.0f} pts`"
+                    f"📊 ORB High:    `{orb['high']:.2f}`\n"
+                    f"📊 ORB Low:     `{orb['low']:.2f}`\n"
+                    f"{orb_emoji} ORB Range:  `{orb_size:.0f} pts` (need {MIN_ORB_SIZE}-{MAX_ORB_SIZE})\n"
+                    f"{vol_emoji} Pre-range:  `{pre_range:.0f} pts` (need >{MIN_PRE_RANGE})\n"
+                    f"{vol_emoji} Prev-range: `{prev_range:.0f} pts` (need >{MIN_PREV_RANGE})"
                 )
-
-                if inst and market_open:
-                    try:
-                        day_range = _get_day_range_so_far(inst["token"])
-                        dr_emoji  = "✅" if day_range >= MIN_DAY_RANGE else "❌"
-                        lines.append(f"{dr_emoji} Day Range: `{day_range:.0f} pts` (need {MIN_DAY_RANGE}+)")
-                    except Exception:
-                        pass
             else:
                 lines.append("⏳ ORB not set yet — available after 9:35am IST")
 
@@ -74,19 +78,21 @@ async def cmd_india() -> None:
                 sl        = s.get("sl",        0)
                 tp1       = s.get("tp1",       0)
                 rr1       = s.get("rr1",       0)
+                sl_pts    = s.get("sl_pts",    0)
+                tp_pts    = s.get("tp_pts",    0)
                 d_emoji   = "📈" if direction == "LONG" else "📉"
                 outcome   = s.get("outcome",   "pending")
                 out_emoji = "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏱️" if outcome == "timeout" else "⏳"
 
                 lines.append(
                     f"{d_emoji} `{direction}`  {out_emoji} `{outcome.upper()}`\n"
-                    f"   🎯 `{entry:.2f}`  🛑 `{sl:.2f}`  ✅ `{tp1:.2f}` ({rr1:.1f}R)"
+                    f"   🎯 `{entry:.2f}`  🛑 `{sl:.2f}` ({sl_pts:.0f}pts)  ✅ `{tp1:.2f}` ({rr1:.1f}R)"
                 )
         else:
             if orb_ready:
                 lines.append(
                     f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"⏳ No signal yet — watching from 10am IST"
+                    f"⏳ No signal yet — watching from 11am IST"
                 )
             else:
                 lines.append(
@@ -96,8 +102,9 @@ async def cmd_india() -> None:
 
         lines.append(
             f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"_Strategy: 10am-1pm · No SHORT before 11am_\n"
-            f"_SL=150pts · TP=300pts · 1:2 RR_"
+            f"_Strategy: SHORT only · Entry 11am-12pm IST_\n"
+            f"_SL={SL_MULT}x ORB · TP={TP_MULT}x ORB · Skip week 3_\n"
+            f"_Time exit: 2:30pm IST_"
         )
 
         await send("\n".join(lines))
@@ -111,8 +118,15 @@ async def cmd_orb() -> None:
     try:
         from engines.indian.scanner import get_orb_levels, setup_orb
         from engines.indian.instruments import get_instruments
-        from engines.indian.data import is_orb_ready
-        from engines.indian.strategy import MIN_ORB_SIZE, MAX_ORB_SIZE
+        from engines.indian.data import (
+            is_orb_ready,
+            get_pre_range_from_redis,
+            get_prev_range_from_redis,
+        )
+        from engines.indian.strategy import (
+            MIN_ORB_SIZE, MAX_ORB_SIZE,
+            MIN_PRE_RANGE, MIN_PREV_RANGE,
+        )
         from config import cfg
 
         instruments = get_instruments()
@@ -134,12 +148,18 @@ async def cmd_orb() -> None:
                 if result and name in result:
                     orb = result[name]
 
+            inst       = instruments.get(name)
+            pre_range  = get_pre_range_from_redis(inst["token"])  if inst else 0.0
+            prev_range = get_prev_range_from_redis(inst["token"]) if inst else 0.0
+            vol_ok     = pre_range >= MIN_PRE_RANGE or prev_range >= MIN_PREV_RANGE
+
             lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━\n*{name}*")
 
             if orb:
                 orb_size  = orb.get("size", 0)
                 orb_ok    = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
                 orb_emoji = "✅" if orb_ok else "❌"
+                vol_emoji = "✅" if vol_ok else "❌"
                 reason    = ""
                 if orb_size < MIN_ORB_SIZE:
                     reason = f" — too tight (min {MIN_ORB_SIZE})"
@@ -147,12 +167,13 @@ async def cmd_orb() -> None:
                     reason = f" — too wide (max {MAX_ORB_SIZE})"
 
                 lines.append(
-                    f"📈 High:   `{orb['high']:.2f}`\n"
-                    f"📉 Low:    `{orb['low']:.2f}`\n"
-                    f"{orb_emoji} Range:  `{orb_size:.0f} pts`{reason}\n"
-                    f"📅 Date:   `{orb.get('date', '--')}`\n\n"
-                    f"🎯 Long entry above:  `{orb['high'] + 10:.2f}`\n"
-                    f"📉 Short entry below: `{orb['low']  - 10:.2f}`"
+                    f"📈 High:        `{orb['high']:.2f}`\n"
+                    f"📉 Low:         `{orb['low']:.2f}`\n"
+                    f"{orb_emoji} Range:      `{orb_size:.0f} pts`{reason}\n"
+                    f"{vol_emoji} Pre-range:  `{pre_range:.0f} pts` (need >{MIN_PRE_RANGE})\n"
+                    f"{vol_emoji} Prev-range: `{prev_range:.0f} pts` (need >{MIN_PREV_RANGE})\n"
+                    f"📅 Date:        `{orb.get('date', '--')}`\n\n"
+                    f"📉 Short entry below: `{orb['low'] - 10:.2f}`"
                 )
             else:
                 lines.append("⏳ Not available yet — after 9:35am IST")
@@ -178,15 +199,16 @@ async def cmd_indianstats() -> None:
             )
             return
 
-        total    = perf.get("total",         0)
-        wins     = perf.get("wins",          0)
-        losses   = perf.get("losses",        0)
-        timeouts = perf.get("timeouts",      0)
-        win_rate = perf.get("win_rate",      0)
-        total_pts= perf.get("total_pts",     0)
-        avg_win  = perf.get("avg_win_pts",   0)
-        avg_loss = perf.get("avg_loss_pts",  0)
-        pf       = perf.get("profit_factor", 0)
+        total    = perf.get("total",            0)
+        wins     = perf.get("wins",             0)
+        losses   = perf.get("losses",           0)
+        timeouts = perf.get("timeouts",         0)
+        win_rate = perf.get("win_rate",         0)
+        prof_rate= perf.get("profitable_rate",  win_rate)
+        total_pts= perf.get("total_pts",        0)
+        avg_win  = perf.get("avg_win_pts",      0)
+        avg_loss = perf.get("avg_loss_pts",     0)
+        pf       = perf.get("profit_factor",    0)
 
         total_rupees = round(total_pts * RUPEES_PER_POINT)
         pnl_emoji    = "💚" if total_pts >= 0 else "🔴"
@@ -196,11 +218,12 @@ async def cmd_indianstats() -> None:
             f"📊 *Indian Market Performance*\n"
             f"🕐 `{_now_ist()}`\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📈 Total:     `{total}` signals\n"
-            f"✅ Wins:      `{wins}`\n"
-            f"❌ Losses:    `{losses}`\n"
-            f"⏱️ Timeouts:  `{timeouts}`\n"
-            f"🎯 Win Rate:  `{win_rate}%`\n\n"
+            f"📈 Total:          `{total}` signals\n"
+            f"✅ Wins (TP):      `{wins}`\n"
+            f"❌ Losses (SL):    `{losses}`\n"
+            f"⏱️ Timeouts:       `{timeouts}`\n"
+            f"🎯 Win Rate:       `{win_rate}%`\n"
+            f"💡 Profitable:     `{prof_rate}%` (wins + positive timeouts)\n\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"{pnl_emoji} Total:     `{pnl_sign}{total_pts:.0f} pts`\n"
             f"💰 Rupees:   `{pnl_sign}₹{abs(total_rupees):,}` / lot\n"
@@ -213,12 +236,12 @@ async def cmd_indianstats() -> None:
         if by_dir:
             lines.append(f"\n━━━━━━━━━━━━━━━━━━━━━━\n*By Direction:*")
             for direction, data in by_dir.items():
-                d_emoji  = "📈" if direction == "LONG" else "📉"
-                dwr      = data.get("win_rate", 0)
-                dtotal   = data.get("total",    0)
-                dpnl     = data.get("pnl_pts",  0)
-                drupees  = round(dpnl * RUPEES_PER_POINT)
-                dsign    = "+" if dpnl >= 0 else ""
+                d_emoji = "📈" if direction == "LONG" else "📉"
+                dwr     = data.get("win_rate", 0)
+                dtotal  = data.get("total",    0)
+                dpnl    = data.get("pnl_pts",  0)
+                drupees = round(dpnl * RUPEES_PER_POINT)
+                dsign   = "+" if dpnl >= 0 else ""
                 lines.append(
                     f"{d_emoji} `{direction}`: `{dwr}%` WR  `{dtotal}` signals\n"
                     f"   `{dsign}{dpnl:.0f} pts`  (`{dsign}₹{abs(drupees):,}`)"
@@ -231,16 +254,16 @@ async def cmd_indianstats() -> None:
             for day in DAY_NAMES:
                 if day not in by_day:
                     continue
-                data = by_day[day]
-                dwr  = data.get("win_rate", 0)
-                dtot = data.get("total",    0)
+                data     = by_day[day]
+                dwr      = data.get("win_rate", 0)
+                dtot     = data.get("total",    0)
                 wr_emoji = "✅" if dwr >= 50 else "⚠️" if dwr >= 35 else "❌"
                 lines.append(f"{wr_emoji} `{day[:3]}`: `{dwr}%` WR  ({dtot} signals)")
 
         lines.append(
             f"\n━━━━━━━━━━━━━━━━━━━━━━\n"
             f"_1 lot = {RUPEES_PER_POINT} rupees per point_\n"
-            f"_Paper tracking only_"
+            f"_SHORT only · Paper tracking_"
         )
 
         await send("\n".join(lines))
