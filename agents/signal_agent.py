@@ -184,6 +184,14 @@ async def run(
 
 def _no_signal(coin: str, reason: str, start: float, trace: list = None) -> dict:
     elapsed = round((time.time() - start) * 1000, 1)
+    
+    adx_from_trace = 0.0
+    if trace:
+        for step in trace:
+            if step.get('adx'):
+                adx_from_trace = float(step['adx'])
+                break
+    
     return {
         "signal":      False,
         "coin":        coin,
@@ -191,6 +199,7 @@ def _no_signal(coin: str, reason: str, start: float, trace: list = None) -> dict
         "grade":       "F",
         "score":       0,
         "reason":      reason,
+        "adx":         adx_from_trace,
         "agent_ms":    elapsed,
         "agent_steps": len(trace) if trace else 0,
         "trace": {
