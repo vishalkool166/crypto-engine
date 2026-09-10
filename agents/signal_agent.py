@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 
@@ -43,7 +44,9 @@ async def run(
         })
 
         if regime.is_volatile:
-            return _no_signal(coin, "volatile_regime", start, trace)
+            r = _no_signal(coin, "volatile_regime", start, trace)
+            r["regime"] = regime.label
+            return r
 
         trend = detect_trend(d4h, coin)
         trace.append({
@@ -55,7 +58,9 @@ async def run(
         })
 
         if not trend.passed:
-            return _no_signal(coin, trend.reason, start, trace)
+            r = _no_signal(coin, trend.reason, start, trace)
+            r["regime"] = regime.label
+            return r
 
         direction = trend.direction
 
@@ -76,7 +81,9 @@ async def run(
         })
 
         if score_result.grade == "F":
-            return _no_signal(coin, "grade_f", start, trace)
+            r = _no_signal(coin, "grade_f", start, trace)
+            r["regime"] = regime.label
+            return r
 
         price       = float(d4h.get("price")      or 0)
         atr         = float(d4h.get("atr")        or 0)
@@ -84,17 +91,22 @@ async def run(
         swing_low   = float(d4h.get("swing_low")  or 0)
 
         if not price or not atr:
-            return _no_signal(coin, "missing_price_or_atr", start, trace)
+            r = _no_signal(coin, "missing_price_or_atr", start, trace)
+            r["regime"] = regime.label
+            return r
 
         swing_level = swing_low if direction == "LONG" else swing_high
         if not swing_level:
-            return _no_signal(coin, "missing_swing_level", start, trace)
+            r = _no_signal(coin, "missing_swing_level", start, trace)
+            r["regime"] = regime.label
+            return r
 
         risk = calc_risk(
             direction   = direction,
             entry       = price,
             swing_level = swing_level,
             atr         = atr,
+            coin        = coin,
         )
 
         trace.append({
@@ -109,7 +121,9 @@ async def run(
         })
 
         if not risk.valid:
-            return _no_signal(coin, risk.reason, start, trace)
+            r = _no_signal(coin, risk.reason, start, trace)
+            r["regime"] = regime.label
+            return r
 
         sizing = calc_sizing(
             balance     = balance,
@@ -119,6 +133,7 @@ async def run(
             direction   = direction,
             regime_mult = regime.size_mult,
             session     = session,
+            coin        = coin,
         )
 
         trace.append({
@@ -132,7 +147,9 @@ async def run(
         })
 
         if sizing.skip:
-            return _no_signal(coin, sizing.reason, start, trace)
+            r = _no_signal(coin, sizing.reason, start, trace)
+            r["regime"] = regime.label
+            return r
 
         elapsed = round((time.time() - start) * 1000, 1)
 
@@ -184,14 +201,14 @@ async def run(
 
 def _no_signal(coin: str, reason: str, start: float, trace: list = None) -> dict:
     elapsed = round((time.time() - start) * 1000, 1)
-    
+
     adx_from_trace = 0.0
     if trace:
         for step in trace:
-            if step.get('adx'):
-                adx_from_trace = float(step['adx'])
+            if step.get("adx"):
+                adx_from_trace = float(step["adx"])
                 break
-    
+
     return {
         "signal":      False,
         "coin":        coin,
@@ -200,6 +217,7 @@ def _no_signal(coin: str, reason: str, start: float, trace: list = None) -> dict
         "score":       0,
         "reason":      reason,
         "adx":         adx_from_trace,
+        "regime":      "",
         "agent_ms":    elapsed,
         "agent_steps": len(trace) if trace else 0,
         "trace": {
