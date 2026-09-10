@@ -5,10 +5,10 @@ import time
 from data.fetcher import fetch_and_store, get_funding_rate
 from data.cache import cache
 from data.rejection_stats import record_scan, get_total_stats, get_top_rejections
-from database import get_session, Signal as SignalModel
+from database import get_session, Signal as SignalModel, PortfolioSnapshot
 from trade.exchange import get_balance
 from trade.ws import get_mark_price, on_kline_closed
-from config import cfg
+from config import cfg, get_coin_config, CIRCUIT_BREAKER_CONFIG
 from alerts.telegram import send_signal, send_scan_summary
 
 log = logging.getLogger(__name__)
@@ -27,6 +27,9 @@ _scan_stats: dict = {
     "total_scans":     0,
     "total_signals":   0,
 }
+
+_daily_sl_count:    int   = 0
+_daily_sl_date:     str   = ""
 
 
 async def _get_cached_balance() -> float:
@@ -86,6 +89,126 @@ def _derive_session() -> str:
     if 17 <= hour < 21: return "New York"
     if 0  <= hour < 8:  return "Asia"
     return "Off Hours"
+
+
+def _check_coin_circuit_breaker(coin: str) -> bool:
+    try:
+        from trade.ws import get_mark_price
+        from redis_client import get_redis
+        import json
+
+        r = get_redis()
+        if not r:
+            return True
+
+        raw = r.get(f"ticker:{coin}USDT")
+        if not raw:
+            return True
+
+        data       = json.loads(raw)
+        change_4h  = float(data.get("percentage", 0))
+
+        threshold = CIRCUIT_BREAKER_CONFIG['coin_drop_4h_pct']
+
+        if abs(change_4h) > threshold:
+            log.warning(
+                "Circuit breaker: %s dropped %.1f%% — skipping signal",
+                coin, change_4h
+            )
+            return False
+
+        return True
+    except Exception:
+        return True
+
+
+def record_sl_hit(coin: str) -> None:
+    global _daily_sl_count, _daily_sl_date
+    from datetime import date
+    today = str(date.today())
+    if _daily_sl_date != today:
+        _daily_sl_count = 0
+        _daily_sl_date  = today
+    _daily_sl_count += 1
+
+    if _daily_sl_count >= CIRCUIT_BREAKER_CONFIG['daily_sl_pause_count']:
+        log.warning(
+            "Circuit breaker: %s SL hits today — pausing new entries",
+            _daily_sl_count
+        )
+        _save_portfolio_snapshot(circuit_level=3)
+
+
+def _get_portfolio_circuit_level() -> int:
+    try:
+        from database import SessionLocal, PortfolioSnapshot
+        db = SessionLocal()
+        try:
+            latest = db.query(PortfolioSnapshot).order_by(
+                PortfolioSnapshot.snapshot_at.desc()
+            ).first()
+            return latest.circuit_level if latest else 0
+        finally:
+            db.close()
+    except Exception:
+        return 0
+
+
+def _save_portfolio_snapshot(circuit_level: int = 0, notes: str = "") -> None:
+    try:
+        from database import SessionLocal, PortfolioSnapshot
+        from trade.exchange import get_balance as _get_bal
+        import asyncio
+
+        db = SessionLocal()
+        try:
+            from database import SessionLocal as SL2, PortfolioSnapshot as PS2
+            with SL2() as db2:
+                snapshots_30d = db2.query(PS2).order_by(
+                    PS2.snapshot_at.desc()
+                ).limit(720).all()
+
+                peak_30d = max(
+                    (s.total_value for s in snapshots_30d),
+                    default=cfg.CAPITAL
+                )
+
+            total_value = cfg.CAPITAL
+            dd_pct      = round((total_value - peak_30d) / peak_30d * 100, 2) if peak_30d > 0 else 0.0
+
+            from database import SessionLocal as SL3, Trade as TradeModel
+            with SL3() as db3:
+                open_pos = db3.query(TradeModel).filter(TradeModel.is_active == True).count()
+
+            snap = PortfolioSnapshot(
+                total_value    = total_value,
+                peak_30d       = peak_30d,
+                drawdown_pct   = dd_pct,
+                open_positions = open_pos,
+                circuit_level  = circuit_level,
+                notes          = notes,
+            )
+            db.add(snap)
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        log.error("_save_portfolio_snapshot: %s", e)
+
+
+def _get_portfolio_size_multiplier() -> float:
+    level = _get_portfolio_circuit_level()
+    if _daily_sl_count >= CIRCUIT_BREAKER_CONFIG['daily_sl_pause_count']:
+        return 0.0
+    mult_map = {
+        0: 1.0,
+        1: CIRCUIT_BREAKER_CONFIG['size_mult_level1'],
+        2: CIRCUIT_BREAKER_CONFIG['size_mult_level2'],
+        3: CIRCUIT_BREAKER_CONFIG['size_mult_level3'],
+        4: CIRCUIT_BREAKER_CONFIG['size_mult_level4'],
+        5: CIRCUIT_BREAKER_CONFIG['size_mult_level5'],
+    }
+    return mult_map.get(level, 0.0)
 
 
 def _save_signal(signal: dict) -> int | None:
@@ -224,6 +347,14 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
         try:
             from engines.state import get as get_coin_state, set_watching, set_idle
 
+            if not _check_coin_circuit_breaker(coin):
+                return None
+
+            portfolio_mult = _get_portfolio_size_multiplier()
+            if portfolio_mult == 0.0:
+                log.info("_analyze_coin: portfolio circuit breaker active — skipping %s", coin)
+                return None
+
             df_4h = await fetch_and_store(coin, "4h", limit=300)
             df_1h = await fetch_and_store(coin, "1h", limit=300)
 
@@ -326,6 +457,7 @@ async def scan_all_coins() -> list:
         _scan_stats["total_signals"]  += sum(1 for r in valid if r.get("grade") in ("A+", "A"))
 
         _write_engine_health(valid, scan_ms)
+        _save_portfolio_snapshot()
 
         await send_scan_summary(valid)
 
@@ -369,6 +501,8 @@ def _write_engine_health(results: list, scan_ms: float) -> None:
             "dominant_regime": dominant_regime,
             "top_rejections":  top_rejections,
             "signal_rate":     get_total_stats().get("signal_rate", 0),
+            "circuit_level":   _get_portfolio_circuit_level(),
+            "daily_sl_count":  _daily_sl_count,
             "updated_at":      time.time(),
         }
 

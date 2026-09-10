@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
-from config import cfg
+from config import cfg, get_coin_config, CRYPTO_POSITION_SIZE_MULTIPLIER, CIRCUIT_BREAKER_CONFIG
 
 log = logging.getLogger(__name__)
 
@@ -21,6 +21,13 @@ SESSION_MULT = {
     "New York":          1.0,
     "Asia":              0.5,
     "Off Hours":         0.0,
+}
+
+SESSION_MAP = {
+    "london": "London",
+    "ny":     "New York",
+    "asia":   "Asia",
+    "all":    None,
 }
 
 
@@ -49,6 +56,56 @@ class SizingResult:
     session_mult:    float
 
 
+def _get_current_session() -> str:
+    hour = datetime.now(timezone.utc).hour
+    if 8  <= hour < 13: return "London"
+    if 13 <= hour < 17: return "London/NY Overlap"
+    if 17 <= hour < 21: return "New York"
+    if 0  <= hour < 8:  return "Asia"
+    return "Off Hours"
+
+
+def _session_matches(coin_session: str) -> bool:
+    if not coin_session or coin_session == "all":
+        return True
+    current = _get_current_session().lower()
+    coin_s  = coin_session.lower()
+    if coin_s == "london" and "london" in current:
+        return True
+    if coin_s == "ny" and ("new york" in current or "overlap" in current):
+        return True
+    if coin_s == "asia" and "asia" in current:
+        return True
+    return False
+
+
+def _get_circuit_breaker_multiplier() -> float:
+    try:
+        from database import SessionLocal, PortfolioSnapshot
+        db = SessionLocal()
+        try:
+            latest = db.query(PortfolioSnapshot).order_by(
+                PortfolioSnapshot.snapshot_at.desc()
+            ).first()
+            if not latest:
+                return 1.0
+            level = latest.circuit_level or 0
+            mult_map = {
+                0: 1.0,
+                1: CIRCUIT_BREAKER_CONFIG['size_mult_level1'],
+                2: CIRCUIT_BREAKER_CONFIG['size_mult_level2'],
+                3: CIRCUIT_BREAKER_CONFIG['size_mult_level3'],
+                4: CIRCUIT_BREAKER_CONFIG['size_mult_level4'],
+                5: CIRCUIT_BREAKER_CONFIG['size_mult_level5'],
+            }
+            return mult_map.get(level, 0.0)
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning("_get_circuit_breaker_multiplier: %s", e)
+        return 1.0
+
+
 def calculate(
     balance:        float,
     sl_pct:         float,
@@ -59,6 +116,7 @@ def calculate(
     ml_probability: Optional[float] = None,
     alignment_mult: float = 1.0,
     session:        str   = "",
+    coin:           str   = "",
 ) -> SizingResult:
     is_paper = cfg.PAPER_TRADING
 
@@ -87,6 +145,28 @@ def calculate(
     if not sl_pct or sl_pct <= 0:
         return _skipped("invalid_sl_pct", today_pnl=today_pnl, daily_limit=daily_limit)
 
+    coin_cfg     = get_coin_config(coin) if coin else {}
+    coin_session = coin_cfg.get("session", "all")
+
+    if not _session_matches(coin_session):
+        return _skipped(
+            f"session_filter:{coin_session}_current:{_get_current_session()}",
+            today_pnl   = today_pnl,
+            daily_limit = daily_limit,
+        )
+
+    from engines.state import should_skip_after_loss
+    if coin and should_skip_after_loss(coin):
+        return _skipped(
+            f"skip_after_loss:{coin}",
+            today_pnl   = today_pnl,
+            daily_limit = daily_limit,
+        )
+
+    circuit_mult = _get_circuit_breaker_multiplier()
+    if circuit_mult == 0.0:
+        return _skipped("circuit_breaker_halt", today_pnl=today_pnl, daily_limit=daily_limit)
+
     perf         = _get_performance()
     drawdown     = _get_drawdown(balance)
     total_trades = _get_total_trades()
@@ -98,9 +178,13 @@ def calculate(
     r_mult  = float(regime_mult)
     ml_mult = _ml_mult(total_trades, ml_probability)
     a_mult  = float(alignment_mult)
-    s_mult  = SESSION_MULT.get(session, 1.0)
 
-    risk_pct = risk_pct * g_mult * r_mult * ml_mult * a_mult * s_mult
+    current_session = _get_current_session()
+    s_mult = SESSION_MULT.get(current_session, 1.0)
+
+    corr_mult = CRYPTO_POSITION_SIZE_MULTIPLIER if coin else 1.0
+
+    risk_pct = risk_pct * g_mult * r_mult * ml_mult * a_mult * s_mult * circuit_mult * corr_mult
     risk_pct = max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk_pct))
 
     leverage      = _leverage_from_sl(sl_pct, is_paper)

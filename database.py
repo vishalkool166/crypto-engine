@@ -730,9 +730,6 @@ class PillarWeightHistory(Base):
     rolled_back             = Column(Boolean, default=False)
     rolled_back_at          = Column(DateTime, nullable=True)
 
-
-
-
 class TradeJourney(Base):
     __tablename__ = "trade_journey"
 
@@ -750,6 +747,28 @@ class TradeJourney(Base):
     entry_price = Column(Float, nullable=False)
     sl_price    = Column(Float, nullable=True)
     tp_price    = Column(Float, nullable=True)
+
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+
+    id             = Column(Integer, primary_key=True)
+    snapshot_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    total_value    = Column(Float, nullable=False)
+    peak_30d       = Column(Float, nullable=False)
+    drawdown_pct   = Column(Float, nullable=False)
+    open_positions = Column(Integer, default=0)
+    circuit_level  = Column(Integer, default=0)
+    notes          = Column(Text, nullable=True)
+
+
+class CoinLastOutcome(Base):
+    __tablename__ = "coin_last_outcomes"
+
+    id          = Column(Integer, primary_key=True)
+    coin        = Column(String, unique=True, nullable=False, index=True)
+    outcome     = Column(String, nullable=True)
+    recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    pnl         = Column(Float, nullable=True)
 
 def init_db():
     Base.metadata.create_all(engine)
@@ -840,6 +859,5 @@ def init_db():
 
     import logging
     logging.getLogger(__name__).info("Database initialized")
-
 
 init_db()

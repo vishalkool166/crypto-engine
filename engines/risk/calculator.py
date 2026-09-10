@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from config import cfg
+from config import cfg, get_coin_config
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +30,21 @@ def calculate(
     entry:       float,
     swing_level: float,
     atr:         float,
-    rr1:         float = 2.5,
-    rr2:         float = 4.0,
+    coin:        str = "",
+    rr1:         float = None,
+    rr2:         float = None,
 ) -> RiskResult:
     is_long = direction == "LONG"
     buffer  = atr * 0.5
+
+    coin_cfg  = get_coin_config(coin) if coin else {}
+    sl_mult   = coin_cfg.get("sl", 1.0)
+    tp_mult   = coin_cfg.get("tp", 2.5)
+
+    if rr1 is None:
+        rr1 = sl_mult * tp_mult
+    if rr2 is None:
+        rr2 = rr1 * 1.5
 
     if is_long:
         sl        = round(swing_level - buffer, 6)
@@ -78,8 +88,8 @@ def calculate(
         sl_dist   = round(sl_dist, 6),
         rr1       = round(actual_rr1, 2),
         rr2       = round(abs(tp2 - entry) / sl_dist, 2) if sl_dist > 0 else None,
-        tp1_label = f"{rr1}R target",
-        tp2_label = f"{rr2}R target",
+        tp1_label = f"{rr1:.1f}R target",
+        tp2_label = f"{rr2:.1f}R target",
         sl_reason = sl_reason,
         reason    = "",
     )

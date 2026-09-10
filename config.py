@@ -126,11 +126,52 @@ TIER_PRICING = {
     },
 }
 
-# Grade thresholds — simple flat values used by scorer.py
 SCORE_THRESHOLDS = {
     "aplus": 80,
     "a":     65,
     "b":     50,
+}
+
+COIN_CONFIG = {
+    'ETH':  {'adx': 22, 'sl': 0.75, 'tp': 2.0,  'session': 'asia',   'skip_after_loss': False, 'tier': 1},
+    'SOL':  {'adx': 22, 'sl': 1.0,  'tp': 3.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'BNB':  {'adx': 25, 'sl': 0.5,  'tp': 1.5,  'session': 'ny',     'skip_after_loss': False, 'tier': 1},
+    'DOGE': {'adx': 25, 'sl': 0.5,  'tp': 2.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'AVAX': {'adx': 20, 'sl': 1.0,  'tp': 3.0,  'session': 'ny',     'skip_after_loss': False, 'tier': 2},
+    'LINK': {'adx': 20, 'sl': 0.75, 'tp': 2.5,  'session': 'ny',     'skip_after_loss': False, 'tier': 1},
+    'UNI':  {'adx': 15, 'sl': 0.75, 'tp': 3.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'XRP':  {'adx': 25, 'sl': 0.5,  'tp': 2.0,  'session': 'london', 'skip_after_loss': True,  'tier': 1},
+    'XLM':  {'adx': 25, 'sl': 0.5,  'tp': 3.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'LTC':  {'adx': 25, 'sl': 0.75, 'tp': 1.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'INJ':  {'adx': 22, 'sl': 0.75, 'tp': 3.0,  'session': 'london', 'skip_after_loss': False, 'tier': 2},
+    'DOT':  {'adx': 15, 'sl': 1.0,  'tp': 2.0,  'session': 'ny',     'skip_after_loss': True,  'tier': 1},
+    'OP':   {'adx': 15, 'sl': 1.0,  'tp': 2.0,  'session': 'asia',   'skip_after_loss': False, 'tier': 2},
+    'ARB':  {'adx': 22, 'sl': 0.75, 'tp': 3.0,  'session': 'ny',     'skip_after_loss': True,  'tier': 1},
+    'VET':  {'adx': 25, 'sl': 0.75, 'tp': 3.5,  'session': 'ny',     'skip_after_loss': False, 'tier': 1},
+    'ETC':  {'adx': 18, 'sl': 0.75, 'tp': 2.0,  'session': 'london', 'skip_after_loss': True,  'tier': 1},
+    'SEI':  {'adx': 25, 'sl': 0.75, 'tp': 2.5,  'session': 'london', 'skip_after_loss': False, 'tier': 1},
+    'SUI':  {'adx': 25, 'sl': 1.5,  'tp': 2.5,  'session': 'ny',     'skip_after_loss': False, 'tier': 1},
+}
+
+REMOVED_COINS = ['BTC', 'ADA']
+
+CRYPTO_CORRELATION_EFFECTIVE_N  = 1.9
+CRYPTO_TOTAL_COINS               = 18
+CRYPTO_POSITION_SIZE_MULTIPLIER  = round(CRYPTO_CORRELATION_EFFECTIVE_N / CRYPTO_TOTAL_COINS, 4)
+
+CIRCUIT_BREAKER_CONFIG = {
+    'coin_drop_4h_pct':        8.0,
+    'daily_sl_pause_count':    3,
+    'portfolio_dd_level1_pct': 5.0,
+    'portfolio_dd_level2_pct': 10.0,
+    'portfolio_dd_level3_pct': 15.0,
+    'portfolio_dd_level4_pct': 20.0,
+    'portfolio_dd_level5_pct': 30.0,
+    'size_mult_level1':        0.7,
+    'size_mult_level2':        0.4,
+    'size_mult_level3':        0.2,
+    'size_mult_level4':        0.0,
+    'size_mult_level5':        0.0,
 }
 
 RS_CONFIG = {
@@ -177,6 +218,17 @@ def tier_rank(tier: str) -> int:
 
 def tier_meets_minimum(user_tier: str, required_tier: str) -> bool:
     return tier_rank(user_tier) >= tier_rank(required_tier)
+
+
+def get_coin_config(coin: str) -> dict:
+    return COIN_CONFIG.get(coin, {
+        'adx':             18,
+        'sl':              1.0,
+        'tp':              2.5,
+        'session':         'all',
+        'skip_after_loss': False,
+        'tier':            2,
+    })
 
 
 class Config:
@@ -238,7 +290,7 @@ class Config:
         "sl_buffer_atr_mult":          0.5,
         "sl_min_pct":                  0.3,
         "sl_max_pct":                  5.0,
-        "tp1_min_rr":                  2.5,
+        "tp1_min_rr":                  2.0,
         "tp2_min_rr":                  4.0,
         "base_risk_pct":               0.01,
         "max_risk_pct":                0.02,
@@ -332,6 +384,7 @@ class Config:
                 rows = db.query(CoinConfig).filter(
                     CoinConfig.enabled == True,
                     CoinConfig.market  == "crypto",
+                    CoinConfig.coin.notin_(REMOVED_COINS),
                 ).all()
                 if rows:
                     _coins_cache      = [r.coin for r in rows]
@@ -340,13 +393,16 @@ class Config:
                 return []
         except Exception:
             pass
-        return self._FALLBACK_COINS
+        return [c for c in self._FALLBACK_COINS if c not in REMOVED_COINS]
 
     @COINS.setter
     def COINS(self, value: list) -> None:
         global _coins_cache, _coins_cache_time
         _coins_cache      = []
         _coins_cache_time = 0.0
+
+    def get_coin_config(self, coin: str) -> dict:
+        return get_coin_config(coin)
 
     def is_admin_email(self, email: str) -> bool:
         return email.strip().lower() in [e.lower() for e in self.ADMIN_EMAILS]
