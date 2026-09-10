@@ -7,17 +7,17 @@ from config import cfg
 
 log = logging.getLogger(__name__)
 
-IST = timezone(timedelta(hours=5, minutes=30))
+IST              = timezone(timedelta(hours=5, minutes=30))
+RUPEES_PER_POINT = 30
+TIME_EXIT_HOUR   = 14
+TIME_EXIT_MINUTE = 30
 
 
 def _save_journey_snapshot(signal_id: int, coin: str, direction: str, price: float, entry_price: float, sl_price: float, tp_price: float, is_entry: bool = False, is_exit: bool = False) -> None:
     try:
         from database import get_session, TradeJourney
         is_long = direction == "LONG"
-        if is_long:
-            pnl_pts = round(price - entry_price, 2)
-        else:
-            pnl_pts = round(entry_price - price, 2)
+        pnl_pts = round(price - entry_price, 2) if is_long else round(entry_price - price, 2)
         pnl_pct = round(pnl_pts / entry_price * 100, 4) if entry_price > 0 else 0.0
         with get_session() as db:
             db.add(TradeJourney(
@@ -36,6 +36,11 @@ def _save_journey_snapshot(signal_id: int, coin: str, direction: str, price: flo
             ))
     except Exception as e:
         log.error("_save_journey_snapshot: %s", e)
+
+
+def _is_time_exit() -> bool:
+    now = datetime.now(IST)
+    return now.hour > TIME_EXIT_HOUR or (now.hour == TIME_EXIT_HOUR and now.minute >= TIME_EXIT_MINUTE)
 
 
 async def track_outcomes() -> None:
@@ -95,21 +100,35 @@ async def _check_signal(signal) -> None:
 
         outcome    = None
         exit_price = None
+        reason     = None
 
         if is_long:
             if price <= sl:
                 outcome    = "loss"
                 exit_price = sl
+                reason     = "sl_hit"
             elif price >= tp1:
                 outcome    = "win"
                 exit_price = tp1
+                reason     = "tp1_hit"
         else:
             if price >= sl:
                 outcome    = "loss"
                 exit_price = sl
+                reason     = "sl_hit"
             elif price <= tp1:
                 outcome    = "win"
                 exit_price = tp1
+                reason     = "tp1_hit"
+
+        if not outcome and _is_time_exit():
+            outcome    = "timeout"
+            exit_price = price
+            reason     = "time_exit_2:30pm"
+            log.info(
+                "Time exit triggered: signal_id=%s %s price=%.2f",
+                signal.id, signal.instrument or signal.coin, price
+            )
 
         if outcome:
             _save_journey_snapshot(
@@ -122,23 +141,7 @@ async def _check_signal(signal) -> None:
                 tp_price    = tp1,
                 is_exit     = True,
             )
-            await _close_signal(signal.id, outcome, exit_price, "tp1_hit" if outcome == "win" else "sl_hit")
-            return
-
-        now              = datetime.now(IST)
-        force_close_time = now.replace(hour=15, minute=15, second=0, microsecond=0)
-        if now >= force_close_time:
-            _save_journey_snapshot(
-                signal_id   = signal.id,
-                coin        = signal.instrument or signal.coin,
-                direction   = direction,
-                price       = price,
-                entry_price = entry,
-                sl_price    = sl,
-                tp_price    = tp1,
-                is_exit     = True,
-            )
-            await _close_signal(signal.id, "timeout", price, "time_stop")
+            await _close_signal(signal.id, outcome, exit_price, reason)
 
     except Exception as e:
         log.error("_check_signal id=%s: %s", signal.id, e)
@@ -157,10 +160,7 @@ async def _close_signal(signal_id: int, outcome: str, exit_price: float, reason:
             is_long = signal.direction == "LONG"
 
             if entry > 0 and exit_price:
-                if is_long:
-                    pnl_pts = round(exit_price - entry, 2)
-                else:
-                    pnl_pts = round(entry - exit_price, 2)
+                pnl_pts = round(exit_price - entry, 2) if is_long else round(entry - exit_price, 2)
             else:
                 pnl_pts = 0.0
 
@@ -170,12 +170,13 @@ async def _close_signal(signal_id: int, outcome: str, exit_price: float, reason:
             signal.notes      = reason
 
         log.info(
-            "Indian signal closed: id=%s %s %s outcome=%s pnl=%.2f pts",
+            "Indian signal closed: id=%s %s %s outcome=%s pnl=%.2f pts reason=%s",
             signal_id,
             signal.coin,
             signal.direction,
             outcome,
             pnl_pts,
+            reason,
         )
 
         await _send_outcome_alert(signal_id, signal.coin, signal.direction, outcome, exit_price, pnl_pts, reason)
@@ -196,12 +197,11 @@ async def _send_outcome_alert(
     try:
         from alerts.telegram import send
 
-        RUPEES_PER_POINT = 30
-        rupees           = round(pnl_pts * RUPEES_PER_POINT)
-        emoji            = "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏱️"
-        pnl_emoji        = "💚" if pnl_pts >= 0 else "🔴"
-        sign             = "+" if pnl_pts >= 0 else ""
-        r_sign           = "+" if rupees >= 0 else ""
+        rupees   = round(pnl_pts * RUPEES_PER_POINT)
+        emoji    = "✅" if outcome == "win" else "❌" if outcome == "loss" else "⏱️"
+        pnl_emoji= "💚" if pnl_pts >= 0 else "🔴"
+        sign     = "+" if pnl_pts >= 0 else ""
+        r_sign   = "+" if rupees >= 0 else ""
 
         await send(
             f"{emoji} *{instrument} {direction} Closed*\n\n"
@@ -237,6 +237,7 @@ def get_performance() -> dict:
 
         pnls      = [float(s.pnl or 0) for s in signals]
         total_pts = round(sum(pnls), 2)
+        positive  = sum(1 for p in pnls if p > 0)
         avg_win   = round(sum(float(s.pnl or 0) for s in wins)   / len(wins),   2) if wins   else 0
         avg_loss  = round(sum(float(s.pnl or 0) for s in losses) / len(losses), 2) if losses else 0
 
@@ -250,11 +251,12 @@ def get_performance() -> dict:
             if s.day_of_week is not None and s.day_of_week < 5:
                 day = day_names[s.day_of_week]
                 if day not in by_day:
-                    by_day[day] = {"wins": 0, "losses": 0, "total": 0}
-                by_day[day]["total"] += 1
+                    by_day[day] = {"wins": 0, "losses": 0, "total": 0, "pnl_pts": 0.0}
+                by_day[day]["total"]   += 1
+                by_day[day]["pnl_pts"] += float(s.pnl or 0)
                 if s.outcome == "win":
                     by_day[day]["wins"] += 1
-                else:
+                elif s.outcome == "loss":
                     by_day[day]["losses"] += 1
         for day in by_day:
             t = by_day[day]["total"]
@@ -273,17 +275,18 @@ def get_performance() -> dict:
             }
 
         return {
-            "total":         total,
-            "wins":          len(wins),
-            "losses":        len(losses),
-            "timeouts":      len(timeouts),
-            "win_rate":      win_rate,
-            "total_pts":     total_pts,
-            "avg_win_pts":   avg_win,
-            "avg_loss_pts":  avg_loss,
-            "profit_factor": pf,
-            "by_day":        by_day,
-            "by_direction":  by_direction,
+            "total":          total,
+            "wins":           len(wins),
+            "losses":         len(losses),
+            "timeouts":       len(timeouts),
+            "win_rate":       win_rate,
+            "profitable_rate":round(positive / total * 100, 1) if total > 0 else 0,
+            "total_pts":      total_pts,
+            "avg_win_pts":    avg_win,
+            "avg_loss_pts":   avg_loss,
+            "profit_factor":  pf,
+            "by_day":         by_day,
+            "by_direction":   by_direction,
         }
 
     except Exception as e:
@@ -298,17 +301,10 @@ def get_open_signals_with_pnl() -> list:
         from engines.indian.instruments import get_instrument
         from datetime import date, timezone, datetime as dt
 
-        today_start = dt(
-            date.today().year,
-            date.today().month,
-            date.today().day,
-            tzinfo=timezone.utc,
-        )
-
         with SessionLocal() as db:
             signals = db.query(SignalModel).filter(
-                SignalModel.market   == "indian",
-                SignalModel.outcome  == "pending",
+                SignalModel.market  == "indian",
+                SignalModel.outcome == "pending",
             ).all()
 
         result = []
@@ -325,14 +321,9 @@ def get_open_signals_with_pnl() -> list:
             progress_pct = None
 
             if price and entry:
-                if is_long:
-                    live_pnl_pts = round(price - entry, 2)
-                else:
-                    live_pnl_pts = round(entry - price, 2)
-
-                tp_dist  = abs(tp1   - entry)
-                cur_dist = abs(price - entry)
-
+                live_pnl_pts = round(price - entry, 2) if is_long else round(entry - price, 2)
+                tp_dist      = abs(tp1   - entry)
+                cur_dist     = abs(price - entry)
                 if tp_dist > 0:
                     progress_pct = round(min(100, cur_dist / tp_dist * 100), 1)
 
@@ -346,23 +337,26 @@ def get_open_signals_with_pnl() -> list:
                 hrs      = mins // 60
                 duration = f"{hrs}h {mins % 60}m" if hrs > 0 else f"{mins}m"
 
+            time_exit_soon = _is_time_exit()
+
             result.append({
-                "id":           s.id,
-                "instrument":   s.instrument or s.coin,
-                "direction":    s.direction,
-                "entry":        entry,
-                "sl":           sl,
-                "tp1":          tp1,
-                "current_price":price,
-                "live_pnl_pts": live_pnl_pts,
-                "live_rupees":  round(live_pnl_pts * 30, 0) if live_pnl_pts is not None else None,
-                "progress_pct": progress_pct,
-                "orb_high":     float(s.orb_high or 0),
-                "orb_low":      float(s.orb_low  or 0),
-                "orb_size":     float(s.orb_size  or 0),
-                "duration":     duration,
-                "timestamp":    s.timestamp.isoformat() if s.timestamp else None,
-                "outcome":      s.outcome,
+                "id":             s.id,
+                "instrument":     s.instrument or s.coin,
+                "direction":      s.direction,
+                "entry":          entry,
+                "sl":             sl,
+                "tp1":            tp1,
+                "current_price":  price,
+                "live_pnl_pts":   live_pnl_pts,
+                "live_rupees":    round(live_pnl_pts * RUPEES_PER_POINT, 0) if live_pnl_pts is not None else None,
+                "progress_pct":   progress_pct,
+                "orb_high":       float(s.orb_high or 0),
+                "orb_low":        float(s.orb_low  or 0),
+                "orb_size":       float(s.orb_size  or 0),
+                "duration":       duration,
+                "timestamp":      s.timestamp.isoformat() if s.timestamp else None,
+                "outcome":        s.outcome,
+                "time_exit_soon": time_exit_soon,
             })
 
         return result

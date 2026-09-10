@@ -3,11 +3,14 @@ import json
 from datetime import datetime, timezone, timedelta
 from engines.indian.data import (
     is_market_open, is_orb_ready,
-    get_orb_candle, get_ltp_live, get_avg_volume,
-    fetch_candles,
+    get_orb_candle, get_ltp_live,
+    get_ltp_from_redis,
+    get_pre_range_from_redis,
+    get_prev_range_from_redis,
+    fetch_pre_range,
 )
 from engines.indian.instruments import get_instrument
-from engines.indian.strategy import analyze
+from engines.indian.strategy import analyze, ENTRY_START_H
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -31,29 +34,6 @@ def _reset_if_new_day():
         _signals_today = {}
         _last_date     = today
         log.info("Indian scanner: new day reset — %s", today)
-
-
-def _get_day_range_so_far(token: str) -> float:
-    from engines.indian.data import get_day_range_from_redis
-    cached = get_day_range_from_redis(token)
-    if cached > 0:
-        return cached
-    try:
-        now       = datetime.now(IST)
-        today     = now.strftime("%Y-%m-%d")
-        from_date = f"{today} 09:15"
-        to_date   = now.strftime("%Y-%m-%d %H:%M")
-        from engines.indian.data import fetch_candles
-        df = fetch_candles(token, "15m", from_date, to_date)
-        if df is None or df.empty:
-            return 0.0
-        day_range = round(float(df["high"].max()) - float(df["low"].min()), 2)
-        from engines.indian.data import store_day_range
-        store_day_range(token, day_range)
-        return day_range
-    except Exception as e:
-        log.error("_get_day_range_so_far: %s", e)
-        return 0.0
 
 
 def setup_orb() -> dict:
@@ -115,6 +95,22 @@ def get_orb_levels(name: str) -> dict | None:
     return None
 
 
+def _get_pre_range(token: str) -> float:
+    cached = get_pre_range_from_redis(token)
+    if cached > 0:
+        return cached
+
+    now = datetime.now(IST)
+    if now.hour >= ENTRY_START_H:
+        return fetch_pre_range(token)
+
+    return 0.0
+
+
+def _get_prev_range(token: str) -> float:
+    return get_prev_range_from_redis(token)
+
+
 async def scan_all() -> list:
     _reset_if_new_day()
 
@@ -137,7 +133,6 @@ async def scan_all() -> list:
         if not inst:
             continue
 
-        from engines.indian.data import get_ltp_from_redis
         price = get_ltp_from_redis(inst["token"])
         if not price:
             ltp_data = get_ltp_live(inst["token"])
@@ -147,21 +142,18 @@ async def scan_all() -> list:
             continue
 
         now        = datetime.now(IST)
-        c_hour     = now.hour
-        c_minute   = now.minute
-        day_range  = _get_day_range_so_far(inst["token"])
-        avg_vol    = get_avg_volume(inst["token"], days=10)
+        pre_range  = _get_pre_range(inst["token"])
+        prev_range = _get_prev_range(inst["token"])
 
         signal = analyze(
-            instrument     = name,
-            orb_high       = orb["high"],
-            orb_low        = orb["low"],
-            current_price  = price,
-            current_hour   = c_hour,
-            current_minute = c_minute,
-            day_range      = day_range,
-            current_volume = 0,
-            avg_volume     = avg_vol,
+            instrument    = name,
+            orb_high      = orb["high"],
+            orb_low       = orb["low"],
+            current_price = price,
+            current_hour  = now.hour,
+            current_minute= now.minute,
+            pre_range     = pre_range,
+            prev_range    = prev_range,
         )
 
         if not signal.signal:
@@ -175,9 +167,10 @@ async def scan_all() -> list:
             await _send_alert(signal, db_id)
             results.append(signal)
             log.info(
-                "Indian signal: %s %s entry=%.2f sl=%.2f tp1=%.2f rr=%.2f",
+                "Indian signal: %s %s entry=%.2f sl=%.2f tp1=%.2f rr=%.2f pre=%.0f prev=%.0f",
                 name, signal.direction,
                 signal.entry, signal.sl, signal.tp1, signal.rr1,
+                signal.pre_range, signal.prev_range,
             )
 
     return results
@@ -233,21 +226,23 @@ def _save_signal(signal) -> int | None:
 async def _send_alert(signal, db_id: int) -> None:
     try:
         from alerts.telegram import send
-        ist_time = datetime.now(IST).strftime("%I:%M %p IST")
-        emoji    = "📈" if signal.direction == "LONG" else "📉"
-        vol_note = "✅ Volume confirmed" if signal.volume_ok else "⚠️ Low volume"
+        ist_time  = datetime.now(IST).strftime("%I:%M %p IST")
+        from engines.indian.strategy import get_week_of_month
+        week      = get_week_of_month(datetime.now(IST).date())
 
         await send(
-            f"{emoji} *{signal.instrument} {signal.direction} — ORB Breakout*\n\n"
-            f"Time:    `{ist_time}`\n"
-            f"Entry:   `{signal.entry:.2f}`\n"
-            f"SL:      `{signal.sl:.2f}`\n"
-            f"TP1:     `{signal.tp1:.2f}` ({signal.rr1:.1f}R)\n"
-            f"TP2:     `{signal.tp2:.2f}` ({signal.rr2:.1f}R)\n\n"
-            f"ORB:     `{signal.orb_low:.2f} — {signal.orb_high:.2f}`\n"
-            f"Range:   `{signal.orb_size:.2f} points`\n"
-            f"{vol_note}\n\n"
-            f"_Signal #{db_id} — Paper tracking only_"
+            f"📉 *{signal.instrument} SHORT — ORB Breakdown*\n\n"
+            f"Time:       `{ist_time}`\n"
+            f"Entry:      `{signal.entry:.2f}`\n"
+            f"SL:         `{signal.sl:.2f}` ({signal.sl_pts:.0f}pts)\n"
+            f"TP1:        `{signal.tp1:.2f}` ({signal.rr1:.1f}R)\n"
+            f"TP2:        `{signal.tp2:.2f}` ({signal.rr2:.1f}R)\n\n"
+            f"ORB:        `{signal.orb_low:.2f} — {signal.orb_high:.2f}`\n"
+            f"ORB Size:   `{signal.orb_size:.0f} pts`\n"
+            f"Pre-range:  `{signal.pre_range:.0f} pts`\n"
+            f"Prev-range: `{signal.prev_range:.0f} pts`\n"
+            f"Week:       `{week} of month`\n\n"
+            f"_Signal #{db_id} — Paper tracking_"
         )
     except Exception as e:
         log.error("_send_alert error: %s", e)
@@ -265,8 +260,11 @@ def get_today_signals() -> list:
             "orb_high":   s.orb_high,
             "orb_low":    s.orb_low,
             "orb_size":   s.orb_size,
+            "sl_pts":     s.sl_pts,
+            "tp_pts":     s.tp_pts,
             "rr1":        s.rr1,
-            "volume_ok":  s.volume_ok,
+            "pre_range":  s.pre_range,
+            "prev_range": s.prev_range,
         }
         for s in _signals_today.values()
     ]

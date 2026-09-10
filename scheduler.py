@@ -534,6 +534,52 @@ def get_next_scan_epoch() -> int:
     )
     return int(next_hour.timestamp() * 1000)
 
+async def job_indian_pre_range():
+    try:
+        from engines.indian.data import fetch_pre_range, is_market_open, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if not is_market_open():
+            return
+
+        if _is_rate_limited():
+            log.warning("job_indian_pre_range: rate limited — skipping")
+            return
+
+        instruments = get_instruments()
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if not inst:
+                continue
+            pre_range = fetch_pre_range(inst["token"])
+            log.info("Pre-range fetched: %s = %.2f pts", name, pre_range)
+
+    except Exception as e:
+        log.error("job_indian_pre_range: %s", e)
+
+
+async def job_indian_prev_range():
+    try:
+        from engines.indian.data import fetch_prev_day_range, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if _is_rate_limited():
+            log.warning("job_indian_prev_range: rate limited — skipping")
+            return
+
+        instruments = get_instruments()
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if not inst:
+                continue
+            prev_range = fetch_prev_day_range(inst["token"])
+            log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
+
+    except Exception as e:
+        log.error("job_indian_prev_range: %s", e)
+
 
 def start_scheduler():
     scheduler.add_job(
@@ -666,6 +712,18 @@ def start_scheduler():
         job_indian_close,
         trigger          = CronTrigger(hour=9, minute=45, timezone="UTC"),
         id               = "indian_close",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_prev_range,
+        trigger          = CronTrigger(hour=3, minute=35, timezone="UTC"),
+        id               = "indian_prev_range",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_pre_range,
+        trigger          = CronTrigger(hour=5, minute=32, timezone="UTC"),
+        id               = "indian_pre_range",
         replace_existing = True,
     )
     scheduler.add_job(
