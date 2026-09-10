@@ -4,9 +4,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron      import CronTrigger
 from apscheduler.triggers.interval  import IntervalTrigger
 
-log       = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler(timezone="UTC")
-IST       = timezone(timedelta(hours=5, minutes=30))
+log              = logging.getLogger(__name__)
+scheduler        = AsyncIOScheduler(timezone="UTC")
+IST              = timezone(timedelta(hours=5, minutes=30))
+RUPEES_PER_POINT = 30
 
 
 async def job_scan():
@@ -311,14 +312,63 @@ async def job_indian_data_refresh():
         log.error("job_indian_data_refresh: %s", e)
 
 
+async def job_indian_prev_range():
+    try:
+        from engines.indian.data import fetch_prev_day_range, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if _is_rate_limited():
+            log.warning("job_indian_prev_range: rate limited — skipping")
+            return
+
+        instruments = get_instruments()
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if not inst:
+                continue
+            prev_range = fetch_prev_day_range(inst["token"])
+            log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
+
+    except Exception as e:
+        log.error("job_indian_prev_range: %s", e)
+
+
+async def job_indian_pre_range():
+    try:
+        from engines.indian.data import fetch_pre_range, is_market_open, _is_rate_limited
+        from engines.indian.instruments import get_instruments
+        from config import cfg
+
+        if not is_market_open():
+            return
+
+        if _is_rate_limited():
+            log.warning("job_indian_pre_range: rate limited — skipping")
+            return
+
+        instruments = get_instruments()
+        for name in cfg.INDIAN_INSTRUMENTS:
+            inst = instruments.get(name)
+            if not inst:
+                continue
+            pre_range = fetch_pre_range(inst["token"])
+            log.info("Pre-range fetched: %s = %.2f pts", name, pre_range)
+
+    except Exception as e:
+        log.error("job_indian_pre_range: %s", e)
+
+
 async def job_indian_orb_setup():
     try:
         from engines.indian.data import is_orb_ready
         if not is_orb_ready():
             return
-        from engines.indian.scanner import setup_orb, _get_day_range_so_far
+
+        from engines.indian.scanner import setup_orb
+        from engines.indian.strategy import MIN_ORB_SIZE, MAX_ORB_SIZE, MIN_PRE_RANGE, MIN_PREV_RANGE
+        from engines.indian.data import get_pre_range_from_redis, get_prev_range_from_redis
         from engines.indian.instruments import get_instrument
-        from engines.indian.strategy import MIN_ORB_SIZE, MAX_ORB_SIZE, MIN_DAY_RANGE
         from alerts.telegram import send
         from config import cfg
 
@@ -329,7 +379,8 @@ async def job_indian_orb_setup():
             if not inst:
                 continue
 
-            day_range = _get_day_range_so_far(inst["token"])
+            pre_range  = get_pre_range_from_redis(inst["token"])
+            prev_range = get_prev_range_from_redis(inst["token"])
 
             if not result or name not in result:
                 await send(
@@ -343,36 +394,31 @@ async def job_indian_orb_setup():
             orb_size = orb["size"]
 
             orb_ok  = MIN_ORB_SIZE <= orb_size <= MAX_ORB_SIZE
-            day_ok  = day_range >= MIN_DAY_RANGE
+            vol_ok  = pre_range >= MIN_PRE_RANGE or prev_range >= MIN_PREV_RANGE
 
-            orb_emoji = "✅" if orb_ok  else "❌"
-            day_emoji = "✅" if day_ok  else "❌"
+            orb_emoji = "✅" if orb_ok else "❌"
+            vol_emoji = "✅" if vol_ok else "⏳"
 
-            if orb_ok and day_ok:
-                status = "Watching for breakout from 10am"
+            if orb_ok:
+                status = "ORB valid — watching from 11am IST"
+            elif orb_size < MIN_ORB_SIZE:
+                status = f"Skipping — ORB too tight ({orb_size:.0f} pts, need {MIN_ORB_SIZE}+)"
             else:
-                reasons = []
-                if not orb_ok:
-                    if orb_size < MIN_ORB_SIZE:
-                        reasons.append(f"ORB too tight ({orb_size:.0f} pts)")
-                    else:
-                        reasons.append(f"ORB too wide ({orb_size:.0f} pts)")
-                if not day_ok:
-                    reasons.append(f"Day range too small ({day_range:.0f} pts)")
-                status = "Skipping today — " + " + ".join(reasons)
+                status = f"Skipping — ORB too wide ({orb_size:.0f} pts, max {MAX_ORB_SIZE})"
 
             await send(
                 f"🇮🇳 *{name} Day Setup*\n\n"
-                f"ORB High:  `{orb['high']:.2f}`\n"
-                f"ORB Low:   `{orb['low']:.2f}`\n"
-                f"ORB Range: `{orb_size:.0f} pts` {orb_emoji}\n"
-                f"Day Range: `{day_range:.0f} pts` {day_emoji}\n\n"
+                f"ORB High:   `{orb['high']:.2f}`\n"
+                f"ORB Low:    `{orb['low']:.2f}`\n"
+                f"ORB Range:  `{orb_size:.0f} pts` {orb_emoji}\n"
+                f"Pre-range:  `{pre_range:.0f} pts` (need >{MIN_PRE_RANGE}) {vol_emoji}\n"
+                f"Prev-range: `{prev_range:.0f} pts` (need >{MIN_PREV_RANGE})\n\n"
                 f"Status: `{status}`"
             )
 
             log.info(
-                "Indian ORB setup: %s high=%.2f low=%.2f size=%.2f",
-                name, orb["high"], orb["low"], orb_size
+                "Indian ORB setup: %s high=%.2f low=%.2f size=%.2f pre=%.0f prev=%.0f",
+                name, orb["high"], orb["low"], orb_size, pre_range, prev_range
             )
 
     except Exception as e:
@@ -407,9 +453,8 @@ async def job_indian_close():
     try:
         from engines.indian.tracker import track_outcomes
         from engines.indian.scanner import get_today_signals, get_orb_levels
-        from engines.indian.strategy import MIN_DAY_RANGE
+        from engines.indian.data import get_pre_range_from_redis, get_prev_range_from_redis
         from engines.indian.instruments import get_instrument
-        from engines.indian.scanner import _get_day_range_so_far
         from alerts.telegram import send
         from config import cfg
         from database import SessionLocal, Signal as SignalModel
@@ -421,17 +466,19 @@ async def job_indian_close():
             today_signals = get_today_signals()
 
             if not today_signals:
-                inst      = get_instrument(name)
-                day_range = _get_day_range_so_far(inst["token"]) if inst else 0
+                orb        = get_orb_levels(name)
+                inst       = get_instrument(name)
+                pre_range  = get_pre_range_from_redis(inst["token"])  if inst else 0
+                prev_range = get_prev_range_from_redis(inst["token"]) if inst else 0
 
-                if day_range < MIN_DAY_RANGE:
-                    reason = f"Day range too small ({day_range:.0f} pts)"
+                if not orb:
+                    reason = "ORB not available"
+                elif orb["size"] < 200 or orb["size"] > 350:
+                    reason = f"ORB out of range ({orb['size']:.0f} pts)"
+                elif pre_range < 300 and prev_range < 600:
+                    reason = f"Low volatility (pre={pre_range:.0f} prev={prev_range:.0f})"
                 else:
-                    orb = get_orb_levels(name)
-                    if not orb:
-                        reason = "ORB not available"
-                    else:
-                        reason = "No breakout today"
+                    reason = "No breakdown signal today"
 
                 await send(
                     f"🇮🇳 *{name} End of Day*\n\n"
@@ -488,7 +535,7 @@ async def job_indian_close():
             for s in closed:
                 pnl    = float(s.pnl or 0)
                 emoji  = "✅" if s.outcome == "win" else "❌" if s.outcome == "loss" else "⏱️"
-                rupees = round(pnl * 15, 0)
+                rupees = round(pnl * RUPEES_PER_POINT, 0)
                 sign   = "+" if rupees >= 0 else ""
                 lines.append(
                     f"{emoji} {s.direction} `{s.outcome.upper()}` "
@@ -503,6 +550,16 @@ async def job_indian_close():
 
     except Exception as e:
         log.error("job_indian_close: %s", e)
+
+
+async def job_journey_cleanup():
+    try:
+        from trade.monitor import downsample_journey_snapshots
+        results = downsample_journey_snapshots()
+        if results:
+            log.info("Journey cleanup: %s trades downsampled — %s", len(results), results)
+    except Exception as e:
+        log.error("job_journey_cleanup: %s", e)
 
 
 def get_next_scan_time() -> str:
@@ -533,52 +590,6 @@ def get_next_scan_epoch() -> int:
         microsecond = 0,
     )
     return int(next_hour.timestamp() * 1000)
-
-async def job_indian_pre_range():
-    try:
-        from engines.indian.data import fetch_pre_range, is_market_open, _is_rate_limited
-        from engines.indian.instruments import get_instruments
-        from config import cfg
-
-        if not is_market_open():
-            return
-
-        if _is_rate_limited():
-            log.warning("job_indian_pre_range: rate limited — skipping")
-            return
-
-        instruments = get_instruments()
-        for name in cfg.INDIAN_INSTRUMENTS:
-            inst = instruments.get(name)
-            if not inst:
-                continue
-            pre_range = fetch_pre_range(inst["token"])
-            log.info("Pre-range fetched: %s = %.2f pts", name, pre_range)
-
-    except Exception as e:
-        log.error("job_indian_pre_range: %s", e)
-
-
-async def job_indian_prev_range():
-    try:
-        from engines.indian.data import fetch_prev_day_range, _is_rate_limited
-        from engines.indian.instruments import get_instruments
-        from config import cfg
-
-        if _is_rate_limited():
-            log.warning("job_indian_prev_range: rate limited — skipping")
-            return
-
-        instruments = get_instruments()
-        for name in cfg.INDIAN_INSTRUMENTS:
-            inst = instruments.get(name)
-            if not inst:
-                continue
-            prev_range = fetch_prev_day_range(inst["token"])
-            log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
-
-    except Exception as e:
-        log.error("job_indian_prev_range: %s", e)
 
 
 def start_scheduler():
@@ -685,6 +696,12 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
+        job_indian_prev_range,
+        trigger          = CronTrigger(hour=3, minute=35, timezone="UTC"),
+        id               = "indian_prev_range",
+        replace_existing = True,
+    )
+    scheduler.add_job(
         job_indian_data_refresh,
         trigger          = IntervalTrigger(minutes=5),
         id               = "indian_data_refresh",
@@ -694,6 +711,12 @@ def start_scheduler():
         job_indian_orb_setup,
         trigger          = CronTrigger(hour=4, minute=5, timezone="UTC"),
         id               = "indian_orb_setup",
+        replace_existing = True,
+    )
+    scheduler.add_job(
+        job_indian_pre_range,
+        trigger          = CronTrigger(hour=5, minute=32, timezone="UTC"),
+        id               = "indian_pre_range",
         replace_existing = True,
     )
     scheduler.add_job(
@@ -715,18 +738,6 @@ def start_scheduler():
         replace_existing = True,
     )
     scheduler.add_job(
-        job_indian_prev_range,
-        trigger          = CronTrigger(hour=3, minute=35, timezone="UTC"),
-        id               = "indian_prev_range",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_indian_pre_range,
-        trigger          = CronTrigger(hour=5, minute=32, timezone="UTC"),
-        id               = "indian_pre_range",
-        replace_existing = True,
-    )
-    scheduler.add_job(
         job_journey_cleanup,
         trigger          = CronTrigger(hour=0, minute=0, timezone="UTC"),
         id               = "journey_cleanup",
@@ -740,12 +751,3 @@ def start_scheduler():
 def stop_scheduler():
     scheduler.shutdown()
     log.info("Scheduler stopped")
-
-async def job_journey_cleanup():
-    try:
-        from trade.monitor import downsample_journey_snapshots
-        results = downsample_journey_snapshots()
-        if results:
-            log.info("Journey cleanup: %s trades downsampled — %s", len(results), results)
-    except Exception as e:
-        log.error("job_journey_cleanup: %s", e)
