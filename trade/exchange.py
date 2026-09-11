@@ -156,12 +156,8 @@ async def get_balance() -> dict:
 
 
 async def get_positions() -> list:
-    try:
-        data = await _get("/fapi/v2/positionRisk", signed=True)
-        return [p for p in data if float(p.get("positionAmt", 0)) != 0]
-    except Exception as e:
-        log.error("get_positions error: %s", e)
-        return []
+    data = await _get("/fapi/v2/positionRisk", signed=True)
+    return [p for p in data if float(p.get("positionAmt", 0)) != 0]
 
 
 async def get_ticker_price(symbol: str) -> float:

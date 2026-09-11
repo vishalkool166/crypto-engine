@@ -238,7 +238,7 @@ async def get_open_positions_enriched() -> list:
     try:
         positions = await get_positions()
     except Exception as e:
-        log.error("get_positions error: %s", e)
+        log.error("get_open_positions_enriched positions fetch error: %s", e)
         positions = []
 
     position_map      = {p.get("symbol", "").replace("USDT", ""): p for p in positions}
@@ -307,28 +307,23 @@ def _determine_exit_reason(trade: dict, exit_price: float) -> str:
 async def _get_exit_price(coin: str, trade: dict) -> float:
     try:
         from trade.exchange import get_user_trades
-        trades = await get_user_trades(f"{coin}USDT", limit=5)
+        trades = await get_user_trades(f"{coin}USDT", limit=10)
         if trades:
-            reduce_trades = [t for t in trades if t.get("reduceOnly") or float(t.get("realizedPnl", 0)) != 0]
-            return float((reduce_trades or trades)[-1].get("price", 0))
+            exit_trades = [
+                t for t in trades
+                if t.get("reduceOnly") == True
+                or float(t.get("realizedPnl", 0)) != 0
+            ]
+            if exit_trades:
+                return float(exit_trades[-1].get("price", 0))
+            log.warning(
+                "_get_exit_price %s: no exit trades found — position likely still open",
+                coin
+            )
+            return 0.0
     except Exception as e:
         log.error("_get_exit_price %s: %s", coin, e)
-    try:
-        from trade.ws import get_mark_price
-        price = get_mark_price(coin)
-        if price:
-            return price
-    except Exception:
-        pass
-    return float(trade.get("entry_price") or 0)
-
-
-async def _record_trade_outcome(trade_id: int) -> None:
-    try:
-        from ml.outcome_recorder import record
-        await record(trade_id)
-    except Exception as e:
-        log.error("_record_trade_outcome trade_id=%s: %s", trade_id, e)
+    return 0.0
 
 
 async def _save_exit_journey_snapshot(trade: dict, exit_price: float) -> None:
@@ -379,8 +374,17 @@ async def _detect_exchange_closed_trades(db_trades: list, positions: list) -> No
         if coin in active_coins:
             continue
 
-        log.info("Position closed on exchange: %s trade_id:%s", coin, trade_id)
-        exit_price  = await _get_exit_price(coin, trade)
+        exit_price = await _get_exit_price(coin, trade)
+
+        if exit_price == 0.0:
+            log.warning(
+                "Skipping close for %s trade_id:%s — not in active positions "
+                "but no exit trade found on exchange. Will recheck next cycle.",
+                coin, trade_id
+            )
+            continue
+
+        log.info("Position closed on exchange: %s trade_id:%s exit:%.6f", coin, trade_id, exit_price)
         exit_reason = _determine_exit_reason(trade, exit_price)
 
         from trade.executor import _calc_pnl, _mark_closed
@@ -427,6 +431,14 @@ async def _sync_close_on_detect(trade_id: int, coin: str, direction: str, exit_p
         log.error("_sync_close_on_detect trade_id=%s: %s", trade_id, e)
 
 
+async def _record_trade_outcome(trade_id: int) -> None:
+    try:
+        from ml.outcome_recorder import record
+        await record(trade_id)
+    except Exception as e:
+        log.error("_record_trade_outcome trade_id=%s: %s", trade_id, e)
+
+
 async def run_monitor_cycle() -> None:
     global _last_snapshot_time
 
@@ -437,7 +449,14 @@ async def run_monitor_cycle() -> None:
     try:
         positions = await get_positions()
     except Exception as e:
-        log.error("Monitor positions fetch error: %s", e)
+        log.error("Monitor positions fetch error — skipping cycle to prevent false closes: %s", e)
+        return
+
+    if db_trades and len(positions) == 0:
+        log.warning(
+            "Safety guard triggered: %s active DB trades but Binance returned 0 positions — skipping cycle",
+            len(db_trades)
+        )
         return
 
     position_map      = {p.get("symbol", "").replace("USDT", ""): p for p in positions}
@@ -713,6 +732,7 @@ def get_trade_journey(trade_id: int) -> list:
     except Exception as e:
         log.error("get_trade_journey: %s", e)
         return []
+
 
 def downsample_journey_snapshots() -> dict:
     try:
