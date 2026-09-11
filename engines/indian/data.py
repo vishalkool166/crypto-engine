@@ -27,6 +27,8 @@ REDIS_TTL_PRE_RANGE  = 7200
 REDIS_TTL_PREV_RANGE = 86400
 REDIS_TTL_RATE_LIMIT = RATE_LIMIT_WAIT_SECONDS
 
+CANDLE_API_SLEEP = 5
+
 
 def _redis():
     try:
@@ -63,6 +65,17 @@ def _is_rate_limit_error(message: str) -> bool:
         "rate limit",
         "too many requests",
         "access denied",
+    ])
+
+
+def _is_rate_limit_exception(e: Exception) -> bool:
+    err_str = str(e).lower()
+    raw_str = repr(e).lower()
+    return any(phrase in err_str or phrase in raw_str for phrase in [
+        "exceeding access rate",
+        "access denied",
+        "rate limit",
+        "too many requests",
     ])
 
 
@@ -117,7 +130,7 @@ def fetch_candles(
             log.warning("fetch_candles skipped — rate limited")
             return None
 
-        time.sleep(1)
+        time.sleep(CANDLE_API_SLEEP)
 
         api = get_api()
         if not api:
@@ -162,7 +175,11 @@ def fetch_candles(
         return df
 
     except Exception as e:
-        log.error("fetch_candles error: %s", e)
+        if _is_rate_limit_exception(e):
+            _set_rate_limited()
+            log.error("fetch_candles rate limited (exception): %s", e)
+        else:
+            log.error("fetch_candles error: %s", e)
         return None
 
 
@@ -205,7 +222,11 @@ def get_ltp_live(token: str, exchange: str = "NFO") -> dict | None:
         }
 
     except Exception as e:
-        log.error("get_ltp_live error: %s", e)
+        if _is_rate_limit_exception(e):
+            _set_rate_limited()
+            log.error("get_ltp_live rate limited (exception): %s", e)
+        else:
+            log.error("get_ltp_live error: %s", e)
         return None
 
 
@@ -339,7 +360,7 @@ def fetch_prev_day_range(token: str) -> float:
         from_date = f"{yesterday} 09:15"
         to_date   = f"{yesterday} 15:30"
 
-        df = fetch_candles(token, "1d", from_date, to_date)
+        df = fetch_candles(token, "15m", from_date, to_date)
         if df is None or df.empty:
             log.warning("fetch_prev_day_range: no data for %s", yesterday)
             return get_prev_range_from_redis(token)
@@ -399,7 +420,12 @@ def refresh_indian_data(token: str, name: str) -> dict:
             log.warning("refresh_indian_data: getLtpData returned no data for %s", name)
 
     except Exception as e:
-        log.error("refresh_indian_data %s: %s", name, e)
+        if _is_rate_limit_exception(e):
+            _set_rate_limited()
+            result["rate_limited"] = True
+            log.error("refresh_indian_data rate limited (exception): %s", e)
+        else:
+            log.error("refresh_indian_data %s: %s", name, e)
 
     return result
 
@@ -436,7 +462,7 @@ def get_avg_volume(token: str, days: int = 10) -> float:
         from_date = (now - timedelta(days=days + 5)).strftime("%Y-%m-%d 09:15")
         to_date   = now.strftime("%Y-%m-%d 15:30")
 
-        df = fetch_candles(token, "1d", from_date, to_date)
+        df = fetch_candles(token, "15m", from_date, to_date)
         if df is None or df.empty:
             return 0.0
 

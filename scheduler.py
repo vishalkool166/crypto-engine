@@ -317,6 +317,7 @@ async def job_indian_prev_range():
         from engines.indian.data import fetch_prev_day_range, _is_rate_limited
         from engines.indian.instruments import get_instruments
         from config import cfg
+        import asyncio
 
         if _is_rate_limited():
             log.warning("job_indian_prev_range: rate limited — skipping")
@@ -329,6 +330,7 @@ async def job_indian_prev_range():
                 continue
             prev_range = fetch_prev_day_range(inst["token"])
             log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
+            await asyncio.sleep(10)
 
     except Exception as e:
         log.error("job_indian_prev_range: %s", e)
@@ -336,12 +338,10 @@ async def job_indian_prev_range():
 
 async def job_indian_pre_range():
     try:
-        from engines.indian.data import fetch_pre_range, is_market_open, _is_rate_limited
+        from engines.indian.data import fetch_pre_range, _is_rate_limited
         from engines.indian.instruments import get_instruments
         from config import cfg
-
-        if not is_market_open():
-            return
+        import asyncio
 
         if _is_rate_limited():
             log.warning("job_indian_pre_range: rate limited — skipping")
@@ -354,6 +354,7 @@ async def job_indian_pre_range():
                 continue
             pre_range = fetch_pre_range(inst["token"])
             log.info("Pre-range fetched: %s = %.2f pts", name, pre_range)
+            await asyncio.sleep(10)
 
     except Exception as e:
         log.error("job_indian_pre_range: %s", e)
