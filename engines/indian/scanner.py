@@ -101,7 +101,7 @@ def _get_pre_range(token: str) -> float:
         return cached
 
     now = datetime.now(IST)
-    if now.hour >= ENTRY_START_H:
+    if ENTRY_START_H <= now.hour < 13:
         return fetch_pre_range(token)
 
     return 0.0
