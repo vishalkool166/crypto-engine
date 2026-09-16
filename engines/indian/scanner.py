@@ -1,5 +1,6 @@
 import logging
 import json
+import time
 from datetime import datetime, timezone, timedelta
 from engines.indian.data import (
     is_market_open, is_orb_ready,
@@ -40,7 +41,11 @@ def setup_orb() -> dict:
     _reset_if_new_day()
 
     results = {}
-    for name in cfg.INDIAN_INSTRUMENTS:
+    for i, name in enumerate(cfg.INDIAN_INSTRUMENTS):
+        if i > 0:
+            log.info("Waiting 30s before fetching next instrument ORB...")
+            time.sleep(30)
+
         inst = get_instrument(name)
         if not inst:
             log.warning("Instrument not found: %s", name)
@@ -146,14 +151,14 @@ async def scan_all() -> list:
         prev_range = _get_prev_range(inst["token"])
 
         signal = analyze(
-            instrument    = name,
-            orb_high      = orb["high"],
-            orb_low       = orb["low"],
-            current_price = price,
-            current_hour  = now.hour,
-            current_minute= now.minute,
-            pre_range     = pre_range,
-            prev_range    = prev_range,
+            instrument     = name,
+            orb_high       = orb["high"],
+            orb_low        = orb["low"],
+            current_price  = price,
+            current_hour   = now.hour,
+            current_minute = now.minute,
+            pre_range      = pre_range,
+            prev_range     = prev_range,
         )
 
         if not signal.signal:
