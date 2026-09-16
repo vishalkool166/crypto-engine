@@ -330,7 +330,7 @@ async def job_indian_prev_range():
                 continue
             prev_range = fetch_prev_day_range(inst["token"])
             log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
-            await asyncio.sleep(10)
+            await asyncio.sleep(30)
 
     except Exception as e:
         log.error("job_indian_prev_range: %s", e)
@@ -428,8 +428,11 @@ async def job_indian_orb_setup():
 
 async def job_indian_scan():
     try:
-        from engines.indian.data import is_orb_ready
+        from engines.indian.data import is_orb_ready, _is_rate_limited
         if not is_orb_ready():
+            return
+        if _is_rate_limited():
+            log.debug("job_indian_scan: rate limited — skipping")
             return
         from engines.indian.scanner import scan_all
         signals = await scan_all()
@@ -698,7 +701,7 @@ def start_scheduler():
     )
     scheduler.add_job(
         job_indian_prev_range,
-        trigger          = CronTrigger(hour=3, minute=35, timezone="UTC"),
+        trigger          = CronTrigger(hour=3, minute=0, timezone="UTC"),
         id               = "indian_prev_range",
         replace_existing = True,
     )

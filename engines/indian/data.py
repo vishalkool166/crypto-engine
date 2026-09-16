@@ -356,22 +356,26 @@ def fetch_prev_day_range(token: str) -> float:
             return get_prev_range_from_redis(token)
 
         from datetime import date, timedelta
-        yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-        from_date = f"{yesterday} 09:15"
-        to_date   = f"{yesterday} 15:30"
 
-        df = fetch_candles(token, "15m", from_date, to_date)
-        if df is None or df.empty:
-            log.warning("fetch_prev_day_range: no data for %s", yesterday)
-            return get_prev_range_from_redis(token)
+        for days_back in range(1, 8):
+            check_date = (date.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+            from_date  = f"{check_date} 09:15"
+            to_date    = f"{check_date} 15:30"
 
-        prev_high  = float(df["high"].max())
-        prev_low   = float(df["low"].min())
-        prev_range = round(prev_high - prev_low, 2)
+            df = fetch_candles(token, "15m", from_date, to_date)
 
-        store_prev_range(token, prev_range)
-        log.info("Prev-range fetched: %.2f pts for %s", prev_range, yesterday)
-        return prev_range
+            if df is not None and not df.empty:
+                prev_high  = float(df["high"].max())
+                prev_low   = float(df["low"].min())
+                prev_range = round(prev_high - prev_low, 2)
+                store_prev_range(token, prev_range)
+                log.info("Prev-range fetched: %.2f pts for %s", prev_range, check_date)
+                return prev_range
+
+            log.debug("No data for %s — trying previous day", check_date)
+
+        log.warning("fetch_prev_day_range: no trading data found in last 7 days")
+        return get_prev_range_from_redis(token)
 
     except Exception as e:
         log.error("fetch_prev_day_range error: %s", e)
