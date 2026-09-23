@@ -410,7 +410,7 @@ class Config:
 
     @property
     def MIN_GRADE_TO_TRADE(self) -> list:
-        return ["A+", "A", "B"]
+        return ["A+", "A"]
 
     @property
     def COINS(self) -> list:
