@@ -45,13 +45,15 @@ def _is_time_exit() -> bool:
 
 async def track_outcomes() -> None:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import get_session, Signal as SignalModel
 
-        with SessionLocal() as db:
+        with get_session() as db:
             open_signals = db.query(SignalModel).filter(
                 SignalModel.market  == "indian",
                 SignalModel.outcome == "pending",
             ).all()
+            open_signals = [s for s in open_signals]
+            db.expunge_all()
 
         if not open_signals:
             return
@@ -149,9 +151,13 @@ async def _check_signal(signal) -> None:
 
 async def _close_signal(signal_id: int, outcome: str, exit_price: float, reason: str) -> None:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import get_session, Signal as SignalModel
 
-        with SessionLocal() as db:
+        coin      = None
+        direction = None
+        pnl_pts   = 0.0
+
+        with get_session() as db:
             signal = db.query(SignalModel).filter(SignalModel.id == signal_id).first()
             if not signal:
                 return
@@ -169,17 +175,20 @@ async def _close_signal(signal_id: int, outcome: str, exit_price: float, reason:
             signal.pnl        = pnl_pts
             signal.notes      = reason
 
+            coin      = signal.coin
+            direction = signal.direction
+
         log.info(
             "Indian signal closed: id=%s %s %s outcome=%s pnl=%.2f pts reason=%s",
             signal_id,
-            signal.coin,
-            signal.direction,
+            coin,
+            direction,
             outcome,
             pnl_pts,
             reason,
         )
 
-        await _send_outcome_alert(signal_id, signal.coin, signal.direction, outcome, exit_price, pnl_pts, reason)
+        await _send_outcome_alert(signal_id, coin, direction, outcome, exit_price, pnl_pts, reason)
 
     except Exception as e:
         log.error("_close_signal id=%s: %s", signal_id, e)
@@ -218,13 +227,15 @@ async def _send_outcome_alert(
 
 def get_performance() -> dict:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import get_session, Signal as SignalModel
 
-        with SessionLocal() as db:
+        with get_session() as db:
             signals = db.query(SignalModel).filter(
                 SignalModel.market == "indian",
                 SignalModel.outcome.in_(["win", "loss", "timeout"]),
             ).all()
+            signals = [s for s in signals]
+            db.expunge_all()
 
         if not signals:
             return {"total": 0, "message": "No closed signals yet"}
@@ -296,16 +307,18 @@ def get_performance() -> dict:
 
 def get_open_signals_with_pnl() -> list:
     try:
-        from database import SessionLocal, Signal as SignalModel
+        from database import get_session, Signal as SignalModel
         from engines.indian.data import get_ltp_from_redis
         from engines.indian.instruments import get_instrument
         from datetime import date, timezone, datetime as dt
 
-        with SessionLocal() as db:
+        with get_session() as db:
             signals = db.query(SignalModel).filter(
                 SignalModel.market  == "indian",
                 SignalModel.outcome == "pending",
             ).all()
+            signals = [s for s in signals]
+            db.expunge_all()
 
         result = []
         for s in signals:
@@ -368,13 +381,15 @@ def get_open_signals_with_pnl() -> list:
 
 def get_signal_journey(signal_id: int) -> list:
     try:
-        from database import SessionLocal, TradeJourney
+        from database import get_session, TradeJourney
 
-        with SessionLocal() as db:
+        with get_session() as db:
             snapshots = db.query(TradeJourney).filter(
                 TradeJourney.trade_id == signal_id,
                 TradeJourney.market   == "indian",
             ).order_by(TradeJourney.timestamp.asc()).all()
+            snapshots = [s for s in snapshots]
+            db.expunge_all()
 
         return [{
             "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
