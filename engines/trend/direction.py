@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from config import cfg, get_coin_config
 
@@ -16,8 +17,12 @@ class TrendResult:
     reason:    str
 
 
-def detect(d4h: dict, coin: str) -> TrendResult:
-    from data.rejection_stats import record_scan
+def detect(d4h: dict, coin: str, *, record_rejection: bool = True) -> TrendResult:
+    if record_rejection:
+        from data.rejection_stats import record_scan
+    else:
+        def record_scan(*args, **kwargs):
+            return None
 
     price  = float(d4h.get("price")  or 0)
     ema20  = float(d4h.get("ema20")  or 0)
@@ -27,6 +32,11 @@ def detect(d4h: dict, coin: str) -> TrendResult:
 
     coin_cfg = get_coin_config(coin)
     min_adx  = coin_cfg.get("adx", cfg.HYBRID_ENGINE.get("trend_min_adx", 18))
+
+    if not all(math.isfinite(v) and v > 0 for v in (price, ema20, ema50, ema200)) or \
+       not math.isfinite(adx) or not math.isfinite(float(min_adx)):
+        record_scan(coin, "NEUTRAL", "missing_indicators")
+        return _rejected("missing_indicators", adx, ema20, ema50, ema200)
 
     if adx < min_adx:
         record_scan(coin, "NEUTRAL", "adx_too_low")

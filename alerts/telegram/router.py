@@ -1,5 +1,6 @@
 import logging
-from fastapi import Request
+import hmac
+from fastapi import Request, HTTPException
 from config import cfg
 
 log = logging.getLogger(__name__)
@@ -7,9 +8,9 @@ log = logging.getLogger(__name__)
 
 async def handle_webhook(request: Request) -> None:
     secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    if cfg.WEBHOOK_SECRET and secret != cfg.WEBHOOK_SECRET:
-        log.warning("Webhook secret mismatch — rejected")
-        return
+    if not cfg.WEBHOOK_SECRET or not hmac.compare_digest(secret, cfg.WEBHOOK_SECRET):
+        log.warning("Telegram webhook authentication failed")
+        raise HTTPException(status_code=403, detail="Forbidden")
     try:
         data    = await request.json()
         msg     = data.get("message", {})

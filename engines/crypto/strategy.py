@@ -96,6 +96,7 @@ def analyze(
             entry       = price,
             swing_level = swing_level,
             atr         = atr,
+            coin        = coin,
         )
 
         if not risk.valid:
@@ -115,6 +116,7 @@ def analyze(
             grade       = grade,
             direction   = direction,
             regime_mult = regime.size_mult,
+            coin        = coin,
         )
 
         if sizing.skip:

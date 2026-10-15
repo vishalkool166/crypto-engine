@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from auth import is_authenticated, verify_totp
+from auth import verify_totp
 from config import cfg
 
 log    = logging.getLogger(__name__)
@@ -11,8 +11,8 @@ router = APIRouter()
 
 
 def _auth(request: Request) -> None:
-    if not is_authenticated(request):
-        raise HTTPException(401, "Unauthorized")
+    from saas.security import require_admin_access
+    require_admin_access(request)
 
 
 @router.get("/trades/open")
@@ -296,6 +296,15 @@ async def trades_mode(request: Request):
                     "reason":  f"Cannot switch — {len(open_trades)} open trade(s). Close all first."
                 }
             )
+
+        from trade.safety import ensure_live_opt_in
+        try:
+            ensure_live_opt_in(new_mode)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc))
+        from trade.order_journal import unresolved
+        if unresolved():
+            raise HTTPException(409, "Unresolved exchange order intents; reconciliation required")
 
         if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
             return JSONResponse(

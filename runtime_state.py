@@ -6,7 +6,7 @@ from threading import Lock
 
 log = logging.getLogger(__name__)
 
-STATE_FILE = "runtime_state.json"
+STATE_FILE = os.path.join("database", "runtime_state.json")
 _lock      = Lock()
 
 _defaults = {
@@ -27,6 +27,10 @@ _state: dict = {}
 def load():
     global _state
     try:
+        if not os.path.exists(STATE_FILE) and os.path.exists("runtime_state.json"):
+            # Backward compatible with pre-migration deployments.
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+            os.replace("runtime_state.json", STATE_FILE)
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 loaded = json.load(f)
@@ -41,8 +45,8 @@ def load():
             _state = dict(_defaults)
             log.info("No runtime state found — using defaults")
     except Exception as e:
-        log.error("Runtime state load error: %s — using defaults", e)
-        _state = dict(_defaults)
+        log.critical("Runtime state load error: %s; refusing to boot with lost risk limits", e)
+        raise RuntimeError("Cannot safely load runtime state") from e
     return _state
 
 
@@ -50,11 +54,21 @@ def save():
     with _lock:
         try:
             tmp = STATE_FILE + ".tmp"
+            os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
             with open(tmp, "w") as f:
                 json.dump(_state, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp, STATE_FILE)
+            # Durably persist the rename, not just file contents.
+            dir_fd = os.open(os.path.dirname(STATE_FILE), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
         except Exception as e:
-            log.error("Runtime state save error: %s", e)
+            log.critical("Runtime state persistence failed: %s", e)
+            raise RuntimeError("Cannot persist risk/runtime state") from e
 
 
 def get(key: str, default=None):
@@ -62,7 +76,8 @@ def get(key: str, default=None):
 
 
 def set(key: str, value):
-    _state[key] = value
+    with _lock:
+        _state[key] = value
     save()
 
 

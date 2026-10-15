@@ -1,0 +1,104 @@
+{
+  "research_complete_for_review": false,
+  "approved_for_live_trading": false,
+  "tested_symbols": 0,
+  "required_symbols": 18,
+  "coins": [
+    {
+      "coin": "ETH",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "SOL",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "BNB",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "DOGE",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "AVAX",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "LINK",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "UNI",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "XRP",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "XLM",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "LTC",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "INJ",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "DOT",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "OP",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "ARB",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "VET",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "ETC",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "SEI",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    },
+    {
+      "coin": "SUI",
+      "status": "NOT_EVALUATED",
+      "reason": "missing_or_incompatible_rolling_report"
+    }
+  ],
+  "notes": [
+    "A positive holdout across folds is not proof of live trading edge.",
+    "Portfolio correlation, multiple comparisons, latency and real fills remain unverified.",
+    "No automatic trading configuration changes are permitted."
+  ],
+  "reason": "No verified 18-coin 1h/4h/funding dataset is present in this deliverable."
+}

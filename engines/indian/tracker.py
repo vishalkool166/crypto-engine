@@ -76,7 +76,7 @@ async def _check_signal(signal) -> None:
         from engines.indian.data import get_ltp_from_redis
         price = get_ltp_from_redis(inst["token"])
         if not price:
-            ltp_data = get_ltp_live(inst["token"])
+            ltp_data = get_ltp_live(inst["token"], tradingsymbol=inst["symbol"])
             price    = ltp_data["ltp"] if ltp_data else None
         if not price:
             return

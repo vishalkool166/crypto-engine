@@ -130,7 +130,8 @@ async def _ensure_orb(orb_window: bool) -> None:
         from engines.indian.strategy import MIN_ORB_SIZE, MAX_ORB_SIZE
         from alerts.telegram import send
 
-        result = setup_orb()
+        import asyncio
+        result = await asyncio.to_thread(setup_orb)
 
         if not result:
             log.error("Startup recovery: ORB setup returned no data")

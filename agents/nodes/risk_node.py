@@ -33,6 +33,7 @@ def risk_node(state: SignalAgentState) -> SignalAgentState:
             entry       = price,
             swing_level = swing_level,
             atr         = atr,
+            coin        = state["coin"],
         )
 
         if not risk.valid:

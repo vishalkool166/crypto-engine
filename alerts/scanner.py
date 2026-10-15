@@ -91,41 +91,49 @@ def _derive_session() -> str:
     return "Off Hours"
 
 
-def _check_coin_circuit_breaker(coin: str) -> bool:
+def _check_coin_circuit_breaker(coin: str, df_4h) -> bool:
+    """Use actual CLOSED four-hour candles, never Redis's 24h ticker change.
+
+    Stale, incomplete or invalid candles cannot authorize a new exposure.
+    The caller fetches fresh data before invoking this check.
+    """
     try:
-        from trade.ws import get_mark_price
-        from redis_client import get_redis
-        import json
-
-        r = get_redis()
-        if not r:
-            return True
-
-        raw = r.get(f"ticker:{coin}USDT")
-        if not raw:
-            return True
-
-        data       = json.loads(raw)
-        change_4h  = float(data.get("percentage", 0))
-
-        threshold = CIRCUIT_BREAKER_CONFIG['coin_drop_4h_pct']
-
-        if abs(change_4h) > threshold:
-            log.warning(
-                "Circuit breaker: %s dropped %.1f%% — skipping signal",
-                coin, change_4h
-            )
+        import math
+        import pandas as pd
+        if df_4h is None or len(df_4h) < 2:
             return False
-
+        previous = float(df_4h["close"].iloc[-2])
+        current = float(df_4h["close"].iloc[-1])
+        if not all(math.isfinite(v) and v > 0 for v in (previous, current)):
+            return False
+        last_open = pd.Timestamp(df_4h.index[-1])
+        prior_open = pd.Timestamp(df_4h.index[-2])
+        if last_open.tzinfo is None:
+            last_open = last_open.tz_localize("UTC")
+            prior_open = prior_open.tz_localize("UTC")
+        else:
+            last_open = last_open.tz_convert("UTC")
+            prior_open = prior_open.tz_convert("UTC")
+        if last_open - prior_open != pd.Timedelta(hours=4):
+            return False
+        age = pd.Timestamp.now(tz="UTC") - (last_open + pd.Timedelta(hours=4))
+        # Last bar must be CLOSED and no older than one regular four-hour cycle.
+        if age < pd.Timedelta(0) or age > pd.Timedelta(hours=4, minutes=10):
+            return False
+        change_4h = (current / previous - 1.0) * 100.0
+        if abs(change_4h) > CIRCUIT_BREAKER_CONFIG["coin_drop_4h_pct"]:
+            log.warning("4h circuit breaker: %s moved %.2f%%; blocking entry", coin, change_4h)
+            return False
         return True
-    except Exception:
-        return True
+    except Exception as e:
+        log.warning("4h circuit breaker unavailable for %s: %s", coin, e)
+        return False
 
 
 def record_sl_hit(coin: str) -> None:
     global _daily_sl_count, _daily_sl_date
-    from datetime import date
-    today = str(date.today())
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
     if _daily_sl_date != today:
         _daily_sl_count = 0
         _daily_sl_date  = today
@@ -150,11 +158,19 @@ def _get_portfolio_circuit_level() -> int:
             return latest.circuit_level if latest else 0
         finally:
             db.close()
-    except Exception:
-        return 0
+    except Exception as e:
+        log.error("Circuit snapshot unavailable: %s; halting new entries", e)
+        return 4
 
 
-def _save_portfolio_snapshot(circuit_level: int = 0, notes: str = "") -> None:
+def _resolve_circuit_level(current: int, requested: int | None) -> int:
+    """Periodic snapshots cannot erase an earlier halt without operator action."""
+    if requested is None:
+        return current
+    return max(current, requested)
+
+
+def _save_portfolio_snapshot(circuit_level: int | None = None, notes: str = "") -> None:
     try:
         from database import SessionLocal, PortfolioSnapshot
         from trade.exchange import get_balance as _get_bal
@@ -180,12 +196,18 @@ def _save_portfolio_snapshot(circuit_level: int = 0, notes: str = "") -> None:
             with SL3() as db3:
                 open_pos = db3.query(TradeModel).filter(TradeModel.is_active == True).count()
 
+            # A routine scan is not an explicit reset of a risk halt.
+            latest_level = db.query(PortfolioSnapshot).order_by(
+                PortfolioSnapshot.snapshot_at.desc()).first()
+            current_level = int(latest_level.circuit_level or 0) if latest_level else 0
+            safe_level = _resolve_circuit_level(current_level, circuit_level)
+
             snap = PortfolioSnapshot(
                 total_value    = total_value,
                 peak_30d       = peak_30d,
                 drawdown_pct   = dd_pct,
                 open_positions = open_pos,
-                circuit_level  = circuit_level,
+                circuit_level  = safe_level,
                 notes          = notes,
             )
             db.add(snap)
@@ -196,9 +218,30 @@ def _save_portfolio_snapshot(circuit_level: int = 0, notes: str = "") -> None:
         log.error("_save_portfolio_snapshot: %s", e)
 
 
+def _get_daily_sl_count() -> int | None:
+    """Count confirmed SL closures from durable trade rows, not process memory.
+
+    Worker restart must not reset the daily stop-loss circuit breaker.
+    """
+    try:
+        from datetime import datetime, timezone
+        from database import SessionLocal, Trade as TradeModel
+        now = datetime.now(timezone.utc)
+        start = datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+        with SessionLocal() as db:
+            return db.query(TradeModel).filter(
+                TradeModel.closed_at >= start,
+                TradeModel.close_reason == "sl_hit",
+            ).count()
+    except Exception as error:
+        log.error("Daily stop-loss count unavailable: %s", error)
+        return None
+
+
 def _get_portfolio_size_multiplier() -> float:
     level = _get_portfolio_circuit_level()
-    if _daily_sl_count >= CIRCUIT_BREAKER_CONFIG['daily_sl_pause_count']:
+    daily_stop_count = _get_daily_sl_count()
+    if daily_stop_count is None or daily_stop_count >= CIRCUIT_BREAKER_CONFIG['daily_sl_pause_count']:
         return 0.0
     mult_map = {
         0: 1.0,
@@ -211,6 +254,18 @@ def _get_portfolio_size_multiplier() -> float:
     return mult_map.get(level, 0.0)
 
 
+def _meets_coin_rr(coin: str, actual_rr: float) -> bool:
+    """Use the configured TP requirement rather than a blanket 2R gate.
+
+    BNB and LTC are deliberately configured at 1.5R and were previously
+    rejected by a downstream hard-coded 2R filter.
+    """
+    import math
+    threshold = float(get_coin_config(coin).get("tp", 2.0))
+    return (math.isfinite(actual_rr) and math.isfinite(threshold) and
+            threshold > 0 and actual_rr + 1e-6 >= 0.90 * threshold)
+
+
 def _save_signal(signal: dict) -> int | None:
     if signal.get("grade") not in cfg.MIN_GRADE_TO_TRADE:
         return None
@@ -218,7 +273,7 @@ def _save_signal(signal: dict) -> int | None:
         return None
     if not signal.get("entry"):
         return None
-    if (signal.get("rr1") or 0) < 2.0:
+    if not _meets_coin_rr(signal["coin"], float(signal.get("rr1") or 0)):
         return None
 
     try:
@@ -347,9 +402,6 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
         try:
             from engines.state import get as get_coin_state, set_watching, set_idle
 
-            if not _check_coin_circuit_breaker(coin):
-                return None
-
             portfolio_mult = _get_portfolio_size_multiplier()
             if portfolio_mult == 0.0:
                 log.info("_analyze_coin: portfolio circuit breaker active — skipping %s", coin)
@@ -361,6 +413,9 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
             if df_4h is None or len(df_4h) < 200:
                 return None
             if df_1h is None or len(df_1h) < 50:
+                return None
+            if not _check_coin_circuit_breaker(coin, df_4h):
+                log.warning("_analyze_coin: invalid, stale or volatile 4h data for %s", coin)
                 return None
 
             from agents.signal_agent import run as agent_run

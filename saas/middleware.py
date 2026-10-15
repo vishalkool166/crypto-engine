@@ -12,17 +12,23 @@ def get_current_user(request: Request) -> dict | None:
     if not user:
         return None
 
-    session_id = user.get("session_id")
-    if session_id:
+    # OAuth tokens must be backed by a live, matching session. JWT claims alone
+    # cannot confer roles after a session has been revoked or a user deactivated.
+    if user.get("type") == "oauth":
+        session_id = user.get("session_id")
+        if not session_id:
+            return None
         try:
             from saas.sessions import validate_session
             session_data = validate_session(session_id)
-            if not session_data:
-                return None
-            user["tier"]     = session_data["tier"]
-            user["is_admin"] = session_data["is_admin"]
-        except Exception as e:
-            log.warning(f"Session validation error: {e}")
+        except Exception:
+            log.exception("Session validation failed")
+            return None
+        if not session_data or str(session_data["user_id"]) != str(user.get("sub")):
+            return None
+        user["tier"] = session_data["tier"]
+        user["is_admin"] = session_data["is_admin"]
+        user["email"] = session_data["email"]
 
     return user
 

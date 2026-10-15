@@ -126,7 +126,8 @@ def get_summary_for_tier(tier: str) -> dict:
     try:
         from api.dashboard import get_summary
         features = get_tier_features(tier)
-        summary  = get_summary()
+        # Do not mutate the shared cached summary while redacting free-tier fields.
+        summary  = dict(get_summary())
 
         if not features.get("show_performance", False):
             summary["today_pnl"]    = None

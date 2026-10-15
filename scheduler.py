@@ -314,21 +314,24 @@ async def job_indian_data_refresh():
 
 async def job_indian_prev_range():
     try:
-        from engines.indian.data import fetch_prev_day_range, _is_rate_limited
+        from engines.indian.data import fetch_prev_day_range
+        from engines.indian.quota import blocked
         from engines.indian.instruments import get_instruments
         from config import cfg
         import asyncio
 
-        if _is_rate_limited():
-            log.warning("job_indian_prev_range: rate limited — skipping")
+        if blocked('candles'):
+            log.warning("job_indian_prev_range: historical circuit open — skipping")
             return
 
+        if datetime.now(IST).weekday() >= 5:
+            return
         instruments = get_instruments()
         for name in cfg.INDIAN_INSTRUMENTS:
             inst = instruments.get(name)
             if not inst:
                 continue
-            prev_range = fetch_prev_day_range(inst["token"])
+            prev_range = await asyncio.to_thread(fetch_prev_day_range, inst["token"])
             log.info("Prev-range fetched: %s = %.2f pts", name, prev_range)
             await asyncio.sleep(30)
 
@@ -338,21 +341,24 @@ async def job_indian_prev_range():
 
 async def job_indian_pre_range():
     try:
-        from engines.indian.data import fetch_pre_range, _is_rate_limited
+        from engines.indian.data import fetch_pre_range
+        from engines.indian.quota import blocked
         from engines.indian.instruments import get_instruments
         from config import cfg
         import asyncio
 
-        if _is_rate_limited():
-            log.warning("job_indian_pre_range: rate limited — skipping")
+        if blocked('candles'):
+            log.warning("job_indian_pre_range: historical circuit open — skipping")
             return
 
+        if datetime.now(IST).weekday() >= 5:
+            return
         instruments = get_instruments()
         for name in cfg.INDIAN_INSTRUMENTS:
             inst = instruments.get(name)
             if not inst:
                 continue
-            pre_range = fetch_pre_range(inst["token"])
+            pre_range = await asyncio.to_thread(fetch_pre_range, inst["token"])
             log.info("Pre-range fetched: %s = %.2f pts", name, pre_range)
             await asyncio.sleep(10)
 
@@ -373,7 +379,8 @@ async def job_indian_orb_setup():
         from alerts.telegram import send
         from config import cfg
 
-        result = setup_orb()
+        import asyncio
+        result = await asyncio.to_thread(setup_orb)
 
         for name in cfg.INDIAN_INSTRUMENTS:
             inst = get_instrument(name)

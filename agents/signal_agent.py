@@ -22,14 +22,17 @@ async def run(
         from engines.risk.calculator import calculate as calc_risk
         from engines.sizing.adaptive import calculate as calc_sizing
 
-        if df_4h is None or len(df_4h) < 50:
+        # EMA200 needs at least 200 *closed* 4h bars. Requiring 220 is
+        # consistent with replay warmup and avoids silent zero EMA values.
+        if df_4h is None or len(df_4h) < 220:
             return _no_signal(coin, "insufficient_4h_data", start)
 
         d4h = get_indicators(df_4h, timeframe="4h")
 
         d1h = {}
-        if df_1h is not None and len(df_1h) >= 50:
-            d1h = get_indicators(df_1h, timeframe="1h")
+        if df_1h is None or len(df_1h) < 200:
+            return _no_signal(coin, "insufficient_1h_data", start)
+        d1h = get_indicators(df_1h, timeframe="1h")
 
         session = get_session()
         trace   = []

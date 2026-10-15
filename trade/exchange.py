@@ -62,11 +62,10 @@ def _clean(symbol: str) -> str:
 
 
 def _precision_from_step(step: float) -> int:
+    from decimal import Decimal
     if not step or step <= 0:
         return 8
-    if step >= 1:
-        return 0
-    return max(0, int(round(-math.log10(step))))
+    return max(0, -Decimal(str(step)).normalize().as_tuple().exponent)
 
 
 async def _http() -> httpx.AsyncClient:
@@ -177,11 +176,14 @@ async def get_symbol_precision(symbol: str) -> dict:
         for s in info.get("symbols", []):
             if s["symbol"] != clean:
                 continue
+            if s.get("status") != "TRADING" or s.get("contractType") != "PERPETUAL":
+                raise ValueError(f"{clean} not an active USDT perpetual contract")
 
             min_qty   = 0.0
             step_size = 0.0
             tick_size = 0.0
             min_price = 0.0
+            min_notional = 0.0
 
             for f in s.get("filters", []):
                 if f["filterType"] == "LOT_SIZE":
@@ -190,6 +192,8 @@ async def get_symbol_precision(symbol: str) -> dict:
                 if f["filterType"] == "PRICE_FILTER":
                     tick_size = float(f.get("tickSize", 0))
                     min_price = float(f.get("minPrice", 0))
+                if f["filterType"] == "MIN_NOTIONAL":
+                    min_notional = float(f.get("notional", 0))
 
             price_precision = _precision_from_step(tick_size)
             qty_precision   = _precision_from_step(step_size)
@@ -206,20 +210,13 @@ async def get_symbol_precision(symbol: str) -> dict:
                 "step_size":       step_size,
                 "tick_size":       tick_size,
                 "min_price":       min_price,
+                "min_notional":    min_notional,
             }
 
     except Exception as e:
         log.error("get_symbol_precision %s: %s", symbol, e)
-
-    log.warning("get_symbol_precision fallback used for %s", symbol)
-    return {
-        "qty_precision":   8,
-        "price_precision": 8,
-        "min_qty":         0.0,
-        "step_size":       0.0,
-        "tick_size":       0.0,
-        "min_price":       0.0,
-    }
+        raise RuntimeError(f"Exchange symbol rules unavailable for {symbol}; blocking order") from e
+    raise RuntimeError(f"Exchange symbol {symbol} has no matching futures metadata")
 
 
 async def set_leverage(symbol: str, leverage: int) -> dict:
@@ -256,12 +253,19 @@ async def place_order(
     stop_price:   float | None = None,
     reduce_only:  bool         = False,
     working_type: str          = "MARK_PRICE",
+    client_order_id: str | None = None,
 ) -> dict:
+    from trade.safety import ensure_live_opt_in
+    if not reduce_only:
+        ensure_live_opt_in(cfg.TRADING_MODE)
     params: dict = {
         "symbol": _clean(symbol),
         "side":   side.upper(),
         "type":   order_type.upper(),
     }
+
+    if client_order_id:
+        params["newClientOrderId"] = client_order_id
 
     if quantity and quantity > 0:
         params["quantity"] = quantity
@@ -282,6 +286,12 @@ async def place_order(
             params["reduceOnly"] = "true"
 
     return await _post("/fapi/v1/order", params, signed=True)
+
+
+async def get_order_by_client_id(symbol: str, client_order_id: str) -> dict:
+    return await _get("/fapi/v1/order", {
+        "symbol": _clean(symbol), "origClientOrderId": client_order_id
+    }, signed=True)
 
 
 async def cancel_order(symbol: str, order_id: str) -> dict:

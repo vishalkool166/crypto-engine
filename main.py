@@ -44,22 +44,10 @@ _cpu_warmup_task:     asyncio.Task = None
 limiter = Limiter(key_func=get_remote_address)
 
 
-def _get_client_tier(websocket: WebSocket) -> str:
-    try:
-        from saas.middleware import get_current_user
-
-        class FakeRequest:
-            def __init__(self, ws):
-                self.cookies = dict(ws.cookies)
-                self.headers = dict(ws.headers)
-
-        fake = FakeRequest(websocket)
-        user = get_current_user(fake)
-        if user:
-            return user.get("tier", "free")
-    except Exception:
-        pass
-    return "free"
+def _get_ws_user(websocket: WebSocket) -> dict | None:
+    from saas.middleware import get_current_user
+    # HTTP and WebSocket requests expose the same cookie/header interface.
+    return get_current_user(websocket)
 
 
 async def _build_ticker_payload(tier: str = "admin") -> dict:
@@ -96,7 +84,9 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
     mark_prices = get_all_mark_prices()
 
     try:
-        open_trades = await get_open_positions_enriched()
+        # An exchange account is shared infrastructure, not SaaS customer data.
+        # Never transmit actual positions to non-administrators.
+        open_trades = await get_open_positions_enriched() if tier == "admin" else []
         for trade in open_trades:
             coin       = trade.get("coin", "")
             live_price = get_mark_price(coin)
@@ -122,14 +112,17 @@ async def _build_ws_payload(tier: str = "admin") -> dict:
         log.error("Trade enrichment error: %s", e)
 
     dashboard["mark_prices"]    = mark_prices
-    dashboard["engine_health"]  = get_engine_health()
-    dashboard["top_rejections"] = get_top_rejections(3)
+    if tier == "admin":
+        dashboard["engine_health"]  = get_engine_health()
+        dashboard["top_rejections"] = get_top_rejections(3)
     return dashboard
 
 
-async def _push_to_clients(payload_str: str):
+async def _push_to_clients(payload_str: str, admin_only: bool = False):
     dead = set()
-    for ws_id, ws_info in _dashboard_clients.items():
+    for ws_id, ws_info in list(_dashboard_clients.items()):
+        if admin_only and not ws_info.get("is_admin", False):
+            continue
         ws = ws_info["ws"]
         try:
             await ws.send_text(payload_str)
@@ -208,7 +201,7 @@ async def _push_trade_update(event_type: str, data: dict = None):
             "data":        data or {},
         })
 
-        await _push_to_clients(payload)
+        await _push_to_clients(payload, admin_only=True)
 
     except Exception as e:
         log.error("_push_trade_update error: %s", e)
@@ -275,7 +268,7 @@ async def lifespan(app: FastAPI):
     global _dashboard_push_task, _cpu_warmup_task
 
     rs.load()
-    _bootstrap_secrets()
+    rs.mark_crash()  # Must remain flagged until the shutdown sequence completes.
 
     on_event(push_event)
 
@@ -286,17 +279,14 @@ async def lifespan(app: FastAPI):
     status = setup_status()
     if not status["setup_complete"]:
         log.warning("=" * 60)
-        log.warning("FIRST RUN — visit /auth/setup to complete setup")
-        log.warning("TOTP URI: %s", status['totp_uri'])
-        log.warning("API Key:  %s", status['api_key'])
-        log.warning("Username: %s", status['username'])
+        log.warning("FIRST RUN — configure SIGNAL_ENGINE_SETUP_TOKEN securely before setup")
         log.warning("=" * 60)
 
     _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
     _cpu_warmup_task     = asyncio.create_task(_cpu_warmup_loop())
     _session_cleanup     = asyncio.create_task(_session_cleanup_loop())
 
-    start_scheduler()
+    # Do not start scheduled trading jobs before startup exchange reconciliation.
     await register_webhook()
     await register_commands()
 
@@ -336,6 +326,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         log.warning("Startup reconciliation error: %s", e)
 
+    start_scheduler()
     await _start_langsmith()
     await _start_rag_indexer()
 
@@ -358,8 +349,6 @@ async def lifespan(app: FastAPI):
         f"Scan:       `every :00/:15/:30/:45 UTC`\n\n"
         f"Type /help for commands"
     )
-
-    rs.mark_clean_shutdown()
 
     yield
 
@@ -404,6 +393,10 @@ async def lifespan(app: FastAPI):
     rs.mark_clean_shutdown()
     log.info("Signal Engine stopped")
 
+
+# Initialize signing secrets before SessionMiddleware captures its secret key.
+# If initialized only inside lifespan, first startup uses the empty string.
+_bootstrap_secrets()
 
 app = FastAPI(
     title       = "Signal Engine v5",
@@ -456,6 +449,12 @@ async def cache_headers(request: Request, call_next):
         response.headers["Pragma"]        = "no-cache"
         response.headers["Expires"]       = "0"
     return response
+
+
+@app.get("/api/health", include_in_schema=False)
+async def api_health():
+    """Unprivileged liveness probe; not a proof of exchange/DB readiness."""
+    return {"status": "alive"}
 
 
 @app.get("/auth/google")
@@ -791,26 +790,15 @@ async def delete_api_key(request: Request, key_id: int):
 
 @app.get("/auth/setup")
 async def auth_setup(request: Request):
-    from auth import setup_status, get_qr_svg, get_qr_png_bytes
+    from saas.security import require_setup_access
+    require_setup_access(request)
+    from auth import setup_status
     status = setup_status()
     if status["setup_complete"]:
         raise HTTPException(status_code=403, detail="Setup already complete.")
-    qr_svg           = ""
-    qr_png_available = False
-    if cfg.TOTP_SECRET:
-        qr_svg = get_qr_svg()
-        if not qr_svg:
-            qr_png_available = bool(get_qr_png_bytes())
-    return templates.TemplateResponse("setup.html", {
-        "request":          request,
-        "status":           status,
-        "qr_svg":           qr_svg,
-        "qr_png_available": qr_png_available,
-        "totp_secret":      cfg.TOTP_SECRET,
-        "totp_uri":         status["totp_uri"],
-        "username":         cfg.DASHBOARD_USERNAME,
-        "api_key":          cfg.DASHBOARD_API_KEY,
-    })
+    # The previous implementation rendered frontend/setup.html, which is not
+    # included in the deployment. Serve explicit bootstrap metadata instead.
+    return JSONResponse(content=status, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/login.html")
@@ -915,8 +903,16 @@ async def auth_reset_password(request: Request):
 
 @app.post("/auth/set-credentials")
 async def auth_set_credentials(request: Request):
+    from saas.security import require_setup_access
+    require_setup_access(request)
     try:
         body     = await request.json()
+        from auth import password_is_set, verify_password, verify_totp
+        if password_is_set():
+            # A session cookie alone must not rotate account credentials.
+            if (not verify_password(body.get("current_password", ""), cfg.DASHBOARD_PASSWORD_HASH)
+                    or not verify_totp(body.get("totp_code", ""))):
+                raise HTTPException(403, "Current password and TOTP required")
         password = body.get("password")
         username = body.get("username")
         messages = []
@@ -936,12 +932,17 @@ async def auth_set_credentials(request: Request):
         if not messages:
             return JSONResponse(content={"success": False, "reason": "Nothing to update"})
         return JSONResponse(content={"success": True, "message": " · ".join(messages)})
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("Credential update failed")
+        raise HTTPException(500, "Credential update failed")
 
 
 @app.post("/auth/regenerate-totp")
 async def auth_regenerate_totp(request: Request):
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         body     = await request.json()
         password = body.get("password", "")
@@ -958,6 +959,8 @@ async def auth_regenerate_totp(request: Request):
 
 @app.post("/auth/generate-recovery-codes")
 async def auth_generate_recovery_codes(request: Request):
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         body      = await request.json()
         totp_code = body.get("totp_code", "")
@@ -975,7 +978,9 @@ async def auth_generate_recovery_codes(request: Request):
 
 
 @app.get("/auth/qr.png")
-async def auth_qr_png():
+async def auth_qr_png(request: Request):
+    from saas.security import require_setup_access
+    require_setup_access(request)
     from auth import get_qr_png_bytes
     try:
         png = get_qr_png_bytes()
@@ -988,12 +993,16 @@ async def auth_qr_png():
 
 @app.get("/api/ws/status")
 async def ws_status(request: Request):
+    from saas.security import require_admin_access
+    require_admin_access(request)
     from trade.ws import get_ws_status
     return JSONResponse(content=get_ws_status())
 
 
 @app.get("/api/rag/status")
 async def rag_status(request: Request):
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from chatbot_rag import get_rag_status
         return JSONResponse(content=get_rag_status())
@@ -1003,9 +1012,8 @@ async def rag_status(request: Request):
 
 @app.post("/api/rag/reindex")
 async def rag_reindex(request: Request):
-    from auth import is_authenticated
-    if not is_authenticated(request):
-        raise HTTPException(401, "Unauthorized")
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from rag.indexer import run_full_index
         loop    = asyncio.get_event_loop()
@@ -1018,6 +1026,8 @@ async def rag_reindex(request: Request):
 
 @app.get("/api/langsmith/status")
 async def langsmith_status(request: Request):
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from monitoring.langsmith_setup import get_langsmith_status
         return JSONResponse(content=get_langsmith_status())
@@ -1027,9 +1037,8 @@ async def langsmith_status(request: Request):
 
 @app.get("/api/indian/startup-status")
 async def indian_startup_status(request: Request):
-    from auth import is_authenticated
-    if not is_authenticated(request):
-        raise HTTPException(401, "Unauthorized")
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from engines.indian.startup import get_startup_status
         return JSONResponse(content=await get_startup_status())
@@ -1039,10 +1048,26 @@ async def indian_startup_status(request: Request):
 
 @app.websocket("/ws/dashboard")
 async def dashboard_websocket(websocket: WebSocket):
+    # Browsers send Origin on the WS handshake; refuse cross-site cookie reuse.
+    origin = websocket.headers.get("origin")
+    if origin and origin.rstrip("/") not in {o.rstrip("/") for o in allowed_origins}:
+        await websocket.close(code=1008)
+        return
+    try:
+        user = _get_ws_user(websocket)
+    except Exception:
+        log.exception("WebSocket authentication failed")
+        await websocket.close(code=1008)
+        return
+    if user is None:
+        await websocket.close(code=1008)
+        return
+    from auth import is_admin_user
+    is_admin = is_admin_user(user)
+    tier = "admin" if is_admin else user.get("tier", "free")
     await websocket.accept()
-    tier  = _get_client_tier(websocket)
     ws_id = id(websocket)
-    _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier}
+    _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier, "is_admin": is_admin}
     try:
         initial = await _build_ws_payload(tier)
         await websocket.send_text(json.dumps(initial))
@@ -1075,11 +1100,15 @@ import os as _os
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str):
-    static_dir = "frontend"
-    file_path  = _os.path.join(static_dir, full_path)
-    if _os.path.exists(file_path) and _os.path.isfile(file_path):
+    from pathlib import Path
+    static_dir = Path("frontend").resolve()
+    file_path = (static_dir / full_path).resolve()
+    # Never serve ../.env, database files, or application source via the SPA fallback.
+    if not file_path.is_relative_to(static_dir):
+        raise HTTPException(404, "Not found")
+    if file_path.is_file():
         return FileResponse(file_path)
-    return FileResponse(_os.path.join(static_dir, "index.html"))
+    return FileResponse(static_dir / "index.html")
 
 
 app.mount(

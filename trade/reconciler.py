@@ -52,7 +52,19 @@ async def reconcile_on_startup() -> None:
                     "Reconciler: %s pending trade found — activating (entry=%.4f)",
                     coin, entry
                 )
-                await _activate_pending_trade(trade, entry, pos)
+                log.critical(
+                    "Pending trade #%s has a live exchange position: manual protection/position reconciliation required",
+                    trade.id,
+                )
+                try:
+                    from alerts.telegram import send
+                    await send(
+                        f"URGENT: {coin} pending trade #{trade.id} is open on exchange. "
+                        "Verify stop-loss, take-profit and DB state manually. "
+                        "Automatic protective order creation disabled."
+                    )
+                except Exception:
+                    log.exception("Unable to notify operator of unreconciled position")
             else:
                 log.warning(
                     "Reconciler: %s has position on exchange but NO trade in DB — orphan position",
@@ -77,6 +89,8 @@ async def _activate_pending_trade(trade, fill_price: float, pos: dict) -> None:
         tp_side   = "BUY"  if not is_long else "SELL"
 
         prec = await get_symbol_precision(symbol)
+        from trade.safety import require_precision
+        require_precision(prec)
         pp   = prec["price_precision"]
 
         sl  = float(trade.sl_price  or 0)

@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Optional
@@ -57,26 +58,13 @@ class SizingResult:
 
 
 def _get_current_session() -> str:
-    hour = datetime.now(timezone.utc).hour
-    if 8  <= hour < 13: return "London"
-    if 13 <= hour < 17: return "London/NY Overlap"
-    if 17 <= hour < 21: return "New York"
-    if 0  <= hour < 8:  return "Asia"
-    return "Off Hours"
+    from engines.core.sessions import session_at
+    return session_at(datetime.now(timezone.utc))
 
 
 def _session_matches(coin_session: str) -> bool:
-    if not coin_session or coin_session == "all":
-        return True
-    current = _get_current_session().lower()
-    coin_s  = coin_session.lower()
-    if coin_s == "london" and "london" in current:
-        return True
-    if coin_s == "ny" and ("new york" in current or "overlap" in current):
-        return True
-    if coin_s == "asia" and "asia" in current:
-        return True
-    return False
+    from engines.core.sessions import session_matches
+    return session_matches(coin_session, datetime.now(timezone.utc))
 
 
 def _get_circuit_breaker_multiplier() -> float:
@@ -102,8 +90,8 @@ def _get_circuit_breaker_multiplier() -> float:
         finally:
             db.close()
     except Exception as e:
-        log.warning("_get_circuit_breaker_multiplier: %s", e)
-        return 1.0
+        log.error("_get_circuit_breaker_multiplier: %s; HALTING new entries", e)
+        return 0.0
 
 
 def calculate(
@@ -120,10 +108,17 @@ def calculate(
 ) -> SizingResult:
     is_paper = cfg.PAPER_TRADING
 
+    if not math.isfinite(balance) or balance <= 0 or not math.isfinite(sl_pct) or sl_pct <= 0 or not math.isfinite(sl_dist) or sl_dist <= 0:
+        return _skipped("invalid_risk_inputs")
+    if direction not in ("LONG", "SHORT"):
+        return _skipped("invalid_direction")
+
     today_pnl   = _get_today_pnl()
     daily_limit = balance * DAILY_LOSS_LIM
+    if today_pnl is None:
+        return _skipped("risk_state_unavailable:daily_pnl", daily_limit=daily_limit)
 
-    if today_pnl < -daily_limit:
+    if today_pnl <= -daily_limit:
         return _skipped(
             f"daily_loss_limit:${abs(today_pnl):.2f}_of_${daily_limit:.2f}",
             today_pnl   = today_pnl,
@@ -131,6 +126,8 @@ def calculate(
         )
 
     open_counts = _get_open_counts()
+    if open_counts is None:
+        return _skipped("risk_state_unavailable:open_positions", today_pnl=today_pnl, daily_limit=daily_limit)
 
     if open_counts["total"] >= HE["max_open_trades"]:
         return _skipped("max_open_trades", today_pnl=today_pnl, daily_limit=daily_limit)
@@ -170,6 +167,15 @@ def calculate(
     perf         = _get_performance()
     drawdown     = _get_drawdown(balance)
     total_trades = _get_total_trades()
+    if perf is None or drawdown is None or total_trades is None:
+        return _skipped("risk_state_unavailable:performance", today_pnl=today_pnl, daily_limit=daily_limit)
+    if not isinstance(drawdown, (float, int)) or not math.isfinite(drawdown) or drawdown < 0:
+        return _skipped("invalid_portfolio_drawdown", today_pnl=today_pnl, daily_limit=daily_limit)
+    # Per-trade sizing must enforce an absolute halt even if the separate
+    # portfolio snapshot writer is stale/unavailable. Drawdown uses a
+    # conservative local approximation until broker-equity integration exists.
+    if drawdown >= CIRCUIT_BREAKER_CONFIG['portfolio_dd_level4_pct'] / 100.0:
+        return _skipped("portfolio_drawdown_halt", today_pnl=today_pnl, daily_limit=daily_limit)
 
     base_risk = PAPER_BASE if is_paper else LIVE_BASE
     risk_pct  = _dynamic_risk(base_risk, perf, drawdown)
@@ -178,6 +184,8 @@ def calculate(
     r_mult  = float(regime_mult)
     ml_mult = _ml_mult(total_trades, ml_probability)
     a_mult  = float(alignment_mult)
+    if not all(math.isfinite(x) and x >= 0 for x in (g_mult, r_mult, ml_mult, a_mult, circuit_mult)):
+        return _skipped("invalid_risk_multiplier", today_pnl=today_pnl, daily_limit=daily_limit)
 
     current_session = _get_current_session()
     s_mult = SESSION_MULT.get(current_session, 1.0)
@@ -185,17 +193,24 @@ def calculate(
     corr_mult = CRYPTO_POSITION_SIZE_MULTIPLIER if coin else 1.0
 
     risk_pct = risk_pct * g_mult * r_mult * ml_mult * a_mult * s_mult * circuit_mult * corr_mult
-    risk_pct = max(MIN_RISK_PCT, min(MAX_RISK_PCT, risk_pct))
+    # A minimum floor applied after defensive multipliers *increases* risk and
+    # negates correlation, drawdown and circuit breaker controls. Never do that.
+    if not math.isfinite(risk_pct) or risk_pct <= 0:
+        return _skipped("risk_budget_zero", today_pnl=today_pnl, daily_limit=daily_limit)
+    risk_pct = min(MAX_RISK_PCT, risk_pct)
 
     leverage      = _leverage_from_sl(sl_pct, is_paper)
     risk_amt      = balance * risk_pct
     position_size = risk_amt / (sl_pct / 100)
-    stake         = position_size / leverage
-    max_stake     = balance * 0.20
-    stake         = min(stake, max_stake)
-    stake         = max(stake, MIN_STAKE)
+    stake         = min(position_size / leverage, balance * 0.20)
+    # If the broker's minimum stake exceeds the approved exposure, SKIP;
+    # never enlarge a position just to place an order.
+    if not math.isfinite(stake) or stake < MIN_STAKE:
+        return _skipped("risk_budget_below_minimum_stake", today_pnl=today_pnl, daily_limit=daily_limit)
     position_size = stake * leverage
     actual_risk   = position_size * (sl_pct / 100)
+    if actual_risk > risk_amt * (1.0 + 1e-9):
+        return _skipped("risk_budget_exceeded", today_pnl=today_pnl, daily_limit=daily_limit)
 
     return SizingResult(
         skip           = False,
@@ -301,12 +316,8 @@ def _leverage_from_sl(sl_pct: float, is_paper: bool) -> int:
 def _get_today_pnl() -> float:
     try:
         from database import SessionLocal, Trade as TradeModel
-        today_start = datetime(
-            date.today().year,
-            date.today().month,
-            date.today().day,
-            tzinfo=timezone.utc,
-        )
+        now_utc = datetime.now(timezone.utc)
+        today_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
         with SessionLocal() as db:
             trades = db.query(TradeModel).filter(
                 TradeModel.closed_at >= today_start,
@@ -315,7 +326,7 @@ def _get_today_pnl() -> float:
         return sum(float(t.net_pnl or t.pnl or 0) for t in trades)
     except Exception as e:
         log.error("_get_today_pnl: %s", e)
-        return 0.0
+        return None
 
 
 def _get_open_counts() -> dict:
@@ -330,7 +341,7 @@ def _get_open_counts() -> dict:
         }
     except Exception as e:
         log.error("_get_open_counts: %s", e)
-        return {"total": 0, "long": 0, "short": 0}
+        return None
 
 
 def _get_total_trades() -> int:
@@ -340,8 +351,9 @@ def _get_total_trades() -> int:
             return db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"])
             ).count()
-    except Exception:
-        return 0
+    except Exception as e:
+        log.error("_get_total_trades: %s", e)
+        return None
 
 
 def _get_performance() -> dict:
@@ -377,7 +389,7 @@ def _get_performance() -> dict:
         }
     except Exception as e:
         log.error("_get_performance: %s", e)
-        return {"total": 0, "win_rate": None, "streak": 0, "streak_type": None}
+        return None
 
 
 def _get_drawdown(balance: float) -> float:
@@ -405,7 +417,7 @@ def _get_drawdown(balance: float) -> float:
         return max(0.0, (peak - balance) / peak) if peak > 0 else 0.0
     except Exception as e:
         log.error("_get_drawdown: %s", e)
-        return 0.0
+        return None
 
 
 def _skipped(reason: str, today_pnl: float = 0.0, daily_limit: float = 0.0) -> SizingResult:

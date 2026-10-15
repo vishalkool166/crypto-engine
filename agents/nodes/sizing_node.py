@@ -23,6 +23,7 @@ def sizing_node(state: SignalAgentState) -> SignalAgentState:
             direction   = direction,
             regime_mult = regime.size_mult,
             session     = session,
+            coin        = state["coin"],
         )
 
         if sizing.skip:

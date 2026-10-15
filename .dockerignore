@@ -10,3 +10,7 @@ database/
 watcher.py
 start.bat
 .DS_Store
+research_data/
+.pytest_cache/
+.env.*
+*.sqlite*

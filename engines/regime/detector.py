@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from config import cfg
 
@@ -21,8 +22,17 @@ class RegimeResult:
 def detect(d4h: dict, d1w: dict = None) -> RegimeResult:
     adx     = float(d4h.get("adx")   or 0)
     atr     = float(d4h.get("atr")   or 0)
-    price   = float(d4h.get("price") or 1)
-    atr_pct = round(atr / price * 100, 4) if price > 0 else 0.0
+    price   = float(d4h.get("price") if d4h.get("price") is not None else 0)
+    if not all(math.isfinite(v) and v > 0 for v in (price, atr)) or \
+       not math.isfinite(adx) or adx < 0:
+        # Treat corrupt/unready market data as an entry veto, not as a low
+        # volatility market. Every caller already rejects is_volatile.
+        return RegimeResult(
+            label="invalid_data", size_mult=0.0, adx=0.0, atr_pct=0.0,
+            is_trending=False, is_ranging=False, is_choppy=False,
+            is_volatile=True, reason="invalid_market_indicators",
+        )
+    atr_pct = round(atr / price * 100, 4)
 
     if atr_pct > 4.0:
         return RegimeResult(

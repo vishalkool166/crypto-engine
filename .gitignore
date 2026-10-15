@@ -7,3 +7,12 @@ __pycache__/
 frontend/js/alpine.min.js
 frontend/js/apexcharts.min.js
 frontend/js/chartjs.min.js
+# Research datasets, build products and runtime credentials
+research_data/
+.pytest_cache/
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+.env.*
+!.env.example

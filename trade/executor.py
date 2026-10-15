@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+from decimal import Decimal, ROUND_FLOOR
 from datetime import datetime, timezone
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import httpx
@@ -51,28 +52,85 @@ def _get_session_expiry() -> int:
     return SESSION_EXPIRY_HOURS.get(session, DEFAULT_EXPIRY_HOURS)
 
 
+def _floor_to_increment(value: float, increment: float) -> float:
+    """Binance uses decimal increments, not powers-of-ten precision."""
+    if not math.isfinite(value) or not math.isfinite(increment) or increment <= 0:
+        raise ValueError("Non-finite value or invalid exchange increment")
+    qty = Decimal(str(value))
+    step = Decimal(str(increment))
+    return float((qty / step).to_integral_value(rounding=ROUND_FLOOR) * step)
+
+
 def _round_tick(price: float, tick_size: float) -> float:
-    if not tick_size or tick_size <= 0:
-        return price
-    precision = max(0, int(round(-math.log10(tick_size)))) if tick_size < 1 else 0
-    return round(math.floor(price / tick_size) * tick_size, precision)
+    return _floor_to_increment(price, tick_size) if tick_size > 0 else price
 
 
 def _round_step(quantity: float, step_size: float) -> float:
-    if not step_size or step_size <= 0:
-        return quantity
-    precision = max(0, int(round(-math.log10(step_size)))) if step_size < 1 else 0
-    return round(math.floor(quantity / step_size) * step_size, precision)
+    return _floor_to_increment(quantity, step_size) if step_size > 0 else quantity
 
 
-@retry(
-    retry   = retry_if_exception_type(httpx.NetworkError),
-    stop    = stop_after_attempt(3),
-    wait    = wait_exponential(multiplier=1, min=2, max=10),
-    reraise = True,
-)
 async def _place_with_retry(**kwargs) -> dict:
-    return await place_order(**kwargs)
+    """Crash-resistant single send; repeated intents only perform lookup.
+
+    Persistent reservation is written before the POST. Caller-provided intent
+    keys are stable across process restarts; never blindly retry an uncertain
+    execution. This is at-most-once submission, not exactly-once execution.
+    """
+    import uuid
+    import asyncio
+    from config import cfg as current_cfg
+    from trade.exchange import get_order_by_client_id
+    from trade.order_journal import reserve, mark
+    from trade.safety import ensure_live_opt_in
+
+    intent_key = kwargs.pop("intent_key", None) or f"ephemeral:{uuid.uuid4().hex}"
+    if not kwargs.get("reduce_only"):
+        ensure_live_opt_in(current_cfg.TRADING_MODE)
+    client_id, is_new = reserve(
+        intent_key, current_cfg.TRADING_MODE,
+        kwargs["symbol"], kwargs["side"], kwargs["order_type"], kwargs,
+    )
+    kwargs["client_order_id"] = client_id
+
+    if not is_new:
+        try:
+            found = await get_order_by_client_id(kwargs["symbol"], client_id)
+            if found and found.get("orderId"):
+                mark(intent_key, "acknowledged", str(found["orderId"]))
+                return found
+        except Exception:
+            log.exception("Previous order intent lookup unavailable: %s", client_id)
+        raise RuntimeError(
+            f"Existing order intent {client_id} is unverified; "
+            "verify exchange state before any retry"
+        )
+
+    try:
+        result = await place_order(**kwargs)
+    except BaseException as exc:
+        # Covers transport failures, 5xx, and task cancellation. In all cases
+        # Binance may have received the request; never submit it again.
+        mark(intent_key, "uncertain")
+        try:
+            found = await get_order_by_client_id(kwargs["symbol"], client_id)
+            if found and found.get("orderId"):
+                mark(intent_key, "acknowledged", str(found["orderId"]))
+                log.warning("Recovered exchange order %s after unknown POST result", client_id)
+                return found
+        except Exception:
+            log.exception("Exchange reconciliation failed: %s", client_id)
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        raise RuntimeError(
+            f"Order {client_id} outcome uncertain; verify exchange state "
+            "before any retry"
+        ) from exc
+
+    if not result or not result.get("orderId"):
+        mark(intent_key, "uncertain")
+        raise RuntimeError(f"Exchange returned no order ID for {client_id}; manual reconciliation required")
+    mark(intent_key, "acknowledged", str(result["orderId"]))
+    return result
 
 
 @retry(
@@ -100,21 +158,31 @@ async def _wait_for_fill(symbol: str, order_id: str) -> dict:
 
 
 async def _wait_for_limit_fill(symbol: str, order_id: str, expiry_hours: int) -> dict | None:
-    expiry   = expiry_hours * 3600
-    deadline = asyncio.get_event_loop().time() + expiry
-    while asyncio.get_event_loop().time() < deadline:
-        order  = await _fetch_order(symbol, order_id)
+    deadline = asyncio.get_running_loop().time() + expiry_hours * 3600
+    while asyncio.get_running_loop().time() < deadline:
+        order = await _fetch_order(symbol, order_id)
         status = order.get("status", "")
+        executed = float(order.get("executedQty") or 0)
         if status == "FILLED":
             return order
+        if executed > 0 or status == "PARTIALLY_FILLED":
+            raise RuntimeError(
+                f"Entry order {order_id} partially executed. Manual position and protective-order reconciliation required"
+            )
         if status in ("CANCELED", "EXPIRED", "REJECTED"):
             return None
         await asyncio.sleep(30)
-    try:
-        await cancel_order(symbol, order_id)
-    except Exception:
-        pass
-    log.info("Limit order expired after %sh: %s", expiry_hours, order_id)
+    # A timeout does NOT prove the exchange order was cancelled. Check the
+    # final state. A partial fill may exist even when cancellation succeeded.
+    await cancel_order(symbol, order_id)
+    final = await _fetch_order(symbol, order_id)
+    if final.get("status") == "FILLED":
+        return final
+    if float(final.get("executedQty") or 0) > 0:
+        raise RuntimeError(f"Entry {order_id} partially filled at expiry; manual reconciliation required")
+    if final.get("status") not in ("CANCELED", "EXPIRED", "REJECTED"):
+        raise RuntimeError(f"Entry {order_id} cancellation unverified; manual reconciliation required")
+    log.info("Limit order cancelled/expired after %sh: %s", expiry_hours, order_id)
     return None
 
 
@@ -148,8 +216,8 @@ def _get_field(trade_id: int, field: str) -> float:
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             return float(getattr(trade, field, 0) or 0) if trade else 0.0
-    except Exception:
-        return 0.0
+    except Exception as exc:
+        raise RuntimeError("Cannot establish open trade count safely") from exc0
 
 
 def _create_pending_trade(
@@ -168,6 +236,16 @@ def _create_pending_trade(
     try:
         from datetime import date as _date
         with get_session() as db:
+            # BEGIN IMMEDIATE obtains the SQLite writer lock before the
+            # duplicate check. This serializes concurrent entry claims.
+            db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+            existing = db.query(TradeModel).filter(
+                TradeModel.coin == coin,
+                TradeModel.state.in_(["pending", "open", "reconciliation_required"]),
+            ).first()
+            if existing:
+                log.warning("Refusing duplicate pending/open %s (trade #%s)", coin, existing.id)
+                return 0
             trade = TradeModel(
                 signal_id        = signal_id,
                 coin             = coin,
@@ -211,12 +289,12 @@ def _activate_trade(
     entry_commission:   float = 0.0,
     entry_role:         str   = "maker",
     sizing_result:      dict  = None,
-) -> None:
+) -> bool:
     try:
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if not trade:
-                return
+                return False
             trade.state              = "open"
             trade.is_active          = True
             trade.entry_price        = entry_price
@@ -245,8 +323,10 @@ def _activate_trade(
                 "Trade activated: id:%s fill:%.6f position_amt:%.6f slip:%.4f%% fee:$%.8f",
                 trade_id, actual_fill_entry, position_amt, slippage_entry_pct, entry_commission,
             )
+        return True
     except Exception as e:
         log.error("_activate_trade error: %s", e)
+        return False
 
 
 def _mark_closed(
@@ -259,12 +339,12 @@ def _mark_closed(
     total_commission:  float = 0.0,
     realized_pnl:      float = 0.0,
     slippage_exit_pct: float = 0.0,
-) -> None:
+) -> bool:
     try:
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if not trade:
-                return
+                return False
             trade.is_active             = False
             trade.state                 = "closed"
             trade.exit_price            = exit_price
@@ -300,11 +380,26 @@ def _mark_closed(
                 "Trade closed: id:%s exit:%.6f pnl:%.4f fee:$%.8f reason:%s",
                 trade_id, exit_price, pnl, total_commission, reason,
             )
+        return True
     except Exception as e:
         log.error("_mark_closed error: %s", e)
+        return False
 
 
-def _cancel_pending_trade(trade_id: int) -> None:
+def _require_trade_reconciliation(trade_id: int, reason: str) -> None:
+    """Never mark an uncertain trade cancelled/closed automatically."""
+    try:
+        with get_session() as db:
+            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if trade and trade.state not in ("closed", "cancelled"):
+                trade.state = "reconciliation_required"
+                trade.notes = (str(trade.notes or "") + "\n" + reason)[-2000:]
+        log.error("Operator reconciliation required for trade #%s: %s", trade_id, reason)
+    except Exception:
+        log.exception("Unable to persist reconciliation flag for #%s", trade_id)
+
+
+def _cancel_pending_trade(trade_id: int) -> bool:
     try:
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
@@ -312,8 +407,10 @@ def _cancel_pending_trade(trade_id: int) -> None:
                 trade.state   = "cancelled"
                 trade.outcome = "cancelled"
                 log.info("Pending trade cancelled: id:%s", trade_id)
+                return True
     except Exception as e:
         log.error("_cancel_pending_trade error: %s", e)
+    return False
 
 
 async def open_position(
@@ -339,8 +436,16 @@ async def open_position(
     sl_side  = "BUY"  if is_short else "SELL"
     tp_side  = "BUY"  if is_short else "SELL"
     trade_id = 0
+    order_submission_started = False
 
     try:
+        from trade.safety import validate_entry, require_precision, ensure_live_opt_in, validate_symbol_notional
+        from trade.order_journal import unresolved
+        ensure_live_opt_in(cfg.TRADING_MODE)
+        validate_entry(direction, entry, sl, tp, stake, leverage, MIN_STAKE_USDT)
+        if unresolved():
+            return {"success": False, "error": "Unresolved exchange order for symbol; operator reconciliation required"}
+
         current = await get_ticker_price(symbol)
         if not current:
             return {"success": False, "error": "Could not fetch price"}
@@ -379,6 +484,7 @@ async def open_position(
         await set_leverage(symbol, leverage)
 
         prec            = await get_symbol_precision(symbol)
+        require_precision(prec)
         qty_step        = prec["step_size"]
         min_qty         = prec["min_qty"]
         tick_size       = prec["tick_size"]
@@ -386,13 +492,20 @@ async def open_position(
 
         total_quantity = _round_step((stake * leverage) / current, qty_step)
 
-        if min_qty > 0 and total_quantity < min_qty:
+        if not math.isfinite(total_quantity) or total_quantity <= 0 or total_quantity < min_qty:
             _cancel_pending_trade(trade_id)
             return {"success": False, "error": f"Quantity {total_quantity} below minimum {min_qty}"}
 
         entry_rounded = _round_tick(entry, tick_size)
         sl_rounded    = _round_tick(sl,    tick_size)
         tp1_rounded   = _round_tick(tp,    tick_size)
+        validate_entry(direction, entry_rounded, sl_rounded, tp1_rounded,
+                       stake, leverage, MIN_STAKE_USDT)
+        try:
+            validate_symbol_notional(entry_rounded, total_quantity, prec.get("min_notional", 0.0))
+        except ValueError:
+            _cancel_pending_trade(trade_id)
+            raise
 
         expiry_hours = _get_session_expiry()
 
@@ -402,7 +515,9 @@ async def open_position(
             stake, leverage, sl_rounded, tp1_rounded, expiry_hours,
         )
 
+        order_submission_started = True
         raw       = await _place_with_retry(
+            intent_key = f"entry:{trade_id}",
             symbol     = symbol,
             side       = side,
             order_type = "LIMIT",
@@ -470,7 +585,10 @@ async def open_position(
     except Exception as e:
         log.error("open_position %s: %s", coin, e, exc_info=True)
         if trade_id:
-            _cancel_pending_trade(trade_id)
+            if order_submission_started:
+                _require_trade_reconciliation(trade_id, "Entry submission or post-submit operation failed")
+            else:
+                _cancel_pending_trade(trade_id)
         return {"success": False, "error": str(e)}
 
 
@@ -502,7 +620,10 @@ async def _monitor_limit_order(
         filled = await _wait_for_limit_fill(symbol, entry_oid, expiry_hours)
 
         if not filled:
-            _cancel_pending_trade(trade_id)
+            if not _cancel_pending_trade(trade_id):
+                raise RuntimeError("Entry cancelled on exchange but DB cancellation failed")
+            from trade.order_journal import mark
+            mark(f"entry:{trade_id}", "finished")
             log.info("Limit order not filled — trade cancelled: %s %s", coin, direction)
             from alerts.telegram import send
             emoji = "📈" if direction == "LONG" else "📉"
@@ -535,6 +656,7 @@ async def _monitor_limit_order(
             try:
                 close_side = "BUY" if direction == "SHORT" else "SELL"
                 await _place_with_retry(
+                    intent_key  = f"emergency:{trade_id}",
                     symbol      = symbol,
                     side        = close_side,
                     order_type  = "MARKET",
@@ -544,20 +666,20 @@ async def _monitor_limit_order(
                 log.info("Emergency close executed for %s", coin)
             except Exception as ce:
                 log.error("Emergency close failed %s: %s", coin, ce)
-            _cancel_pending_trade(trade_id)
+            _require_trade_reconciliation(trade_id, "Stop-loss placement failed; emergency close not verified")
             from alerts.telegram import send
             await send(
-                f"🚨 *SL Failed — Position Closed*\n\n"
+                f"🚨 *SL Failed — Verify Emergency Exit*\n\n"
                 f"`{coin}` {direction}\n"
                 f"Stop loss could not be placed.\n"
-                f"Position closed immediately to protect capital.\n"
+                f"Emergency exit attempted; verify actual position and order status on Binance.\n"
                 f"Entry was: `{fill_price:.6f}`"
             )
             return
 
         tp1_oid = await _place_tp(symbol, tp_side, tp1_rounded, price_precision, tick_size, "TP1")
 
-        _activate_trade(
+        activated = _activate_trade(
             trade_id           = trade_id,
             entry_price        = fill_price,
             position_amt       = signed_qty,
@@ -572,6 +694,10 @@ async def _monitor_limit_order(
             entry_role         = entry_role,
             sizing_result      = sizing_result,
         )
+        if not activated:
+            raise RuntimeError("Entry filled but trade activation failed; reconcile database state")
+        from trade.order_journal import mark
+        mark(f"entry:{trade_id}", "finished")
 
         from alerts.telegram import send
         mode      = "DEMO" if cfg.TRADING_MODE != "live" else "LIVE"
@@ -592,7 +718,15 @@ async def _monitor_limit_order(
     except Exception as e:
         log.error("_monitor_limit_order %s: %s", coin, e, exc_info=True)
         if trade_id:
-            _cancel_pending_trade(trade_id)
+            _require_trade_reconciliation(trade_id, "Entry monitoring failed; check exchange position")
+        try:
+            from alerts.telegram import send
+            await send(
+                f"URGENT: {coin} {direction} entry monitor failed. "
+                "Check current position, open orders and protective stops manually."
+            )
+        except Exception:
+            log.exception("Unable to deliver critical trade reconciliation alert")
 
 
 async def _place_sl(
@@ -672,20 +806,24 @@ async def close_position(
         )
 
         if not position:
-            log.warning("No open position for %s", coin)
-            _mark_closed(trade_id, 0.0, 0.0, reason)
-            return {"success": False, "error": "No open position found"}
+            log.warning("No open position for %s; local record requires reconciliation", coin)
+            _require_trade_reconciliation(trade_id, "Exchange position absent during close")
+            return {"success": False, "error": "No open position found; manual reconciliation required"}
 
-        await _cleanup_orders(symbol)
+        position_amt_live = float(position.get("positionAmt", 0))
+        qty        = abs(position_amt_live)
+        close_side = "BUY" if position_amt_live < 0 else "SELL"
 
-        qty        = abs(float(position.get("positionAmt", 0)))
-        close_side = "BUY" if is_short else "SELL"
-
+        from trade.safety import require_precision
         prec     = await get_symbol_precision(symbol)
+        require_precision(prec)
         qty_step = prec["step_size"]
         qty      = _round_step(qty, qty_step)
+        if qty <= 0:
+            raise RuntimeError("Cannot construct valid close quantity; manual exchange action required")
 
         raw        = await _place_with_retry(
+            intent_key  = f"close:{trade_id}",
             symbol      = symbol,
             side        = close_side,
             order_type  = "MARKET",
@@ -693,6 +831,7 @@ async def close_position(
             reduce_only = True,
         )
         filled     = await _wait_for_fill(symbol, raw["orderId"])
+        await _cleanup_orders(symbol)
         close_oid  = str(filled.get("orderId", ""))
         exit_price = float(filled.get("avgPrice") or filled.get("price") or 0)
 
@@ -718,7 +857,7 @@ async def close_position(
             )
         )
 
-        _mark_closed(
+        closed = _mark_closed(
             trade_id         = trade_id,
             exit_price       = exit_price,
             pnl              = net_pnl,
@@ -728,6 +867,10 @@ async def close_position(
             total_commission = total_fee,
             realized_pnl     = realized_pnl,
         )
+        if not closed:
+            raise RuntimeError("Exchange close filled but local trade closure failed; manual reconciliation required")
+        from trade.order_journal import mark
+        mark(f"close:{trade_id}", "finished")
 
         try:
             from ml.outcome_recorder import record
@@ -750,6 +893,7 @@ async def close_position(
         return {"success": True, "exit_price": exit_price, "pnl": net_pnl}
 
     except Exception as e:
+        _require_trade_reconciliation(trade_id, "Close failed or outcome uncertain")
         log.error("close_position %s: %s", coin, e, exc_info=True)
         return {"success": False, "error": str(e)}
 
@@ -774,8 +918,9 @@ def has_open_trade(coin: str) -> bool:
                 TradeModel.coin      == coin,
                 TradeModel.is_active == True,
             ).first() is not None
-    except Exception:
-        return False
+    except Exception as exc:
+        log.critical("Local position lookup failed for %s; blocking entry: %s", coin, exc)
+        return True  # Never interpret unavailable risk state as no position.
 
 
 async def has_open_trade_or_position(coin: str) -> bool:
@@ -788,8 +933,9 @@ async def has_open_trade_or_position(coin: str) -> bool:
             p.get("symbol") == symbol and float(p.get("positionAmt", 0)) != 0
             for p in positions
         )
-    except Exception:
-        return False
+    except Exception as exc:
+        log.critical("Exchange position lookup failed for %s; blocking entry: %s", coin, exc)
+        return True
 
 
 def get_open_trade_count() -> int:

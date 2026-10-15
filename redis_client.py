@@ -22,8 +22,8 @@ def get_redis() -> redis_lib.Redis | None:
         )
         client.ping()
         _redis_client = client
-        log.info(f"Redis connected: {cfg.REDIS_URL}")
+        log.info("Redis connection established")
         return _redis_client
     except Exception as e:
-        log.error(f"Redis connection failed: {e}")
+        log.error("Redis connection failed: %s", type(e).__name__)
         return None

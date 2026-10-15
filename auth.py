@@ -367,16 +367,9 @@ def verify_api_key(key: str) -> bool:
 
 
 def is_authenticated(request) -> bool:
-    api_key = request.headers.get("X-API-Key", "")
-    if api_key and verify_api_key(api_key):
-        return True
-    token = request.cookies.get("se_token", "")
-    if token and verify_jwt(token):
-        return True
-    user = get_oauth_user_from_request(request)
-    if user:
-        return True
-    return False
+    # Import lazily: saas.middleware itself depends on this module.
+    from saas.middleware import get_current_user
+    return get_current_user(request) is not None
 
 
 def get_user_tier(request) -> str:

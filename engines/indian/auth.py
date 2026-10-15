@@ -1,6 +1,8 @@
 import logging
 import time
 import json
+import threading
+from engines.indian import quota
 import pyotp
 from config import cfg
 
@@ -9,6 +11,7 @@ log = logging.getLogger(__name__)
 _api        = None
 _session_at = 0.0
 _SESSION_TTL = 20 * 3600
+_auth_lock = threading.RLock()
 
 _REDIS_SESSION_KEY = "indian:session:token"
 _REDIS_SESSION_AT  = "indian:session:at"
@@ -73,6 +76,8 @@ def _login() -> bool:
             log.error("ANGELONE_TOTP_SECRET not set in .env")
             return False
 
+        # Shared account rate limit is reserved before generating a login.
+        quota.admit('login')
         totp_code = pyotp.TOTP(cfg.ANGELONE_TOTP_SECRET).now()
         api       = SmartConnect(api_key=cfg.ANGELONE_API_KEY)
         data      = api.generateSession(
@@ -81,8 +86,11 @@ def _login() -> bool:
             totp_code,
         )
 
-        if not data.get("status"):
-            log.error("AngelOne login failed: %s", data.get("message", "unknown"))
+        if not isinstance(data, dict) or not data.get("status"):
+            message = data.get("message", "") if isinstance(data, dict) else ""
+            if any(x in str(message).lower() for x in ("rate limit", "exceeding access rate", "too many requests", "ab1021")):
+                quota.trip_circuit('login')
+            log.error("AngelOne login rejected by broker")
             return False
 
         _api        = api
@@ -93,60 +101,40 @@ def _login() -> bool:
         log.info("AngelOne login successful")
         return True
 
+    except quota.RateLimitBlocked as exc:
+        log.warning('Angel One login deferred: %s', exc)
+        return False
     except Exception as e:
-        log.error("AngelOne login error: %s", e)
+        if any(x in str(e).lower() for x in ("rate limit", "exceeding access rate", "too many requests", "ab1021")):
+            quota.trip_circuit('login')
+        # Never log exceptions containing request headers/credentials.
+        log.error("AngelOne login error: %s", type(e).__name__)
         return False
 
 
 def get_api():
+    """At most one login attempt per call, serialized within this process."""
     global _api, _session_at
-
-    if _api is not None:
-        age = time.time() - _session_at
-        if age < _SESSION_TTL:
+    with _auth_lock:
+        if _api is not None and time.time() - _session_at < _SESSION_TTL:
             return _api
-        log.info("AngelOne session expired in memory — re-logging in")
-
-    if _api is None and _session_at == 0.0:
-        if _load_session_from_redis():
-            log.info("Attempting to restore AngelOne session from Redis")
-            success = _login()
-            if success:
-                return _api
-
-    success = _login()
-    if success:
-        return _api
-
-    log.error("AngelOne get_api failed — all login attempts exhausted")
-    return None
+        # A Redis timestamp is NOT a portable SmartConnect authenticated session.
+        # Never make a second login attempt after a failed re-login.
+        return _api if _login() else None
 
 
 def refresh_session():
-    global _api, _session_at
-    log.info("Forcing AngelOne session refresh")
-    _api        = None
-    _session_at = 0.0
-
-    try:
-        r = _get_redis()
-        if r:
-            r.delete(_REDIS_SESSION_KEY)
-            r.delete(_REDIS_SESSION_AT)
-    except Exception:
-        pass
-
-    success = _login()
-    if success:
-        return _api
-    return None
+    """Replace the session only after the new login is confirmed."""
+    with _auth_lock:
+        if _login():
+            return _api
+        return None
 
 
 async def init_indian_session() -> bool:
-    if _load_session_from_redis():
-        log.info("Found existing session in Redis — attempting reuse")
-
-    success = _login()
+    # Timestamp-only data in Redis cannot restore a SmartConnect token.
+    with _auth_lock:
+        success = _login()
     if success:
         log.info("AngelOne session initialized")
         return True

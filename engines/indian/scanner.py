@@ -42,9 +42,14 @@ def setup_orb() -> dict:
 
     results = {}
     for i, name in enumerate(cfg.INDIAN_INSTRUMENTS):
+        old = get_orb_levels(name)
+        if old and old.get('date') == _today_ist():
+            results[name] = old
+            continue
         if i > 0:
-            log.info("Waiting 30s before fetching next instrument ORB...")
-            time.sleep(30)
+            # Historical API local pace: one request at least every five seconds.
+            # The admission controller (Redis) is still authoritative.
+            time.sleep(5.3)
 
         inst = get_instrument(name)
         if not inst:
@@ -86,18 +91,49 @@ def setup_orb() -> dict:
 
 
 def get_orb_levels(name: str) -> dict | None:
-    if name in _orb_levels:
-        return _orb_levels[name]
+    """Never use yesterday's cached ORB in today's scanning session."""
+    entry = _orb_levels.get(name)
+    if entry and entry.get('date') == _today_ist():
+        return entry
     try:
         from redis_client import get_redis
-        r = get_redis()
-        if r:
-            raw = r.get(f"indian:orb:{name}")
+        redis = get_redis()
+        if redis:
+            raw = redis.get(f'indian:orb:{name}')
             if raw:
-                return json.loads(raw)
+                entry = json.loads(raw)
+                if entry.get('date') == _today_ist():
+                    return entry
     except Exception:
         pass
     return None
+
+
+def _signal_claim_key(name: str) -> str:
+    return f'indian:signal:claim:{_today_ist()}:{name}'
+
+
+def _claim_signal(name: str) -> bool:
+    try:
+        from redis_client import get_redis
+        redis = get_redis()
+        if not redis:
+            log.warning('Indian signal deduplication unavailable; skipping alert')
+            return False
+        return bool(redis.set(_signal_claim_key(name), 'reserved', ex=172800, nx=True))
+    except Exception as exc:
+        log.error('Indian signal deduplication failed: %s', type(exc).__name__)
+        return False
+
+
+def _release_signal_claim(name: str) -> None:
+    try:
+        from redis_client import get_redis
+        redis = get_redis()
+        if redis:
+            redis.delete(_signal_claim_key(name))
+    except Exception:
+        log.error('Could not release failed Indian signal claim; manual review needed')
 
 
 def _get_pre_range(token: str) -> float:
@@ -140,7 +176,7 @@ async def scan_all() -> list:
 
         price = get_ltp_from_redis(inst["token"])
         if not price:
-            ltp_data = get_ltp_live(inst["token"])
+            ltp_data = get_ltp_live(inst["token"], tradingsymbol=inst["symbol"])
             price    = ltp_data["ltp"] if ltp_data else None
         if not price:
             log.warning("Could not get LTP for %s", name)
@@ -165,9 +201,15 @@ async def scan_all() -> list:
             log.debug("%s: no signal — %s", name, signal.reason)
             continue
 
-        _signals_today[name] = signal
+        # Atomic cross-worker reservation survives restarts (Redis AOF).
+        # On uncertain Redis state, refuse to duplicate a signal.
+        if not _claim_signal(name):
+            continue
         db_id = _save_signal(signal)
-
+        if not db_id:
+            _release_signal_claim(name)
+            continue
+        _signals_today[name] = signal
         if db_id:
             await _send_alert(signal, db_id)
             results.append(signal)

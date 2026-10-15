@@ -8,8 +8,8 @@ router = APIRouter()
 
 
 def _auth(request: Request) -> None:
-    if not is_authenticated(request):
-        raise HTTPException(401, "Unauthorized")
+    from saas.security import require_admin_access
+    require_admin_access(request)
 
 
 @router.get("/engine/health")
@@ -188,7 +188,8 @@ async def engine_filter_analysis(request: Request):
 
 @router.post("/engine/rejections/reset")
 async def engine_rejections_reset(request: Request):
-    _auth(request)
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from auth import verify_totp
         body = await request.json()

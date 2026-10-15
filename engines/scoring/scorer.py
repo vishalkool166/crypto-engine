@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -23,6 +24,12 @@ def score(
     direction: str,
     regime:    str,
 ) -> ScoreResult:
+    if direction not in ("LONG", "SHORT") or not all(
+        isinstance(v, (int, float)) and math.isfinite(v) for v in (adx, rsi, vol_ratio)
+    ) or adx < 0 or not 0 <= rsi <= 100 or vol_ratio < 0:
+        return ScoreResult(total=0.0, grade="F", adx_pts=0.0,
+                           rsi_pts=0.0, vol_pts=0.0,
+                           direction=direction, regime=regime)
     adx_pts = _adx_score(adx)
     rsi_pts = _rsi_score(rsi, direction)
     vol_pts = _vol_score(vol_ratio)
@@ -91,9 +98,6 @@ def _grade(total: float) -> str:
 
 
 def get_session() -> str:
-    hour = datetime.now(timezone.utc).hour
-    if 8  <= hour < 13: return "London"
-    if 13 <= hour < 17: return "London/NY Overlap"
-    if 17 <= hour < 21: return "New York"
-    if 0  <= hour < 8:  return "Asia"
-    return "Off Hours"
+    """Compatibility wrapper around the shared UTC session policy."""
+    from engines.core.sessions import session_at
+    return session_at(datetime.now(timezone.utc))

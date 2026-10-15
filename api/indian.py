@@ -181,10 +181,12 @@ async def indian_performance(request: Request):
 
 @router.post("/indian/orb/setup")
 async def indian_orb_setup(request: Request):
-    _auth(request)
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from engines.indian.scanner import setup_orb
-        result = setup_orb()
+        import asyncio
+        result = await asyncio.to_thread(setup_orb)
         return JSONResponse(content={"success": True, "orb": result})
     except Exception as e:
         log.error("indian_orb_setup error: %s", e)
@@ -193,7 +195,8 @@ async def indian_orb_setup(request: Request):
 
 @router.post("/indian/scan")
 async def indian_scan_now(request: Request):
-    _auth(request)
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from engines.indian.scanner import scan_all
         signals = await scan_all()
@@ -208,7 +211,8 @@ async def indian_scan_now(request: Request):
 
 @router.post("/indian/refresh")
 async def indian_refresh(request: Request):
-    _auth(request)
+    from saas.security import require_admin_access
+    require_admin_access(request)
     try:
         from engines.indian.data import refresh_indian_data, _is_rate_limited
         from engines.indian.instruments import get_instruments
@@ -233,3 +237,11 @@ async def indian_refresh(request: Request):
     except Exception as e:
         log.error("indian_refresh error: %s", e)
         raise HTTPException(500, str(e))
+
+@router.get("/indian/quota")
+async def indian_quota_status(request: Request):
+    """Admin-only diagnostic; no client codes, account secrets or tokens."""
+    from saas.security import require_admin_access
+    require_admin_access(request)
+    from engines.indian.quota import status
+    return JSONResponse(content=status())

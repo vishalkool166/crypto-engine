@@ -491,14 +491,14 @@ def _bootstrap_secrets() -> None:
         secret = pyotp.random_base32()
         _ensure("TOTP_SECRET", secret)
         cfg.TOTP_SECRET = secret
-        log.info("[FIRST RUN] TOTP_SECRET generated: %s", secret)
+        log.info("[FIRST RUN] TOTP_SECRET generated (value redacted)")
         changed = True
 
     if not os.getenv("DASHBOARD_API_KEY"):
         key = secrets.token_hex(32)
         _ensure("DASHBOARD_API_KEY", key)
         cfg.DASHBOARD_API_KEY = key
-        log.info("[FIRST RUN] DASHBOARD_API_KEY generated: %s", key)
+        log.info("[FIRST RUN] DASHBOARD_API_KEY generated (value redacted)")
         changed = True
 
     if not os.getenv("WEBHOOK_SECRET"):

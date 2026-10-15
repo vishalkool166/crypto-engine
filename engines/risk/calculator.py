@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass
 from typing import Optional
 from config import cfg, get_coin_config
@@ -34,6 +35,12 @@ def calculate(
     rr1:         float = None,
     rr2:         float = None,
 ) -> RiskResult:
+    # Never let NaN, infinity or bad directional parameters reach a broker.
+    if direction not in ("LONG", "SHORT"):
+        return _invalid("invalid_direction")
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+               for value in (entry, swing_level, atr)):
+        return _invalid("invalid_price_atr_or_swing")
     is_long = direction == "LONG"
     buffer  = atr * 0.5
 
@@ -44,6 +51,9 @@ def calculate(
         rr1 = tp_mult
     if rr2 is None:
         rr2 = tp_mult * 1.5
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+               for value in (rr1, rr2, tp_mult)):
+        return _invalid("invalid_reward_multiple")
 
     if is_long:
         sl        = round(swing_level - buffer, 6)
@@ -52,6 +62,8 @@ def calculate(
         sl        = round(swing_level + buffer, 6)
         sl_reason = f"above_swing_high:{swing_level:.4f}"
 
+    if not math.isfinite(sl) or sl <= 0:
+        return _invalid("invalid_stop_price")
     if is_long and sl >= entry:
         return _invalid("sl_above_entry")
     if not is_long and sl <= entry:
@@ -72,6 +84,8 @@ def calculate(
         tp1 = round(entry - sl_dist * rr1, 6)
         tp2 = round(entry - sl_dist * rr2, 6)
 
+    if not all(math.isfinite(p) and p > 0 for p in (tp1, tp2)):
+        return _invalid("invalid_target_price")
     actual_rr1 = abs(tp1 - entry) / sl_dist if sl_dist > 0 else 0.0
 
     min_rr = coin_cfg.get("tp", HE.get("tp1_min_rr", 1.5))

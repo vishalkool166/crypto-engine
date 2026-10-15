@@ -16,8 +16,9 @@ def build_report(
     if not trades:
         return {"error": "No trades to report"}
 
-    wins     = [t for t in trades if t["outcome"] == "win"]
-    losses   = [t for t in trades if t["outcome"] == "loss"]
+    # A target-hit label is not equivalent to a winning trade after costs.
+    wins     = [t for t in trades if t["pnl"] > 0]
+    losses   = [t for t in trades if t["pnl"] < 0]
     timeouts = [t for t in trades if t["outcome"] == "timeout"]
 
     total    = len(trades)
@@ -29,13 +30,21 @@ def build_report(
     worst_trade = round(min(pnls), 4)
     avg_trade   = round(sum(pnls) / len(pnls), 4)
 
-    max_dd = round(max((t["drawdown"] for t in trades), default=0), 2)
+    equity_path = capital
+    peak_equity = capital
+    worst_dd = 0.0
+    for trade in trades:
+        equity_path += trade['pnl']
+        peak_equity = max(peak_equity, equity_path)
+        if peak_equity > 0:
+            worst_dd = max(worst_dd, (peak_equity - equity_path) / peak_equity * 100)
+    max_dd = round(worst_dd, 2)
 
     aplus  = [t for t in trades if t["grade"] == "A+"]
     a_only = [t for t in trades if t["grade"] == "A"]
 
-    aplus_wins = [t for t in aplus  if t["outcome"] == "win"]
-    a_wins     = [t for t in a_only if t["outcome"] == "win"]
+    aplus_wins = [t for t in aplus if t['pnl'] > 0]
+    a_wins = [t for t in a_only if t['pnl'] > 0]
 
     period_start = trades[0]["date"]  if trades else "--"
     period_end   = trades[-1]["date"] if trades else "--"
@@ -45,13 +54,10 @@ def build_report(
 
     gross_profit  = sum(p for p in pnls if p > 0)
     gross_loss    = abs(sum(p for p in pnls if p < 0))
-    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else 0
+    profit_factor = round(gross_profit / gross_loss, 2) if gross_loss > 0 else None
 
-    expectancy = round(
-        (win_rate / 100 * avg_trade) -
-        ((1 - win_rate / 100) * abs(worst_trade)),
-        4
-    )
+    # Expectancy is the observed mean *net* P&L per completed trade.
+    expectancy = avg_trade
 
     tp1_trades  = [t for t in trades if t.get("tp1_hit")]
     tp2_trades  = [t for t in trades if t.get("tp2_hit")]
@@ -130,9 +136,9 @@ def _breakdown_by_field(trades: list, field: str) -> dict:
         if val not in breakdown:
             breakdown[val] = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
         breakdown[val]["trades"] += 1
-        if t["outcome"] == "win":
+        if t['pnl'] > 0:
             breakdown[val]["wins"] += 1
-        elif t["outcome"] == "loss":
+        elif t['pnl'] < 0:
             breakdown[val]["losses"] += 1
         breakdown[val]["pnl"] = round(breakdown[val]["pnl"] + t["pnl"], 4)
 
@@ -148,7 +154,7 @@ def _max_consecutive(trades: list, outcome: str) -> int:
     max_c = 0
     cur_c = 0
     for t in trades:
-        if t["outcome"] == outcome:
+        if (t['pnl'] > 0 if outcome == 'win' else t['pnl'] < 0):
             cur_c += 1
             max_c = max(max_c, cur_c)
         else:
