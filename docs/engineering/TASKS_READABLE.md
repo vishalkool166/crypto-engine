@@ -1,0 +1,145 @@
+# Signal Engine engineering task ledger — 141 stable IDs
+
+Authoritative task acceptance and status: `MASTER_TASK_LEDGER.csv`. ADR-002 overrides old directory and CI assumptions.
+
+- **SE-00-001** [VERIFIED] Freeze and checksum the handoff
+- **SE-00-002** [PLANNED] Collect live-vs-source deployment facts
+- **SE-00-003** [IMPLEMENTED_UNVERIFIED] Map all entry points and call paths
+- **SE-00-004** [PLANNED] Inventory state and backup boundaries
+- **SE-00-005** [PLANNED] Characterize current signal outcomes
+- **SE-00-006** [PLANNED] Create API and permissions inventory
+- **SE-00-007** [PLANNED] Record unresolved architectural choices
+- **SE-00-008** [VERIFIED] Set evidence ledger process
+- **SE-00-009** [IMPLEMENTED_UNVERIFIED] Capture source-package security baseline
+- **SE-00-010** [IMPLEMENTED_UNVERIFIED] Define functional parity matrix
+- **SE-01-001** [IMPLEMENTED_UNVERIFIED] Decide and create private monorepo layout
+- **SE-01-002** [IMPLEMENTED_UNVERIFIED] Preserve and document existing root backend layout
+- **SE-01-003** [IMPLEMENTED_UNVERIFIED] Bring editable React source into same repository
+- **SE-01-004** [IMPLEMENTED_UNVERIFIED] Repair npm lockfile provenance
+- **SE-01-005** [PLANNED] Constrain Python dependency resolution
+- **SE-01-006** [IMPLEMENTED_UNVERIFIED] Create secret-safe config templates
+- **SE-01-007** [IMPLEMENTED_UNVERIFIED] Harden .gitignore and Docker context
+- **SE-01-008** [IMPLEMENTED_UNVERIFIED] Simplify development commands
+- **SE-01-009** [IMPLEMENTED_UNVERIFIED] Establish licensing and provenance decision
+- **SE-01-010** [IMPLEMENTED_UNVERIFIED] Document source-of-truth frontend build pipeline
+- **SE-01-011** [IMPLEMENTED_UNVERIFIED] Add CODEOWNERS/PR templates and protected merge policy
+- **SE-01-012** [PLANNED] Produce reproducible release artifact and SBOM
+- **SE-02-001** [PLANNED] Map FastAPI startup side effects and lifecycle
+- **SE-02-002** [PLANNED] Separate API handlers from services and brokers
+- **SE-02-003** [PLANNED] Normalize request/response validation
+- **SE-02-004** [PLANNED] Publish versioned API schema and client contracts
+- **SE-02-005** [PLANNED] Inventory and gate mutating GET routes
+- **SE-02-006** [IMPLEMENTED_UNVERIFIED] Normalize pagination query/result contract
+- **SE-02-007** [PLANNED] Fix WebSocket events and reconnection model
+- **SE-02-008** [PLANNED] Audit caching and stale data semantics
+- **SE-02-009** [PLANNED] Keep job scheduling single-leader
+- **SE-02-010** [PLANNED] Standardize exception handling and logging
+- **SE-02-011** [PLANNED] Enforce config schema and readiness checks
+- **SE-03-001** [PLANNED] Produce formal threat and privilege model
+- **SE-03-002** [PLANNED] Inventory multiple auth paths and identity linking
+- **SE-03-003** [PLANNED] Audit admin and tier enforcement per endpoint
+- **SE-03-004** [PLANNED] Review login, reset, lockout and recovery design
+- **SE-03-005** [PLANNED] Secure cookie, CSRF, CORS and reverse-proxy trust
+- **SE-03-006** [PLANNED] Review OAuth state, PKCE/nonce and callback defense
+- **SE-03-007** [PLANNED] Minimize secrets and rotate compromised credentials
+- **SE-03-008** [PLANNED] Define and implement email verification lifecycle
+- **SE-03-009** [IMPLEMENTED_UNVERIFIED] Implement Resend transactional delivery adapter
+- **SE-03-010** [PLANNED] Add password-recovery and security-change flows
+- **SE-03-011** [PLANNED] Test provider failures and abuse controls
+- **SE-03-012** [IMPLEMENTED_UNVERIFIED] Restrict email scope permanently
+- **SE-03-013** [PLANNED] Audit sensitive API keys and session controls
+- **SE-03-014** [PLANNED] Protect user data and audit retention
+- **SE-03-015** [PLANNED] Check dependencies, HTTP headers, and reflected error paths
+- **SE-04-001** [PLANNED] Freeze canonical indicator and grading outputs
+- **SE-04-002** [PLANNED] Test fail-closed no-new-exposure invariants
+- **SE-04-003** [PLANNED] Prove order intent reservation and idempotency
+- **SE-04-004** [PLANNED] Validate partial fill, cancel and protection handling
+- **SE-04-005** [PLANNED] Audit portfolio budgets and sticky circuit breakers
+- **SE-04-006** [PLANNED] Gate all execution-changing endpoints
+- **SE-04-007** [PLANNED] Reconcile account snapshot and closed trades
+- **SE-04-008** [PLANNED] Verify Binance metadata and rate/precision rules
+- **SE-04-009** [PLANNED] Design kill-switch and safe operator reset
+- **SE-04-010** [PLANNED] Enforce paper/demo-only release flag
+- **SE-04-011** [PLANNED] Version and protect execution-state schema
+- **SE-04-012** [PLANNED] Audit Telegram trading commands and controls
+- **SE-05-001** [PLANNED] Document Indian-market scope and execution policy
+- **SE-05-002** [PLANNED] Verify real Redis Lua rate governor
+- **SE-05-003** [PLANNED] Test endpoint-specific cooldown
+- **SE-05-004** [PLANNED] Verify static-IP and broker-policy deployment
+- **SE-05-005** [PLANNED] Validate market time and holiday boundaries
+- **SE-05-006** [PLANNED] Test stale-candle and LTP rejection
+- **SE-05-007** [PLANNED] Test startup, login and token refresh failure
+- **SE-05-008** [PLANNED] Protect manual refresh and quota diagnostics
+- **SE-05-009** [PLANNED] Prove cross-market isolation
+- **SE-06-001** [PLANNED] Inventory tables and schema evolution
+- **SE-06-002** [PLANNED] Implement versioned reversible migrations
+- **SE-06-003** [PLANNED] Validate transaction boundaries and concurrency
+- **SE-06-004** [IMPLEMENTED_UNVERIFIED] Backup/restore DB plus operational state
+- **SE-06-005** [PLANNED] Design secure retention and pruning
+- **SE-06-006** [PLANNED] Freeze immutable backtest datasets and manifests
+- **SE-06-007** [PLANNED] Run 18-symbol historical out-of-sample evaluation
+- **SE-06-008** [PLANNED] Test simulation realism and live/backtest parity
+- **SE-06-009** [PLANNED] Audit ML training, feature freshness and no leakage
+- **SE-06-010** [PLANNED] Bound AI/RAG resources and prompt-data boundary
+- **SE-06-011** [PLANNED] Decide fate of legacy strategy implementation
+- **SE-06-012** [PLANNED] Distinguish verified exchange and simulated P&L
+- **SE-07-001** [PLANNED] Create screen and action inventory
+- **SE-07-002** [IMPLEMENTED_UNVERIFIED] Specify navigation IA for users vs administrators
+- **SE-07-003** [IMPLEMENTED_UNVERIFIED] Define visual identity and tokens
+- **SE-07-004** [IMPLEMENTED_UNVERIFIED] Design Overview prioritization
+- **SE-07-005** [PLANNED] Design signal investigation workflow
+- **SE-07-006** [PLANNED] Design open positions and history separately
+- **SE-07-007** [PLANNED] Design performance and research views
+- **SE-07-008** [PLANNED] Design administrative workspace
+- **SE-07-009** [PLANNED] Define responsive breakpoints and mobile patterns
+- **SE-07-010** [PLANNED] Create high-risk interaction prototypes
+- **SE-07-011** [PLANNED] Accessibility and reduced-motion rules
+- **SE-07-012** [PLANNED] Approve design reference screenshots
+- **SE-08-001** [IMPLEMENTED_UNVERIFIED] Build app shell and shared layouts
+- **SE-08-002** [IMPLEMENTED_UNVERIFIED] Build coherent table, filters and pagination primitives
+- **SE-08-003** [IMPLEMENTED_UNVERIFIED] Fix signal-history filter wiring
+- **SE-08-004** [IMPLEMENTED_UNVERIFIED] Fix trade-history pagination and cache keys
+- **SE-08-005** [IMPLEMENTED_UNVERIFIED] Rebuild Overview
+- **SE-08-006** [PLANNED] Rebuild Signals and coin detail
+- **SE-08-007** [PLANNED] Rebuild Trades and trade detail
+- **SE-08-008** [PLANNED] Rebuild Performance with verified data labels
+- **SE-08-009** [PLANNED] Rebuild India/admin surfaces
+- **SE-08-010** [PLANNED] Build Account & Security UX
+- **SE-08-011** [PLANNED] Test WebSocket, stale, offline and empty states
+- **SE-08-012** [PLANNED] Preserve PWA and demo isolation
+- **SE-08-013** [PLANNED] Keyboard, screen reader, responsive browser audit
+- **SE-08-014** [IMPLEMENTED_UNVERIFIED] Add frontend component and E2E test harness
+- **SE-08-015** [PLANNED] Budget frontend performance and bundle output
+- **SE-09-001** [PLANNED] Freeze target deployment topology
+- **SE-09-002** [IMPLEMENTED_UNVERIFIED] Build reproducible dev/staging Docker stack
+- **SE-09-003** [PLANNED] Secure TLS, reverse proxy and inbound ports
+- **SE-09-004** [PLANNED] Separate readiness/liveness/engine health
+- **SE-09-005** [PLANNED] Build structured logging and correlation IDs
+- **SE-09-006** [PLANNED] Metrics and operator diagnostics
+- **SE-09-007** [IMPLEMENTED_UNVERIFIED] Write controlled start/stop/restart runbooks
+- **SE-09-008** [PLANNED] Test disk-full/Redis-down/broker-down scenarios
+- **SE-09-009** [PLANNED] Design consistent backup schedule and offsite retention
+- **SE-09-010** [PLANNED] Define rollout and rollback plan
+- **SE-09-011** [PLANNED] Create cost and capacity operating envelope
+- **SE-10-001** [IMPLEMENTED_UNVERIFIED] Automate existing 139-test baseline and compile
+- **SE-10-002** [IMPLEMENTED_UNVERIFIED] Make frontend lint/type/build reproducible
+- **SE-10-003** [PLANNED] Add HTTP/WS API contract test suite
+- **SE-10-004** [PLANNED] Add real Redis and DB integration suite
+- **SE-10-005** [PLANNED] Add safety and failure injection suite
+- **SE-10-006** [PLANNED] Add cross-role frontend E2E journeys
+- **SE-10-007** [PLANNED] Create visual regression baseline
+- **SE-10-008** [IMPLEMENTED_UNVERIFIED] Add dependency/security scanning and secret detection
+- **SE-10-009** [IMPLEMENTED_UNVERIFIED] Maintain manual quality gates and artifact checks without GitHub Actions
+- **SE-10-010** [PLANNED] Test from clean Mac/Linux machine or containers
+- **SE-10-011** [IMPLEMENTED_UNVERIFIED] Record test environment and limitations
+- **SE-11-001** [IMPLEMENTED_UNVERIFIED] Prepare maintainers README and contributor guide
+- **SE-11-002** [IMPLEMENTED_UNVERIFIED] Publish environment/configuration reference
+- **SE-11-003** [PLANNED] Write migration/rollback and incident playbooks
+- **SE-11-004** [IMPLEMENTED_UNVERIFIED] Create versioning/release changelog and evidence pack
+- **SE-11-005** [PLANNED] Validate paper-mode staging deployment end-to-end
+- **SE-11-006** [PLANNED] Perform independent security-review gate
+- **SE-11-007** [PLANNED] Conduct independent strategy evaluation gate
+- **SE-11-008** [PLANNED] Run exchange testnet trading-drill gate
+- **SE-11-009** [PLANNED] Verify cutover against running AWS instance
+- **SE-11-010** [IMPLEMENTED_UNVERIFIED] Publish repository readiness report card
+- **SE-11-011** [PLANNED] Keep LIVE approval as separate independent gate

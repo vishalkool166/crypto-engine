@@ -1,3 +1,5 @@
+> **2026-10-19 project deployment update:** This is a source package; `docs/engineering/RELEASE_EVIDENCE.md` and ADR-002 govern current engineering status. AWS backend remains root, editable React lives in `dashboard/`, GitHub Actions are not used.
+
 # Engineering status and verification ledger
 
 **Baseline:** consolidated source from the P0/P1 continuation; includes earlier security, order-intent journal, Angel One quota changes and trading-safety fixes. **This is not an approved live-trading release.**

@@ -616,13 +616,35 @@ def get_performance_by_coin() -> list:
         return []
 
 
-def get_trade_history(limit: int = 20, offset: int = 0) -> list:
+def _history_query(db, *, outcome=None, grade=None, coin=None, closed_only=False):
+    """Build a single filtered query for both total-count and paged records."""
+    q = db.query(TradeModel).filter(TradeModel.outcome != "cancelled")
+    if closed_only:
+        q = q.filter(TradeModel.is_active.is_(False))
+    if outcome and outcome != 'all':
+        q = q.filter(TradeModel.outcome == outcome)
+    if grade and grade != 'all':
+        q = q.filter(TradeModel.grade == grade)
+    if coin:
+        q = q.filter(TradeModel.coin.ilike('%' + coin.replace('%', r'\%').replace('_', r'\_') + '%', escape='\\'))
+    return q
+
+
+def count_trade_history(*, outcome=None, grade=None, coin=None, closed_only=False) -> int:
+    """Propagates errors instead of misleading the API with a zero total."""
+    with get_session() as db:
+        return _history_query(db, outcome=outcome, grade=grade, coin=coin,
+                              closed_only=closed_only).count()
+
+
+def get_trade_history(limit: int = 20, offset: int = 0, *,
+                      outcome: str | None = None, grade: str | None = None,
+                      coin: str | None = None, closed_only: bool = False) -> list:
     try:
         with get_session() as db:
-            trades = db.query(TradeModel).filter(
-                TradeModel.outcome != "cancelled"
-            ).order_by(
-                TradeModel.opened_at.desc()
+            q = _history_query(db, outcome=outcome, grade=grade, coin=coin, closed_only=closed_only)
+            trades = q.order_by(
+                TradeModel.opened_at.desc(), TradeModel.id.desc()
             ).offset(offset).limit(limit).all()
         return [{
             "trade_id":               t.id,

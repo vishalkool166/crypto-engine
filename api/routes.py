@@ -308,6 +308,60 @@ async def get_signals(
         raise HTTPException(500, str(e))
 
 
+@router.get("/signals/page")
+async def get_signals_page(
+    request: Request,
+    limit: int = 20,
+    offset: int = 0,
+    grade: str | None = None,
+    coin: str | None = None,
+    outcome: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Stable filtered history pagination, preserving plan-based visibility."""
+    _auth(request)
+    if not (1 <= limit <= 100 and 0 <= offset <= 1_000_000):
+        raise HTTPException(422, "Invalid pagination")
+    if grade and grade not in ("all", "A+", "A", "B"):
+        raise HTTPException(422, "Invalid grade")
+    if outcome and outcome not in ("all", "win", "loss", "pending"):
+        raise HTTPException(422, "Invalid outcome")
+    if coin and (len(coin) > 24 or not coin.isalnum()):
+        raise HTTPException(422, "Invalid coin")
+    from saas.middleware import get_user_tier
+    from saas.tiers import filter_signal_for_tier, get_signals_limit
+    from config import get_tier_features
+    from datetime import timedelta
+    tier = get_user_tier(request)
+    features = get_tier_features(tier)
+    q = db.query(SignalModel)
+    if grade and grade != 'all':
+        q = q.filter(SignalModel.grade == grade)
+    if outcome and outcome != 'all':
+        q = q.filter(SignalModel.outcome == outcome)
+    if coin:
+        q = q.filter(SignalModel.coin.ilike('%' + coin + '%'))
+    delay = features.get('signal_delay_minutes', 0)
+    if delay:
+        q = q.filter(SignalModel.timestamp <= datetime.now(timezone.utc) - timedelta(minutes=delay))
+    # Never expose an accurate total of records hidden by a plan's historical cap.
+    total = min(q.count(), get_signals_limit(tier))
+    bounded = max(0, min(limit, total - offset))
+    rows = q.order_by(SignalModel.timestamp.desc(), SignalModel.id.desc()).offset(offset).limit(bounded).all() if bounded else []
+    visible = [{
+        "id": item.id, "timestamp": item.timestamp.isoformat() if item.timestamp else None,
+        "coin": item.coin, "direction": item.direction, "grade": item.grade,
+        "score": item.score, "signal_type": item.signal_type,
+        "entry": item.entry, "sl": item.sl, "tp1": item.tp1,
+        "risk_amt": item.risk_amt, "outcome": item.outcome,
+        "exit_price": item.exit_price if features.get('show_full_history', False) else None,
+        "pnl": item.pnl if features.get('show_performance', False) else None,
+        "market": item.market,
+    } for item in rows]
+    return {"items": [filter_signal_for_tier(item, tier) for item in visible],
+            "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/signals/latest")
 async def signals_latest(request: Request):
     _auth(request)

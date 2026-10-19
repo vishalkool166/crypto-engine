@@ -1,66 +1,59 @@
 # Signal Engine V5
 
-A Python-based market-analysis and automated trading research platform with crypto futures, Indian-market signals, risk controls, and a React dashboard.
+Private-source Python trading engine and React dashboard, distributed in a single repository. **Current handoff is v1.0.0-rc1, a source-level release candidate and not production-certified.** **AWS continues to run the original Python backend at the repository root; Cloudflare Pages builds only `dashboard/`.** The owner intentionally does not use GitHub Actions.
 
-**Status: engineering research / not approved for real-money deployment.** Profitability, exchange reconciliation and production operations have not been independently validated. Trading can lose money. See [verification status](docs/STATUS.md) before using any execution code.
+## Layout
 
-## What it does
-
-- Analyze Binance USDⓈ-M futures candles across 1h/4h timeframes with trend, momentum, volatility, and volume scoring.
-- Apply individual research parameters for 18 configured coins, protective risk budgets, execution constraints and order-state journaling.
-- Ingest Angel One SmartAPI Indian-market data with Redis-coordinated quotas and an opening-range signal pipeline.
-- Serve APIs, notifications, research utilities, and a separate React/Vite trading dashboard.
-
-The focus of this repository is **correctness, explainability, failure handling and reproducibility**—not a claimed trading edge. Real capital must remain disabled until the requirements in [Status](docs/STATUS.md) are met.
-
-## Repository map
-
-| Location | Responsibility |
+| Path | Purpose |
 | --- | --- |
-| `agents/`, `engines/` | Primary signal pipeline, indicator analysis, regimes, risk and sizing |
-| `trade/` | Exchange adapters, entry checks, durable order intents and reconciliation |
-| `engines/indian/` | Angel One integration and Indian-market scanning |
-| `backtest/` | Research data acquisition, simulation, per-coin ablation, walk-forward experiments |
-| `data/`, `database.py` | Candle storage, caching and persistence |
-| `api/`, `main.py` | API and service entrypoints |
-| `tests/` | Isolated regression and safety tests |
-| `docs/` | Architecture, research methodology, operations and verification ledger |
+| `main.py`, `config.py`, `scheduler.py`, `auth.py` | Existing backend startup, environment and scheduling; paths preserved |
+| `agents/`, `engines/`, `trade/`, `api/`, `saas/` | Existing Python trading/API implementation; only targeted pagination and security-email changes |
+| `Dockerfile`, `docker-compose.yml` | **Unchanged original AWS deployment contract** |
+| `frontend/` | Existing compiled static fallback served by AWS; kept for backwards compatibility |
+| `dashboard/` | Editable React/TypeScript source; deploy this folder on Cloudflare Pages |
+| `docs/engineering/` | Private engineering blueprint/task ledger, architecture decisions and readiness evidence |
+| `docs/operations/` | Two-host rollout and recovery guidance |
+| `scripts/verify_local.sh` | Explicit local quality checks; no GitHub Actions |
 
-The separately distributed `crypto-engine-frontend-main/` repository holds the editable React/Vite dashboard source. Backend `frontend/` contains static served assets; those files are not a substitute for the React source.
-
-## Quick verification (Python 3.11)
+## Local tests (Python 3.11 target)
 
 ```bash
 python -m pip install -r requirements.txt
-python -m pytest -q tests
-python -m compileall -q -x 'frontend/' .
+bash scripts/verify_local.sh
 ```
 
-For an isolated subset without the full runtime stack, see the CI job in `.github/workflows/`. **Passing unit tests does not authorize live orders.** Default mode should remain paper/demo with `SIGNAL_ENGINE_ALLOW_LIVE_TRADING` unset.
+When npm access is available, `CHECK_FRONTEND=1 bash scripts/verify_local.sh` additionally runs npm clean install, lint, TypeScript checks and production build. Node 22 is recommended for the dashboard. Unit tests do not approve live trading.
 
-### Research (no exchange keys needed)
+## Dashboard local development
 
 ```bash
-python -m backtest.research download --coins ETH,SOL \
-  --start 2024-01-01 --end 2026-10-01 --data-dir research_data
-python -m backtest.per_coin_audit --data-dir research_data --coins ETH,SOL
+cd dashboard
+cp .env.example .env.local
+npm ci
+npm run dev
 ```
 
-Research requires intact, contiguous 1h/4h candles and real funding settlements. See [Research](docs/RESEARCH.md) for constraints and full 18-coin commands. Do not interpret illustrative samples or mocked tests as a profitable strategy.
+Vite proxies API/auth/WebSocket requests to `http://127.0.0.1:8000` for local development unless an override is explicitly supplied. Production Cloudflare builds must set `VITE_API_URL` and `VITE_WS_URL` to the live **AWS HTTPS/WSS** origin; these are public URLs, never secrets.
 
-## Technical documentation
+## Hosting / existing GitHub repo
 
-- [Architecture and active paths](docs/ARCHITECTURE.md)
-- [Research, per-coin tuning and acceptance tests](docs/RESEARCH.md)
-- [Operations, backup and order recovery](docs/OPERATIONS.md)
-- [Exchange/API integration and rate-limit policy](docs/INTEGRATIONS.md)
-- [Engineering status and blockers](docs/STATUS.md)
-- [Engineering decisions](docs/DECISIONS.md)
+Keep **`vishalkool166/crypto-engine`** as your canonical repository and retain its Git history. Cloudflare Pages connects to that Git repository with root `dashboard`, command `npm run build`, output `dist`, and Node 22. AWS stays on its existing root-level Dockerfile and Compose config; the current automatic AWS update mechanism must be identified before merging into production. See [controlled migration playbook](docs/operations/AWS_CLOUDFLARE_ROLLOUT.md).
 
-## Safety, licensing and provenance
+Existing GitHub Actions workflows are intentionally removed. Cloudflare's native Git integration builds frontend commits independently; it does not redeploy your Python engine.
 
-Never commit broker tokens or TOTP secrets. Preserve the existing SQLite data volume and order journal on upgrades; do not replace it with an example database. Full disaster-recovery tests remain pending.
+## Security and release status
 
-Development has involved AI-assisted implementation and review. The repository documents the actual test coverage and remaining limitations rather than implying independent certification. No root `LICENSE` is supplied; use is governed by applicable copyright law until a license is explicitly selected.
+- Existing trade algorithms and live/paper mode controls are not rewritten; **do not enable real capital on the basis of these code changes**.
+- Resend is an **inactive** provider adapter reserved exclusively for account verification/recovery/security emails. Password reset workflows remain unfinished; do **not** activate email without token, cooldown, session revocation and security review.
+- Telegram is the trading alert channel; no trade/market/performance email functionality is implemented.
+- Credentials, live SQLite volumes, Redis data and exchange secrets must never enter Git.
+- Local 161 Python regressions pass with 1 auth-dependent module skipped in the isolated environment. Frontend syntax parses, but npm clean build, AWS deployment, live Redis, browser auth and broker recovery still require external verification. See [readiness report](docs/engineering/RELEASE_EVIDENCE.md).
 
-**Reproducible evidence gate:** After downloading all data and running `backtest.walkforward`, use `python -m backtest.evidence --input research_data/walkforward_results.json`. It refuses to label an incomplete 18-coin study as finished and never enables live execution.
+The historical signal-strategy documentation remains in `docs/`; engineering planning docs are not included in the Cloudflare static build. This repository is private by default. No copyright license is granted by inclusion in this archive.
+
+## Release gates and change safety
+
+- See [v1.0.0 candidate verification](docs/engineering/RELEASE_EVIDENCE.md), [machine-readable gates](docs/engineering/RELEASE_GATES_V1.json), [security policy](SECURITY.md), and [contribution workflow](CONTRIBUTING.md).
+- `scripts/restore_sqlite.py` restores an integrity-checked snapshot into a **new file only**. It must never be aimed at a running production database.
+- A Cloudflare Pages build requires public `VITE_API_URL` (HTTPS) and `VITE_WS_URL` (WSS) at build time; `dashboard/scripts/check-deploy-env.mjs` validates them. Use a same-site custom domain for auth tests.
+- `STRICT_SESSION_ORIGIN_CHECK=false` is an explicit deployment compatibility guard. Enable only after staging confirms cookie-origin compatibility; it is not automatically safe to switch on at an untested EC2 instance.

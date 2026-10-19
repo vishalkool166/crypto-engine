@@ -63,15 +63,28 @@ async def trades_profit(request: Request):
 
 
 @router.get("/trades/history")
-async def trades_history(request: Request, limit: int = 20, offset: int = 0):
+async def trades_history(request: Request, limit: int = 20, offset: int = 0,
+                         outcome: str | None = None, grade: str | None = None,
+                         coin: str | None = None):
     _auth(request)
+    if not 1 <= limit <= 100 or not 0 <= offset <= 1_000_000:
+        raise HTTPException(422, 'Pagination out of range')
+    if outcome and outcome not in ('all', 'win', 'loss', 'timeout', 'expired'):
+        raise HTTPException(422, 'Invalid outcome filter')
+    if grade and grade not in ('all', 'A+', 'A', 'B'):
+        raise HTTPException(422, 'Invalid grade filter')
+    if coin and (len(coin) > 24 or not coin.isalnum()):
+        raise HTTPException(422, 'Invalid coin filter')
     try:
-        from trade.monitor import get_trade_history
-        trades = get_trade_history(limit=limit, offset=offset)
-        return JSONResponse(content={"trades": trades, "trades_count": len(trades)})
+        from trade.monitor import get_trade_history, count_trade_history
+        filters = dict(outcome=outcome, grade=grade, coin=coin, closed_only=True)
+        trades = get_trade_history(limit=limit, offset=offset, **filters)
+        total = count_trade_history(**filters)
+        return JSONResponse(content={"trades": trades, "trades_count": total,
+                                     "limit": limit, "offset": offset})
     except Exception as e:
-        log.error("trades_history error: %s", e)
-        raise HTTPException(500, str(e))
+        log.error("trades_history error: %s", type(e).__name__)
+        raise HTTPException(500, "Trade history unavailable")
 
 
 @router.get("/trades/daily")

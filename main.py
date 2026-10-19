@@ -436,6 +436,21 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def session_origin_guard(request: Request, call_next):
+    # Optional rollout switch: legacy AWS behavior stays unchanged by default.
+    # Enable only after confirming the browser sends Origin and custom-domain
+    # cookies are working. Reject cookie-backed CSRF for unsafe requests.
+    import os as _env
+    if (_env.getenv('STRICT_SESSION_ORIGIN_CHECK', '').lower() == 'true'
+            and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            and (request.cookies.get(cfg.SESSION_COOKIE_NAME) or request.cookies.get('se_token'))):
+        from saas.origin_security import allowed_request_origin
+        if not allowed_request_origin(request.headers.get('origin'), allowed_origins):
+            return JSONResponse(status_code=403, content={'detail': 'Untrusted request origin'})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def cache_headers(request: Request, call_next):
     response = await call_next(request)
     path     = request.url.path
@@ -448,6 +463,11 @@ async def cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         response.headers["Pragma"]        = "no-cache"
         response.headers["Expires"]       = "0"
+    # Authenticated/account endpoints must not be stored by browsers or proxies.
+    # This is deliberately independent of the Cloudflare frontend's cache policy.
+    if path.startswith(('/api/', '/auth/')):
+        response.headers['Cache-Control'] = 'no-store, private'
+        response.headers['Pragma'] = 'no-cache'
     return response
 
 
@@ -544,7 +564,13 @@ async def auth_callback_google(request: Request):
         }
         final_token = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
 
-        response = RedirectResponse(url=f"{cfg.DOMAIN}/")
+        # Preserve the legacy backend redirect unless a separate Pages origin is configured.
+        # FRONTEND_URL is server-controlled configuration, never supplied by a query string.
+        import os as _os
+        dashboard_origin = (_os.environ.get("FRONTEND_URL") or cfg.DOMAIN or "http://localhost:8000").rstrip("/")
+        if not dashboard_origin.startswith(("https://", "http://")):
+            raise HTTPException(500, "Invalid frontend redirect configuration")
+        response = RedirectResponse(url=f"{dashboard_origin}/")
         response.set_cookie(
             key      = cfg.SESSION_COOKIE_NAME,
             value    = final_token,

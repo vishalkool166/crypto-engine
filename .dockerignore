@@ -14,3 +14,11 @@ research_data/
 .pytest_cache/
 .env.*
 *.sqlite*
+
+# React source is deployed independently to Cloudflare Pages.
+dashboard/
+.github/
+docs/
+scripts/
+backups/
+*.bundle

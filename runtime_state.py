@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import logging
 import time
 from threading import Lock
@@ -31,7 +30,7 @@ def load():
         if not os.path.exists(STATE_FILE) and os.path.exists("runtime_state.json"):
             # Backward compatible with pre-migration deployments.
             os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
-            shutil.move("runtime_state.json", STATE_FILE)
+            os.replace("runtime_state.json", STATE_FILE)
         if os.path.exists(STATE_FILE):
             with open(STATE_FILE, "r") as f:
                 loaded = json.load(f)

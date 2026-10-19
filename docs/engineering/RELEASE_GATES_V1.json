@@ -1,0 +1,61 @@
+{
+  "release": "1.0.0-rc1",
+  "date": "2026-10-19",
+  "meaning": "Local engineering candidate, NOT production certification",
+  "repo": "vishalkool166/crypto-engine (existing Git history must be preserved at merge)",
+  "hosts": {
+    "backend": "AWS EC2 existing Python root",
+    "frontend": "Cloudflare Pages dashboard/ root"
+  },
+  "github_actions": "not used or shipped",
+  "release_gates": [
+    {
+      "id": "G-A",
+      "name": "Source/repo contract",
+      "state": "PASS_LOCAL",
+      "evidence": "scripts/check_monorepo_contract.py, scripts/check_task_ledger.py, scripts/check_source_hygiene.py"
+    },
+    {
+      "id": "G-B",
+      "name": "Offline Python regressions",
+      "state": "PASS_WITH_SKIP",
+      "evidence": "161 passed, 1 auth-dependent skipped on Python 3.13 runner; Python 3.11 runtime not tested"
+    },
+    {
+      "id": "G-C",
+      "name": "Frontend production build",
+      "state": "BLOCKED",
+      "evidence": "npm registry DNS EAI_AGAIN; TypeScript syntax parsed but no full type/lint/Vite build"
+    },
+    {
+      "id": "G-D",
+      "name": "Authenticated browser integration",
+      "state": "BLOCKED",
+      "evidence": "No local service startup with full deps, no Cloudflare/AWS custom-domain tests"
+    },
+    {
+      "id": "G-E",
+      "name": "Security account lifecycle",
+      "state": "INCOMPLETE",
+      "evidence": "Resend adapter off; no verified reset-token issuance/recovery/session-revocation lifecycle"
+    },
+    {
+      "id": "G-F",
+      "name": "Redis/broker safety and recovery",
+      "state": "BLOCKED",
+      "evidence": "No live Redis, broker demo/testnet, Docker, active scheduler or restore exercise on AWS"
+    },
+    {
+      "id": "G-G",
+      "name": "Production deployment",
+      "state": "NOT_ATTEMPTED",
+      "evidence": "No GitHub push, EC2 edit, AWS restart or Cloudflare publish performed"
+    },
+    {
+      "id": "G-H",
+      "name": "Live-money release authorization",
+      "state": "NOT_GRANTED",
+      "evidence": "Staging, independent review, and exchange-side safety tests required"
+    }
+  ]
+}

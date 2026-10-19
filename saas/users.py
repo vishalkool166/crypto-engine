@@ -3,6 +3,7 @@ import secrets
 import logging
 from datetime import datetime, timezone
 from database import get_session, User, Subscription, ApiKey
+from sqlalchemy import or_, func
 from config import cfg, TIER_FREE, TIER_ADMIN
 
 log = logging.getLogger(__name__)
@@ -190,18 +191,33 @@ def reactivate_user(user_id: int) -> dict:
 
 
 def list_all_users(
-    limit:  int = 100,
+    limit: int = 100,
     offset: int = 0,
-    tier:   str = None,
+    tier: str = None,
+    search: str = None,
 ) -> dict:
+    # Filter before pagination so search and record counts cover the full dataset.
+    if not 1 <= limit <= 100 or offset < 0:
+        raise ValueError('Invalid pagination bounds')
+    query_text = (search or '').strip().lower()
+    if len(query_text) > 120:
+        raise ValueError('Search is too long')
     try:
         with get_session() as db:
             query = db.query(User)
             if tier:
                 query = query.filter(User.tier == tier)
+            if query_text:
+                # SQLAlchemy parameters are bound, not interpolated into SQL.
+                escaped_query = query_text.replace('%', r'\%').replace('_', r'\_')
+                pattern = '%' + escaped_query + '%' 
+                query = query.filter(or_(
+                    func.lower(User.email).like(pattern, escape="\\"),
+                    func.lower(User.name).like(pattern, escape="\\"),
+                ))
             total = query.count()
             users = query.order_by(
-                User.created_at.desc()
+                User.created_at.desc(), User.id.desc()
             ).offset(offset).limit(limit).all()
 
             return {
