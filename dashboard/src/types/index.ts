@@ -588,6 +588,7 @@ export interface ApiKey {
   name:       string
   last_used:  string | null
   created_at: string | null
+  expires_at: string | null
 }
 
 export interface ModeStatus {
@@ -711,6 +712,23 @@ export interface IndianOpenSignal {
   outcome:       string
 }
 
+export interface IndianSetupSignal {
+  instrument: string
+  direction:  string
+  entry:      number
+  sl:         number
+  tp1:        number
+  tp2:        number
+  orb_high:   number
+  orb_low:    number
+  orb_size:   number
+  sl_pts:     number
+  tp_pts:     number
+  rr1:        number
+  pre_range:  number
+  prev_range: number
+}
+
 export interface IndianSignal {
   id:          number
   timestamp:   string | null
@@ -745,7 +763,7 @@ export interface IndianStatus {
   prev_ranges:        Record<string, number>
   instruments_config: Record<string, IndianInstrumentConfig>
   signals_today:      number
-  signals:            IndianOpenSignal[]
+  signals:            IndianSetupSignal[]
   open_signals:       IndianOpenSignal[]
   rate_limited:       boolean
   data_age_secs:      number

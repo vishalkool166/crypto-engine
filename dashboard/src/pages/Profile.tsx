@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { User, Mail, Calendar, Clock, Shield, Crown, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatTimeAgo } from '@/lib/utils'
-import { meApi } from '@/lib/endpoints'
+import { meApi, pricingApi } from '@/lib/endpoints'
 import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 import { PageSkeleton } from '@/components/ui/LoadingSkeleton'
@@ -12,43 +12,8 @@ import type { Tier } from '@/types'
 
 const TIERS: Tier[] = ['free', 'pro', 'elite']
 
-const TIER_FEATURES: Record<string, Array<{ label: string; value: string; available: boolean }>> = {
-  free: [
-    { label: 'Signal delay',      value: '8 hours',      available: false },
-    { label: 'Signals per day',   value: '3',            available: true  },
-    { label: 'Entry / SL / TP',   value: 'Not included', available: false },
-    { label: 'Performance',       value: 'Not included', available: false },
-    { label: 'Coins monitored',   value: '5',            available: true  },
-  ],
-  pro: [
-    { label: 'Signal delay',      value: 'Live',         available: true  },
-    { label: 'Signals per day',   value: 'Unlimited',    available: true  },
-    { label: 'Entry / SL / TP',   value: 'Included',     available: true  },
-    { label: 'Performance',       value: 'Full access',  available: true  },
-    { label: 'Session breakdown', value: 'Included',     available: true  },
-    { label: 'Coins monitored',   value: 'All coins',    available: true  },
-  ],
-  elite: [
-    { label: 'Signal delay',      value: 'Live',         available: true  },
-    { label: 'Signals per day',   value: 'Unlimited',    available: true  },
-    { label: 'Entry / SL / TP',   value: 'Included',     available: true  },
-    { label: 'Confluence factors',value: 'Included',     available: true  },
-    { label: 'ML probability',    value: 'Included',     available: true  },
-    { label: 'Phase breakdown',   value: 'Included',     available: true  },
-    { label: 'MAE / MFE',         value: 'Included',     available: true  },
-    { label: 'API key access',    value: 'Up to 3 keys', available: true  },
-    { label: 'Content generator', value: 'Included',     available: true  },
-    { label: 'AI assistant',      value: 'Included',     available: true  },
-  ],
-  admin: [
-    { label: 'Signal delay',      value: 'Live',         available: true  },
-    { label: 'Full system access',value: 'All features', available: true  },
-    { label: 'User management',   value: 'Full control', available: true  },
-    { label: 'API key access',    value: 'Unlimited',    available: true  },
-    { label: 'Content generator', value: 'Included',     available: true  },
-    { label: 'AI assistant',      value: 'Included',     available: true  },
-  ],
-}
+type PlanFeature = { text: string; available: boolean }
+type Catalogue = { tiers: { id: string; features: PlanFeature[] }[] }
 
 export default function Profile() {
   const { user, tier, isAdmin } = useAuthStore()
@@ -60,11 +25,18 @@ export default function Profile() {
     enabled:  !isDemoMode,
   })
 
+  const { data: catalogue, isError: catalogueUnavailable } = useQuery<Catalogue>({
+    queryKey: ['pricing-catalogue'],
+    queryFn: async () => (await pricingApi.get()).data as Catalogue,
+    staleTime: 60_000,
+  })
+
   if (isLoading && !isDemoMode) return <PageSkeleton />
 
   const activeTier = isDemoMode ? demoTier : tier
-  const tierCfg    = getTierConfig(activeTier)
-  const features   = TIER_FEATURES[activeTier] ?? TIER_FEATURES.free
+  const tierCfg = getTierConfig(activeTier)
+  const features = catalogue?.tiers.find(plan => plan.id === activeTier)?.features ??
+    (activeTier === 'admin' ? catalogue?.tiers.find(plan => plan.id === 'elite')?.features : undefined)
 
   const displayEmail = isDemoMode
     ? `demo-${demoTier}@signalengine.app`
@@ -167,7 +139,7 @@ export default function Profile() {
                     <p className="text-xs text-muted-foreground">
                       {t === 'free'  && 'Delayed signals'}
                       {t === 'pro'   && 'Live signals + levels'}
-                      {t === 'elite' && 'Full access + AI'}
+                      {t === 'elite' && 'Advanced signal analysis'}
                     </p>
                     {isActive && (
                       <p className="text-xs font-medium text-foreground mt-1">
@@ -235,30 +207,18 @@ export default function Profile() {
           <div className="space-y-2">
             <p className="label-xs">Your Plan Includes</p>
             <div className="space-y-2">
-              {features.map(f => (
-                <div key={f.label} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className={cn(
-                      'h-1.5 w-1.5 rounded-full shrink-0',
-                      f.available
-                        ? 'bg-[hsl(var(--chart-1))]'
-                        : 'bg-muted-foreground/30'
-                    )} />
-                    <span className={cn(
-                      'text-xs',
-                      f.available ? 'text-foreground' : 'text-muted-foreground'
-                    )}>
-                      {f.label}
-                    </span>
-                  </div>
-                  <span className={cn(
-                    'text-xs font-medium',
-                    f.available ? 'text-foreground' : 'text-muted-foreground/50'
-                  )}>
-                    {f.value}
+              {features?.map(f => (
+                <div key={f.text} className="flex items-center gap-2">
+                  <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full',
+                    f.available ? 'bg-[hsl(var(--chart-1))]' : 'bg-muted-foreground/30')} />
+                  <span className={cn('text-xs', f.available ? 'text-foreground' : 'text-muted-foreground')}>
+                    {f.text}
                   </span>
                 </div>
               ))}
+              {!features && <p className="text-xs text-muted-foreground">
+                {catalogueUnavailable ? 'Plan details are unavailable right now.' : 'Loading current entitlements…'}
+              </p>}
             </div>
           </div>
 

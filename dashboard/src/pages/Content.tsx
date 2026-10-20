@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, Copy, Check, RefreshCw, Radio, BarChart3, Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -29,7 +29,9 @@ function loadHistory(): GeneratedPost[] {
 function saveHistory(posts: GeneratedPost[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(posts.slice(0, 10)))
-  } catch {}
+  } catch {
+    // Browser storage may be unavailable or over quota; content generation can continue.
+  }
 }
 
 export default function Content() {
@@ -43,16 +45,16 @@ export default function Content() {
 
   const canUse = hasFeature('api_key_access') || isAdmin
 
-  const availableCoins = [
+  const availableCoins = useMemo(() => [
     ...live.map(i => i.coin),
     ...watching.map(i => i.coin),
-  ].filter(Boolean)
+  ].filter(Boolean), [live, watching])
 
   useEffect(() => {
     if (availableCoins.length > 0 && !selectedCoin) {
       setSelectedCoin(availableCoins[0])
     }
-  }, [availableCoins.length])
+  }, [availableCoins, selectedCoin])
 
   const handleGenerate = async () => {
     if (generating) return

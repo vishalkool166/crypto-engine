@@ -109,7 +109,7 @@ function MLValidationPanel() {
         <div className="rounded-lg border border-border bg-card p-5">
           <p className="text-sm font-semibold text-foreground mb-4">Top Features by Importance</p>
           <div className="space-y-2">
-            {v.top_features.slice(0, 8).map((f, i) => {
+            {v.top_features.slice(0, 8).map(f => {
               const max = v.top_features![0]?.importance ?? 1
               const pct = Math.round((f.importance / max) * 100)
               return (

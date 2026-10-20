@@ -4,16 +4,28 @@ from datetime import datetime, timezone
 log = logging.getLogger(__name__)
 
 
+def _halt_new_entries(reason: str) -> None:
+    try:
+        import runtime_state
+        runtime_state.set_new_exposure_halt(True, reason)
+    except Exception:
+        log.critical("Could not persist new-exposure halt after reconciliation failure")
+
+
 async def reconcile_on_startup() -> None:
     try:
         from trade.exchange import get_positions
         from database import SessionLocal, Trade as TradeModel
         from trade.exchange import get_symbol_precision, place_algo_order
 
-        positions = await get_positions()
-        if not positions:
-            log.info("Reconciler: no open positions on exchange")
-            return
+        try:
+            positions = await get_positions()
+        except Exception:
+            _halt_new_entries("startup_exchange_reconciliation_unavailable")
+            raise
+        if positions is None:
+            _halt_new_entries("startup_exchange_reconciliation_unknown")
+            raise RuntimeError("Exchange position snapshot is unknown")
 
         pos_map = {
             p["symbol"].replace("USDT", ""): p
@@ -33,6 +45,32 @@ async def reconcile_on_startup() -> None:
                 TradeModel.is_active == True
             ).all()
 
+            active_by_coin = {t.coin: t for t in active}
+            needs_manual_reconciliation = False
+            for coin, trade in active_by_coin.items():
+                pos = pos_map.get(coin)
+                if pos is None:
+                    trade.state = "reconciliation_required"
+                    needs_manual_reconciliation = True
+                    log.critical("Active local trade #%s %s is absent from exchange snapshot; preserving record for manual reconciliation",
+                                 trade.id, coin)
+                    continue
+                amount = float(pos.get("positionAmt", 0))
+                observed_direction = "LONG" if amount > 0 else "SHORT"
+                if amount == 0 or observed_direction != trade.direction:
+                    trade.state = "reconciliation_required"
+                    needs_manual_reconciliation = True
+                    log.critical("Local/exchange position mismatch for trade #%s %s; manual reconciliation required",
+                                 trade.id, coin)
+
+            if pending:
+                needs_manual_reconciliation = True
+                log.critical("%s pending local trade(s) require startup reconciliation", len(pending))
+
+            if needs_manual_reconciliation:
+                _halt_new_entries("startup_trade_state_requires_reconciliation")
+                db.commit()
+
         active_coins  = {t.coin for t in active}
         pending_coins = {t.coin: t for t in pending}
 
@@ -43,7 +81,9 @@ async def reconcile_on_startup() -> None:
             direction  = "LONG" if is_long else "SHORT"
 
             if coin in active_coins:
-                log.info("Reconciler: %s already active in DB — skipping", coin)
+                trade = active_by_coin.get(coin)
+                if trade and trade.state == "open":
+                    log.info("Reconciler: %s position matches an active local trade", coin)
                 continue
 
             if coin in pending_coins:
@@ -66,6 +106,7 @@ async def reconcile_on_startup() -> None:
                 except Exception:
                     log.exception("Unable to notify operator of unreconciled position")
             else:
+                _halt_new_entries("startup_orphan_exchange_position")
                 log.warning(
                     "Reconciler: %s has position on exchange but NO trade in DB — orphan position",
                     coin
@@ -73,6 +114,7 @@ async def reconcile_on_startup() -> None:
                 await _handle_orphan_position(coin, direction, entry, pos)
 
     except Exception as e:
+        _halt_new_entries("startup_reconciliation_failed")
         log.error("reconcile_on_startup: %s", e)
 
 

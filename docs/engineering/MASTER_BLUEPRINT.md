@@ -1,7 +1,7 @@
 # Signal Engine — Master Engineering Blueprint v1.1 (AWS + Pages deployment)
 
-**Status:** implementation-ledger baseline; see ADR-002 for newer architecture • **Artifact type:** controlled implementation specification • **Audience:** owner, implementer and independent reviewer.
-**Source-of-truth tracker:** `MASTER_TASK_LEDGER.csv` (mirrored as JSON and readable Markdown).
+**Status:** historical master plan with current topology below • **Artifact type:** controlled implementation specification • **Audience:** owner, implementer and independent reviewer.
+**Source-of-truth tracker:** `MASTER_TASK_LEDGER.csv` (one canonical file, checked for ID uniqueness and dependency cycles).
 **Scope lock:** The original source archive remains protected; no deployment, trading enablement or source rewrite is authorized by this blueprint.
 
 ## 1. Product outcome
@@ -30,14 +30,13 @@ crypto-engine/                   # existing private GitHub repository
 ├── main.py config.py scheduler.py auth.py   # existing AWS import root
 ├── agents/ engines/ trade/ api/ saas/ tests/ # unchanged top-level layout
 ├── Dockerfile docker-compose.yml           # existing AWS runtime contract
-├── frontend/                      # old compiled AWS-served assets (temporary fallback)
 ├── dashboard/                     # source React/Vite/TS -> Cloudflare Pages dist/
 ├── docs/engineering/              # private planning & evidence; not Pages assets
 ├── docs/operations/               # AWS/Cloudflare deployment runbook
 └── scripts/                       # owner-run local checks (no GitHub Actions)
 ```
 
-This is the adopted placement. Preserve AWS entrypoints and unit tests. The original backend `frontend/` compiled build is retained for AWS compatibility; `dashboard/` is the editable UI source. See ADR-002.
+This is the adopted placement. Preserve AWS entrypoints and unit tests. The obsolete root `frontend/` compiled build has been removed in the current source candidate. AWS browser entrypoints redirect to the Cloudflare frontend. This removal still requires a staging container build and browser verification before any production rollout.
 
 ## 4. Execution order — coherent work packages
 

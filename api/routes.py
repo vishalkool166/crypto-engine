@@ -237,7 +237,7 @@ async def dashboard_coin_detail(request: Request, coin: str):
         raise HTTPException(500, str(e))
 
 
-@router.get("/scan")
+@router.post("/scan")
 @limiter.limit("1/minute")
 async def scan(request: Request):
     from saas.security import require_admin_access
@@ -501,7 +501,7 @@ async def macro_events(request: Request):
 _backtest_lock: dict = {}
 
 
-@router.get("/backtest/{coin}")
+@router.post("/backtest/{coin}")
 async def backtest(request: Request, coin: str):
     _auth(request)
     coin = coin.upper()
@@ -531,7 +531,7 @@ async def backtest(request: Request, coin: str):
         _backtest_lock[coin] = False
 
 
-@router.get("/backtest/all/run")
+@router.post("/backtest/all/run")
 async def backtest_all(request: Request):
     from saas.security import require_admin_access
     require_admin_access(request)
@@ -576,8 +576,11 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
     } for r in rows]))
 
 
-@router.get("/health")
+@router.get("/system/health")
 async def health(request: Request):
+    """Authenticated administrator diagnostics. /api/health remains liveness-only."""
+    from saas.security import require_admin_access
+    require_admin_access(request)
     if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
         return JSONResponse(content=_health_cache["data"])
 
@@ -668,12 +671,8 @@ async def mode_toggle(request: Request):
 
         if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
             return JSONResponse(status_code=400, content={"success": False, "reason": "Live API keys not configured"})
-        from config import _ensure
-        from trade.exchange import close_exchange
-        _ensure("TRADING_MODE", new_mode)
-        cfg.TRADING_MODE  = new_mode
-        cfg.PAPER_TRADING = new_mode != "live"
-        await close_exchange()
+        from trade.safety import apply_trading_mode
+        await apply_trading_mode(new_mode)
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
         invalidate_all()
         return JSONResponse(content={"success": True, "mode": new_mode})
@@ -970,11 +969,14 @@ async def chat_endpoint(request: Request):
         if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
             raise HTTPException(403, {"code": "upgrade_required"})
 
-        body    = await request.json()
-        message = body.get("message", "").strip()
+        body = await request.json()
+        message = body.get("message") if isinstance(body, dict) else None
 
-        if not message:
+        if not isinstance(message, str) or not message.strip():
             raise HTTPException(400, "Message required")
+        message = message.strip()
+        if len(message) > 2000:
+            raise HTTPException(413, "Message exceeds the 2000 character limit")
 
         from chatbot_rag import chat_with_sources
         result = await chat_with_sources(message)

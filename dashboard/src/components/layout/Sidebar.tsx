@@ -55,7 +55,7 @@ const DEMO_BOTTOM: NavItem[] = [
 ]
 
 export default function Sidebar() {
-  const { isAdmin, canAccess, hasFeature, user, logout } = useAuthStore()
+  const { isAdmin, canAccess, user, logout } = useAuthStore()
   const { sidebarCollapsed, toggleSidebar }              = useUiStore()
   const { isDemoMode, demoTier, setDemoTier }            = useDemoStore()
   const navigate                                         = useNavigate()
@@ -73,7 +73,11 @@ export default function Sidebar() {
 
   const handleLogout = async () => {
     if (isDemoMode) { navigate('/login', { replace: true }); return }
-    try { await authApi.logout() } catch {}
+    try {
+      await authApi.logout()
+    } catch {
+      // Clear the local session even when the backend logout endpoint is unavailable.
+    }
     logout()
     navigate('/login', { replace: true })
     toast.success('Signed out')

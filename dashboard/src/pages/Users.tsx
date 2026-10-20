@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, X, ChevronRight, UserCheck, UserX, Monitor, Smartphone, Clock, TrendingUp } from 'lucide-react'
+import { Search, X, ChevronRight, UserCheck, UserX, Monitor, Smartphone, TrendingUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   formatTimeAgo, formatDateTime, truncate,
@@ -11,7 +11,6 @@ import {
   useRevokeSession, useRevokeAllSessions,
 } from '@/hooks/useAdmin'
 import { useQuery } from '@tanstack/react-query'
-import { adminApi } from '@/lib/endpoints'
 import api from '@/lib/api'
 import EmptyState from '@/components/ui/EmptyState'
 import { PageSkeleton } from '@/components/ui/LoadingSkeleton'

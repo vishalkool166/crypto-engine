@@ -6,7 +6,6 @@ import {
   mockOpenTrades, mockClosedTrades, mockBalance,
   mockProfit, mockDailyPnl, mockCoinPerformance,
 } from '@/demo/mockData'
-import type { Trade } from '@/types'
 import api from '@/lib/api'
 
 export function useOpenTrades() {
@@ -51,7 +50,7 @@ export function useTradeHistory(limit = 20, offset = 0) {
     staleTime:       30_000,
     refetchInterval: !isDemoMode ? 60_000 : false,
     placeholderData: isDemoMode
-      ? { trades: mockClosedTrades, trades_count: mockClosedTrades.length }
+      ? { trades: mockClosedTrades, trades_count: mockClosedTrades.length, limit, offset }
       : undefined,
   })
 }

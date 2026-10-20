@@ -133,162 +133,50 @@ def _get_tier_feature_list(tier: str) -> list:
 
 
 def _get_comparison_table() -> list:
+    """Derive entitlements from the same configuration enforced by API routes."""
+    plans = (TIER_FREE, TIER_PRO, TIER_ELITE)
     rows = [
-        {
-            "feature":     "Signal delivery",
-            "free":        "30 min delay",
-            "pro":         "Live",
-            "elite":       "Live",
-            "free_bool":   None,
-            "pro_bool":    None,
-            "elite_bool":  None,
-        },
-        {
-            "feature":    "Signals per day",
-            "free":       "3",
-            "pro":        "Unlimited",
-            "elite":      "Unlimited",
-            "free_bool":  None,
-            "pro_bool":   None,
-            "elite_bool": None,
-        },
-        {
-            "feature":    "Grade (A+/A/B)",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  True,
-            "pro_bool":   True,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Entry / SL / TP",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   True,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Signal thesis",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   False,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Confluence factors",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   False,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "ML probability",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   False,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Live positions",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   True,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Performance history",
-            "free":       "3 signals",
-            "pro":        "Full",
-            "elite":      "Full",
-            "free_bool":  None,
-            "pro_bool":   None,
-            "elite_bool": None,
-        },
-        {
-            "feature":    "Backtest access",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   False,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "API key",
-            "free":       None,
-            "pro":        None,
-            "elite":      None,
-            "free_bool":  False,
-            "pro_bool":   False,
-            "elite_bool": True,
-        },
-        {
-            "feature":    "Coins monitored",
-            "free":       "5",
-            "pro":        "All",
-            "elite":      "All",
-            "free_bool":  None,
-            "pro_bool":   None,
-            "elite_bool": None,
-        },
-        {
-            "feature":    "Support",
-            "free":       "None",
-            "pro":        "Email",
-            "elite":      "Priority",
-            "free_bool":  None,
-            "pro_bool":   None,
-            "elite_bool": None,
-        },
+        ("Entry / SL / TP", "show_levels"),
+        ("Confluence factors", "show_factors"),
+        ("Signal thesis", "show_thesis"),
+        ("ML probability", "show_ml"),
+        ("Positions", "show_positions"),
+        ("Performance", "show_performance"),
+        ("Full history", "show_full_history"),
+        ("Backtesting", "backtest_access"),
+        ("API key access", "api_key_access"),
     ]
-    return rows
+    comparison = []
+    for label, key in rows:
+        entry = {"feature": label}
+        for plan in plans:
+            entry[plan] = None
+            entry[f"{plan}_bool"] = bool(get_tier_features(plan)[key])
+        comparison.append(entry)
+    for label, field, formatter in (
+        ("Signal delay", "signal_delay_minutes", lambda n: f"{n} min" if n else "Live"),
+        ("Signals per day", "signals_per_day", lambda n: str(n) if n < 999 else "Up to 999"),
+        ("Coins visible", "coins_limit", lambda n: str(n) if n < 999 else "All configured"),
+    ):
+        entry = {"feature": label}
+        for plan in plans:
+            entry[plan] = formatter(get_tier_features(plan)[field])
+            entry[f"{plan}_bool"] = None
+        comparison.append(entry)
+    return comparison
 
 
 def _get_faq() -> list:
+    delay = get_tier_features(TIER_FREE)["signal_delay_minutes"]
     return [
-        {
-            "question": "What is a signal?",
-            "answer":   "A signal is a trading opportunity identified by our engine. It includes the coin, direction (LONG/SHORT), grade (A+/A/B), and for paid tiers — entry price, stop loss, and take profit levels.",
-        },
-        {
-            "question": "How is the grade calculated?",
-            "answer":   "Grades are based on a confluence score out of 100. A+ is 85+, A is 68+, B is 52+. The score combines 16 factors including market structure, liquidity sweeps, BTC alignment, session timing, and more.",
-        },
-        {
-            "question": "What is the signal delay on the free plan?",
-            "answer":   "Free plan signals are delayed by 30 minutes. Pro and Elite receive signals instantly as they are generated.",
-        },
-        {
-            "question": "Can I cancel anytime?",
-            "answer":   "Yes. Cancel anytime from your settings page. You keep access until the end of your billing period. No questions asked.",
-        },
-        {
-            "question": "What exchanges are supported?",
-            "answer":   "Signals are generated for Binance Futures (USDT perpetuals). The engine monitors multiple coins across multiple timeframes 24/7.",
-        },
-        {
-            "question": "Is this financial advice?",
-            "answer":   "No. Signal Engine provides automated technical analysis signals for educational purposes only. Always do your own research and never risk more than you can afford to lose.",
-        },
-        {
-            "question": "How do I upgrade or downgrade?",
-            "answer":   "Go to Settings → Subscription. Upgrades take effect immediately. Downgrades take effect at the end of your current billing period.",
-        },
-        {
-            "question": "What is the confluence factor breakdown?",
-            "answer":   "Elite users see exactly which of the 16 factors contributed to each signal score — including liquidity sweep, displacement, retest confirmation, BTC alignment, OI behavior, and more.",
-        },
+        {"question": "What do plans control?", "answer":
+         "Plans define signal visibility, history and analytics access. Trading execution is controlled separately by the engine."},
+        {"question": "When can Basic users see signals?", "answer":
+         f"Basic signals are configured with a {delay}-minute delay. Signal limits and eligibility are enforced by the backend."},
+        {"question": "Can I upgrade from the dashboard?", "answer":
+         "Automated subscription checkout is not enabled. Contact the administrator to request a plan change."},
+        {"question": "Is Signal Engine financial advice?", "answer":
+         "Signal Engine provides technical analysis for research and educational purposes, not personalized investment advice."},
     ]
 
 

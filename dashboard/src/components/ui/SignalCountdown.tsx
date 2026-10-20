@@ -31,7 +31,7 @@ export default function SignalCountdown({ timestamp, className }: Props) {
       if (remaining <= 0) clearInterval(id)
     }, 1000)
     return () => clearInterval(id)
-  }, [timestamp])
+  }, [timestamp, msUntilVisible])
 
   if (ms <= 0) return null
 

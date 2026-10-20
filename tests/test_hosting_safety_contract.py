@@ -31,6 +31,7 @@ def test_pages_admin_requests_use_configured_aws_client():
 
 def test_oauth_destination_is_server_configured_and_legacy_fallback_preserved():
     main = (ROOT / 'main.py').read_text()
-    assert '_os.environ.get("FRONTEND_URL") or cfg.DOMAIN' in main
-    assert 'f"{dashboard_origin}/"' in main
+    assert 'frontend_location("/")' in main
+    assert 'frontend_location("/login?error=oauth_failed")' in main
+    assert 'from saas.frontend_url import frontend_location' in main
     assert 'redirect_uri = f"{cfg.DOMAIN' in main

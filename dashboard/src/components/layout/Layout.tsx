@@ -56,7 +56,7 @@ export default function Layout() {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [])
+  }, [setCommandPaletteOpen])
 
   useEffect(() => {
     setMoreOpen(false)

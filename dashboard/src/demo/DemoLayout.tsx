@@ -11,9 +11,7 @@ import TopBar from '@/components/layout/TopBar'
 import CommandPalette from '@/components/modals/CommandPalette'
 import DemoBanner from '@/demo/DemoBanner'
 import DemoAuthProvider from '@/demo/DemoAuthProvider'
-import { DemoInit } from '@/pages/Demo'
 import { useUiStore } from '@/stores/uiStore'
-import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/lib/utils'
 
 const BOTTOM_NAV = [
@@ -49,7 +47,7 @@ export default function DemoLayout() {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [])
+  }, [setCommandPaletteOpen])
 
   useEffect(() => {
     setMoreOpen(false)
@@ -59,7 +57,6 @@ export default function DemoLayout() {
 
   return (
     <DemoAuthProvider>
-      <DemoInit />
       <div className="flex h-screen w-screen overflow-hidden bg-background flex-col">
         <DemoBanner />
 

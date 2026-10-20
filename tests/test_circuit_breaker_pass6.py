@@ -78,3 +78,29 @@ def test_daily_stop_limit_is_fail_closed_and_not_in_memory():
     assert size() == 0.0
     level['count'] = None
     assert size() == 0.0
+
+
+@pytest.mark.parametrize('circuit_level, expected', [
+    (0, 1.0),
+    (1, CIRCUIT_BREAKER_CONFIG['size_mult_level1']),
+    (2, CIRCUIT_BREAKER_CONFIG['size_mult_level2']),
+    (3, CIRCUIT_BREAKER_CONFIG['size_mult_level3']),
+    (4, CIRCUIT_BREAKER_CONFIG['size_mult_level4']),
+    (5, CIRCUIT_BREAKER_CONFIG['size_mult_level5']),
+    (6, 0.0),
+])
+def test_portfolio_circuit_levels_only_reduce_risk_and_halt_unknown_level(circuit_level, expected):
+    make_size = extracted_function('alerts/scanner.py', '_get_portfolio_size_multiplier', {
+        'CIRCUIT_BREAKER_CONFIG': CIRCUIT_BREAKER_CONFIG,
+        '_get_portfolio_circuit_level': lambda: circuit_level,
+        '_get_daily_sl_count': lambda: 0,
+    })
+    assert make_size() == expected
+    assert expected <= 1.0
+
+
+def test_periodic_circuit_level_resolution_never_lowers_a_halt():
+    resolve = extracted_function('alerts/scanner.py', '_resolve_circuit_level', {})
+    for current in range(6):
+        for requested in (None, 0, 1):
+            assert resolve(current, requested) >= current

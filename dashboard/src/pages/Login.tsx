@@ -1,120 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { motion, useAnimationFrame, useMotionValue, useSpring } from 'framer-motion'
+import { Link, useNavigate } from 'react-router-dom'
+import { motion, useMotionValue, useSpring } from 'framer-motion'
 import { TrendingUp, Sun, Moon } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useTheme } from 'next-themes'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 
-const MOCK_TICKER = [
-  { coin: 'BTC',   price: '67,420', change: '+2.34%', pos: true  },
-  { coin: 'ETH',   price: '3,521',  change: '+1.87%', pos: true  },
-  { coin: 'SOL',   price: '101.98', change: '+4.21%', pos: true  },
-  { coin: 'BNB',   price: '687.09', change: '-0.54%', pos: false },
-  { coin: 'ARB',   price: '1.24',   change: '+3.12%', pos: true  },
-  { coin: 'AVAX',  price: '38.92',  change: '-1.23%', pos: false },
-  { coin: 'LINK',  price: '18.74',  change: '+2.91%', pos: true  },
-  { coin: 'XRP',   price: '1.3776', change: '+1.44%', pos: true  },
-  { coin: 'DOGE',  price: '0.1842', change: '-0.88%', pos: false },
-  { coin: 'MATIC', price: '0.892',  change: '+1.62%', pos: true  },
-]
-
-const STATS = [
-  { label: 'signals generated', value: 847,  prefix: '',  suffix: ''  },
-  { label: 'win rate',          value: 68.4, prefix: '',  suffix: '%' },
-  { label: 'PnL tracked',       value: 2841, prefix: '$', suffix: ''  },
-]
-
-function useCountUp(target: number, duration = 1200, delay = 0) {
-  const [current, setCurrent] = useState(0)
-
-  useEffect(() => {
-    const timeout = setTimeout(() => {
-      const start = performance.now()
-      const step  = (now: number) => {
-        const elapsed  = now - start
-        const progress = Math.min(elapsed / duration, 1)
-        const ease     = 1 - Math.pow(1 - progress, 3)
-        setCurrent(target * ease)
-        if (progress < 1) requestAnimationFrame(step)
-        else setCurrent(target)
-      }
-      requestAnimationFrame(step)
-    }, delay)
-    return () => clearTimeout(timeout)
-  }, [target, duration, delay])
-
-  return current
-}
-
-function StatCounter({ stat, delay }: { stat: typeof STATS[0]; delay: number }) {
-  const value   = useCountUp(stat.value, 1400, delay)
-  const display = stat.value % 1 !== 0
-    ? value.toFixed(1)
-    : Math.floor(value).toLocaleString()
-
+function ThemeBar({ onThemeToggle, theme }: { onThemeToggle: () => void; theme: string | undefined }) {
   return (
-    <motion.div
-      initial    = {{ opacity: 0, y: 8 }}
-      animate    = {{ opacity: 1, y: 0 }}
-      transition = {{ delay: delay / 1000 + 0.8, duration: 0.4 }}
-      className  = "flex items-center gap-1.5 text-xs text-muted-foreground"
-    >
-      <span className="font-mono font-semibold text-foreground">
-        {stat.prefix}{display}{stat.suffix}
-      </span>
-      <span>{stat.label}</span>
-    </motion.div>
-  )
-}
-
-function TickerBar({ onThemeToggle, theme }: { onThemeToggle: () => void; theme: string | undefined }) {
-  const trackRef  = useRef<HTMLDivElement>(null)
-  const offsetRef = useRef(0)
-  const lastRef   = useRef(0)
-  const items     = [...MOCK_TICKER, ...MOCK_TICKER]
-
-  useAnimationFrame((t) => {
-    if (!trackRef.current) return
-    const delta     = lastRef.current ? t - lastRef.current : 0
-    lastRef.current = t
-    const total     = trackRef.current.scrollWidth / 2
-    if (total > 0) {
-      offsetRef.current = (offsetRef.current + (28 * delta) / 1000) % total
-      trackRef.current.style.transform = `translateX(-${offsetRef.current}px)`
-    }
-  })
-
-  return (
-    <div className="relative z-20 flex items-center border-b border-border/40 bg-background/80 backdrop-blur-sm">
-      <div className="flex-1 overflow-hidden">
-        <div
-          ref       = {trackRef}
-          className = "flex items-center gap-8 py-2 px-4 whitespace-nowrap will-change-transform"
-          style     = {{ width: 'max-content' }}
-        >
-          {items.map((item, i) => (
-            <div key={i} className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-mono font-semibold text-foreground/70">{item.coin}</span>
-              <span className="text-xs font-mono text-muted-foreground/60">{item.price}</span>
-              <span className={`text-xs font-mono ${item.pos ? 'text-[hsl(var(--chart-1)/0.7)]' : 'text-[hsl(var(--chart-2)/0.7)]'}`}>
-                {item.change}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <button
-        onClick   = {onThemeToggle}
-        className = "relative z-30 shrink-0 flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors mr-3"
-      >
-        {theme === 'dark'
-          ? <Sun  className="h-4 w-4" />
-          : <Moon className="h-4 w-4" />
-        }
+    <header className="relative z-20 flex items-center justify-between border-b border-border/40 bg-background/80 px-5 py-3">
+      <span className="text-xs font-semibold tracking-wide text-muted-foreground">SIGNAL ENGINE</span>
+      <button type="button" onClick={onThemeToggle} aria-label="Toggle color theme"
+        className="rounded-md border border-border p-2 text-muted-foreground hover:bg-accent hover:text-foreground">
+        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
       </button>
-    </div>
+    </header>
   )
 }
 
@@ -170,7 +71,7 @@ function CursorGrid({ isDark }: { isDark: boolean }) {
       window.removeEventListener('mousemove',  handleMove)
       window.removeEventListener('mouseleave', handleLeave)
     }
-  }, [])
+  }, [mouseX, mouseY])
 
   return (
     <div
@@ -351,13 +252,22 @@ function FloatingOrb({ className, delay = 0 }: { className?: string; delay?: num
 }
 
 export default function Login() {
+  const [emailAccountsAvailable, setEmailAccountsAvailable] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    fetch(`${API_URL}/auth/email/status`, { signal: controller.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data?.enabled === true) setEmailAccountsAvailable(true) })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [])
   const { isAuthenticated } = useAuthStore()
   const navigate            = useNavigate()
   const { theme, setTheme } = useTheme()
 
   useEffect(() => {
     if (isAuthenticated) navigate('/', { replace: true })
-  }, [isAuthenticated])
+  }, [isAuthenticated, navigate])
 
   const handleGoogle = () => {
     window.location.href = `${API_URL}/auth/google`
@@ -376,7 +286,7 @@ export default function Login() {
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-background">
 
-      <TickerBar onThemeToggle={handleThemeToggle} theme={theme} />
+      <ThemeBar onThemeToggle={handleThemeToggle} theme={theme} />
 
       <div className="relative flex flex-1 flex-col overflow-hidden">
 
@@ -462,6 +372,12 @@ export default function Login() {
                 Continue with Google
               </motion.button>
 
+              {emailAccountsAvailable && (
+                <Link to="/account" className="block w-full rounded-md border border-border bg-background px-4 py-2.5 text-center text-sm font-medium text-foreground hover:bg-accent">
+                  Continue with email
+                </Link>
+              )}
+
               <div className="relative flex items-center gap-3">
                 <div className="flex-1 h-px bg-border" />
                 <span className="text-xs text-muted-foreground">or</span>
@@ -485,34 +401,9 @@ export default function Login() {
               </div>
             </motion.div>
 
-            <motion.div
-              initial    = {{ opacity: 0 }}
-              animate    = {{ opacity: 1 }}
-              transition = {{ delay: 0.9 }}
-              className  = "mt-6 flex items-center justify-center gap-6 flex-wrap"
-            >
-              {/* These numbers and market prices are decorative samples, not engine telemetry. */}
-              <span className="text-[10px] font-medium tracking-wide text-muted-foreground">Illustrative figures</span>
-              {STATS.map((stat, i) => (
-                <StatCounter key={stat.label} stat={stat} delay={900 + i * 150} />
-              ))}
-            </motion.div>
-
-            <motion.div
-              initial    = {{ opacity: 0 }}
-              animate    = {{ opacity: 1 }}
-              transition = {{ delay: 1.2 }}
-              className  = "mt-4 flex items-center justify-center gap-4"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--chart-1))] animate-pulse-dot" />
-                <span className="text-xs text-muted-foreground">System operational</span>
-              </div>
-              <span className="text-xs text-muted-foreground/30">·</span>
-              <span className="text-xs text-muted-foreground">
-                v{import.meta.env.VITE_APP_VERSION ?? '5.0.0'}
-              </span>
-            </motion.div>
+            <p className="mt-5 text-center text-xs leading-relaxed text-muted-foreground">
+              Account access is secured by Signal Engine. Trading data becomes available after sign-in.
+            </p>
           </motion.div>
 
         </div>

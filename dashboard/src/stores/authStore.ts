@@ -4,7 +4,7 @@ import type { AuthUser, Tier, TierFeatures } from '@/types'
 
 const TIER_FEATURES: Record<Tier, TierFeatures> = {
   free: {
-    signal_delay_minutes:   480,
+    signal_delay_minutes:   30,
     signals_per_day:        3,
     show_levels:            false,
     show_factors:           false,
@@ -104,7 +104,7 @@ interface AuthState {
   tier:            Tier
   features:        TierFeatures
   isLoading:       boolean
-  setUser:         (user: AuthUser | null) => void
+  setUser:         (user: AuthUser | null, serverFeatures?: TierFeatures) => void
   setLoading:      (loading: boolean) => void
   logout:          () => void
   hasFeature:      (feature: keyof TierFeatures) => boolean
@@ -125,7 +125,7 @@ export const useAuthStore = create<AuthState>()(
       features:        DEFAULT_FEATURES,
       isLoading:       true,
 
-      setUser: (user) => {
+      setUser: (user, serverFeatures) => {
         if (!user) {
           set({
             user:            null,
@@ -138,9 +138,11 @@ export const useAuthStore = create<AuthState>()(
         }
         const tier     = (user.tier ?? 'free') as Tier
         const isAdmin  = user.is_admin === true
-        const features = isAdmin
+        // The backend returns actual entitlements via /api/me. The local map
+        // is a rendering fallback, never the authority for API permissions.
+        const features = serverFeatures ?? (isAdmin
           ? TIER_FEATURES.admin
-          : TIER_FEATURES[tier] ?? DEFAULT_FEATURES
+          : TIER_FEATURES[tier] ?? DEFAULT_FEATURES)
         set({
           user,
           isAuthenticated: true,

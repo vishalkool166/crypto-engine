@@ -35,6 +35,7 @@ export default function TopBar() {
   const { isDemoMode }            = useDemoStore()
   const { setCommandPaletteOpen } = useUiStore()
   const session                   = useSession()
+  const [, setFreshnessClock]     = useState(Date.now())
   const sessionCfg                = getSessionConfig(session)
 
   const realWs    = useWsStore()
@@ -45,7 +46,10 @@ export default function TopBar() {
   const { countdown } = useScanStatus()
 
   const isConnected = status === 'connected'
+  const isStale = !isDemoMode && isConnected && realWs.lastUpdated !== null && Date.now() - realWs.lastUpdated > 60_000
+  const connectionLabel = isStale ? 'Connection active · data is stale' : isConnected && realWs.lastUpdated === null ? 'Connected · awaiting data' : isConnected ? 'Connection active' : `Connection ${status}`
   const isLive      = summary?.mode === 'live'
+  const hasTickerItems = ticker.length > 0
 
   const tickerRef   = useRef<HTMLDivElement>(null)
   const animRef     = useRef<number | null>(null)
@@ -54,7 +58,12 @@ export default function TopBar() {
   const startedRef  = useRef(false)
 
   useEffect(() => {
-    if (!ticker.length || startedRef.current) return
+    const timer = window.setInterval(() => setFreshnessClock(Date.now()), 15_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!hasTickerItems || startedRef.current) return
     if (!tickerRef.current) return
     startedRef.current = true
 
@@ -79,7 +88,7 @@ export default function TopBar() {
       startedRef.current  = false
       lastTimeRef.current = 0
     }
-  }, [ticker.length > 0])
+  }, [hasTickerItems])
 
   return (
     <header className="shrink-0 border-b border-border bg-background">
@@ -159,11 +168,12 @@ export default function TopBar() {
           </div>
 
           {!isDemoMode && (
-            <div className="flex items-center">
-              {isConnected
-                ? <Wifi    className="h-3.5 w-3.5 text-[hsl(var(--chart-1))]" />
-                : <WifiOff className="h-3.5 w-3.5 text-muted-foreground animate-pulse" />
+            <div className="flex items-center gap-1.5" role="status" aria-live="polite" aria-label={connectionLabel}>
+              {isConnected && !isStale
+                ? <Wifi className="h-3.5 w-3.5 text-[hsl(var(--chart-1))]" aria-hidden="true" />
+                : <WifiOff className={cn('h-3.5 w-3.5', isStale ? 'text-[hsl(var(--chart-4))]' : 'text-muted-foreground')} aria-hidden="true" />
               }
+              <span className="sr-only">{connectionLabel}</span>
             </div>
           )}
 

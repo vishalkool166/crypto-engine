@@ -247,6 +247,9 @@ export default function Settings() {
           </div>
         ) : (
           <div className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Personal API keys are read-only and expire after 90 days. Revoke and replace older keys that have no expiry date.
+            </p>
             <AnimatePresence>
               {createdKey && (
                 <motion.div
@@ -295,6 +298,13 @@ export default function Settings() {
                       </p>
                       <p className="text-xs font-mono text-muted-foreground mt-0.5">
                         {key.prefix}...
+                        {key.expires_at ? (
+                          <span className="ml-2 not-italic font-sans">
+                            Expires {new Date(key.expires_at).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className="ml-2 not-italic font-sans">Legacy key · no expiry recorded</span>
+                        )}
                         {key.last_used && (
                           <span className="ml-2 not-italic font-sans">
                             Used {formatTimeAgo(key.last_used)}

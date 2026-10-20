@@ -4,7 +4,7 @@ import importlib
 import logging
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
 from unittest.mock import AsyncMock
@@ -14,6 +14,10 @@ import pytest
 
 from trade import order_journal, safety
 from test_security_regression import extracted_function
+
+
+def _reserve_across_processes(_):
+    return order_journal.reserve('entry:multi-process', 'paper', 'ADAUSDT', 'BUY', 'LIMIT', {'quantity': '2'})
 
 
 @pytest.fixture
@@ -29,6 +33,34 @@ def test_order_intent_committed_before_network(durable_db):
     assert order_journal.unresolved('ETHUSDT')[0]['client_order_id'] == client_id
     assert order_journal.reserve('entry:100', 'paper', 'ETHUSDT', 'BUY', 'LIMIT', {'quantity': '1', 'price': '120'}) == (client_id, False)
     assert len(order_journal.unresolved()) == 1
+    import sqlite3
+    with sqlite3.connect(durable_db) as db:
+        assert db.execute('SELECT version FROM order_journal_schema WHERE singleton=1').fetchone() == (1,)
+
+
+def test_order_journal_schema_version_backfill_preserves_existing_intents(durable_db):
+    import sqlite3
+    original = order_journal.reserve('entry:legacy', 'paper', 'ETHUSDT', 'BUY', 'LIMIT', {'quantity': '1'})
+    with sqlite3.connect(durable_db) as db:
+        db.execute('DROP TABLE order_journal_schema')
+    order_journal._INITIALIZED_PATHS.clear()
+    assert order_journal.reserve('entry:legacy', 'paper', 'ETHUSDT', 'BUY', 'LIMIT', {'quantity': '1'}) == (original[0], False)
+    assert order_journal.unresolved('ETHUSDT')[0]['client_order_id'] == original[0]
+    with sqlite3.connect(durable_db) as db:
+        assert db.execute('SELECT version FROM order_journal_schema WHERE singleton=1').fetchone() == (1,)
+
+
+def test_order_journal_refuses_unknown_future_schema_without_deleting_evidence(durable_db):
+    import sqlite3
+    original = order_journal.reserve('entry:versioned', 'paper', 'BTCUSDT', 'BUY', 'LIMIT', {'quantity': '2'})
+    with sqlite3.connect(durable_db) as db:
+        db.execute('UPDATE order_journal_schema SET version=99 WHERE singleton=1')
+    order_journal._INITIALIZED_PATHS.clear()
+    with pytest.raises(RuntimeError, match='Unsupported order journal schema version'):
+        order_journal.reserve('entry:next', 'paper', 'ETHUSDT', 'BUY', 'LIMIT', {'quantity': '1'})
+    with sqlite3.connect(durable_db) as db:
+        assert db.execute('SELECT client_order_id FROM exchange_order_intents WHERE intent_key=?',
+                          ('entry:versioned',)).fetchone() == (original[0],)
 
 
 def test_order_intent_survives_reload(durable_db):
@@ -53,6 +85,14 @@ def test_atomic_reservation_concurrency(durable_db):
     assert sum(created for _, created in outcomes) == 1
 
 
+def test_atomic_reservation_across_processes(durable_db):
+    with ProcessPoolExecutor(max_workers=4) as pool:
+        outcomes = list(pool.map(_reserve_across_processes, range(8)))
+    assert len({client_id for client_id, _ in outcomes}) == 1
+    assert sum(created for _, created in outcomes) == 1
+    assert len(order_journal.unresolved('ADAUSDT')) == 1
+
+
 def test_uncertain_orders_block_new_entries(durable_db):
     order_journal.reserve('entry:50', 'paper', 'BNBUSDT', 'BUY', 'LIMIT')
     order_journal.mark('entry:50', 'uncertain')
@@ -73,6 +113,83 @@ def test_live_guard_is_disabled_by_default(monkeypatch):
         safety.ensure_live_opt_in('live')
     monkeypatch.setenv('SIGNAL_ENGINE_ALLOW_LIVE_TRADING', safety.LIVE_OPT_IN)
     safety.ensure_live_opt_in('live')
+
+
+@pytest.mark.asyncio
+async def test_mode_change_does_not_mutate_configuration_if_exchange_close_fails(monkeypatch):
+    import config
+    import trade.exchange as exchange
+    original = (config.cfg.TRADING_MODE, config.cfg.PAPER_TRADING)
+    persisted = []
+    monkeypatch.setattr(config, '_ensure', lambda key, value: persisted.append((key, value)))
+
+    async def fail_close():
+        raise RuntimeError('client still active')
+
+    monkeypatch.setattr(exchange, 'close_exchange', fail_close)
+    with pytest.raises(RuntimeError, match='client still active'):
+        await safety.apply_trading_mode('live')
+    assert persisted == []
+    assert (config.cfg.TRADING_MODE, config.cfg.PAPER_TRADING) == original
+
+
+@pytest.mark.asyncio
+async def test_mode_change_closes_exchange_before_persisting_and_updating(monkeypatch):
+    import config
+    import trade.exchange as exchange
+    original = (config.cfg.TRADING_MODE, config.cfg.PAPER_TRADING)
+    events = []
+    monkeypatch.setattr(config, '_ensure', lambda key, value: events.append(('persist', key, value)))
+
+    async def close():
+        events.append(('close',))
+
+    monkeypatch.setattr(exchange, 'close_exchange', close)
+    try:
+        await safety.apply_trading_mode('live')
+        assert events == [('close',), ('persist', 'TRADING_MODE', 'live')]
+        assert (config.cfg.TRADING_MODE, config.cfg.PAPER_TRADING) == ('live', False)
+    finally:
+        config.cfg.TRADING_MODE, config.cfg.PAPER_TRADING = original
+
+
+def test_both_mode_routes_use_the_shared_safe_transition():
+    from pathlib import Path
+    for path in (Path('api/trading.py'), Path('api/routes.py')):
+        source = path.read_text()
+        assert 'apply_trading_mode(new_mode)' in source
+        assert '_ensure("TRADING_MODE", new_mode)' not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('order', [
+    {'status': 'PARTIALLY_FILLED', 'executedQty': '0.25'},
+    {'status': 'NEW', 'executedQty': '0.25'},
+    {'status': 'PARTIALLY_FILLED', 'executedQty': '0'},
+])
+async def test_limit_entry_partial_fill_requires_manual_reconciliation(order):
+    waiter = extracted_function('trade/executor.py', '_wait_for_limit_fill', {
+        'asyncio': asyncio,
+        '_fetch_order': AsyncMock(return_value=order),
+    })
+    with pytest.raises(RuntimeError, match='partially executed'):
+        await waiter('ETHUSDT', 'entry-1', 1)
+
+
+@pytest.mark.asyncio
+async def test_limit_entry_waiter_accepts_filled_and_returns_none_when_cancelled():
+    filled_order = {'status': 'FILLED', 'executedQty': '1'}
+    filled_waiter = extracted_function('trade/executor.py', '_wait_for_limit_fill', {
+        'asyncio': asyncio,
+        '_fetch_order': AsyncMock(return_value=filled_order),
+    })
+    assert await filled_waiter('ETHUSDT', 'entry-2', 1) == filled_order
+
+    cancelled_waiter = extracted_function('trade/executor.py', '_wait_for_limit_fill', {
+        'asyncio': asyncio,
+        '_fetch_order': AsyncMock(return_value={'status': 'CANCELED', 'executedQty': '0'}),
+    })
+    assert await cancelled_waiter('ETHUSDT', 'entry-3', 1) is None
 
 
 @pytest.mark.parametrize('args', [
@@ -128,6 +245,39 @@ async def test_reused_order_intent_never_resubmits(monkeypatch, durable_db):
     assert (await execute(**kwargs))['orderId'] == 42
     assert submit.await_count == 1
     assert exchange.get_order_by_client_id.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_new_exposure_halt_blocks_entries_but_allows_reduce_only_exits(monkeypatch, durable_db, tmp_path):
+    import runtime_state
+
+    monkeypatch.setattr(runtime_state, 'STATE_FILE', str(tmp_path / 'runtime_state.json'))
+    monkeypatch.setattr(runtime_state, '_state', {})
+    runtime_state.set_new_exposure_halt(True, 'incident')
+
+    exchange = ModuleType('trade.exchange')
+    exchange.place_order = AsyncMock(return_value={'orderId': 7, 'status': 'NEW'})
+    exchange.get_order_by_client_id = AsyncMock(return_value=None)
+    monkeypatch.setitem(sys.modules, 'trade.exchange', exchange)
+
+    from trade import order_journal
+    reserve = order_journal.reserve
+    monkeypatch.setattr(order_journal, 'reserve', lambda *args, **kwargs: ('se_exit', True))
+    monkeypatch.setattr(order_journal, 'mark', lambda *args, **kwargs: None)
+    execute = extracted_function('trade/executor.py', '_place_with_retry', {
+        'place_order': exchange.place_order, 'log': logging.getLogger(__name__), 'asyncio': asyncio,
+    })
+
+    with pytest.raises(PermissionError, match='incident'):
+        await execute(intent_key='entry:halted', symbol='ETHUSDT', side='BUY',
+                      order_type='MARKET', quantity=1)
+    assert exchange.place_order.await_count == 0
+
+    result = await execute(intent_key='close:7', symbol='ETHUSDT', side='SELL',
+                           order_type='MARKET', quantity=1, reduce_only=True)
+    assert result['orderId'] == 7
+    assert exchange.place_order.await_count == 1
+    monkeypatch.setattr(order_journal, 'reserve', reserve)
 
 
 @pytest.mark.asyncio

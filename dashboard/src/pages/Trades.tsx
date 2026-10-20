@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatCurrency, formatPercent } from '@/lib/utils'
-import { pnlColor } from '@/lib/tokens'
 import {
   useTradeSummary, useDailyPnl,
   useCoinPerformance, useWsStatusTrades, useForceSell,
@@ -118,7 +117,6 @@ export default function Trades() {
   const queryClient                       = useQueryClient()
   const { hasFeature, isAdmin }           = useAuthStore()
   const { isDemoMode }                    = useDemoStore()
-  const navigate                          = useNavigate()
   const [totpOpen,      setTotpOpen]      = useState(false)
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
   const [drawerTrade,   setDrawerTrade]   = useState<Trade | null>(null)
@@ -126,9 +124,9 @@ export default function Trades() {
   const showPositions = hasFeature('show_positions') || isAdmin
 
   const {
-    trades, profit, balance, isLoading,
+    trades, isLoading,
     freeBalance, totalBalance, totalPnl, winRate, tradeCount,
-    totalUnrealized, openCount,
+    openCount,
   } = useTradeSummary()
 
   const { data: indianStatus }            = useIndianStatus()

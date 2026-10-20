@@ -26,7 +26,7 @@ export default function Home() {
   const { isAdmin, hasFeature }        = useAuthStore()
   const { isFree, canSeeSignal }       = useSignalAccess()
 
-  const { live, watching, queue, isLoading: signalsLoading } = useSignals()
+  const { live, queue, isLoading: signalsLoading } = useSignals()
   const { totalPnl, winRate, tradeCount, freeBalance, openCount } = useTradeSummary()
   const { alerts }                                             = useSystemStatus()
   const { countdown, watchingCount, inTradeCount } = useScanStatus()

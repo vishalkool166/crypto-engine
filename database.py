@@ -7,12 +7,16 @@ from sqlalchemy import (
     UniqueConstraint, JSON
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.engine import URL
 
-os.makedirs("database", exist_ok=True)
+DATABASE_PATH = os.environ.get("SIGNAL_ENGINE_DATABASE_PATH", "database/signals.db").strip()
+if not DATABASE_PATH:
+    DATABASE_PATH = "database/signals.db"
+os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
 
 Base = declarative_base()
 engine = create_engine(
-    "sqlite:///database/signals.db",
+    URL.create("sqlite", database=DATABASE_PATH),
     connect_args={"check_same_thread": False, "timeout": 30},
     pool_size=5,
     max_overflow=10
@@ -771,6 +775,8 @@ class CoinLastOutcome(Base):
     pnl         = Column(Float, nullable=True)
 
 def init_db():
+    # Register optional email-account tables without changing existing user schema.
+    from saas import email_accounts  # noqa: F401
     Base.metadata.create_all(engine)
 
     from sqlalchemy import inspect, text

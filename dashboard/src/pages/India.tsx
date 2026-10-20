@@ -25,6 +25,9 @@ import type {
 } from '@/types'
 
 const RUPEES_PER_POINT = 30
+const INDIA_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+})
 
 function DirectionBadge({ direction }: { direction: string }) {
   const isLong = direction === 'LONG'
@@ -557,7 +560,6 @@ function PerformanceTab({ perf }: { perf: IndianPerformance | null }) {
           <div className="divide-y divide-border">
             {Object.entries(perf.by_direction).map(([dir, data]) => {
               const isLong = dir === 'LONG'
-              const rupees = Math.round((data.pnl_pts ?? 0) * RUPEES_PER_POINT)
               const pColor = (data.pnl_pts ?? 0) >= 0
                 ? 'text-[hsl(var(--chart-1))]'
                 : 'text-[hsl(var(--chart-2))]'
@@ -814,7 +816,10 @@ export default function India() {
   })
 
   const willTrade   = orbReady && marketOpen && allReady
-  const closedToday = todaySignals.filter(s => s.outcome !== 'pending')
+  const closedToday = (signals ?? []).filter(s =>
+    s.timestamp && s.outcome !== 'pending' &&
+    INDIA_DATE_FORMATTER.format(new Date(s.timestamp)) === (status?.date ?? '')
+  )
 
   const TABS = [
     { id: 'today',       label: 'Today'       },

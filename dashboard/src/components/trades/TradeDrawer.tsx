@@ -81,7 +81,6 @@ export default function TradeDrawer({ trade, onClose, onForceSell }: Props) {
   const isOpen    = trade.is_open ?? false
   const pnl       = isOpen ? (trade.profit_abs ?? 0) : (trade.pnl ?? 0)
   const dirCfg    = getDirectionConfig(trade.direction)
-  const DirIcon   = dirCfg?.icon
   const health    = trade.health
   const hCfg      = health ? getHealthConfig(health.state) : null
   const reasonCfg = getCloseReasonConfig(trade.close_reason)
@@ -95,7 +94,7 @@ export default function TradeDrawer({ trade, onClose, onForceSell }: Props) {
     <div className="flex flex-col h-full">
       <div className="flex items-center justify-between border-b border-border px-5 py-4 shrink-0">
         <div className="flex items-center gap-2.5">
-          {dirCfg && DirIcon && (
+          {dirCfg && (
             <span className={cn('font-mono font-semibold text-sm', dirCfg.text)}>
               {trade.coin}USDT
             </span>

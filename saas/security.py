@@ -2,8 +2,14 @@
 import hmac
 import os
 from fastapi import HTTPException
-from auth import is_admin_user
+from auth import is_admin_user as _auth_is_admin_user
 from saas.middleware import get_current_user
+
+
+def is_admin_user(user: dict | None) -> bool:
+    if user and user.get("type") == "api_key":
+        return False
+    return _auth_is_admin_user(user)
 
 
 def require_admin_access(request) -> dict:

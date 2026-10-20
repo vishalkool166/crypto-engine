@@ -1,341 +1,160 @@
 import { useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useQuery } from '@tanstack/react-query'
 import { Check, X, ChevronDown } from 'lucide-react'
-import { cn } from '@/lib/utils'
+import { pricingApi } from '@/lib/endpoints'
 import { useAuthStore } from '@/stores/authStore'
 import { getTierConfig } from '@/lib/tokens'
+import { cn } from '@/lib/utils'
 
-const PLANS = [
-  {
-    id:          'free',
-    monthly:     0,
-    annual:      0,
-    description: 'Delayed signals to get started',
-    features: [
-      'Signals delayed 8 hours',
-      '3 signals per day',
-      'Grade visibility (A+/A/B)',
-      'Score visible',
-      '5 coins monitored',
-      'Signal universe view',
-    ],
-    locked: [
-      'Entry / SL / TP levels',
-      'Live positions',
-      'Performance analytics',
-      'Signal thesis',
-    ],
-    popular: false,
-  },
-  {
-    id:          'pro',
-    monthly:     29,
-    annual:      23,
-    description: 'Live signals with full entry levels',
-    features: [
-      'Live signals — zero delay',
-      'Unlimited signals per day',
-      'Entry / SL / TP levels',
-      'Live positions view',
-      'Full performance history',
-      'Session breakdown',
-      'All coins monitored',
-    ],
-    locked: [
-      'Signal thesis',
-      'Confluence factors',
-      'ML probability',
-      'Backtest access',
-    ],
-    popular: true,
-  },
-  {
-    id:          'elite',
-    monthly:     79,
-    annual:      63,
-    description: 'Everything plus deep analysis and AI tools',
-    features: [
-      'Everything in Pro',
-      'Signal thesis explanation',
-      'Confluence factor breakdown',
-      'ML probability score',
-      'Phase breakdown & MAE/MFE',
-      'Backtest access',
-      'API key access (3 keys)',
-      'Content generator',
-      'AI assistant',
-    ],
-    locked: [],
-    popular: false,
-  },
-]
-
-const COMPARISON = [
-  { feature: 'Signal delivery',       free: '8hr delay', pro: 'Live',      elite: 'Live'      },
-  { feature: 'Signals per day',       free: '3',         pro: 'Unlimited', elite: 'Unlimited' },
-  { feature: 'Score visible',         free: true,        pro: true,        elite: true        },
-  { feature: 'Entry / SL / TP',       free: false,       pro: true,        elite: true        },
-  { feature: 'Live positions',        free: false,       pro: true,        elite: true        },
-  { feature: 'Performance history',   free: false,       pro: true,        elite: true        },
-  { feature: 'Session breakdown',     free: false,       pro: true,        elite: true        },
-  { feature: 'Signal thesis',         free: false,       pro: false,       elite: true        },
-  { feature: 'Confluence factors',    free: false,       pro: false,       elite: true        },
-  { feature: 'ML probability',        free: false,       pro: false,       elite: true        },
-  { feature: 'Phase breakdown',       free: false,       pro: false,       elite: true        },
-  { feature: 'MAE / MFE analysis',    free: false,       pro: false,       elite: true        },
-  { feature: 'Backtest access',       free: false,       pro: false,       elite: true        },
-  { feature: 'API key access',        free: false,       pro: false,       elite: true        },
-  { feature: 'Content generator',     free: false,       pro: false,       elite: true        },
-  { feature: 'AI assistant',          free: false,       pro: false,       elite: true        },
-  { feature: 'Coins monitored',       free: '5',         pro: 'All',       elite: 'All'       },
-]
-
-const FAQ = [
-  {
-    q: 'What is a signal?',
-    a: 'A signal is a trading opportunity identified by the engine. It includes the coin, direction (LONG/SHORT), grade (A+/A/B), and for paid tiers — entry price, stop loss, and take profit levels.',
-  },
-  {
-    q: 'How is the grade calculated?',
-    a: 'Grades come from a combined score of three independent factors: sweep quality, zone quality, and trigger quality. A+ requires all three to be strong. The score is honest — no padding.',
-  },
-  {
-    q: 'What is the signal delay on the free plan?',
-    a: 'Free plan signals are delayed by 8 hours. By the time you see them, the trade opportunity has passed. Pro and Elite receive signals the moment they are generated.',
-  },
-  {
-    q: 'What is the content generator?',
-    a: 'Elite users can generate market commentary and signal tweets on demand. One click, one AI call, you get sharp output. No auto-posting — you control what goes out.',
-  },
-  {
-    q: 'What is the AI assistant?',
-    a: 'Elite users get access to a chat assistant that knows your live signal data, trade history, and how the engine works. Ask it why a signal fired, what a grade means, or how position sizing works.',
-  },
-  {
-    q: 'Can I cancel anytime?',
-    a: 'Yes. Cancel from your profile page. You keep access until the end of your billing period.',
-  },
-  {
-    q: 'Is this financial advice?',
-    a: 'No. Signal Engine provides automated technical analysis for educational purposes only. Always do your own research.',
-  },
-]
+type TierId = 'free' | 'pro' | 'elite'
+type TierFeature = { text: string; available: boolean; highlight: boolean }
+type Plan = {
+  id: TierId
+  name: string
+  price_monthly: number
+  price_annual: number
+  description: string
+  popular: boolean
+  features: TierFeature[]
+}
+type Comparison = {
+  feature: string
+  free: string | null
+  pro: string | null
+  elite: string | null
+  free_bool: boolean | null
+  pro_bool: boolean | null
+  elite_bool: boolean | null
+}
+type PricingResponse = {
+  tiers: Plan[]
+  comparison: Comparison[]
+  faq: { question: string; answer: string }[]
+}
 
 export default function Pricing() {
-  const { tier: currentTier }     = useAuthStore()
-  const [billing, setBilling]     = useState<'monthly' | 'annual'>('monthly')
-  const [openFaq, setOpenFaq]     = useState<number | null>(null)
+  const { tier } = useAuthStore()
+  const [billing, setBilling] = useState<'monthly' | 'annual'>('monthly')
+  const [openFaq, setOpenFaq] = useState<number | null>(null)
+  const { data, isLoading, isError, refetch } = useQuery<PricingResponse>({
+    queryKey: ['pricing-catalogue'],
+    queryFn: async () => (await pricingApi.get()).data as PricingResponse,
+    staleTime: 60_000,
+  })
 
   return (
-    <div className="p-4 md:p-6 space-y-10 max-w-4xl">
-
-      <div className="text-center space-y-2">
-        <h1 className="text-xl font-semibold text-foreground">
-          Simple, transparent pricing
-        </h1>
+    <main className="mx-auto max-w-5xl space-y-8 p-4 md:p-6">
+      <header className="space-y-2">
+        <h1 className="text-xl font-semibold text-foreground">Plans and access</h1>
         <p className="text-sm text-muted-foreground">
-          Choose the plan that fits your trading style
+          Your current plan controls which research and analysis tools are visible. Changes are managed by the administrator.
         </p>
-      </div>
+      </header>
 
-      <div className="flex justify-center">
-        <div className="flex items-center gap-px rounded-md border border-border overflow-hidden">
-          {(['monthly', 'annual'] as const).map(b => (
-            <button
-              key       = {b}
-              onClick   = {() => setBilling(b)}
-              className = {cn(
-                'px-5 py-2 text-xs font-medium capitalize transition-colors',
-                billing === b
-                  ? 'bg-foreground text-background'
-                  : 'text-muted-foreground hover:text-foreground bg-background'
-              )}
-            >
-              {b}
-              {b === 'annual' && (
-                <span className="ml-1.5 text-[hsl(var(--chart-1))]">
-                  −20%
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
+      {isLoading && <p role="status" className="text-sm text-muted-foreground">Loading current plan details…</p>}
+      {isError && (
+        <section role="alert" className="rounded-lg border border-border bg-card p-5">
+          <p className="text-sm text-foreground">Plan details are temporarily unavailable. No pricing estimates are being shown.</p>
+          <button className="mt-3 rounded-md border border-border px-3 py-1.5 text-sm" onClick={() => refetch()}>Try again</button>
+        </section>
+      )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {PLANS.map((plan, i) => {
-          const price    = billing === 'annual' ? plan.annual : plan.monthly
-          const isCurrent= currentTier === plan.id
-          const tierCfg  = getTierConfig(plan.id)
-
-          return (
-            <motion.div
-              key        = {plan.id}
-              initial    = {{ opacity: 0, y: 10 }}
-              animate    = {{ opacity: 1, y: 0  }}
-              transition = {{ delay: i * 0.08 }}
-              className  = {cn(
-                'relative rounded-lg border bg-card p-6 space-y-5',
-                plan.popular
-                  ? 'border-foreground/20'
-                  : 'border-border'
-              )}
-            >
-              {plan.popular && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                  <span className="inline-flex items-center rounded-full border border-border bg-card px-3 py-0.5 text-xs font-medium text-foreground">
-                    Most Popular
-                  </span>
-                </div>
-              )}
-
-              <div className="space-y-1">
-                <p className={cn('text-sm font-semibold', tierCfg.text)}>
-                  {tierCfg.label}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {plan.description}
-                </p>
-              </div>
-
-              <div className="flex items-baseline gap-1">
-                {price === 0 ? (
-                  <span className="value-lg text-foreground">Free</span>
-                ) : (
-                  <>
-                    <span className="value-lg text-foreground">${price}</span>
-                    <span className="text-xs text-muted-foreground">/mo</span>
-                    {billing === 'annual' && (
-                      <span className="text-xs text-muted-foreground">
-                        billed annually
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                {plan.features.map(f => (
-                  <div key={f} className="flex items-start gap-2">
-                    <Check className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-1))] mt-0.5" />
-                    <span className="text-xs text-foreground">{f}</span>
-                  </div>
-                ))}
-                {plan.locked.map(f => (
-                  <div key={f} className="flex items-start gap-2">
-                    <X className="h-3.5 w-3.5 shrink-0 text-muted-foreground/30 mt-0.5" />
-                    <span className="text-xs text-muted-foreground/50">{f}</span>
-                  </div>
-                ))}
-              </div>
-
+      {data && (
+        <>
+          <div className="inline-flex overflow-hidden rounded-md border border-border">
+            {(['monthly', 'annual'] as const).map(option => (
               <button
-                disabled
-                className = {cn(
-                  'w-full rounded-md px-4 py-2.5 text-sm font-medium transition-colors',
-                  isCurrent
-                    ? 'border border-border bg-muted text-muted-foreground cursor-default'
-                    : plan.popular
-                    ? 'bg-foreground text-background opacity-50 cursor-not-allowed'
-                    : 'border border-border bg-background text-foreground opacity-50 cursor-not-allowed'
-                )}
-              >
-                {isCurrent ? 'Current Plan' : 'Coming Soon'}
-              </button>
-            </motion.div>
-          )
-        })}
-      </div>
+                key={option}
+                type="button"
+                aria-pressed={billing === option}
+                onClick={() => setBilling(option)}
+                className={cn('px-4 py-2 text-xs font-medium capitalize',
+                  billing === option ? 'bg-foreground text-background' : 'bg-background text-muted-foreground hover:text-foreground')}
+              >{option}</button>
+            ))}
+          </div>
 
-      <div className="rounded-md border border-[hsl(var(--chart-4)/0.2)] bg-[hsl(var(--chart-4)/0.06)] px-4 py-3 text-center">
-        <p className="text-sm font-medium text-[hsl(var(--chart-4))]">
-          Stripe integration coming soon
-        </p>
-        <p className="text-xs text-[hsl(var(--chart-4)/0.7)] mt-1">
-          Contact admin to upgrade manually in the meantime.
-        </p>
-      </div>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            {data.tiers.map(plan => {
+              const current = plan.id === tier
+              const price = billing === 'monthly' ? plan.price_monthly : plan.price_annual
+              return (
+                <section key={plan.id} className={cn('rounded-lg border bg-card p-5', plan.popular ? 'border-foreground/30' : 'border-border')}>
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <h2 className={cn('text-sm font-semibold', getTierConfig(plan.id).text)}>{plan.name}</h2>
+                    {current && <span className="rounded-full bg-muted px-2 py-1 text-xs text-foreground">Current plan</span>}
+                  </div>
+                  <p className="min-h-10 text-xs text-muted-foreground">{plan.description}</p>
+                  <p className="my-4 text-2xl font-semibold text-foreground">
+                    {price === 0 ? 'Free' : `$${price}`}
+                    {price !== 0 && <span className="ml-1 text-xs font-normal text-muted-foreground">/month</span>}
+                  </p>
+                  <ul className="space-y-2 border-t border-border pt-4">
+                    {plan.features.map(feature => (
+                      <li key={feature.text} className="flex items-start gap-2 text-xs">
+                        {feature.available
+                          ? <Check aria-label="Included" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-1))]" />
+                          : <X aria-label="Unavailable" className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />}
+                        <span className={feature.available ? 'text-foreground' : 'text-muted-foreground'}>{feature.text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-5 border-t border-border pt-4 text-xs text-muted-foreground">
+                    {current ? 'Your current access level' : 'Contact an administrator to request this plan'}
+                  </p>
+                </section>
+              )
+            })}
+          </div>
 
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">Compare Plans</h2>
-        <div className="rounded-lg border border-border bg-card overflow-hidden">
-          <table className="w-full">
-            <thead className="border-b border-border">
-              <tr>
-                <th className="table-header-cell w-1/2">Feature</th>
-                {['Basic', 'Pro', 'Elite'].map(h => (
-                  <th key={h} className="table-header-cell text-center">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {COMPARISON.map(row => (
-                <tr key={row.feature} className="table-row">
-                  <td className="table-cell text-xs text-foreground">
-                    {row.feature}
-                  </td>
-                  {[row.free, row.pro, row.elite].map((val, i) => (
-                    <td key={i} className="table-cell text-center">
-                      {typeof val === 'boolean' ? (
-                        val
-                          ? <Check className="h-3.5 w-3.5 text-[hsl(var(--chart-1))] mx-auto" />
-                          : <X     className="h-3.5 w-3.5 text-muted-foreground/30 mx-auto" />
-                      ) : (
-                        <span className="text-xs text-foreground">{val}</span>
-                      )}
-                    </td>
+          <p className="text-xs text-muted-foreground">
+            Self-service billing and checkout are not enabled. Displayed plan amounts are catalogue values, not an offer to charge your account.
+          </p>
+
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold text-foreground">Compare access</h2>
+            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+              <table className="w-full min-w-[520px] text-xs">
+                <thead className="border-b border-border">
+                  <tr><th className="p-3 text-left">Feature</th><th className="p-3 text-center">Basic</th><th className="p-3 text-center">Pro</th><th className="p-3 text-center">Elite</th></tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {data.comparison.map(row => (
+                    <tr key={row.feature}>
+                      <td className="p-3 text-foreground">{row.feature}</td>
+                      {(['free', 'pro', 'elite'] as const).map(plan => {
+                        const available = row[`${plan}_bool`]
+                        return (
+                          <td key={plan} className="p-3 text-center text-muted-foreground">
+                            {available === true ? <Check aria-label="Included" className="mx-auto h-3.5 w-3.5 text-[hsl(var(--chart-1))]" />
+                              : available === false ? <X aria-label="Not included" className="mx-auto h-3.5 w-3.5" />
+                                : row[plan] ?? '—'}
+                          </td>
+                        )
+                      })}
+                    </tr>
                   ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-foreground">
-          Frequently Asked Questions
-        </h2>
-        <div className="space-y-2">
-          {FAQ.map((item, i) => (
-            <div
-              key       = {i}
-              className = "rounded-lg border border-border bg-card overflow-hidden"
-            >
-              <button
-                onClick   = {() => setOpenFaq(openFaq === i ? null : i)}
-                className = "flex w-full items-center justify-between px-5 py-4 text-left"
-              >
-                <span className="text-sm font-medium text-foreground">
-                  {item.q}
-                </span>
-                <ChevronDown className={cn(
-                  'h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0 ml-3',
-                  openFaq === i && 'rotate-180'
-                )} />
-              </button>
-              <AnimatePresence>
-                {openFaq === i && (
-                  <motion.div
-                    initial    = {{ height: 0, opacity: 0 }}
-                    animate    = {{ height: 'auto', opacity: 1 }}
-                    exit       = {{ height: 0, opacity: 0 }}
-                    transition = {{ duration: 0.2 }}
-                    className  = "overflow-hidden"
-                  >
-                    <div className="border-t border-border px-5 py-4">
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {item.a}
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                </tbody>
+              </table>
             </div>
-          ))}
-        </div>
-      </div>
+          </section>
 
-    </div>
+          <section className="space-y-2">
+            <h2 className="text-sm font-semibold text-foreground">Questions</h2>
+            {data.faq.map((item, index) => (
+              <div key={item.question} className="rounded-lg border border-border bg-card">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-4 p-4 text-left text-sm font-medium text-foreground"
+                  aria-expanded={openFaq === index}
+                  onClick={() => setOpenFaq(openFaq === index ? null : index)}
+                >{item.question}<ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground', openFaq === index && 'rotate-180')} /></button>
+                {openFaq === index && <p className="border-t border-border px-4 py-3 text-sm text-muted-foreground">{item.answer}</p>}
+              </div>
+            ))}
+          </section>
+        </>
+      )}
+    </main>
   )
 }

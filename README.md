@@ -1,59 +1,81 @@
-# Signal Engine V5
+# Signal Engine
 
-Private-source Python trading engine and React dashboard, distributed in a single repository. **Current handoff is v1.0.0-rc1, a source-level release candidate and not production-certified.** **AWS continues to run the original Python backend at the repository root; Cloudflare Pages builds only `dashboard/`.** The owner intentionally does not use GitHub Actions.
+A Python market-signal and paper-trading service with a React dashboard. This repository contains **one AWS backend** and **one Cloudflare Pages frontend**. The trading scheduler, exchange integrations, Redis and persistent SQLite state remain on AWS.
 
-## Layout
+> **Release state:** Phases 01–09 cumulative **source candidate**. This checkout is not the running EC2 revision. Offline tests and static checks do not certify a production deployment, live execution, or any profitable trading edge. Email/password signup remains disabled until all staging security gates pass.
 
-| Path | Purpose |
+## Repository map
+
+| Location | Responsibility |
 | --- | --- |
-| `main.py`, `config.py`, `scheduler.py`, `auth.py` | Existing backend startup, environment and scheduling; paths preserved |
-| `agents/`, `engines/`, `trade/`, `api/`, `saas/` | Existing Python trading/API implementation; only targeted pagination and security-email changes |
-| `Dockerfile`, `docker-compose.yml` | **Unchanged original AWS deployment contract** |
-| `frontend/` | Existing compiled static fallback served by AWS; kept for backwards compatibility |
-| `dashboard/` | Editable React/TypeScript source; deploy this folder on Cloudflare Pages |
-| `docs/engineering/` | Private engineering blueprint/task ledger, architecture decisions and readiness evidence |
-| `docs/operations/` | Two-host rollout and recovery guidance |
-| `scripts/verify_local.sh` | Explicit local quality checks; no GitHub Actions |
+| `main.py`, `scheduler.py`, `config.py`, `auth.py`, `database.py` | Existing AWS application entrypoints and runtime configuration |
+| `agents/`, `engines/`, `trade/`, `api/`, `saas/` | Market analysis, execution controls, API endpoints, user access and plan rules |
+| `dashboard/` | Editable React/Vite application deployed to Cloudflare Pages |
+| `tests/` | Python regression and security tests |
+| `scripts/` | Offline validation, SQLite backup/restore and release checks |
+| `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` | System boundaries and operational controls |
+| `docs/engineering/MASTER_TASK_LEDGER.csv` | Tracked engineering tasks and remaining release gates |
 
-## Local tests (Python 3.11 target)
+The obsolete compiled AWS `frontend/` directory is intentionally absent. Browser entrypoints on AWS redirect to the configured Cloudflare frontend; the backend continues to serve API, Google OAuth, WebSocket and Telegram webhook endpoints.
+
+## Running and testing locally
+
+Python **3.11** and Node **22** are the intended development runtimes. Use an isolated environment and *never* run this checkout with production credentials or a production trading database.
 
 ```bash
 python -m pip install -r requirements.txt
-bash scripts/verify_local.sh
+python -m pip install -r requirements-test.txt
+python -m pytest -q
+python scripts/check_monorepo_contract.py
+python scripts/check_task_ledger.py
 ```
 
-When npm access is available, `CHECK_FRONTEND=1 bash scripts/verify_local.sh` additionally runs npm clean install, lint, TypeScript checks and production build. Node 22 is recommended for the dashboard. Unit tests do not approve live trading.
-
-## Dashboard local development
+Frontend development and checks:
 
 ```bash
 cd dashboard
-cp .env.example .env.local
 npm ci
-npm run dev
+npm run lint
+npx tsc --noEmit -p tsconfig.app.json
+npm run build
 ```
 
-Vite proxies API/auth/WebSocket requests to `http://127.0.0.1:8000` for local development unless an override is explicitly supplied. Production Cloudflare builds must set `VITE_API_URL` and `VITE_WS_URL` to the live **AWS HTTPS/WSS** origin; these are public URLs, never secrets.
+Local frontend development can use `npm run dev` and the Vite localhost API proxy. The Cloudflare production build requires `VITE_API_URL` and `VITE_WS_URL`, both **public** URLs (never credentials).
 
-## Hosting / existing GitHub repo
+## Deployments
 
-Keep **`vishalkool166/crypto-engine`** as your canonical repository and retain its Git history. Cloudflare Pages connects to that Git repository with root `dashboard`, command `npm run build`, output `dist`, and Node 22. AWS stays on its existing root-level Dockerfile and Compose config; the current automatic AWS update mechanism must be identified before merging into production. See [controlled migration playbook](docs/operations/AWS_CLOUDFLARE_ROLLOUT.md).
+- **AWS EC2:** Existing Compose service `signal-engine`, `uvicorn main:app`, root `Dockerfile`, `/app/database` bind mount and `redis_data` volume are preserved. Redis remains private to Compose. The current Git-to-AWS update mechanism is external to this repository and must be verified separately.
+- **Cloudflare Pages:** Connect `vishalkool166/crypto-engine`; root `dashboard`; `npm run build`; output `dist`; Node 22. Git integration does not require GitHub Actions.
+- **Current frontend:** `https://app.vishalkool.top`. **Current API:** `https://signal-engine-v5.vishalkool.top`. These hostnames must not be exchanged without a reviewed OAuth/DNS cutover.
+- **Google login:** AWS performs the OAuth callback, sets its backend-scoped session cookie and redirects to `FRONTEND_URL`. Verify cookie/CORS behavior against both domains after any change.
+- **Health checks:** `GET /api/health` is public liveness-only (used by Docker). `GET /api/system/health` is administrator-only diagnostics and includes an actual Redis ping result. A failed health query is not proof of Redis failure.
 
-Existing GitHub Actions workflows are intentionally removed. Cloudflare's native Git integration builds frontend commits independently; it does not redeploy your Python engine.
+See [operations](docs/OPERATIONS.md) for backup, scheduler, and incident response. **Do not copy a candidate ZIP straight into a live auto-deploy checkout without backup and staging verification.**
 
-## Security and release status
+## Accounts and plans
 
-- Existing trade algorithms and live/paper mode controls are not rewritten; **do not enable real capital on the basis of these code changes**.
-- Resend is an **inactive** provider adapter reserved exclusively for account verification/recovery/security emails. Password reset workflows remain unfinished; do **not** activate email without token, cooldown, session revocation and security review.
-- Telegram is the trading alert channel; no trade/market/performance email functionality is implemented.
-- Credentials, live SQLite volumes, Redis data and exchange secrets must never enter Git.
-- Local 161 Python regressions pass with 1 auth-dependent module skipped in the isolated environment. Frontend syntax parses, but npm clean build, AWS deployment, live Redis, browser auth and broker recovery still require external verification. See [readiness report](docs/engineering/RELEASE_EVIDENCE.md).
+Google Sign-In remains the deployed login. A separate email/password registration, verification, sign-in and recovery implementation is included in source but **disabled by default** pending browser, Resend and session-security verification. Set neither email feature flag on AWS yet. Resend is exclusively for account verification and security messages, never signals, trades, reports or marketing; Telegram remains the trading-alert channel.
 
-The historical signal-strategy documentation remains in `docs/`; engineering planning docs are not included in the Cloudflare static build. This repository is private by default. No copyright license is granted by inclusion in this archive.
+This candidate adds three **new** account tables through `database.init_db()`; it does not modify existing User or Subscription schemas. See [release evidence](docs/engineering/RELEASE_EVIDENCE.md) before any staging activation.
 
-## Release gates and change safety
+`config.py` is the current authority for entitlements. `GET /api/pricing` exposes its plan catalogue to the dashboard, including Free/Pro/Elite signal visibility and restrictions. Billing and customer self-upgrades are **not** enabled; administrator changes require authorization. Never infer live-trading permission from a subscription tier.
 
-- See [v1.0.0 candidate verification](docs/engineering/RELEASE_EVIDENCE.md), [machine-readable gates](docs/engineering/RELEASE_GATES_V1.json), [security policy](SECURITY.md), and [contribution workflow](CONTRIBUTING.md).
-- `scripts/restore_sqlite.py` restores an integrity-checked snapshot into a **new file only**. It must never be aimed at a running production database.
-- A Cloudflare Pages build requires public `VITE_API_URL` (HTTPS) and `VITE_WS_URL` (WSS) at build time; `dashboard/scripts/check-deploy-env.mjs` validates them. Use a same-site custom domain for auth tests.
-- `STRICT_SESSION_ORIGIN_CHECK=false` is an explicit deployment compatibility guard. Enable only after staging confirms cookie-origin compatibility; it is not automatically safe to switch on at an untested EC2 instance.
+## Status and safety
+
+This release has isolated Python tests for account provisioning, email verification/reset, tier changes, privilege checks, health-route contracts, exchange outages, logout routing, and per-tier WebSocket updates. It still needs a full browser build, real Redis probe, end-to-end OAuth tests, safe AWS image rebuild, recovery drill and independent trading review. See [verification evidence](docs/engineering/RELEASE_EVIDENCE.md) and [engineering ledger](docs/engineering/MASTER_TASK_LEDGER.csv).
+
+The project intentionally does not use GitHub Actions. Do not commit `.env`, exchange keys, Redis snapshots or trading databases.
+
+## Manual release assessment
+
+The repository has no GitHub Actions. On a separate development machine with the required runtimes:
+
+```bash
+bash scripts/verify_local.sh
+python scripts/release_audit.py --output /tmp/signal-engine-release-audit.json
+python scripts/freeze_strategy_baseline.py --check
+```
+
+The release audit explicitly leaves browser, real Redis, AWS rollout, email provider, and exchange testnet gates **blocked** until someone performs and records them. A skipped test is not counted as a completed verification gate. The `S0` strategy manifest verifies *source identity*, not signal profitability; quantitative evaluation uses [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+To deploy, compare this candidate against the running AWS commit first, test with a restored **staging** database and isolated Redis, and follow the rollback procedure in [`docs/OPERATIONS.md`](docs/OPERATIONS.md). Never copy a ZIP over the production SQLite database or use an unverified auto-deployment to `main`.

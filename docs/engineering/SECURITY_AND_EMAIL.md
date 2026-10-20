@@ -6,9 +6,13 @@
 
 **Forbidden email categories**: crypto/Indian signals, position opened/closed, stop-loss/TP, performance/digests, engine uptime/incidents, general product notifications, subscription marketing, campaigns and promotional mail. Preserve Telegram or in-app channels for trading notifications. Do not build user-controlled trading email preferences. A code-level policy/enumeration test should reject any unsupported category or event mapping.
 
+## Current source status (2026-10-19)
+
+The candidate contains feature-gated email/password registration, verification, login and password-reset routes, plus a Resend adapter restricted to the account/security event enum. `EMAIL_ACCOUNTS_ENABLED` and `SECURITY_EMAIL_ENABLED` default to false. This is source-level implementation only: browser end-to-end behavior, delivery to a verified sender, rate limiting behind the deployed proxy, concurrent token claims, and operational recovery have not been verified. Keep both flags disabled until those gates are recorded as passed. See `RELEASE_EVIDENCE.md` for the current audit evidence.
+
 ## Identity / authentication
 
-Source contains dashboard username/password + TOTP endpoints, Google OAuth, SaaS user sessions and API keys. **Do not blindly bolt email reset onto every identity type**; first define identity linking, verified email ownership, admin setup flow and recoverability. If email is not a login identifier for a legacy account, require approved linking/step-up flow before reset. The historical `/auth/request-totp` Telegram delivery path deserves a threat review but must not be silently removed without a compatibility decision.
+Source contains dashboard username/password + TOTP endpoints, Google OAuth, SaaS user sessions and API keys, as well as a separate feature-gated email/password identity path. Email identities are not silently linked to Google identities. The historical `/auth/request-totp` Telegram delivery path deserves a threat review but must not be silently removed without a compatibility decision.
 
 ### Security flow: new account / verification
 

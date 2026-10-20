@@ -32,6 +32,7 @@
 **/google*.json
 **/*.log
 **/data/live/
+**/data/binance_validation/
 **/reports/private/
 backups/
 .storage/
@@ -54,3 +55,8 @@ backups/
 # Staged frontend source has its own build artefacts.
 /dashboard/.env.local
 /dashboard/.env.production
+
+# Local runtime databases must never enter source archives.
+*.db
+*.sqlite
+*.sqlite3

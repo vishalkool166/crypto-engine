@@ -112,6 +112,9 @@ def test_replay_uses_coin_specific_live_tp_and_no_trend_side_effect(monkeypatch)
     assert sol['trades'][0]['tp1'] == 103.5
     assert all(t['tp2_hit'] is False for t in eth['trades'])
     assert eth['funding_modeled'] is False
+    assert eth['result_type'] == 'simulated_backtest'
+    assert eth['pnl_provenance'] == 'simulated_not_exchange_realized'
+    assert eth['exchange_verified'] is False
     assert eth['walk_forward']['method'].startswith('chronological')
 
 

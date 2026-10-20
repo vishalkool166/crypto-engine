@@ -63,7 +63,7 @@ function useCountUp(target: string, duration = 800) {
     })
 
     return () => { if (animRef.current) animRef.current.stop() }
-  }, [target])
+  }, [target, duration])
 
   return displayed
 }

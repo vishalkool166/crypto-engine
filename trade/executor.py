@@ -81,10 +81,11 @@ async def _place_with_retry(**kwargs) -> dict:
     from config import cfg as current_cfg
     from trade.exchange import get_order_by_client_id
     from trade.order_journal import reserve, mark
-    from trade.safety import ensure_live_opt_in
+    from trade.safety import ensure_live_opt_in, ensure_new_exposure_allowed
 
     intent_key = kwargs.pop("intent_key", None) or f"ephemeral:{uuid.uuid4().hex}"
     if not kwargs.get("reduce_only"):
+        ensure_new_exposure_allowed()
         ensure_live_opt_in(current_cfg.TRADING_MODE)
     client_id, is_new = reserve(
         intent_key, current_cfg.TRADING_MODE,
@@ -439,8 +440,10 @@ async def open_position(
     order_submission_started = False
 
     try:
-        from trade.safety import validate_entry, require_precision, ensure_live_opt_in, validate_symbol_notional
+        from trade.safety import (validate_entry, require_precision, ensure_live_opt_in,
+                                  ensure_new_exposure_allowed, validate_symbol_notional)
         from trade.order_journal import unresolved
+        ensure_new_exposure_allowed()
         ensure_live_opt_in(cfg.TRADING_MODE)
         validate_entry(direction, entry, sl, tp, stake, leverage, MIN_STAKE_USDT)
         if unresolved():

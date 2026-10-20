@@ -81,12 +81,12 @@ export default function RejectionStats() {
 
   const summaryStats = tab === 'total' ? totalStats : tab === 'weekly' ? weeklyStats : null
 
-  const chartData = dailyStats.slice(-7).map((d: { date: string; total: number }) => ({
+  const chartData = dailyStats.slice(-7).map(d => ({
     date:  d.date.slice(5),
     total: d.total,
   }))
 
-  const entries = activeStats
+  const entries: Array<[string, { count: number; pct: number }]> = activeStats
     ? Object.entries(activeStats as Record<string, { count: number; pct: number }>)
         .sort(([, a], [, b]) => b.count - a.count)
         .slice(0, 10)

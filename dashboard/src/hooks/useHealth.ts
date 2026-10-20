@@ -3,16 +3,18 @@ import { useQuery } from '@tanstack/react-query'
 import { systemApi } from '@/lib/endpoints'
 import { useWsStore } from '@/stores/wsStore'
 import { useDemoStore } from '@/demo/demoStore'
-import { mockSummary, mockTicker } from '@/demo/mockData'
+import { useAuthStore } from '@/stores/authStore'
+import { mockSummary } from '@/demo/mockData'
 
 export function useHealth() {
   const { isDemoMode } = useDemoStore()
+  const { isAdmin } = useAuthStore()
 
   return useQuery({
     queryKey:        ['health'],
     queryFn:         () => systemApi.health().then(r => r.data),
-    enabled:         !isDemoMode,
-    refetchInterval: !isDemoMode ? 15_000 : false,
+    enabled:         !isDemoMode && isAdmin,
+    refetchInterval: !isDemoMode && isAdmin ? 15_000 : false,
     staleTime:       10_000,
   })
 }
@@ -32,14 +34,15 @@ export function useWsStatus() {
 export function useSystemStatus() {
   const { isDemoMode }              = useDemoStore()
   const { status: wsStatus }        = useWsStore()
-  const { data: health, isLoading } = useHealth()
+  const { data: health, isLoading, isError } = useHealth()
   const { data: wsData }            = useWsStatus()
 
   if (isDemoMode) {
     return {
       isLoading:      false,
+      healthUnavailable: false,
       wsConnected:    true,
-      redisConnected: true,
+      redisConnected: true as boolean | null,
       engineOk:       true,
       mlEnabled:      true,
       mlProgress: {
@@ -80,8 +83,9 @@ export function useSystemStatus() {
 
   return {
     isLoading,
+    healthUnavailable: isError,
     wsConnected:    wsStatus === 'connected',
-    redisConnected: health?.redis_connected    ?? false,
+    redisConnected: typeof health?.redis_connected === 'boolean' ? health.redis_connected : null,
     engineOk:       health?.status === 'ok',
     mlEnabled:      health?.ml_status?.ml_enabled ?? false,
     mlProgress: {
@@ -121,7 +125,7 @@ function _buildAlerts(health: unknown, system: unknown): string[] {
   const alerts: string[] = []
   const h = health as Record<string, unknown> | undefined
   const s = system as Record<string, unknown> | undefined
-  if (!h?.redis_connected)               alerts.push('Redis disconnected')
+  if (h && h.redis_connected === false) alerts.push('Redis disconnected')
   if (s && (s.cpu_pct  as number) > 90)  alerts.push(`CPU critical: ${s.cpu_pct}%`)
   if (s && (s.ram_pct  as number) > 90)  alerts.push(`RAM critical: ${s.ram_pct}%`)
   if (s && (s.disk_pct as number) > 85)  alerts.push(`Disk high: ${s.disk_pct}%`)

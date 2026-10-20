@@ -1,6 +1,5 @@
 import {
   createContext,
-  useContext,
   useEffect,
   useRef,
   ReactNode,
@@ -19,15 +18,13 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue>({ send: () => {} })
 
-export function useWebSocket() {
-  return useContext(WebSocketContext)
-}
-
 export default function WebSocketProvider({ children }: { children: ReactNode }) {
   const wsRef             = useRef<WebSocket | null>(null)
   const reconnectRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
   const delayRef          = useRef(BASE_DELAY)
   const mountedRef        = useRef(true)
+  const connectRef        = useRef<() => void>(() => {})
+  const scheduleRef       = useRef<() => void>(() => {})
 
   const { setStatus, setPayload, incrementReconnect, resetReconnect } = useWsStore()
   const { isAuthenticated } = useAuthStore()
@@ -54,7 +51,9 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
       try {
         const payload = JSON.parse(event.data)
         setPayload(payload)
-      } catch {}
+      } catch {
+        // Ignore malformed frames; a later valid frame can still update the dashboard.
+      }
     }
 
     ws.onerror = () => {
@@ -66,7 +65,7 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
       if (!mountedRef.current) return
       setStatus('disconnected')
       wsRef.current = null
-      schedule()
+      scheduleRef.current()
     }
   }
 
@@ -75,7 +74,7 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
     incrementReconnect()
     reconnectRef.current = setTimeout(() => {
       delayRef.current = Math.min(delayRef.current * 2, MAX_DELAY)
-      connect()
+      connectRef.current()
     }, delayRef.current)
   }
 
@@ -85,9 +84,12 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
     }
   }
 
+  connectRef.current = connect
+  scheduleRef.current = schedule
+
   useEffect(() => {
     mountedRef.current = true
-    if (isAuthenticated) connect()
+    if (isAuthenticated) connectRef.current()
 
     return () => {
       mountedRef.current = false

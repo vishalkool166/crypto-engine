@@ -40,7 +40,7 @@ export default function SignalRow({ item, index = 0, selected, onSelect }: Props
           : <span className="w-8 text-xs text-muted-foreground/40">—</span>
         }
 
-        {dirCfg && DirIcon && item.direction !== '--' ? (
+        {dirCfg && item.direction !== '--' ? (
           <span className={cn(
             'hidden sm:inline-flex items-center gap-1 rounded border px-1.5 py-px text-xs font-medium shrink-0',
             dirCfg.bg, dirCfg.text, dirCfg.border

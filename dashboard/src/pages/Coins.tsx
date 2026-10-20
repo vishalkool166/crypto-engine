@@ -13,7 +13,6 @@ import EmptyState from '@/components/ui/EmptyState'
 import { PageSkeleton } from '@/components/ui/LoadingSkeleton'
 import { getStateConfig } from '@/lib/tokens'
 import { Coins } from 'lucide-react'
-import { toast } from 'sonner'
 import type { CoinConfig } from '@/types'
 
 export default function CoinsPage() {

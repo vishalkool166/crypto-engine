@@ -5,6 +5,10 @@ import { useDemoStore } from '@/demo/demoStore'
 import { mockCoins, mockAdminStats } from '@/demo/mockData'
 import { toast } from 'sonner'
 
+async function runUnlessDemo(isDemoMode: boolean, request: () => Promise<unknown>): Promise<void> {
+  if (!isDemoMode) await request()
+}
+
 export function useAdminStats() {
   const { isAdmin }    = useAuthStore()
   const { isDemoMode } = useDemoStore()
@@ -63,7 +67,7 @@ export function useUpdateTier() {
 
   return useMutation({
     mutationFn: ({ id, tier }: { id: number; tier: string }) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : adminApi.updateTier(id, tier),
+      runUnlessDemo(isDemoMode, () => adminApi.updateTier(id, tier)),
     onSuccess: (_, { id }) => {
       if (isDemoMode) { toast.success('Tier updated (demo)'); return }
       toast.success('Tier updated')
@@ -79,8 +83,7 @@ export function useDeactivateUser() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: number) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : adminApi.deactivate(id),
+    mutationFn: (id: number) => runUnlessDemo(isDemoMode, () => adminApi.deactivate(id)),
     onSuccess: (_, id) => {
       if (isDemoMode) { toast.success('User deactivated (demo)'); return }
       toast.success('User deactivated')
@@ -96,8 +99,7 @@ export function useReactivateUser() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: number) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : adminApi.reactivate(id),
+    mutationFn: (id: number) => runUnlessDemo(isDemoMode, () => adminApi.reactivate(id)),
     onSuccess: (_, id) => {
       if (isDemoMode) { toast.success('User reactivated (demo)'); return }
       toast.success('User reactivated')
@@ -113,8 +115,7 @@ export function useRevokeSession() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (sessionId: string) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : adminApi.revokeSession(sessionId),
+    mutationFn: (sessionId: string) => runUnlessDemo(isDemoMode, () => adminApi.revokeSession(sessionId)),
     onSuccess: () => {
       if (isDemoMode) { toast.success('Session revoked (demo)'); return }
       toast.success('Session revoked')
@@ -129,8 +130,7 @@ export function useRevokeAllSessions() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (userId: number) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : adminApi.revokeAllSessions(userId),
+    mutationFn: (userId: number) => runUnlessDemo(isDemoMode, () => adminApi.revokeAllSessions(userId)),
     onSuccess: () => {
       if (isDemoMode) { toast.success('All sessions revoked (demo)'); return }
       toast.success('All sessions revoked')
@@ -185,7 +185,7 @@ export function useToggleMode() {
 
   return useMutation({
     mutationFn: ({ mode, totp_code }: { mode: string; totp_code: string }) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : systemApi.modeToggle(mode, totp_code),
+      runUnlessDemo(isDemoMode, () => systemApi.modeToggle(mode, totp_code)),
     onSuccess: (_, { mode }) => {
       if (isDemoMode) { toast.success(`Switched to ${mode} mode (demo)`); return }
       toast.success(`Switched to ${mode} mode`)
@@ -201,11 +201,14 @@ export function useDockerPurge() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (totp_code: string) =>
-      isDemoMode ? Promise.resolve({ data: { freed_mb: 0 } }) : systemApi.dockerPurge(totp_code),
+    mutationFn: async (totp_code: string) => {
+      if (isDemoMode) return { freed_mb: 0 }
+      const response = await systemApi.dockerPurge(totp_code)
+      return response.data as { freed_mb: number }
+    },
     onSuccess: (data) => {
       if (isDemoMode) { toast.success('Purge complete (demo)'); return }
-      toast.success(`Purge complete — freed ${(data as { data: { freed_mb: number } }).data.freed_mb}MB`)
+      toast.success(`Purge complete — freed ${data.freed_mb}MB`)
       queryClient.invalidateQueries({ queryKey: ['health'] })
     },
     onError: () => { throw new Error('Invalid TOTP code') },
@@ -217,8 +220,7 @@ export function useSyncOutcomes() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: () =>
-      isDemoMode ? Promise.resolve({ data: {} }) : systemApi.syncOutcomes(),
+    mutationFn: () => runUnlessDemo(isDemoMode, () => systemApi.syncOutcomes()),
     onSuccess: () => {
       if (isDemoMode) { toast.success('Outcomes synced (demo)'); return }
       toast.success('Outcomes synced')
@@ -248,7 +250,7 @@ export function useToggleCoin() {
 
   return useMutation({
     mutationFn: ({ coin, enabled }: { coin: string; enabled: boolean }) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : coinsApi.toggle(coin, enabled),
+      runUnlessDemo(isDemoMode, () => coinsApi.toggle(coin, enabled)),
     onSuccess: (_, { coin, enabled }) => {
       toast.success(`${coin} ${enabled ? 'enabled' : 'disabled'}${isDemoMode ? ' (demo)' : ''}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })
@@ -262,8 +264,7 @@ export function useRemoveCoin() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (coin: string) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : coinsApi.remove(coin),
+    mutationFn: (coin: string) => runUnlessDemo(isDemoMode, () => coinsApi.remove(coin)),
     onSuccess: (_, coin) => {
       toast.success(`${coin} removed${isDemoMode ? ' (demo)' : ''}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })
@@ -277,8 +278,7 @@ export function useAddCoin() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (coin: string) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : coinsApi.add(coin),
+    mutationFn: (coin: string) => runUnlessDemo(isDemoMode, () => coinsApi.add(coin)),
     onSuccess: (_, coin) => {
       toast.success(`${coin} added${isDemoMode ? ' (demo)' : ' — backfill started'}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })

@@ -12,6 +12,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,6 +21,48 @@ DEFAULT_DB = Path('database/signals.db')
 _SETUP_LOCK = threading.Lock()
 _INITIALIZED_PATHS = set()
 _VALID_INTENT = re.compile(r'^[A-Za-z0-9_.:-]{1,120}$')
+_SCHEMA_VERSION = 1
+
+
+def _initialize_schema(db: sqlite3.Connection) -> None:
+    """Create/validate the journal schema without rewriting existing intents."""
+    db.execute('BEGIN IMMEDIATE')
+    try:
+        db.execute('''CREATE TABLE IF NOT EXISTS order_journal_schema (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            version INTEGER NOT NULL
+        )''')
+        db.execute('''CREATE TABLE IF NOT EXISTS exchange_order_intents (
+            intent_key TEXT PRIMARY KEY,
+            client_order_id TEXT NOT NULL UNIQUE,
+            mode TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            side TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            request_sha256 TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('reserved', 'acknowledged', 'uncertain', 'finished')),
+            exchange_order_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )''')
+        columns = {row[1] for row in db.execute('PRAGMA table_info(exchange_order_intents)')}
+        required = {
+            'intent_key', 'client_order_id', 'mode', 'symbol', 'side', 'order_type',
+            'request_sha256', 'status', 'exchange_order_id', 'created_at', 'updated_at',
+        }
+        if not required.issubset(columns):
+            raise RuntimeError('Order journal schema is incomplete; refusing to rewrite intent evidence')
+
+        row = db.execute('SELECT version FROM order_journal_schema WHERE singleton=1').fetchone()
+        if row is None:
+            db.execute('INSERT INTO order_journal_schema(singleton, version) VALUES (1, ?)',
+                       (_SCHEMA_VERSION,))
+        elif row[0] != _SCHEMA_VERSION:
+            raise RuntimeError(f'Unsupported order journal schema version: {row[0]}')
+        db.execute('COMMIT')
+    except BaseException:
+        db.execute('ROLLBACK')
+        raise
 
 
 class OrderIntentConflict(RuntimeError):
@@ -47,20 +90,20 @@ def _connection():
         with _SETUP_LOCK:
             resolved = path.resolve()
             if resolved not in _INITIALIZED_PATHS:
-                db.execute('PRAGMA journal_mode=WAL')
-                db.execute('''CREATE TABLE IF NOT EXISTS exchange_order_intents (
-                    intent_key TEXT PRIMARY KEY,
-                    client_order_id TEXT NOT NULL UNIQUE,
-                    mode TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    order_type TEXT NOT NULL,
-                    request_sha256 TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('reserved', 'acknowledged', 'uncertain', 'finished')),
-                    exchange_order_id TEXT,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )''')
+                deadline = time.monotonic() + 10
+                delay = 0.01
+                while True:
+                    try:
+                        journal_mode = db.execute('PRAGMA journal_mode').fetchone()[0].lower()
+                        if journal_mode != 'wal':
+                            db.execute('PRAGMA journal_mode=WAL')
+                        _initialize_schema(db)
+                        break
+                    except sqlite3.OperationalError as exc:
+                        if 'locked' not in str(exc).lower() or time.monotonic() >= deadline:
+                            raise
+                        time.sleep(delay)
+                        delay = min(delay * 2, 0.25)
                 _INITIALIZED_PATHS.add(resolved)
         db.execute('PRAGMA synchronous=FULL')
         yield db

@@ -29,7 +29,7 @@ export function useDemoTracking() {
       tier:       demoTier,
       referrer:   document.referrer || '',
     }).catch(() => {})
-  }, [isDemoMode])
+  }, [isDemoMode, demoTier])
 
   useEffect(() => {
     if (!isDemoMode) return

@@ -19,3 +19,7 @@ Contact the repository owner privately through the GitHub repository's existing 
 ## Unsupported assumptions
 
 A passing unit test suite, Cloudflare deployment success, or GitHub's security indicators cannot certify broker safety or a vulnerability-free application. Additional paper-mode and independent production-change reviews are mandatory.
+
+## Email account feature gate
+
+Email/password accounts are implemented for future activation and **disabled by default**. Both `EMAIL_ACCOUNTS_ENABLED` and `SECURITY_EMAIL_ENABLED` must be enabled after a verified provider domain, browser/OAuth coexistence, account linking policy, secure cookies, session revocation, and abuse testing. Email delivery is exclusively for account setup and security; no market, system, performance or marketing email is permitted. Never send a user a raw verification token outside the authorized inbox flow. See `docs/engineering/RELEASE_EVIDENCE.md`.

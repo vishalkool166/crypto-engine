@@ -10,7 +10,6 @@ import {
   usePerformanceByVersion, usePerformanceByRegime,
 } from '@/hooks/usePerformance'
 import { useAuthStore } from '@/stores/authStore'
-import { useDemoStore } from '@/demo/demoStore'
 import KPICard from '@/components/ui/KPICard'
 import EmptyState from '@/components/ui/EmptyState'
 import { LockedSection } from '@/components/ui/TierGate'
@@ -19,7 +18,7 @@ import EquityCurve from '@/components/performance/EquityCurve'
 import GradeBreakdown from '@/components/performance/GradeBreakdown'
 import SignalHistoryTable from '@/components/performance/SignalHistoryTable'
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
+  PieChart, Pie, Cell, ResponsiveContainer,
 } from 'recharts'
 
 const ACTION_STYLES: Record<string, { text: string; bg: string; border: string }> = {
@@ -30,7 +29,6 @@ const ACTION_STYLES: Record<string, { text: string; bg: string; border: string }
 
 export default function Performance() {
   const { hasFeature, isAdmin }         = useAuthStore()
-  const { isDemoMode }                  = useDemoStore()
   const [backtestCoin, setBacktestCoin] = useState('')
   const [runCoin,      setRunCoin]      = useState<string | null>(null)
 

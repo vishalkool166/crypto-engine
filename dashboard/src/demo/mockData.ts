@@ -1,7 +1,7 @@
 import type {
   RadarItem, QueueItem, Summary, Performance,
   Trade, TradesBalance, TradesProfit, CoinConfig,
-  DailyEntry, Signal, AuditEntry, AdminUser, AdminStats,
+  DailyEntry, Signal, AdminStats,
   CoinPerformance, TickerItem, EngineHealth, RejectionStats,
 } from '@/types'
 

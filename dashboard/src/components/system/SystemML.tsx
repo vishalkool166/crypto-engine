@@ -1,7 +1,6 @@
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { formatTimeAgo } from '@/lib/utils'
-import { scoreToColor } from '@/lib/tokens'
 import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import ScoreBar from '@/components/ui/ScoreBar'
 

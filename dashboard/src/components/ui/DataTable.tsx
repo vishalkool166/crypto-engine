@@ -141,9 +141,16 @@ export default function DataTable<T>({
               <tr
                 key       = {keyExtractor(row)}
                 onClick   = {() => onRowClick?.(row)}
+                onKeyDown = {(event) => {
+                  if (!onRowClick || (event.key !== 'Enter' && event.key !== ' ')) return
+                  if (event.target !== event.currentTarget) return
+                  event.preventDefault()
+                  onRowClick(row)
+                }}
+                tabIndex  = {onRowClick ? 0 : undefined}
                 className = {cn(
                   'transition-colors',
-                  onRowClick && 'cursor-pointer hover:bg-muted/40'
+                  onRowClick && 'cursor-pointer hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring'
                 )}
               >
                 {columns.map((col) => (

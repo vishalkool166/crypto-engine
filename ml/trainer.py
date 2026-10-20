@@ -8,6 +8,16 @@ from ml.dataset import build_dataset, get_feature_names
 
 log = logging.getLogger(__name__)
 
+
+def chronological_split(X, y, test_fraction: float = 0.2):
+    """Split already time-ordered rows without shuffling or overlap."""
+    if len(X) != len(y) or not 0 < test_fraction < 1:
+        raise ValueError('Invalid chronological training data')
+    split_idx = int(len(X) * (1 - test_fraction))
+    if split_idx < 1 or split_idx >= len(X):
+        raise ValueError('Chronological split needs non-empty train and holdout windows')
+    return X.iloc[:split_idx], X.iloc[split_idx:], y.iloc[:split_idx], y.iloc[split_idx:]
+
 MODEL_DIR  = "ml/models"
 MODEL_PATH = "ml/models/lgbm_model.pkl"
 META_PATH  = "ml/models/lgbm_meta.json"
@@ -42,15 +52,23 @@ def train_model() -> dict:
             f1_score,
             confusion_matrix,
         )
-        from sklearn.calibration import CalibratedClassifierCV
         has_sklearn = True
     except ImportError:
         has_sklearn = False
 
     _ensure_model_dir()
 
-    n_pos    = y.sum()
-    n_neg    = (y == 0).sum()
+    # Reserve the latest chronological tail as an untouched evaluation set.
+    # Never fit, calibrate, or choose features using this holdout.
+    try:
+        X_train, X_holdout, y_train, y_holdout = chronological_split(X, y)
+    except ValueError as exc:
+        return {"success": False, "reason": str(exc)}
+    if len(X_train) < 10 or y_train.nunique() < 2:
+        return {"success": False, "reason": "Chronological training window needs both outcome classes"}
+
+    n_pos    = y_train.sum()
+    n_neg    = (y_train == 0).sum()
     scale_pw = n_neg / n_pos if n_pos > 0 else 1.0
 
     model = lgb.LGBMClassifier(
@@ -76,48 +94,37 @@ def train_model() -> dict:
     conf_matrix = None
     report_dict = {}
 
-    if has_sklearn and len(X) >= 20:
+    if has_sklearn and len(X_train) >= 20:
         try:
-            n_splits = min(5, len(X) // 4)
+            n_splits = min(5, len(X_train) // 4)
             tscv     = TimeSeriesSplit(n_splits=n_splits)
-            scores   = cross_val_score(model, X, y, cv=tscv, scoring="roc_auc")
+            scores   = cross_val_score(model, X_train, y_train, cv=tscv, scoring="roc_auc")
             cv_score = round(float(scores.mean()), 4)
             cv_std   = round(float(scores.std()),  4)
             log.info("CV AUC: %s +/- %s", cv_score, cv_std)
         except Exception as e:
             log.warning("Cross-validation failed: %s", e)
 
-    model.fit(X, y)
+    model.fit(X_train, y_train)
     final_model = model
-
-    if has_sklearn and len(X) >= 40:
-        try:
-            split_idx = int(len(X) * 0.8)
-            X_cal     = X.iloc[split_idx:]
-            y_cal     = y.iloc[split_idx:]
-            if len(X_cal) >= 10 and y_cal.sum() >= 2 and (y_cal == 0).sum() >= 2:
-                calibrated  = CalibratedClassifierCV(model, method="isotonic", cv="prefit")
-                calibrated.fit(X_cal, y_cal)
-                final_model = calibrated
-        except Exception as e:
-            log.warning("Calibration failed: %s", e)
 
     if has_sklearn:
         try:
-            probs     = final_model.predict_proba(X)[:, 1]
-            preds     = final_model.predict(X)
-            auc_score = round(float(roc_auc_score(y, probs)), 4)
-            precision = round(float(precision_score(y, preds, zero_division=0)), 4)
-            recall    = round(float(recall_score(y, preds, zero_division=0)), 4)
-            f1        = round(float(f1_score(y, preds, zero_division=0)), 4)
-            cm        = confusion_matrix(y, preds)
+            probs     = final_model.predict_proba(X_holdout)[:, 1]
+            preds     = final_model.predict(X_holdout)
+            if y_holdout.nunique() > 1:
+                auc_score = round(float(roc_auc_score(y_holdout, probs)), 4)
+            precision = round(float(precision_score(y_holdout, preds, zero_division=0)), 4)
+            recall    = round(float(recall_score(y_holdout, preds, zero_division=0)), 4)
+            f1        = round(float(f1_score(y_holdout, preds, zero_division=0)), 4)
+            cm        = confusion_matrix(y_holdout, preds, labels=[0, 1])
             conf_matrix = {
                 "true_negative":  int(cm[0][0]),
                 "false_positive": int(cm[0][1]),
                 "false_negative": int(cm[1][0]),
                 "true_positive":  int(cm[1][1]),
             }
-            report    = classification_report(y, preds, output_dict=True)
+            report    = classification_report(y_holdout, preds, output_dict=True, labels=[0, 1], zero_division=0)
             report_dict = {
                 "precision_win":  round(report.get("1", {}).get("precision", 0), 3),
                 "recall_win":     round(report.get("1", {}).get("recall",    0), 3),
@@ -176,20 +183,22 @@ def train_model() -> dict:
 
     meta = {
         "trained_at":               datetime.now(timezone.utc).isoformat(),
-        "samples":                  len(X),
-        "wins":                     int(y.sum()),
-        "losses":                   int((y == 0).sum()),
-        "win_rate":                 round(float(y.mean()) * 100, 1),
+        "samples":                  len(X_train),
+        "evaluation_samples":       len(X_holdout),
+        "wins":                     int(y_train.sum()),
+        "losses":                   int((y_train == 0).sum()),
+        "win_rate":                 round(float(y_train.mean()) * 100, 1),
         "features":                 len(feature_names),
         "cv_auc":                   cv_score,
         "cv_std":                   cv_std,
         "cv_method":                "TimeSeriesSplit",
-        "train_auc":                auc_score,
+        "holdout_auc":              auc_score,
         "precision":                precision,
         "recall":                   recall,
         "f1":                       f1,
         "confusion_matrix":         conf_matrix,
-        "calibrated":               final_model is not model,
+        "calibrated":               False,
+        "evaluation_method":        "chronological_untouched_last_20_percent",
         "top_features":             top_features,
         "zero_importance_features": zero_importance_features,
         "shap_top_features":        shap_top_features,
@@ -209,13 +218,14 @@ def train_model() -> dict:
 
     return {
         "success":                  True,
-        "samples":                  len(X),
-        "wins":                     int(y.sum()),
-        "losses":                   int((y == 0).sum()),
+        "samples":                  len(X_train),
+        "evaluation_samples":       len(X_holdout),
+        "wins":                     int(y_train.sum()),
+        "losses":                   int((y_train == 0).sum()),
         "win_rate":                 meta["win_rate"],
         "cv_auc":                   cv_score,
         "cv_std":                   cv_std,
-        "train_auc":                auc_score,
+        "holdout_auc":              auc_score,
         "precision":                precision,
         "recall":                   recall,
         "f1":                       f1,

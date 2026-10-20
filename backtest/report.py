@@ -76,6 +76,9 @@ def build_report(
     session_breakdown = _breakdown_by_field(trades, "session")
 
     report = {
+        "result_type": "simulated_backtest",
+        "pnl_provenance": "simulated_not_exchange_realized",
+        "exchange_verified": False,
         "coin":               coin,
         "period_start":       period_start,
         "period_end":         period_end,

@@ -16,7 +16,7 @@ export const authApi = {
       authenticated: boolean
       user?: { id: string; email: string; tier: string; is_admin: boolean }
     }>('/auth/session'),
-  logout: () => api.get('/auth/logout'),
+  logout: () => api.post('/auth/logout'),
 }
 
 export const dashboardApi = {
@@ -39,7 +39,7 @@ export const signalsApi = {
   latest:  () => api.get('/api/signals/latest'),
   byId:    (id: number) => api.get(`/api/signal/${id}`),
   analyze: (coin: string) => api.get(`/api/analyze/${coin}`),
-  scan:    () => api.get('/api/scan'),
+  scan:    () => api.post('/api/scan'),
 }
 
 export const coinsApi = {
@@ -87,7 +87,7 @@ export const adminApi = {
 }
 
 export const systemApi = {
-  health:       () => api.get('/api/health'),
+  health:       () => api.get('/api/system/health'),
   disk:         () => api.get('/api/system/disk'),
   dockerPurge:  (totp_code: string) => api.post('/api/system/docker-purge', { totp_code }),
   modeStatus:   () => api.get<ModeStatus>('/api/mode/status'),
@@ -99,13 +99,13 @@ export const systemApi = {
 
 export const performanceApi = {
   stats:           () => api.get('/api/stats'),
-  backtest:        (coin: string) => api.get<BacktestResult>(`/api/backtest/${coin}`),
+  backtest:        (coin: string) => api.post<BacktestResult>(`/api/backtest/${coin}`),
   backtestHistory: () => api.get('/api/backtest/history/all'),
   factorAnalysis:  () => api.get<FactorAnalysis>('/api/analysis/factors'),
 }
 
 export const mlApi = {
-  status:                () => api.get('/api/health'),
+  status:                () => api.get('/api/system/health'),
   adaptationHistory:     (limit = 20) => api.get(`/api/admin/adaptations/history?limit=${limit}`),
   pendingRecommendations:() => api.get('/api/admin/adaptations/pending'),
   approveRecommendation: (id: number) => api.post(`/api/admin/adaptations/${id}/approve`),
@@ -121,7 +121,12 @@ export const mlApi = {
 
 export const engineApi = {
   health:              () => api.get<EngineHealth>('/api/engine/health'),
-  rejections:          () => api.get<{ total: RejectionStats; daily: unknown[]; weekly: unknown; top: unknown[] }>('/api/engine/rejections'),
+  rejections:          () => api.get<{
+    total: RejectionStats
+    daily: Array<{ date: string; total: number; by_reason: Record<string, number> }>
+    weekly: { week: string; total: number; by_reason: Record<string, { count: number; pct: number }> }
+    top: unknown[]
+  }>('/api/engine/rejections'),
   rejectionsByCoin:    (coin: string) => api.get(`/api/engine/rejections/coin/${coin}`),
   traces:              (limit = 50) => api.get<{ traces: DecisionTrace[]; summary: Record<string, unknown>; count: number }>(`/api/engine/traces?limit=${limit}`),
   tracesByCoin:        (coin: string) => api.get<{ coin: string; latest: DecisionTrace | null; traces: DecisionTrace[]; count: number }>(`/api/engine/traces/${coin}`),

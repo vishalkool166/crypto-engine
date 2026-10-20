@@ -1,6 +1,6 @@
 import {
   TrendingUp, TrendingDown, Minus,
-  Zap, Flame, Clock, Eye,
+  Zap, Flame, Clock,
 } from 'lucide-react'
 
 // ─── Grade ───────────────────────────────────────────────

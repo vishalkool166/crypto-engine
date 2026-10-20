@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useSignals, useSignalHistory } from '@/hooks/useSignals'
+import { useSignals } from '@/hooks/useSignals'
 import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 import { useSignalAccess } from '@/hooks/useSignalAccess'

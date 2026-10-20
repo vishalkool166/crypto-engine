@@ -6,7 +6,7 @@
 
 - The original backend files `main.py`, `Dockerfile`, `docker-compose.yml`, `scheduler.py`, `config.py` and the Python import root stay in the same locations. Do not rename services, database mounts, or start a second scheduler.
 - Preserve `./database` and the Redis named volume on EC2; **never** replace them with empty source or example state. Back up SQLite with its online backup API while the engine is operating; preserve WAL integrity.
-- Build Cloudflare Pages only from `dashboard/` (`npm run build` -> `dist`). `frontend/` is the old AWS static fallback and is intentionally left in place during migration.
+- Build Cloudflare Pages only from `dashboard/` (`npm run build` -> `dist`). In the Phase 01–02 **candidate**, old `frontend/` is removed and AWS HTML routes redirect to Cloudflare. The currently running AWS version may still serve those files; only cut over after staged build and rollback checks.
 - Resend is disabled until full account lifecycle security is implemented and verified. No trading emails.
 
 ## Safely apply the downloadable ZIP to your existing Git repository
@@ -20,7 +20,7 @@
    ```
 
    This command **does not delete stale files** by itself. Explicitly remove `.github/workflows/` from the checkout (the user chose no Actions), then verify changes with `git status` and `git diff --check`. Never blindly use `rsync --delete` against a checkout with live data.
-4. Check the diff of the original five AWS runtime files listed in `docs/engineering/UPSTREAM_RUNTIME_SHA256.json`: they should be unchanged. `main.py` gains only a controlled OAuth redirect and existing APIs remain. Review additions to `api/`, `trade/`, `saas/` independently.
+4. Check the protected runtime files in `docs/engineering/UPSTREAM_RUNTIME_SHA256.json`: they should be unchanged. In Phase 01–02, `main.py` also removes legacy static/template serving and redirects known browser entrypoints to Cloudflare. Review this change in staging before production. Review additions to `api/`, `trade/`, `saas/` independently.
 5. Run `bash scripts/verify_local.sh`. With npm access, run `CHECK_FRONTEND=1 bash scripts/verify_local.sh`. A local pass does not prove AWS compatibility; stage the backend separately in **paper/demo** mode and verify auth, CORS, WebSockets and DB backups before production.
 6. Commit this branch; push it for review. Only merge to your AWS auto-deploy branch after a verified backup/rollback rehearsal. Keep the old SHA available for `git revert`/rollback.
 
@@ -51,6 +51,7 @@ DNS: use a dashboard subdomain such as `app.vishalkool.top` if owned/configured.
 - Signals and trades pagination must show consistent counts/sorting across page boundaries; user/admin roles enforced by backend.
 - Verify admin, audit and account actions, loading/empty/error states on mobile and desktop; no demo data misrepresented as live data.
 - Verify one and only one backend scheduler, no order duplication, stable Redis connections, actual journal and database state; keep live trading disabled in staging.
+- Verify new backend container startup with the old `frontend/` removed; check `/`, `/login`, `/auth/google`, `/auth/callback/google`, `/api/health`, `/ws/dashboard` and unknown routes.
 - Exercise a rollback to last known working AWS commit and Cloudflare deployment; check that sessions and records remain intact.
 
 ## AWS auto-update unknown

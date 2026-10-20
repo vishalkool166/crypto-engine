@@ -4,6 +4,10 @@ import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 import { toast } from 'sonner'
 
+async function runUnlessDemo(isDemoMode: boolean, request: () => Promise<unknown>): Promise<void> {
+  if (!isDemoMode) await request()
+}
+
 const DEMO_VERSION_HISTORY = [
   {
     version:        'v5.2.1',
@@ -183,8 +187,7 @@ export function useApproveRecommendation() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: number) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : mlApi.approveRecommendation(id),
+    mutationFn: (id: number) => runUnlessDemo(isDemoMode, () => mlApi.approveRecommendation(id)),
     onSuccess: () => {
       toast.success(isDemoMode ? 'Approved (demo)' : 'Recommendation approved')
       if (!isDemoMode) {
@@ -202,7 +205,7 @@ export function useRejectRecommendation() {
 
   return useMutation({
     mutationFn: ({ id, reason }: { id: number; reason?: string }) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : mlApi.rejectRecommendation(id, reason),
+      runUnlessDemo(isDemoMode, () => mlApi.rejectRecommendation(id, reason)),
     onSuccess: () => {
       toast.success(isDemoMode ? 'Rejected (demo)' : 'Recommendation rejected')
       if (!isDemoMode) {
@@ -218,8 +221,7 @@ export function useManualRollback() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (parameter: string) =>
-      isDemoMode ? Promise.resolve({ data: {} }) : mlApi.manualRollback(parameter),
+    mutationFn: (parameter: string) => runUnlessDemo(isDemoMode, () => mlApi.manualRollback(parameter)),
     onSuccess: (_, parameter) => {
       toast.success(isDemoMode ? `${parameter} rolled back (demo)` : `${parameter} rolled back`)
       if (!isDemoMode) {

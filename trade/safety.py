@@ -10,6 +10,37 @@ def ensure_live_opt_in(mode: str) -> None:
         raise PermissionError('Live order execution disabled; operator opt-in required')
 
 
+def ensure_new_exposure_allowed() -> None:
+    """Fail closed when durable operator state halts new positions."""
+    try:
+        import runtime_state
+        halt = runtime_state.get_new_exposure_halt()
+    except Exception as exc:
+        raise RuntimeError('Cannot verify new-exposure halt state; blocking order') from exc
+    if halt.get('enabled') is not False:
+        reason = str(halt.get('reason') or 'operator halt')
+        raise PermissionError(f'New exposure halted: {reason}')
+
+
+async def apply_trading_mode(mode: str) -> None:
+    """Apply a mode change only after the current exchange client is closed.
+
+    The routes enforce authentication, TOTP, open-position and unresolved-order
+    checks. Keeping the state mutation here makes both API entry points obey
+    the same ordering: client shutdown must succeed before persistence or the
+    process configuration changes.
+    """
+    if mode not in ('paper', 'live'):
+        raise ValueError('Trading mode must be paper or live')
+    from config import _ensure, cfg
+    from trade.exchange import close_exchange
+
+    await close_exchange()
+    _ensure('TRADING_MODE', mode)
+    cfg.TRADING_MODE = mode
+    cfg.PAPER_TRADING = mode != 'live'
+
+
 def validate_entry(direction: str, entry: float, sl: float, tp: float, stake: float,
                    leverage: int, minimum_stake: float) -> None:
     values = (entry, sl, tp, stake)

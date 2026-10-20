@@ -35,6 +35,5 @@ result={'source':'static AST only: no live verification',
         'routes':sorted(routes,key=lambda r:(r['file'],r['path'])),
         'scheduled_jobs':jobs,'python_files':len([p for p in backend.rglob('*.py') if not any(x in p.relative_to(root).parts for x in ('__pycache__','.venv','dashboard','frontend','scripts','tests','docs'))]),
         'top_imports':sorted(set(imports)),'unparsed':syntax}
-output=root/'docs'/'engineering'/'SOURCE_INVENTORY_IMPLEMENTATION.json'
-output.write_text(json.dumps(result,indent=2)+'\n')
-print(f"Wrote {len(routes)} decorated routes, {len(jobs)} add_job calls, {len(syntax)} syntax errors")
+# Print the inventory on demand instead of committing stale generated JSON.
+print(json.dumps(result, indent=2))
