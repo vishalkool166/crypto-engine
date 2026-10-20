@@ -1,58 +1,67 @@
 # Signal Engine
 
-Signal Engine is a market-analysis and trading research application with crypto and Indian-market signal workflows, risk controls, a Python API, and a React dashboard.
+Market research and paper-trading operations with two distinct applications:
 
-**Research software; not approved for live-money deployment.** Trading can lose money. Profitability and production execution have not been independently validated. Keep trading in paper mode until the acceptance requirements in [Engineering status](docs/STATUS.md) are complete.
-
-## Project layout
-
-| Path | Purpose |
+| Application | Purpose |
 | --- | --- |
-| `main.py`, `api/` | FastAPI service and API routes |
-| `agents/`, `engines/` | Signal analysis, scoring, risk, and sizing |
-| `trade/` | Exchange adapters, order controls, and reconciliation |
-| `backtest/`, `data/`, `ml/` | Research, market history, outcomes, and evaluation |
-| `saas/` | Accounts, access tiers, and administration |
-| `dashboard/` | Editable React, TypeScript, and Vite source |
-| `dashboard/dist/` | Cloudflare Pages build output |
-| `frontend/` | Existing static path served by the backend |
-| `docs/` | Architecture, operations, integrations, and research status |
+| https://app.vishalkool.top | Public signal ledger, methodology, recorded outcomes, and service status |
+| https://admin-app.vishalkool.top | Google-authenticated operator console, private paper trades, system health, markets, research, Telegram, audit, and settings |
 
-## Run locally
+The frontend source is entirely in **dashboard/**. The Python backend stays on AWS. Cloudflare Pages hosts the two static builds; a small Worker routes each hostname to the appropriate Pages build or to the AWS service through Cloudflare Tunnel.
 
-Install backend dependencies and configure a local `.env` using the variables consumed by `config.py` and `docker-compose.yml`. Never commit credentials.
+**Operating mode: paper only. Strategy profitability: not evaluated.** Grades are rule-based scores, not calibrated win probabilities. No customer accounts, subscriptions, billing, or live-mode switches are exposed.
 
-```bash
-python -m pip install -r requirements.txt
-python main.py
-```
+## Release status
 
-Run the dashboard from its existing directory:
+See **docs/STATUS.md** for exact verification evidence and remaining deployment checks. The downloadable archive contains source and separate prebuilt public/admin assets. It does not contain production credentials, a database, or a trained model.
 
-```bash
-cd dashboard
-npm ci
-npm run dev
-```
+Start with **docs/OPERATIONS.md** to replace the current repository and configure Pages, Google, AWS, Tunnel, and the gateway. Source replacement alone does not deploy the external configuration.
 
-The production dashboard uses the browser's current origin for API, authentication, and WebSocket requests. The Vite development proxy targets `https://app.vishalkool.top`. The production edge must forward `/api/*`, `/auth/*`, and `/ws/*` to the backend.
+## Development
 
-## Cloudflare Pages
+Requires Python 3.12 and Node 22.12+. Local verification used Python 3.12 and Node 24.19; Pages is configured for Node 22.
 
-Set the Pages project root to `dashboard`, the build command to `npm ci && npm run build`, and the output directory to `dist`. Build files stay under `dashboard/dist/`. The backend's existing root `frontend/` directory remains available for its static fallback route.
+~~~bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+npm --prefix dashboard ci
+ENV=development ENGINE_ENABLED=false uvicorn main:app --host 127.0.0.1 --port 8000
+npm --prefix dashboard run dev
+npm --prefix dashboard run dev:admin
+~~~
 
-## Verify
+The public dev server uses port 5173; admin uses 5174. API/WebSocket requests are proxied to the local backend. Google OAuth requires an exact registered callback and configured credentials; there is no development login bypass.
 
-```bash
+~~~bash
 python -m pytest -q tests
-python -m compileall -q -x 'frontend/' .
-cd dashboard && npm run lint && npm run build
-```
+npm --prefix dashboard run build
+npx --prefix dashboard playwright install chromium
+npm --prefix dashboard test
+npm --prefix deploy/cloudflare ci
+npm --prefix deploy/cloudflare test
+~~~
 
-See [Architecture](docs/ARCHITECTURE.md), [Operations](docs/OPERATIONS.md), [Research](docs/RESEARCH.md), and [Engineering status](docs/STATUS.md) for system boundaries, deployment precautions, and known validation limits.
+## Source map
 
-## Scope and licensing
+- **main.py, operator_auth.py, portal_settings.py:** HTTP boundaries, Google operator identity, revocable hashed sessions, and canonical domain configuration.
+- **api/portal.py:** Explicit public signal projection and private operational endpoints.
+- **agents/, engines/, trade/:** Existing strategy, sizing, execution safeguards, and order journal.
+- **alerts/telegram/:** Operator-only commands, reporting, webhook validation, deduplication, and rate limits.
+- **backtest/:** Historical research and fail-closed evidence assessment.
+- **dashboard/:** Public/admin React builds, local shadcn-style UI primitives, and the public PWA.
+- **deploy/cloudflare/:** Gateway Worker and its tests.
+- **scripts/:** Private environment setup, deployment-config generation, and online SQLite backup.
 
-Twitter post creation and approval commands have been removed. Telegram market briefings remain. Resend is intended for account setup and security messages only. Stripe checkout is not implemented in this source bundle; paid subscriptions must remain unavailable until checkout, webhooks, and entitlement updates are built and tested.
+Historical customer tables remain in existing databases to avoid destructive migration. They have no customer-facing routes or billing workflow. Vector-retrieval and ML research source is preserved but is not part of the active strategy. The private assistant uses bounded SQL retrieval and requires explicit Groq configuration.
 
-No open-source license is included. All rights are reserved until the repository owner selects a license.
+## Technical references
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Deployment, migration, and rollback](docs/OPERATIONS.md)
+- [Security](docs/SECURITY.md)
+- [Research methodology](docs/RESEARCH.md)
+- [Blueprint and scope](docs/BLUEPRINT.md)
+- [Verification status](docs/STATUS.md)
+
+No license has been selected by the repository owner. This release does not add a license or change ownership rights.

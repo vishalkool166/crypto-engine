@@ -36,7 +36,7 @@ async def job_cooldown_tick():
 
 async def job_session_cleanup():
     try:
-        from saas.sessions import cleanup_expired_sessions
+        from access.sessions import cleanup_expired_sessions
         count = cleanup_expired_sessions()
         if count:
             log.info("Session cleanup: %s removed", count)
@@ -632,12 +632,6 @@ def start_scheduler():
         job_session_cleanup,
         trigger          = IntervalTrigger(hours=1),
         id               = "session_cleanup",
-        replace_existing = True,
-    )
-    scheduler.add_job(
-        job_rag_reindex,
-        trigger          = IntervalTrigger(minutes=30),
-        id               = "rag_reindex",
         replace_existing = True,
     )
     scheduler.add_job(

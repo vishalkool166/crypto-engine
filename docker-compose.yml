@@ -1,50 +1,55 @@
 services:
-
   redis:
     image: redis:7-alpine
     container_name: redis
     volumes:
       - redis_data:/data
-    command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 256mb
-      --maxmemory-policy noeviction
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 5s
+      interval: 15s
+      timeout: 3s
       retries: 3
-      start_period: 10s
+    security_opt: ["no-new-privileges:true"]
 
   signal-engine:
     build: .
     container_name: signal-engine
-    stop_grace_period: 30s
-    ports:
-      - "8000:8000"
+    stop_grace_period: 45s
+    expose: ["8000"]
     volumes:
       - ./database:/app/database
-    env_file:
-      - ./.env
+    env_file: .env
     environment:
-      - REDIS_URL=redis://redis:6379
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy
     restart: unless-stopped
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
     logging:
-      driver: "json-file"
-      options:
-        max-size: "50m"
-        max-file: "10"
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/api/health', timeout=5)"]
-      interval: 60s
-      timeout: 10s
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 45s
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: $TUNNEL_TOKEN
+    restart: unless-stopped
+    depends_on:
+      signal-engine:
+        condition: service_healthy
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
 
 volumes:
   redis_data:

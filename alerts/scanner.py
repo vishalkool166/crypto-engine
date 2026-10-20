@@ -319,6 +319,7 @@ def _save_signal(signal: dict) -> int | None:
                 day_of_week    = now.weekday(),
                 hour_of_day    = now.hour,
                 system_version = cfg.SYSTEM_VERSION,
+                factor_scores  = json.dumps(signal.get("trace", {}), default=str),
                 regime         = signal.get("regime", ""),
                 session        = signal.get("session", ""),
             )
@@ -425,6 +426,14 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 df_1h   = df_1h,
                 balance = balance,
             )
+
+            from engines.decision_trace import DecisionTrace, store_trace
+            recorded = DecisionTrace(coin=coin, direction=result.get("direction","NEUTRAL"),
+                steps=result.get("trace",{}).get("steps",[]),
+                final_decision="TRADE" if result.get("signal") else "NO_TRADE",
+                final_score=result.get("score",0),final_grade=result.get("grade","F"),
+                stopped_at=result.get("reason"),regime=result.get("regime",""),session=result.get("session",""))
+            store_trace(recorded)
 
             ticker  = _get_ticker_from_redis(coin)
             funding = _get_funding_from_redis(coin)

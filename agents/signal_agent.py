@@ -183,6 +183,7 @@ async def run(
             "agent_steps": len(trace),
             "trace": {
                 "steps":     trace,
+                "entry_features": {"score": score_result.total, "adx": adx, "rsi": rsi, "vol_ratio": vol_ratio},
                 "direction": direction,
                 "grade":     score_result.grade,
                 "score":     score_result.total,

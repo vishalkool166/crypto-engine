@@ -305,7 +305,7 @@ def get_performance() -> dict:
         return {}
 
 
-def get_open_signals_with_pnl() -> list:
+def get_open_signals_with_pnl(allow_refresh: bool = True) -> list:
     try:
         from database import get_session, Signal as SignalModel
         from engines.indian.data import get_ltp_from_redis
@@ -322,7 +322,7 @@ def get_open_signals_with_pnl() -> list:
 
         result = []
         for s in signals:
-            inst  = get_instrument(s.instrument or s.coin)
+            inst  = get_instrument(s.instrument or s.coin, allow_refresh=allow_refresh)
             price = get_ltp_from_redis(inst["token"]) if inst else None
 
             entry   = float(s.entry or 0)

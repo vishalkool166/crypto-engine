@@ -1,98 +1,74 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import { VitePWA } from 'vite-plugin-pwa'
-import path from 'path'
-
-export default defineConfig({
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
-    VitePWA({
-      registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icons/*.png'],
-      manifest: {
-        name: 'Signal Engine',
-        short_name: 'Signal Engine',
-        description: 'Crypto market research and signal analysis workspace',
-        theme_color: '#0a0a0f',
-        background_color: '#0a0a0f',
-        display: 'standalone',
-        orientation: 'portrait-primary',
-        scope: '/',
-        start_url: '/',
-        icons: [
-          {
-            src: '/icons/icon-192.png',
-            sizes: '192x192',
-            type: 'image/png',
-            purpose: 'any maskable',
-          },
-          {
-            src: '/icons/icon-512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any maskable',
-          },
-        ],
-      },
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        navigateFallback: 'index.html',
-        navigateFallbackDenylist: [
-          /^\/auth\//,
-          /^\/api\//,
-          /^\/ws\//,
-          /^\/webhook\//,
-        ],
-      },
-      devOptions: {
-        enabled: false,
-      },
-    }),
+    ...(mode === "public"
+      ? [
+          VitePWA({
+            registerType: "prompt",
+            includeAssets: ["favicon.svg", "icons/*.png"],
+            manifest: {
+              id: "/",
+              name: "Signal Engine",
+              short_name: "Signal Engine",
+              description: "Market research and paper-signal monitoring",
+              theme_color: "#141714",
+              background_color: "#f4f3ee",
+              display: "standalone",
+              scope: "/",
+              start_url: "/",
+              icons: [
+                {
+                  src: "/icons/icon-192.png",
+                  sizes: "192x192",
+                  type: "image/png",
+                  purpose: "any",
+                },
+                {
+                  src: "/icons/icon-512.png",
+                  sizes: "512x512",
+                  type: "image/png",
+                  purpose: "any maskable",
+                },
+              ],
+            },
+            workbox: {
+              globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
+              navigateFallback: "/index.html",
+              navigateFallbackDenylist: [
+                /^\/api\//,
+                /^\/auth\//,
+                /^\/ws\//,
+                /^\/webhook\//,
+              ],
+              cleanupOutdatedCaches: true,
+              importScripts: ["/sw-cleanup.js"],
+            },
+            devOptions: { enabled: false },
+          }),
+        ]
+      : []),
   ],
-
-  base: '/',
-
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+  cacheDir: "node_modules/.vite-" + mode,
+  optimizeDeps: { exclude: ["virtual:pwa-register/react"] },
+  define: {
+    __APP_TARGET__: JSON.stringify(mode === "admin" ? "admin" : "public"),
   },
-
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'https://app.vishalkool.top',
-        changeOrigin: true,
-        secure: true,
-      },
-      '/auth': {
-        target: 'https://app.vishalkool.top',
-        changeOrigin: true,
-        secure: true,
-      },
-      '/ws': {
-        target: 'wss://app.vishalkool.top',
-        changeOrigin: true,
-        secure: true,
-        ws: true,
-      },
-    },
-  },
-
   build: {
-    outDir: 'dist',
+    outDir: mode === "admin" ? "dist/admin" : "dist/public",
     emptyOutDir: true,
     sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts'],
-          motion: ['framer-motion'],
-          query: ['@tanstack/react-query'],
-        },
-      },
-    },
   },
-})
+  server: {
+    host: "127.0.0.1",
+    proxy: Object.fromEntries(
+      ["/api", "/auth", "/ws"].map((path) => [
+        path,
+        { target: "http://127.0.0.1:8000", ws: true, changeOrigin: false },
+      ]),
+    ),
+  },
+  preview: { host: "127.0.0.1" },
+}));

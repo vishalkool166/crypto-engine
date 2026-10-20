@@ -1,0 +1,165 @@
+{
+  "built_at": "2026-10-20",
+  "python_tests_passed": 155,
+  "gateway_tests_passed": 5,
+  "browser_contract_tests_passed": 5,
+  "typescript_check": "passed",
+  "frontend_builds": [
+    "public",
+    "admin"
+  ],
+  "worker_bundle_dry_run": "passed",
+  "local_browser_backend": "disposable database, no broker credentials, engine disabled, external sockets blocked",
+  "remote_deployment_verified": false,
+  "strategy_profitability_verified": false,
+  "browser_sweep": {
+    "results": [
+      {
+        "app": "public",
+        "path": "/",
+        "h1": [
+          "The market, with a record."
+        ],
+        "overflow": false
+      },
+      {
+        "app": "public",
+        "path": "/signals",
+        "h1": [
+          "Inspect the setup."
+        ],
+        "overflow": false
+      },
+      {
+        "app": "public",
+        "path": "/performance",
+        "h1": [
+          "Outcomes without embellishment."
+        ],
+        "overflow": false
+      },
+      {
+        "app": "public",
+        "path": "/methodology",
+        "h1": [
+          "Rules you can inspect."
+        ],
+        "overflow": false
+      },
+      {
+        "app": "public",
+        "path": "/status",
+        "h1": [
+          "A clear operational record."
+        ],
+        "overflow": false
+      },
+      {
+        "app": "login",
+        "google": 1
+      },
+      {
+        "app": "admin",
+        "path": "/",
+        "h1": [
+          "Keep the engine accountable."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/signals",
+        "h1": [
+          "Decisions, in view."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/trades",
+        "h1": [
+          "Positions and their lifecycle."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/markets",
+        "h1": [
+          "A deliberate market scope."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/india",
+        "h1": [
+          "Opening-range research."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/research",
+        "h1": [
+          "Test the assumptions."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/system",
+        "h1": [
+          "Inspect the dependencies."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/telegram",
+        "h1": [
+          "Reports with a purpose."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/audit",
+        "h1": [
+          "A record of access and actions."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "admin",
+        "path": "/settings",
+        "h1": [
+          "Explicit settings. Private secrets."
+        ],
+        "overflow": false,
+        "errors": []
+      },
+      {
+        "app": "public-mobile",
+        "overflow": false
+      },
+      {
+        "app": "admin-mobile",
+        "overflow": false
+      }
+    ],
+    "errors": []
+  },
+  "python_known_dependency_vulnerabilities": 0,
+  "frontend_known_dependency_vulnerabilities": 0,
+  "gateway_known_dependency_vulnerabilities": 0
+}

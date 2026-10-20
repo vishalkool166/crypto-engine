@@ -160,60 +160,34 @@ def _db_stats_optimized() -> dict:
 
 
 @router.get("/dashboard")
-@limiter.limit("60/minute")
 async def dashboard(request: Request):
     _auth(request)
-    try:
-        from saas.middleware import get_user_tier
-        from saas.signals import get_dashboard_for_tier
-        tier = get_user_tier(request)
-        return JSONResponse(content=make_serializable(
-            await build_dashboard_payload() if tier == "admin" else get_dashboard_for_tier(tier)
-        ))
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
-
+    return await build_dashboard_payload()
 
 @router.get("/dashboard/summary")
 async def dashboard_summary(request: Request):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from saas.signals import get_summary_for_tier
-    return JSONResponse(content=make_serializable(get_summary_for_tier(get_user_tier(request))))
-
+    return make_serializable(get_summary())
 
 @router.get("/dashboard/performance")
 async def dashboard_performance(request: Request):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from saas.signals import get_performance_for_tier
-    return JSONResponse(content=make_serializable(get_performance_for_tier(get_user_tier(request))))
-
+    return make_serializable(get_performance())
 
 @router.get("/dashboard/signals")
 async def dashboard_signals(request: Request):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from saas.signals import get_signals_for_tier
-    return JSONResponse(content=make_serializable(get_signals_for_tier(get_user_tier(request))))
-
+    return make_serializable(get_signals_data())
 
 @router.get("/dashboard/history")
 async def dashboard_history(request: Request, limit: int = 20):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from saas.signals import get_history_for_tier
-    return JSONResponse(content=make_serializable(get_history_for_tier(get_user_tier(request), limit=min(max(limit, 1), 100))))
-
+    return make_serializable(get_history(min(max(limit,1),100)))
 
 @router.get("/dashboard/universe")
 async def dashboard_universe(request: Request):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from saas.signals import get_universe_for_tier
-    return JSONResponse(content=make_serializable(get_universe_for_tier(get_user_tier(request))))
-
+    return make_serializable(get_universe())
 
 @router.get("/dashboard/ticker")
 async def dashboard_ticker(request: Request):
@@ -223,7 +197,7 @@ async def dashboard_ticker(request: Request):
 
 @router.get("/dashboard/coin/{coin}")
 async def dashboard_coin_detail(request: Request, coin: str):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from api.dashboard import get_coin_detail
@@ -237,23 +211,6 @@ async def dashboard_coin_detail(request: Request, coin: str):
         raise HTTPException(500, str(e))
 
 
-@router.get("/scan")
-@limiter.limit("1/minute")
-async def scan(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        from data.cache import cache as _cache
-        _cache.clear_all()
-        results = await scan_all_coins()
-        invalidate_all()
-        return JSONResponse(content={
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "count":     len(results),
-        })
-    except Exception as e:
-        log.error(traceback.format_exc())
-        raise HTTPException(500, str(e))
 
 
 @router.get("/signals")
@@ -274,17 +231,7 @@ async def get_signals(
             q = q.filter(SignalModel.coin == coin.upper())
         if outcome:
             q = q.filter(SignalModel.outcome == outcome.lower())
-        from saas.middleware import get_user_tier
-        from saas.tiers import filter_signal_for_tier, apply_signal_delay, get_signals_limit
-        tier = get_user_tier(request)
-        # The query must apply the delay BEFORE limiting or returning results.
-        from config import get_tier_features
-        from datetime import timedelta
-        features = get_tier_features(tier)
-        delay = features.get("signal_delay_minutes", 0)
-        if delay:
-            q = q.filter(SignalModel.timestamp <= datetime.now(timezone.utc) - timedelta(minutes=delay))
-        bounded_limit = min(max(limit, 1), 100, get_signals_limit(tier))
+        bounded_limit = min(max(limit, 1), 100)
         records = [{
             "id":          item.id,
             "timestamp":   item.timestamp.isoformat() if item.timestamp else None,
@@ -298,11 +245,11 @@ async def get_signals(
             "tp1":         item.tp1,
             "risk_amt":    item.risk_amt,
             "outcome":     item.outcome,
-            "exit_price":  item.exit_price if features.get("show_full_history", False) else None,
-            "pnl":         item.pnl if features.get("show_performance", False) else None,
+            "exit_price":  item.exit_price,
+            "pnl":         item.pnl,
             "market":      item.market,
         } for item in q.limit(bounded_limit).all()]
-        return JSONResponse(content=[filter_signal_for_tier(item, tier) for item in records])
+        return JSONResponse(content=make_serializable(records))
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
@@ -329,12 +276,7 @@ async def signals_latest(request: Request):
         )
         if not best:
             raise HTTPException(404, "No valid signals found")
-        from saas.middleware import get_user_tier
-        from saas.tiers import filter_signal_for_tier, apply_signal_delay
-        tier = get_user_tier(request)
-        if not apply_signal_delay([best], tier):
-            raise HTTPException(404, "No available signals")
-        return JSONResponse(content=filter_signal_for_tier(best, tier))
+        return JSONResponse(content=make_serializable(best))
     except HTTPException:
         raise
     except Exception as e:
@@ -360,11 +302,7 @@ async def signals_active(request: Request):
             key=lambda x: x.get("score", 0),
             reverse=True,
         )
-        from saas.middleware import get_user_tier
-        from saas.tiers import filter_signal_for_tier, apply_signal_delay, get_signals_limit
-        tier = get_user_tier(request)
-        delayed = apply_signal_delay(active, tier)
-        return JSONResponse(content=[filter_signal_for_tier(item, tier) for item in delayed[:get_signals_limit(tier)]])
+        return JSONResponse(content=make_serializable(active[:100]))
     except HTTPException:
         raise
     except Exception as e:
@@ -374,26 +312,9 @@ async def signals_active(request: Request):
 @router.get("/signal/{signal_id}")
 async def get_signal_by_id(request: Request, signal_id: int, db: Session = Depends(get_db)):
     _auth(request)
-    from saas.middleware import get_user_tier
-    from config import get_tier_features
-    features = get_tier_features(get_user_tier(request))
     row = db.query(SignalModel).filter(SignalModel.id == signal_id).first()
-    from datetime import timedelta
-    if row and row.timestamp:
-        delay = features.get("signal_delay_minutes", 0)
-        ts = row.timestamp.replace(tzinfo=timezone.utc) if row.timestamp.tzinfo is None else row.timestamp
-        if datetime.now(timezone.utc) - ts < timedelta(minutes=delay):
-            raise HTTPException(404, "Signal not available")
-    if not row:
-        raise HTTPException(404, "Signal not found")
-    return JSONResponse(content={
-        "id": row.id, "coin": row.coin, "direction": row.direction,
-        "grade": row.grade,
-        "entry": row.entry if features.get("show_levels", False) else None,
-        "sl": row.sl if features.get("show_levels", False) else None,
-        "tp1": row.tp1 if features.get("show_levels", False) else None,
-        "score": row.score,
-    })
+    if not row: raise HTTPException(404, "Signal not found")
+    return JSONResponse(content=make_serializable({c.name:getattr(row,c.name) for c in row.__table__.columns}))
 
 
 @router.get("/coins/active")
@@ -447,66 +368,8 @@ async def macro_events(request: Request):
 _backtest_lock: dict = {}
 
 
-@router.get("/backtest/{coin}")
-async def backtest(request: Request, coin: str):
-    _auth(request)
-    coin = coin.upper()
-    if coin not in cfg.COINS:
-        raise HTTPException(400, f"{coin} not supported")
-
-    if _backtest_lock.get(coin):
-        return JSONResponse(content={"error": f"Backtest already running for {coin}"}, status_code=429)
-
-    _backtest_lock[coin] = True
-    try:
-        loop   = asyncio.get_running_loop()
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: run_backtest(coin=coin, capital=1000, leverage=10)),
-            timeout=120.0,
-        )
-        if "error" in result:
-            raise HTTPException(400, result["error"])
-        return JSONResponse(content=make_serializable(result))
-    except asyncio.TimeoutError:
-        raise HTTPException(408, "Backtest timed out")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-    finally:
-        _backtest_lock[coin] = False
 
 
-@router.get("/backtest/all/run")
-async def backtest_all(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-
-    if _backtest_lock.get("__all__"):
-        return JSONResponse(content={"error": "Backtest already running"}, status_code=429)
-
-    _backtest_lock["__all__"] = True
-    loop    = asyncio.get_running_loop()
-    results = []
-    try:
-        for coin in cfg.COINS:
-            try:
-                r = await asyncio.wait_for(
-                    loop.run_in_executor(None, lambda c=coin: run_backtest(coin=c, capital=1000, leverage=10)),
-                    timeout=120.0,
-                )
-                if "error" not in r:
-                    results.append(r)
-            except Exception as e:
-                log.error("Backtest error %s: %s", coin, e)
-        results.sort(key=lambda x: x.get("win_rate", 0), reverse=True)
-        return JSONResponse(content=make_serializable({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "count":     len(results),
-            "results":   results,
-        }))
-    finally:
-        _backtest_lock["__all__"] = False
 
 
 @router.get("/backtest/history/all")
@@ -522,52 +385,11 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
     } for r in rows]))
 
 
-@router.get("/health")
-async def health(request: Request):
-    if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
-        return JSONResponse(content=_health_cache["data"])
-
-    from trade.sync import get_sync_status
-    from alerts.scanner import get_engine_health
-    from data.rejection_stats import get_top_rejections
-    from chatbot_rag import get_rag_status
-    from monitoring.langsmith_setup import get_langsmith_status
-
-    redis_ok = False
-    try:
-        from redis_client import get_redis
-        r = get_redis()
-        if r:
-            r.ping()
-            redis_ok = True
-    except Exception:
-        pass
-
-    loop   = asyncio.get_running_loop()
-    system = await loop.run_in_executor(None, _system_stats)
-
-    result = {
-        "status":           "ok",
-        "timestamp":        datetime.now(timezone.utc).isoformat(),
-        "trading_mode":     "live" if not cfg.PAPER_TRADING else "paper",
-        "coins_count":      len(cfg.COINS),
-        "grades":           cfg.MIN_GRADE_TO_TRADE,
-        "redis_connected":  redis_ok,
-        "sync_status":      await get_sync_status(),
-        "engine_health":    get_engine_health(),
-        "top_rejections":   get_top_rejections(3),
-        "rag_status":       get_rag_status(),
-        "langsmith_status": get_langsmith_status(),
-        "system":           system,
-    }
-    _health_cache["data"] = result
-    _health_cache["at"]   = time.time()
-    return JSONResponse(content=result)
 
 
 @router.post("/sync/outcomes")
 async def sync_outcomes(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from trade.sync import sync_trade_outcomes
@@ -588,50 +410,11 @@ async def mode_status(request: Request):
     })
 
 
-@router.post("/mode/toggle")
-async def mode_toggle(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        body     = await request.json()
-        new_mode = body.get("mode", "")
-        if new_mode not in ["live", "paper"]:
-            raise HTTPException(400, "Invalid mode")
-        from auth import verify_totp
-        if not verify_totp(body.get("totp_code", "")):
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid TOTP code"})
-        from trade.monitor import get_open_positions_enriched
-        if await get_open_positions_enriched():
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Close all trades first"})
-        from trade.safety import ensure_live_opt_in
-        try:
-            ensure_live_opt_in(new_mode)
-        except PermissionError as exc:
-            raise HTTPException(403, str(exc))
-        from trade.order_journal import unresolved
-        if unresolved():
-            raise HTTPException(409, "Unresolved exchange order intents; reconciliation required")
-
-        if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Live API keys not configured"})
-        from config import _ensure
-        from trade.exchange import close_exchange
-        _ensure("TRADING_MODE", new_mode)
-        cfg.TRADING_MODE  = new_mode
-        cfg.PAPER_TRADING = new_mode != "live"
-        await close_exchange()
-        audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
-        invalidate_all()
-        return JSONResponse(content={"success": True, "mode": new_mode})
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
 
 
 @router.get("/audit/log")
 async def audit_log(request: Request, limit: int = 50, db: Session = Depends(get_db)):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     from database import AuditLog
     rows = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(limit).all()
@@ -650,7 +433,7 @@ async def get_coins(request: Request):
 
 @router.post("/coins/toggle")
 async def toggle_coin(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         body    = await request.json()
@@ -681,7 +464,7 @@ async def _backfill_coin(coin: str) -> None:
 
 @router.post("/coins/add")
 async def add_coin(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         body = await request.json()
@@ -717,7 +500,7 @@ async def add_coin(request: Request):
 
 @router.delete("/coins/{coin}")
 async def remove_coin(request: Request, coin: str):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         coin = coin.upper()
@@ -807,35 +590,11 @@ async def proxy_binance_price(request: Request, symbol: str):
         raise HTTPException(500, str(e))
 
 
-@router.post("/system/docker-purge")
-async def docker_purge(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        body = await request.json()
-        from auth import verify_totp
-        if not verify_totp(body.get("totp_code", "")):
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid TOTP code"})
-        import subprocess
-        disk_before = psutil.disk_usage('/').used
-        result      = subprocess.run(
-            ["/usr/bin/docker", "system", "prune", "-f", "--volumes"],
-            capture_output=True, text=True, timeout=120,
-            cwd="/home/ubuntu/crypto-engine",
-            env={**os.environ, "HOME": "/root", "PATH": "/usr/bin:/usr/local/bin:/bin"},
-        )
-        freed_mb = round((disk_before - psutil.disk_usage('/').used) / 1024 ** 2)
-        audit("docker_purge", "dashboard", f"freed:{freed_mb}MB", ip=request.client.host if request.client else "")
-        if result.returncode == 0:
-            return JSONResponse(content={"success": True, "output": result.stdout, "freed_mb": freed_mb})
-        return JSONResponse(status_code=500, content={"success": False, "reason": result.stderr or "Failed"})
-    except Exception as e:
-        raise HTTPException(500, str(e))
 
 
 @router.get("/system/disk")
 async def system_disk(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     disk = psutil.disk_usage('/')
     return JSONResponse(content={
@@ -873,7 +632,7 @@ async def coins_states(request: Request):
 
 @router.get("/trades/{trade_id}/journey")
 async def trade_journey(request: Request, trade_id: int):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from trade.monitor import get_trade_journey
@@ -884,7 +643,7 @@ async def trade_journey(request: Request, trade_id: int):
 
 @router.get("/engine/monthly-report")
 async def monthly_report(request: Request, year: int = None, month: int = None):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from reports.monthly_report import generate_monthly_report
@@ -895,7 +654,7 @@ async def monthly_report(request: Request, year: int = None, month: int = None):
 
 @router.get("/engine/monthly-report/history")
 async def monthly_report_history(request: Request, months: int = 3):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from reports.monthly_report import get_last_n_months
@@ -904,30 +663,3 @@ async def monthly_report_history(request: Request, months: int = 3):
         raise HTTPException(500, str(e))
 
 
-@router.post("/chat")
-async def chat_endpoint(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from config import tier_meets_minimum, TIER_ELITE
-
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
-            raise HTTPException(403, {"code": "upgrade_required"})
-
-        body    = await request.json()
-        message = body.get("message", "").strip()
-
-        if not message:
-            raise HTTPException(400, "Message required")
-
-        from chatbot_rag import chat_with_sources
-        result = await chat_with_sources(message)
-        return JSONResponse(content=result)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("Chat endpoint error: %s", e)
-        raise HTTPException(500, str(e))

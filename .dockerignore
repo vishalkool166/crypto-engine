@@ -14,3 +14,10 @@ research_data/
 .pytest_cache/
 .env.*
 *.sqlite*
+dashboard/
+deploy/
+work/
+tests/
+.venv/
+*.zip
+.verification/

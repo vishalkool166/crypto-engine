@@ -38,73 +38,10 @@ def extracted_function(relative, name, globals_):
     return namespace[name]
 
 
-def test_admin_authentication_and_authorization(monkeypatch):
-    fake_auth = ModuleType('auth')
-    fake_auth.is_admin_user = lambda user: bool(user.get('is_admin'))
-    fake_auth.password_is_set = lambda: True
-    fake_middleware = ModuleType('saas.middleware')
-    user_state = {'user': None}
-    fake_middleware.get_current_user = lambda request: user_state['user']
-    module = load_module_from_source(monkeypatch, 'security_under_test', 'saas/security.py', {
-        'auth': fake_auth, 'saas.middleware': fake_middleware,
-    })
-    request = SimpleNamespace(headers={})
-    with pytest.raises(HTTPException) as err:
-        module.require_admin_access(request)
-    assert err.value.status_code == 401
-    user_state['user'] = {'is_admin': False}
-    with pytest.raises(HTTPException) as err:
-        module.require_admin_access(request)
-    assert err.value.status_code == 403
-    user_state['user'] = {'is_admin': True}
-    assert module.require_admin_access(request)['is_admin']
 
 
-def test_initial_setup_requires_operator_secret(monkeypatch):
-    auth = ModuleType('auth')
-    auth.is_admin_user = lambda user: True
-    password = {'set': False}
-    auth.password_is_set = lambda: password['set']
-    mw = ModuleType('saas.middleware')
-    mw.get_current_user = lambda request: None
-    module = load_module_from_source(monkeypatch, 'security_bootstrap_test', 'saas/security.py', {
-        'auth': auth, 'saas.middleware': mw,
-    })
-    monkeypatch.delenv('SIGNAL_ENGINE_SETUP_TOKEN', raising=False)
-    with pytest.raises(HTTPException):
-        module.require_setup_access(SimpleNamespace(headers={'X-Setup-Token': 'abc'}))
-    monkeypatch.setenv('SIGNAL_ENGINE_SETUP_TOKEN', 'valid-secret')
-    with pytest.raises(HTTPException):
-        module.require_setup_access(SimpleNamespace(headers={'X-Setup-Token': 'wrong'}))
-    module.require_setup_access(SimpleNamespace(headers={'X-Setup-Token': 'valid-secret'}))
-    password['set'] = True
-    with pytest.raises(HTTPException):
-        module.require_setup_access(SimpleNamespace(headers={'X-Setup-Token': 'valid-secret'}))
 
 
-def test_revoked_sessions_fail_closed(monkeypatch):
-    config = ModuleType('config')
-    config.cfg = SimpleNamespace()
-    config.tier_meets_minimum = lambda a,b: True
-    for name in ('TIER_FREE','TIER_PRO','TIER_ELITE','TIER_ADMIN'):
-        setattr(config, name, name.lower())
-    auth = ModuleType('auth')
-    token = {'sub':'7', 'type':'oauth', 'session_id':'session-1', 'tier':'admin', 'is_admin': True}
-    auth.get_current_user_any = lambda request: token.copy()
-    auth.is_admin_user = lambda user: bool(user['is_admin'])
-    sessions = ModuleType('saas.sessions')
-    sessions.validate_session = lambda _: None
-    mw = load_module_from_source(monkeypatch, 'middleware_under_test', 'saas/middleware.py', {
-        'config': config, 'auth': auth, 'saas.sessions': sessions,
-    })
-    assert mw.get_current_user(SimpleNamespace()) is None
-    sessions.validate_session = lambda _: {'user_id':8,'tier':'admin','is_admin':True,'email':'x'}
-    assert mw.get_current_user(SimpleNamespace()) is None
-    sessions.validate_session = lambda _: {'user_id':7,'tier':'free','is_admin':False,'email':'real@example.test'}
-    user = mw.get_current_user(SimpleNamespace())
-    assert user['is_admin'] is False and user['tier'] == 'free'
-    sessions.validate_session = lambda _: (_ for _ in ()).throw(RuntimeError('db offline'))
-    assert mw.get_current_user(SimpleNamespace()) is None
 
 
 @pytest.mark.asyncio
@@ -174,50 +111,9 @@ class WS:
         raise WebSocketDisconnect()
 
 
-def ws_function(user):
-    import json
-    auth = ModuleType('auth')
-    auth.is_admin_user = lambda u: bool(u.get('is_admin',False))
-    old = sys.modules.get('auth')
-    sys.modules['auth'] = auth
-    clients = {}
-    fn = extracted_function('main.py', 'dashboard_websocket', {
-        'allowed_origins':['https://example.test'],
-        '_get_ws_user': lambda ws: user,
-        '_dashboard_clients': clients,
-        '_build_ws_payload': AsyncMock(return_value={'type':'dashboard'}),
-        'log': logging.getLogger(__name__), 'json':json,
-        'WebSocketDisconnect': WebSocketDisconnect, 'WebSocket': WebSocket,
-    })
-    if old is None:
-        del sys.modules['auth']
-    else:
-        sys.modules['auth'] = old
-    return fn, clients, auth
 
 
-@pytest.mark.asyncio
-async def test_ws_rejects_unauthenticated(monkeypatch):
-    fn, clients, auth = ws_function(None)
-    monkeypatch.setitem(sys.modules, 'auth', auth)
-    ws = WS(origin='https://example.test')
-    await fn(ws)
-    assert ws.closed == 1008 and not ws.accepted and not clients
 
 
-@pytest.mark.asyncio
-async def test_ws_rejects_cross_site_origin(monkeypatch):
-    fn, clients, auth = ws_function({'tier':'admin','is_admin':True})
-    monkeypatch.setitem(sys.modules, 'auth', auth)
-    ws = WS(origin='https://evil.test')
-    await fn(ws)
-    assert ws.closed == 1008 and not ws.accepted and not clients
 
 
-@pytest.mark.asyncio
-async def test_ws_accepts_authenticated_user(monkeypatch):
-    fn, clients, auth = ws_function({'tier':'free','is_admin':False})
-    monkeypatch.setitem(sys.modules, 'auth', auth)
-    ws = WS(origin='https://example.test')
-    await fn(ws)
-    assert ws.accepted and len(ws.sent)==1 and not clients

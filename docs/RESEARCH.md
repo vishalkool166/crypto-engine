@@ -2,7 +2,7 @@
 
 ## Current evidence
 
-**No configuration is certified profitable. No 50–60% winning-trade rate is demonstrated.** Exchange metadata and limited candle samples were retrieved through read-only Binance APIs, but the complete 18-coin, 1h/4h/funding archives were not materialized in this runtime. The local `ta` package is also unavailable. Offline code tests do not measure trading edge.
+**No configuration is certified profitable. No 50–60% winning-trade rate is demonstrated.** Exchange metadata and limited candle samples were retrieved through read-only Binance APIs, but the complete 18-coin, 1h/4h/funding archives were not materialized in this runtime. The runtime dependencies now include `ta`; the full historical experiment has not been rerun in this rebuild. Offline code tests do not measure trading edge.
 
 ## Strategy under examination
 

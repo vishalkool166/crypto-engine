@@ -77,7 +77,7 @@ async def send_signal(signal: dict, coin: str, regime: str, session: str) -> Non
         f"📦 Size:     `${pos_size:.2f}`\n"
         f"📍 Regime:   `{regime or '--'}`\n"
         f"⏰ Session:  `{session or '--'}`\n\n"
-        f"_Forwarded to execution engine_"
+        f"_Paper setup recorded; execution status is reported separately_"
     )
 
     await send(msg)

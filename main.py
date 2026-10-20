@@ -1,1127 +1,350 @@
+"""HTTP entrypoint. Public projection and Google-authenticated operator APIs."""
+
 import asyncio
-import hashlib
+import hmac
 import json
 import logging
-import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import JSONResponse, Response, RedirectResponse
+import secrets
+import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import JSONResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
-from api.routes       import router, build_dashboard_payload
-from api.trading      import router as trading_router
-from api.engine_health import router as engine_health_router
-from api.indian        import router as indian_router
-from saas.admin       import router as admin_router
-from database         import init_db
-from scheduler        import start_scheduler, stop_scheduler
-from alerts.telegram  import send, register_webhook, handle_webhook, register_commands
-from config           import cfg, _bootstrap_secrets
-from events           import on_event, emit
-import runtime_state  as rs
+from portal_settings import settings
+from operator_auth import (
+    init_operator_schema,
+    current_operator,
+    require_operator,
+    create_operator_session,
+    revoke_operator_session,
+    oauth_client,
+)
+from api.portal import router as portal_router, public_snapshot
+from service_runtime import lifespan
 
 logging.basicConfig(
-    level  = logging.INFO,
-    format = "%(asctime)s — %(name)s — %(levelname)s — %(message)s"
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
-logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
-logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
-logging.getLogger("websockets").setLevel(logging.WARNING)
-
-log       = logging.getLogger(__name__)
-templates = Jinja2Templates(directory="frontend")
-
-_dashboard_clients:   dict         = {}
-_last_payload_hash:   str          = ""
-_dashboard_push_task: asyncio.Task = None
-_cpu_warmup_task:     asyncio.Task = None
-
-limiter = Limiter(key_func=get_remote_address)
-
-
-def _get_ws_user(websocket: WebSocket) -> dict | None:
-    from saas.middleware import get_current_user
-    # HTTP and WebSocket requests expose the same cookie/header interface.
-    return get_current_user(websocket)
-
-
-async def _build_ticker_payload(tier: str = "admin") -> dict:
-    from saas.signals import get_summary_for_tier
-    from trade.ws import get_all_mark_prices
-
-    summary     = get_summary_for_tier(tier)
-    mark_prices = get_all_mark_prices()
-
-    return {
-        "type":        "ticker",
-        "items":       [],
-        "mark_prices": mark_prices,
-        "summary": {
-            "next_scan_epoch": summary.get("next_scan_epoch", 0),
-            "mode":            summary.get("mode",          "paper"),
-            "today_pnl":       summary.get("today_pnl",     None),
-            "today_pnl_pos":   summary.get("today_pnl_pos", True),
-            "today_trades":    summary.get("today_trades",  None),
-            "coins_count":     summary.get("coins_count",   0),
-        }
-    }
-
-
-async def _build_ws_payload(tier: str = "admin") -> dict:
-    from saas.signals import get_dashboard_for_tier
-    from trade.ws import get_all_mark_prices
-    from trade.monitor import get_open_positions_enriched
-    from trade.ws import get_mark_price
-    from alerts.scanner import get_engine_health
-    from data.rejection_stats import get_top_rejections
-
-    dashboard   = get_dashboard_for_tier(tier)
-    mark_prices = get_all_mark_prices()
-
-    try:
-        # An exchange account is shared infrastructure, not SaaS customer data.
-        # Never transmit actual positions to non-administrators.
-        open_trades = await get_open_positions_enriched() if tier == "admin" else []
-        for trade in open_trades:
-            coin       = trade.get("coin", "")
-            live_price = get_mark_price(coin)
-            if live_price:
-                trade["current_price"] = live_price
-                entry    = float(trade.get("entry_price") or 0)
-                leverage = int(trade.get("leverage") or 1)
-                margin   = float(trade.get("margin_used") or 0)
-                is_short = trade.get("is_short", False)
-                if entry > 0:
-                    if is_short:
-                        pnl = (entry - live_price) / entry * margin * leverage
-                    else:
-                        pnl = (live_price - entry) / entry * margin * leverage
-                    trade["profit_abs"]   = round(pnl, 4)
-                    trade["profit_ratio"] = round(
-                        (live_price - entry) / entry * leverage if not is_short
-                        else (entry - live_price) / entry * leverage,
-                        4
-                    )
-        dashboard["open_trades"] = open_trades
-    except Exception as e:
-        log.error("Trade enrichment error: %s", e)
-
-    dashboard["mark_prices"]    = mark_prices
-    if tier == "admin":
-        dashboard["engine_health"]  = get_engine_health()
-        dashboard["top_rejections"] = get_top_rejections(3)
-    return dashboard
-
-
-async def _push_to_clients(payload_str: str, admin_only: bool = False):
-    dead = set()
-    for ws_id, ws_info in list(_dashboard_clients.items()):
-        if admin_only and not ws_info.get("is_admin", False):
-            continue
-        ws = ws_info["ws"]
-        try:
-            await ws.send_text(payload_str)
-        except Exception:
-            dead.add(ws_id)
-    for ws_id in dead:
-        _dashboard_clients.pop(ws_id, None)
-
-
-async def push_event(event_type: str, data: dict = None):
-    global _last_payload_hash
-    if not _dashboard_clients:
-        return
-    try:
-        tiers_present = set(
-            info.get("tier", "free")
-            for info in _dashboard_clients.values()
-        )
-
-        for tier in tiers_present:
-            tier_clients = {
-                k: v for k, v in _dashboard_clients.items()
-                if v.get("tier") == tier
-            }
-            if not tier_clients:
-                continue
-
-            if event_type == "ping":
-                payload      = await _build_ticker_payload(tier)
-                payload_str  = json.dumps(payload)
-                payload_hash = hashlib.md5(
-                    (tier + payload_str).encode()
-                ).hexdigest()
-                if payload_hash == _last_payload_hash:
-                    continue
-                _last_payload_hash = payload_hash
-            else:
-                payload     = await _build_ws_payload(tier)
-                payload_str = json.dumps(payload)
-
-            dead = set()
-            for ws_id, ws_info in tier_clients.items():
-                ws = ws_info["ws"]
-                try:
-                    await ws.send_text(payload_str)
-                except Exception:
-                    dead.add(ws_id)
-            for ws_id in dead:
-                _dashboard_clients.pop(ws_id, None)
-
-    except Exception as e:
-        log.error("push_event error: %s", e)
-
-
-async def _push_trade_update(event_type: str, data: dict = None):
-    if not _dashboard_clients:
-        return
-    try:
-        from trade.monitor import get_open_positions_enriched, get_profit_summary
-        from trade.ws import get_mark_price
-
-        open_trades = await get_open_positions_enriched()
-        for trade in open_trades:
-            coin       = trade.get("coin", "")
-            live_price = get_mark_price(coin)
-            if live_price:
-                trade["current_price"] = live_price
-
-        profit = get_profit_summary()
-
-        payload = json.dumps({
-            "type":        "trade_update",
-            "event":       event_type,
-            "open_trades": open_trades,
-            "profit":      profit,
-            "data":        data or {},
-        })
-
-        await _push_to_clients(payload, admin_only=True)
-
-    except Exception as e:
-        log.error("_push_trade_update error: %s", e)
-
-
-async def _on_trade_event(event_type: str, data: dict):
-    push_types = {"trade_closed", "order_filled", "account_update"}
-    if event_type in push_types:
-        await _push_trade_update(event_type, data)
-
-
-async def _dashboard_push_loop():
-    while True:
-        await asyncio.sleep(2)
-        if _dashboard_clients:
-            await push_event("dashboard")
-
-
-async def _cpu_warmup_loop():
-    import psutil
-    while True:
-        psutil.cpu_percent(interval=None)
-        await asyncio.sleep(30)
-
-
-async def _session_cleanup_loop():
-    from saas.sessions import cleanup_expired_sessions
-    while True:
-        await asyncio.sleep(3600)
-        try:
-            count = cleanup_expired_sessions()
-            if count:
-                log.info("Session cleanup: %s expired sessions removed", count)
-        except Exception as e:
-            log.error("Session cleanup error: %s", e)
-
-
-async def _start_langsmith():
-    try:
-        from monitoring.langsmith_setup import start_langsmith
-        success = start_langsmith()
-        if success:
-            log.info("LangSmith tracing active")
-        else:
-            log.warning("LangSmith tracing not active — add LANGCHAIN_API_KEY to .env")
-    except Exception as e:
-        log.warning("LangSmith setup error: %s — continuing without tracing", e)
-
-
-async def _start_rag_indexer():
-    try:
-        from rag.indexer import run_full_index
-        log.info("Starting RAG indexer on startup...")
-        loop    = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, run_full_index)
-        total   = sum(results.values())
-        log.info("RAG indexer complete — %s chunks indexed: %s", total, results)
-    except Exception as e:
-        log.warning("RAG indexer startup error: %s — continuing without RAG", e)
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global _dashboard_push_task, _cpu_warmup_task
-
-    rs.load()
-    rs.mark_crash()  # Must remain flagged until the shutdown sequence completes.
-
-    on_event(push_event)
-
-    from trade.ws import start_ws, on_trade_event
-    on_trade_event(_on_trade_event)
-
-    from auth import setup_status
-    status = setup_status()
-    if not status["setup_complete"]:
-        log.warning("=" * 60)
-        log.warning("FIRST RUN — configure SIGNAL_ENGINE_SETUP_TOKEN securely before setup")
-        log.warning("=" * 60)
-
-    _dashboard_push_task = asyncio.create_task(_dashboard_push_loop())
-    _cpu_warmup_task     = asyncio.create_task(_cpu_warmup_loop())
-    _session_cleanup     = asyncio.create_task(_session_cleanup_loop())
-
-    # Do not start scheduled trading jobs before startup exchange reconciliation.
-    await register_webhook()
-    await register_commands()
-
-    try:
-        from scheduler import job_btc_cache
-        await job_btc_cache()
-        log.info("BTC cache populated on startup")
-    except Exception as e:
-        log.warning("BTC cache startup failed: %s", e)
-
-    from alerts.scanner import register_kline_handler
-    register_kline_handler()
-
-    await start_ws()
-    log.info("Binance WebSocket streams started")
-
-    try:
-        from engines.indian.auth import init_indian_session
-        indian_ok = await init_indian_session()
-        if indian_ok:
-            from engines.indian.instruments import refresh_instruments
-            refresh_instruments()
-            log.info("Indian market session initialized")
-    except Exception as e:
-        log.warning("Indian market init failed: %s", e)
-
-    try:
-        from engines.indian.startup import recover_missed_jobs
-        await recover_missed_jobs()
-    except Exception as e:
-        log.warning("Indian startup recovery failed: %s", e)
-
-    try:
-        from trade.reconciler import reconcile_on_startup
-        await reconcile_on_startup()
-        log.info("Startup reconciliation complete")
-    except Exception as e:
-        log.warning("Startup reconciliation error: %s", e)
-
-    start_scheduler()
-    await _start_langsmith()
-    await _start_rag_indexer()
-
-    mode   = "🔴 LIVE" if not cfg.PAPER_TRADING else "🔵 PAPER (Binance Demo)"
-    grades = ", ".join(cfg.MIN_GRADE_TO_TRADE)
-
-    from monitoring.langsmith_setup import get_langsmith_status
-    ls_status = get_langsmith_status()
-    ls_line   = f"`✅ Active — {ls_status['url']}`" if ls_status["enabled"] else "`⚠️ Add LANGCHAIN_API_KEY to .env`"
-
-    await send(
-        f"✅ *Signal Engine v5 Started*\n\n"
-        f"Mode:       `{mode}`\n"
-        f"Coins:      `{len(cfg.COINS)} coins`\n"
-        f"Grades:     `{grades}`\n"
-        f"Webhook:    `✅ Active`\n"
-        f"WS:         `✅ Binance streams active`\n"
-        f"RAG:        `✅ Vector store ready`\n"
-        f"LangSmith:  {ls_line}\n"
-        f"Scan:       `every :00/:15/:30/:45 UTC`\n\n"
-        f"Type /help for commands"
-    )
-
-    yield
-
-    await send("🔴 *Signal Engine v5 Stopped*")
-
-    rs.mark_crash()
-
-    if _dashboard_push_task:
-        _dashboard_push_task.cancel()
-        try:
-            await _dashboard_push_task
-        except asyncio.CancelledError:
-            pass
-
-    if _cpu_warmup_task:
-        _cpu_warmup_task.cancel()
-        try:
-            await _cpu_warmup_task
-        except asyncio.CancelledError:
-            pass
-
-    _session_cleanup.cancel()
-    try:
-        await _session_cleanup
-    except asyncio.CancelledError:
-        pass
-
-    from trade.ws import stop_ws
-    await stop_ws()
-
-    from trade.exchange import close_exchange
-    await close_exchange()
-
-    from trade.monitor import stop_monitor
-    stop_monitor()
-
-    from monitoring.langsmith_setup import stop_langsmith
-    stop_langsmith()
-
-    stop_scheduler()
-
-    rs.mark_clean_shutdown()
-    log.info("Signal Engine stopped")
-
-
-# Initialize signing secrets before SessionMiddleware captures its secret key.
-# If initialized only inside lifespan, first startup uses the empty string.
-_bootstrap_secrets()
-
+# HTTP client INFO logs include token-bearing Telegram URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+log = logging.getLogger(__name__)
+settings.validate()
 app = FastAPI(
-    title       = "Signal Engine v5",
-    description = "Automated crypto signal engine",
-    version     = "5.0.0",
-    lifespan    = lifespan
+    title="Signal Engine",
+    version="1.0.0",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+    redirect_slashes=False,
 )
-
 app.add_middleware(
     SessionMiddleware,
-    secret_key = cfg.JWT_SECRET,
-    max_age    = 3600,
-    https_only = cfg.ENV == "production",
-    same_site  = "lax",
+    secret_key=settings.session_secret or secrets.token_hex(32),
+    session_cookie="__Host-se_oauth_state" if settings.production else "se_oauth_state",
+    max_age=600,
+    https_only=settings.production,
+    same_site="lax",
 )
+_buckets = OrderedDict()
 
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-allowed_origins = [
-    cfg.DOMAIN,
-    cfg.FRONTEND_URL,
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
-allowed_origins = [o for o in allowed_origins if o]
+def app_host(request):
+    return request.headers.get(
+        "x-forwarded-app-host", request.headers.get("host", "")
+    ).lower()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins     = allowed_origins,
-    allow_methods     = ["*"],
-    allow_headers     = ["*"],
-    allow_credentials = True
-)
+
+def trusted_edge(headers):
+    if not settings.production:
+        return True
+    value = headers.get("x-origin-verify", "")
+    return bool(
+        settings.origin_secret and hmac.compare_digest(value, settings.origin_secret)
+    )
+
+
+def admit(ip, category, maximum):
+    key = (ip, category)
+    now = time.monotonic()
+    previous = _buckets.get(key, (now, 0))
+    started, count = previous if now - previous[0] < 60 else (now, 0)
+    _buckets[key] = (started, count + 1)
+    _buckets.move_to_end(key)
+    while len(_buckets) > 10000:
+        _buckets.popitem(last=False)
+    return count < maximum
 
 
 @app.middleware("http")
-async def cache_headers(request: Request, call_next):
+async def boundary(request: Request, call_next):
+    path = request.url.path
+    if path == "/health/live":
+        return JSONResponse({"status": "alive"})
+    if not trusted_edge(request.headers):
+        return JSONResponse({"detail": "Forbidden"}, status_code=403)
+    host = app_host(request)
+    admin_host = host == settings.admin_host or (
+        not settings.production
+        and host.split(":")[0] in ("localhost", "127.0.0.1", "testserver")
+    )
+    public_path = path.startswith("/api/v1/public/")
+    if not admin_host and not public_path:
+        return JSONResponse({"detail": "Not found"}, status_code=404)
+    ip = (
+        request.headers.get("x-visitor-ip", "")
+        if settings.production
+        else (request.client.host if request.client else "")
+    )
+    mutating = request.method not in ("GET", "HEAD", "OPTIONS")
+    category = (
+        "auth" if path.startswith("/auth/") else "mutation" if mutating else "read"
+    )
+    if not admit(ip, category, 20 if category == "auth" else 30 if mutating else 120):
+        return JSONResponse(
+            {"detail": "Request limit reached; try again shortly"},
+            status_code=429,
+            headers={"Retry-After": "60"},
+        )
+    if mutating:
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > 65536:
+                return JSONResponse({"detail": "Request too large"}, status_code=413)
+            body.extend(chunk)
+        request._body = bytes(body)
+    if path.startswith("/api/v1/admin/") or path in ("/auth/session", "/auth/logout"):
+        user = current_operator(request)
+        if not user:
+            return JSONResponse(
+                {"detail": "Operator authentication required"}, status_code=401
+            )
+        if mutating:
+            origins = (
+                (settings.admin_origin,)
+                if settings.production
+                else (
+                    settings.admin_origin,
+                    "http://localhost:5174",
+                    "http://127.0.0.1:5174",
+                )
+            )
+            if request.headers.get("origin") not in origins or not hmac.compare_digest(
+                request.headers.get("x-csrf-token", ""), user["csrf"]
+            ):
+                return JSONResponse(
+                    {"detail": "Request verification failed"}, status_code=403
+                )
     response = await call_next(request)
-    path     = request.url.path
-    if any(path.endswith(f) for f in [
-        'preact.min.js', 'preact-hooks.min.js',
-        'htm.min.js', 'chartjs.min.js', 'alpine.min.js',
-    ]):
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    elif path.endswith(('.js', '.css')):
-        response.headers["Cache-Control"] = "no-cache, must-revalidate"
-        response.headers["Pragma"]        = "no-cache"
-        response.headers["Expires"]       = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
-@app.get("/api/health", include_in_schema=False)
-async def api_health():
-    """Unprivileged liveness probe; not a proof of exchange/DB readiness."""
-    return {"status": "alive"}
+@app.exception_handler(HTTPException)
+async def http_error(request, exc):
+    return JSONResponse(
+        {
+            "detail": "Service operation failed; consult operator logs"
+            if exc.status_code >= 500
+            else exc.detail
+        },
+        status_code=exc.status_code,
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(Exception)
+async def server_error(request, exc):
+    log.exception("Unhandled request failure on %s", request.url.path)
+    return JSONResponse({"detail": "Service temporarily unavailable"}, status_code=503)
 
 
 @app.get("/auth/google")
-async def auth_google(request: Request):
-    try:
-        from authlib.integrations.starlette_client import OAuth
-        from starlette.config import Config as StarletteConfig
-
-        config = StarletteConfig(environ={
-            "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
-            "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
-        })
-        oauth = OAuth(config)
-        oauth.register(
-            name                = "google",
-            server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs       = {"scope": "openid email profile"},
-        )
-        redirect_uri = f"{cfg.DOMAIN or 'http://localhost:8000'}/auth/callback/google"
-        return await oauth.google.authorize_redirect(request, redirect_uri)
-    except Exception as e:
-        log.error("Google auth error: %s", e)
-        raise HTTPException(500, "OAuth configuration error")
+async def google_start(request: Request):
+    return await oauth_client().authorize_redirect(
+        request,
+        settings.admin_origin + "/auth/callback/google",
+        prompt="select_account",
+    )
 
 
 @app.get("/auth/callback/google")
-async def auth_callback_google(request: Request):
+async def google_callback(request: Request):
     try:
-        from authlib.integrations.starlette_client import OAuth
-        from starlette.config import Config as StarletteConfig
-        from saas.users    import create_or_get_user
-        from saas.sessions import create_session
-        from auth          import create_oauth_jwt
-
-        config = StarletteConfig(environ={
-            "GOOGLE_CLIENT_ID":     cfg.GOOGLE_CLIENT_ID,
-            "GOOGLE_CLIENT_SECRET": cfg.GOOGLE_CLIENT_SECRET,
-        })
-        oauth = OAuth(config)
-        oauth.register(
-            name                = "google",
-            server_metadata_url = "https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs       = {"scope": "openid email profile"},
-        )
-
-        token    = await oauth.google.authorize_access_token(request)
-        userinfo = token.get("userinfo") or await oauth.google.userinfo(token=token)
-
-        email       = userinfo.get("email", "")
-        name        = userinfo.get("name", "")
-        avatar      = userinfo.get("picture", "")
-        provider_id = userinfo.get("sub", "")
-
-        if not email:
-            raise HTTPException(400, "No email from Google")
-
-        user = create_or_get_user(
-            email       = email,
-            name        = name,
-            avatar      = avatar,
-            provider    = "google",
-            provider_id = provider_id,
-        )
-
-        ip         = request.client.host if request.client else ""
-        user_agent = request.headers.get("user-agent", "")
-
-        session_id = create_session(
-            user_id    = user["id"],
-            tier       = user["tier"],
-            ip         = ip,
-            user_agent = user_agent,
-        )
-
-        from jose import jwt as jose_jwt
-        import datetime as _dt
-        from datetime import timedelta
-        payload = {
-            "sub":        str(user["id"]),
-            "email":      user["email"],
-            "tier":       user["tier"],
-            "is_admin":   user["is_admin"],
-            "session_id": session_id,
-            "type":       "oauth",
-            "iat":        _dt.datetime.now(_dt.timezone.utc),
-            "exp":        _dt.datetime.now(_dt.timezone.utc) + timedelta(hours=cfg.OAUTH_JWT_EXPIRY),
-        }
-        final_token = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
-
-        response = RedirectResponse(url=f"{cfg.DOMAIN}/")
+        token = await oauth_client().authorize_access_token(request)
+        info = token.get("userinfo")
+        if not info:
+            raise HTTPException(403, "Google identity was not verified")
+        session = create_operator_session(info)
+        response = RedirectResponse(settings.admin_origin + "/", status_code=303)
         response.set_cookie(
-            key      = cfg.SESSION_COOKIE_NAME,
-            value    = final_token,
-            httponly = cfg.SESSION_COOKIE_HTTPONLY,
-            secure   = cfg.SESSION_COOKIE_SECURE,
-            samesite = cfg.SESSION_COOKIE_SAMESITE,
-            max_age  = cfg.SESSION_COOKIE_MAX_AGE,
+            settings.cookie_name,
+            session,
+            max_age=settings.session_hours * 3600,
+            secure=settings.production,
+            httponly=True,
+            samesite="lax",
+            path="/",
         )
-
         from auth import audit
-        audit(
-            action  = "oauth_login",
-            source  = "google",
-            detail  = f"user:{email} tier:{user['tier']} new:{user.get('is_new', False)}",
-            ip      = ip,
-            success = True,
-        )
 
+        audit("operator_login", "google", "Verified operator sign-in", success=True)
         return response
-
     except HTTPException:
-        raise
-    except Exception as e:
-        log.error("Google callback error: %s", e)
-        return RedirectResponse(url="/login?error=oauth_failed")
+        return RedirectResponse(
+            settings.admin_origin + "/login?error=unauthorized", status_code=303
+        )
+    except Exception:
+        log.warning("Google operator authentication failed")
+        return RedirectResponse(
+            settings.admin_origin + "/login?error=authentication_failed",
+            status_code=303,
+        )
 
 
 @app.get("/auth/session")
-async def auth_session(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.users import get_user_by_id
-        user = get_current_user(request)
-        if not user:
-            return JSONResponse(status_code=401, content={"authenticated": False})
-        user_id = int(user.get("sub", 0))
-        if user_id:
-            fresh = get_user_by_id(user_id)
-            if fresh:
-                return JSONResponse(content={
-                    "authenticated": True,
-                    "user": {
-                        "id":       str(fresh["id"]),
-                        "email":    fresh["email"],
-                        "tier":     fresh["tier"],
-                        "is_admin": fresh["is_admin"],
-                    }
-                })
-        return JSONResponse(content={
-            "authenticated": True,
-            "user": {
-                "id":       user.get("sub"),
-                "email":    user.get("email"),
-                "tier":     user.get("tier"),
-                "is_admin": user.get("is_admin", False),
-            }
-        })
-    except Exception as e:
-        log.error("Session check error: %s", e)
-        return JSONResponse(status_code=401, content={"authenticated": False})
+def session(request: Request):
+    user = require_operator(request)
+    return {
+        "authenticated": True,
+        "user": {"email": user["email"], "is_admin": True},
+        "csrf": user["csrf"],
+        "expires_at": user["expires_at"],
+    }
 
 
-@app.get("/auth/logout")
-async def auth_logout(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.sessions  import revoke_session
-        user = get_current_user(request)
-        if user and user.get("session_id"):
-            revoke_session(user["session_id"])
-    except Exception:
-        pass
-    response = RedirectResponse(url="/")
-    response.delete_cookie(cfg.SESSION_COOKIE_NAME)
-    response.delete_cookie("se_token")
+@app.post("/auth/logout")
+def logout(request: Request):
+    revoke_operator_session(request)
+    response = JSONResponse({"success": True})
+    response.delete_cookie(
+        settings.cookie_name,
+        path="/",
+        secure=settings.production,
+        httponly=True,
+        samesite="lax",
+    )
     return response
-
-
-@app.get("/api/me/sessions")
-async def get_my_sessions(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.sessions  import get_user_sessions
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id  = int(user.get("sub", 0))
-        sessions = get_user_sessions(user_id)
-        return JSONResponse(content={"sessions": sessions})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("get_my_sessions error: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/me/sessions/{session_id}/revoke")
-async def revoke_my_session(request: Request, session_id: str):
-    try:
-        from saas.middleware import get_current_user
-        from saas.sessions  import revoke_session
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id = int(user.get("sub", 0))
-        result  = revoke_session(session_id, user_id)
-        if not result.get("success"):
-            raise HTTPException(400, result.get("reason", "Failed"))
-        return JSONResponse(content=result)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/me/sessions/revoke-all")
-async def revoke_all_my_sessions(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.sessions  import revoke_all_sessions
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id     = int(user.get("sub", 0))
-        current_sid = user.get("session_id")
-        result      = revoke_all_sessions(user_id, except_session=current_sid)
-        return JSONResponse(content=result)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/auth/onboarding/complete")
-async def complete_onboarding(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.users     import mark_user_onboarded
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id = int(user.get("sub", 0))
-        if user_id:
-            mark_user_onboarded(user_id)
-        return JSONResponse(content={"success": True})
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("Onboarding complete error: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/pricing")
-async def get_pricing():
-    try:
-        from saas.tiers import get_pricing_data
-        return JSONResponse(content=get_pricing_data())
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/me")
-async def get_me(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.users     import get_user_by_id, list_api_keys
-        from saas.sessions  import get_user_sessions
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id   = int(user.get("sub", 0))
-        user_data = get_user_by_id(user_id) if user_id else None
-        if not user_data:
-            return JSONResponse(content={
-                "id":       user.get("sub"),
-                "email":    user.get("email"),
-                "tier":     user.get("tier"),
-                "is_admin": user.get("is_admin", False),
-            })
-        from config import get_tier_features
-        features = get_tier_features(user_data["tier"])
-        api_keys = []
-        if features.get("api_key_access"):
-            api_keys = list_api_keys(user_id)
-        sessions = get_user_sessions(user_id)
-        return JSONResponse(content={
-            **user_data,
-            "features": features,
-            "api_keys": api_keys,
-            "sessions": sessions,
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("get_me error: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/me/api-keys")
-async def create_api_key(request: Request):
-    try:
-        from saas.middleware import get_current_user
-        from saas.users     import create_api_key_for_user
-        from config         import tier_has_feature
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        tier = user.get("tier", "free")
-        if not tier_has_feature(tier, "api_key_access"):
-            raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
-        body    = await request.json()
-        name    = body.get("name", "Default")
-        user_id = int(user.get("sub", 0))
-        result  = create_api_key_for_user(user_id, name)
-        if not result.get("success"):
-            raise HTTPException(400, result.get("reason", "Failed"))
-        return JSONResponse(content=result)
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("create_api_key error: %s", e)
-        raise HTTPException(500, str(e))
-
-
-@app.delete("/api/me/api-keys/{key_id}")
-async def delete_api_key(request: Request, key_id: int):
-    try:
-        from saas.middleware import get_current_user
-        from saas.users     import revoke_api_key
-        user = get_current_user(request)
-        if not user:
-            raise HTTPException(401, "Authentication required")
-        user_id = int(user.get("sub", 0))
-        result  = revoke_api_key(key_id, user_id)
-        if not result.get("success"):
-            raise HTTPException(400, result.get("reason", "Failed"))
-        return JSONResponse(content=result)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/auth/setup")
-async def auth_setup(request: Request):
-    from saas.security import require_setup_access
-    require_setup_access(request)
-    from auth import setup_status
-    status = setup_status()
-    if status["setup_complete"]:
-        raise HTTPException(status_code=403, detail="Setup already complete.")
-    # The previous implementation rendered frontend/setup.html, which is not
-    # included in the deployment. Serve explicit bootstrap metadata instead.
-    return JSONResponse(content=status, headers={"Cache-Control": "no-store"})
-
-
-@app.get("/login.html")
-async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "mode":    "live" if not cfg.PAPER_TRADING else "paper"
-    })
-
-
-@app.post("/auth/login")
-@limiter.limit("10/minute")
-async def auth_login(request: Request):
-    try:
-        body     = await request.json()
-        username = body.get("username", "").strip()
-        password = body.get("password", "")
-        totp     = body.get("totp_code", "")
-        ip       = request.client.host if request.client else ""
-        from auth import validate_login
-        result = validate_login(username, password, totp, ip)
-        if result["success"]:
-            response = JSONResponse(content={
-                "success":  True,
-                "username": result.get("username", ""),
-                "tier":     result.get("tier", "pro"),
-                "mode":     "live" if not cfg.PAPER_TRADING else "paper"
-            })
-            response.set_cookie(
-                key      = "se_token",
-                value    = result["token"],
-                httponly = True,
-                secure   = cfg.ENV == "production",
-                samesite = "lax",
-                max_age  = 86400
-            )
-            return response
-        else:
-            status_code = 423 if result.get("locked") else 401
-            return JSONResponse(
-                status_code = status_code,
-                content     = {
-                    "success":            False,
-                    "reason":             result["reason"],
-                    "locked":             result.get("locked", False),
-                    "lockout_minutes":    result.get("lockout_minutes", 0),
-                    "attempts_remaining": result.get("attempts_remaining", 5),
-                }
-            )
-    except Exception as e:
-        log.error("Login error: %s", e)
-        raise HTTPException(500, "Login failed")
-
-
-@app.post("/auth/request-totp")
-@limiter.limit("5/minute")
-async def request_totp_via_telegram(request: Request):
-    try:
-        body     = await request.json()
-        password = body.get("password", "")
-        if not password:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Password required"})
-        from auth import verify_password
-        if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
-        if not cfg.TOTP_SECRET:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "TOTP not configured"})
-        import pyotp
-        code = pyotp.TOTP(cfg.TOTP_SECRET).now()
-        await send(
-            f"🔐 *Login Code Requested*\n\n"
-            f"Your current TOTP code:\n"
-            f"`{code}`\n\n"
-            f"_Valid for ~30 seconds._\n"
-            f"_If you didn't request this, ignore it._"
-        )
-        return JSONResponse(content={"success": True})
-    except Exception as e:
-        log.error("Request TOTP error: %s", e)
-        return JSONResponse(status_code=500, content={"success": False, "reason": "Failed to send"})
-
-
-@app.post("/auth/reset-password")
-@limiter.limit("5/minute")
-async def auth_reset_password(request: Request):
-    try:
-        body          = await request.json()
-        totp_code     = body.get("totp_code", "")
-        recovery_code = body.get("recovery_code", "")
-        new_password  = body.get("new_password", "")
-        ip            = request.client.host if request.client else ""
-        from auth import reset_password_with_totp, reset_password_with_recovery
-        if recovery_code:
-            result = reset_password_with_recovery(recovery_code, new_password, ip)
-        else:
-            result = reset_password_with_totp(totp_code, new_password, ip)
-        return JSONResponse(content=result)
-    except Exception as e:
-        log.error("Reset password error: %s", e)
-        raise HTTPException(500, "Reset failed")
-
-
-@app.post("/auth/set-credentials")
-async def auth_set_credentials(request: Request):
-    from saas.security import require_setup_access
-    require_setup_access(request)
-    try:
-        body     = await request.json()
-        from auth import password_is_set, verify_password, verify_totp
-        if password_is_set():
-            # A session cookie alone must not rotate account credentials.
-            if (not verify_password(body.get("current_password", ""), cfg.DASHBOARD_PASSWORD_HASH)
-                    or not verify_totp(body.get("totp_code", ""))):
-                raise HTTPException(403, "Current password and TOTP required")
-        password = body.get("password")
-        username = body.get("username")
-        messages = []
-        if username:
-            from auth import set_username
-            set_username(username)
-            messages.append(f"Username updated to '{username}'")
-        if password:
-            if len(password) < 8:
-                return JSONResponse(
-                    status_code = 400,
-                    content     = {"success": False, "reason": "Password too short — minimum 8 characters"}
-                )
-            from auth import set_password
-            set_password(password)
-            messages.append("Password updated")
-        if not messages:
-            return JSONResponse(content={"success": False, "reason": "Nothing to update"})
-        return JSONResponse(content={"success": True, "message": " · ".join(messages)})
-    except HTTPException:
-        raise
-    except Exception:
-        log.exception("Credential update failed")
-        raise HTTPException(500, "Credential update failed")
-
-
-@app.post("/auth/regenerate-totp")
-async def auth_regenerate_totp(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        body     = await request.json()
-        password = body.get("password", "")
-        if not password:
-            return JSONResponse(status_code=400, content={"success": False, "reason": "Current password required"})
-        from auth import verify_password, regenerate_totp
-        if not verify_password(password, cfg.DASHBOARD_PASSWORD_HASH):
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid password"})
-        new_secret = regenerate_totp()
-        return JSONResponse(content={"success": True, "secret": new_secret})
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/auth/generate-recovery-codes")
-async def auth_generate_recovery_codes(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        body      = await request.json()
-        totp_code = body.get("totp_code", "")
-        from auth import verify_totp, generate_recovery_codes, store_recovery_codes
-        if not verify_totp(totp_code):
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid authenticator code"})
-        codes = generate_recovery_codes(8)
-        store_recovery_codes(codes)
-        ip = request.client.host if request.client else ""
-        from auth import audit
-        audit("recovery_codes_generated", "web", "New recovery codes generated", ip=ip)
-        return JSONResponse(content={"success": True, "codes": codes})
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/auth/qr.png")
-async def auth_qr_png(request: Request):
-    from saas.security import require_setup_access
-    require_setup_access(request)
-    from auth import get_qr_png_bytes
-    try:
-        png = get_qr_png_bytes()
-        if not png:
-            raise HTTPException(500, "QR generation failed")
-        return Response(content=png, media_type="image/png")
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/ws/status")
-async def ws_status(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    from trade.ws import get_ws_status
-    return JSONResponse(content=get_ws_status())
-
-
-@app.get("/api/rag/status")
-async def rag_status(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        from chatbot_rag import get_rag_status
-        return JSONResponse(content=get_rag_status())
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.post("/api/rag/reindex")
-async def rag_reindex(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        from rag.indexer import run_full_index
-        loop    = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, lambda: run_full_index(full_reindex=True))
-        total   = sum(results.values())
-        return JSONResponse(content={"success": True, "total": total, "breakdown": results})
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/langsmith/status")
-async def langsmith_status(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        from monitoring.langsmith_setup import get_langsmith_status
-        return JSONResponse(content=get_langsmith_status())
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.get("/api/indian/startup-status")
-async def indian_startup_status(request: Request):
-    from saas.security import require_admin_access
-    require_admin_access(request)
-    try:
-        from engines.indian.startup import get_startup_status
-        return JSONResponse(content=await get_startup_status())
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
-
-@app.websocket("/ws/dashboard")
-async def dashboard_websocket(websocket: WebSocket):
-    # Browsers send Origin on the WS handshake; refuse cross-site cookie reuse.
-    origin = websocket.headers.get("origin")
-    if origin and origin.rstrip("/") not in {o.rstrip("/") for o in allowed_origins}:
-        await websocket.close(code=1008)
-        return
-    try:
-        user = _get_ws_user(websocket)
-    except Exception:
-        log.exception("WebSocket authentication failed")
-        await websocket.close(code=1008)
-        return
-    if user is None:
-        await websocket.close(code=1008)
-        return
-    from auth import is_admin_user
-    is_admin = is_admin_user(user)
-    tier = "admin" if is_admin else user.get("tier", "free")
-    await websocket.accept()
-    ws_id = id(websocket)
-    _dashboard_clients[ws_id] = {"ws": websocket, "tier": tier, "is_admin": is_admin}
-    try:
-        initial = await _build_ws_payload(tier)
-        await websocket.send_text(json.dumps(initial))
-    except Exception as e:
-        log.error("Dashboard WS initial push error: %s", e)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        _dashboard_clients.pop(ws_id, None)
-    except Exception:
-        _dashboard_clients.pop(ws_id, None)
 
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
+    from alerts.telegram.router import handle_webhook
+
     await handle_webhook(request)
-    return JSONResponse(content={"ok": True})
+    return {"ok": True}
 
 
-app.include_router(router,               prefix="/api")
-app.include_router(trading_router,       prefix="/api")
-app.include_router(admin_router,         prefix="/api")
-app.include_router(engine_health_router, prefix="/api")
-app.include_router(indian_router,        prefix="/api")
+app.include_router(portal_router, prefix="/api/v1")
 
-from fastapi.responses import FileResponse
-import os as _os
+# Existing operational functions remain available only within the operator boundary.
+# Dangerous system administration and live mode switches are deliberately unmounted.
+from api.routes import router as data_router
+from api.trading import router as trading_router
+from api.engine_health import router as engine_router
+from api.indian import router as indian_router
+
+DENIED = {
+    "/health",
+    "/scan",
+    "/mode/toggle",
+    "/system/docker-purge",
+    "/backtest/{coin}",
+    "/backtest/all/run",
+    "/trades/start",
+    "/trades/stop",
+    "/trades/mode",
+    "/chat",
+    "/demo/track",
+    "/content/{post_id}/publish",
+}
+for source in (data_router, trading_router, engine_router, indian_router):
+    source.routes[:] = [
+        route
+        for route in source.routes
+        if route.path not in DENIED
+        and not route.path.startswith(("/content", "/demo", "/mode/"))
+    ]
+    app.include_router(source, prefix="/api/v1/admin")
+
+_ws_counts = {}
 
 
-@app.get("/{full_path:path}", include_in_schema=False)
-async def serve_spa(full_path: str):
-    from pathlib import Path
-    static_dir = Path("frontend").resolve()
-    file_path = (static_dir / full_path).resolve()
-    # Never serve ../.env, database files, or application source via the SPA fallback.
-    if not file_path.is_relative_to(static_dir):
-        raise HTTPException(404, "Not found")
-    if file_path.is_file():
-        return FileResponse(file_path)
-    return FileResponse(static_dir / "index.html")
+async def stream(websocket, private):
+    if not trusted_edge(websocket.headers):
+        await websocket.close(code=1008)
+        return
+    origin = websocket.headers.get("origin", "")
+    expected = settings.admin_origin if private else settings.public_origin
+    local = (
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    )
+    if origin != expected and (settings.production or origin not in local):
+        await websocket.close(code=1008)
+        return
+    if private and (
+        app_host(websocket) != settings.admin_host
+        and settings.production
+        or not current_operator(websocket)
+    ):
+        await websocket.close(code=1008)
+        return
+    ip = (
+        websocket.headers.get("x-visitor-ip", "")
+        if settings.production
+        else str(websocket.client.host)
+    )
+    if _ws_counts.get(ip, 0) >= 5 or sum(_ws_counts.values()) >= 200:
+        await websocket.close(code=1013)
+        return
+    _ws_counts[ip] = _ws_counts.get(ip, 0) + 1
+    await websocket.accept()
+    try:
+        while True:
+            if private and not current_operator(websocket):
+                await websocket.close(code=1008)
+                break
+            if private:
+                from api.portal import private_health
+
+                data = await asyncio.to_thread(private_health, websocket)
+            else:
+                data = await asyncio.to_thread(public_snapshot)
+            await asyncio.wait_for(websocket.send_json(data), timeout=10)
+            # Client input is never treated as a trading command.
+            await asyncio.sleep(15 if private else 30)
+    except (WebSocketDisconnect, RuntimeError, asyncio.TimeoutError):
+        pass
+    except Exception:
+        log.warning("Dashboard stream unavailable")
+        try:
+            await websocket.close(code=1011)
+        except RuntimeError:
+            pass
+    finally:
+        _ws_counts[ip] = max(0, _ws_counts.get(ip, 1) - 1)
+        if not _ws_counts[ip]:
+            _ws_counts.pop(ip, None)
 
 
-app.mount(
-    "/",
-    StaticFiles(directory="frontend", html=True),
-    name="frontend"
-)
+@app.websocket("/ws/public")
+async def public_ws(websocket: WebSocket):
+    await stream(websocket, False)
+
+
+@app.websocket("/ws/admin")
+async def admin_ws(websocket: WebSocket):
+    await stream(websocket, True)
+
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host      = "0.0.0.0",
-        port      = cfg.PORT,
-        reload    = False,
-        log_level = "info"
-    )
+    import uvicorn
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, workers=1)

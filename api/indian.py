@@ -33,9 +33,9 @@ async def indian_status(request: Request):
         now          = datetime.now(IST)
         market_open  = is_market_open()
         orb_ready    = is_orb_ready()
-        instruments  = get_instruments()
+        instruments  = get_instruments(allow_refresh=False)
         today_signals= get_today_signals()
-        open_signals = get_open_signals_with_pnl()
+        open_signals = get_open_signals_with_pnl(allow_refresh=False)
         rate_limited = _is_rate_limited()
         refresh_age  = get_last_refresh_age()
 
@@ -181,7 +181,7 @@ async def indian_performance(request: Request):
 
 @router.post("/indian/orb/setup")
 async def indian_orb_setup(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from engines.indian.scanner import setup_orb
@@ -195,7 +195,7 @@ async def indian_orb_setup(request: Request):
 
 @router.post("/indian/scan")
 async def indian_scan_now(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from engines.indian.scanner import scan_all
@@ -211,7 +211,7 @@ async def indian_scan_now(request: Request):
 
 @router.post("/indian/refresh")
 async def indian_refresh(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from engines.indian.data import refresh_indian_data, _is_rate_limited
@@ -241,7 +241,7 @@ async def indian_refresh(request: Request):
 @router.get("/indian/quota")
 async def indian_quota_status(request: Request):
     """Admin-only diagnostic; no client codes, account secrets or tokens."""
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     from engines.indian.quota import status
     return JSONResponse(content=status())

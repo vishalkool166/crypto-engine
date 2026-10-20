@@ -11,7 +11,7 @@ router = APIRouter()
 
 
 def _auth(request: Request) -> None:
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
 
 
@@ -195,28 +195,8 @@ async def trades_close(request: Request):
         raise HTTPException(500, str(e))
 
 
-@router.post("/trades/start")
-async def trades_start(request: Request):
-    _auth(request)
-    try:
-        from alerts.scanner import scan_all_coins
-        asyncio.create_task(scan_all_coins())
-        return JSONResponse(content={"status": "ok", "message": "Scanner started"})
-    except Exception as e:
-        log.error("trades_start error: %s", e)
-        raise HTTPException(500, str(e))
 
 
-@router.post("/trades/stop")
-async def trades_stop(request: Request):
-    _auth(request)
-    try:
-        from trade.monitor import stop_monitor
-        stop_monitor()
-        return JSONResponse(content={"status": "ok", "message": "Monitor stopped"})
-    except Exception as e:
-        log.error("trades_stop error: %s", e)
-        raise HTTPException(500, str(e))
 
 
 @router.get("/trades/ping")
@@ -270,71 +250,3 @@ async def trades_whitelist(request: Request):
     })
 
 
-@router.post("/trades/mode")
-async def trades_mode(request: Request):
-    _auth(request)
-    try:
-        body     = await request.json()
-        new_mode = body.get("mode", "")
-
-        if new_mode not in ["live", "paper"]:
-            raise HTTPException(400, "mode must be live or paper")
-
-        if not verify_totp(body.get("totp_code", "")):
-            return JSONResponse(
-                status_code = 401,
-                content     = {"success": False, "reason": "Invalid TOTP code"}
-            )
-
-        from trade.monitor import get_open_positions_enriched
-        open_trades = await get_open_positions_enriched()
-        if open_trades:
-            return JSONResponse(
-                status_code = 400,
-                content     = {
-                    "success": False,
-                    "reason":  f"Cannot switch — {len(open_trades)} open trade(s). Close all first."
-                }
-            )
-
-        from trade.safety import ensure_live_opt_in
-        try:
-            ensure_live_opt_in(new_mode)
-        except PermissionError as exc:
-            raise HTTPException(403, str(exc))
-        from trade.order_journal import unresolved
-        if unresolved():
-            raise HTTPException(409, "Unresolved exchange order intents; reconciliation required")
-
-        if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
-            return JSONResponse(
-                status_code = 400,
-                content     = {"success": False, "reason": "Binance live API keys not configured"}
-            )
-
-        from config import _ensure
-        from trade.exchange import close_exchange
-
-        _ensure("TRADING_MODE", new_mode)
-        cfg.TRADING_MODE  = new_mode
-        cfg.PAPER_TRADING = new_mode != "live"
-
-        await close_exchange()
-
-        from auth import audit
-        audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
-
-        from api.dashboard import invalidate_all
-        invalidate_all()
-
-        return JSONResponse(content={
-            "success": True,
-            "mode":    new_mode,
-            "message": f"Switched to {new_mode} mode"
-        })
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error("trades_mode error: %s", e)
-        raise HTTPException(500, str(e))

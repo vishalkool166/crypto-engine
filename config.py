@@ -20,111 +20,10 @@ MAX_SIGNAL_AGE_HOURS = 4
 ENTRY_DEVIATION_MULT = 0.10
 ENTRY_FAVORABLE_MULT = 0.60
 
-TIER_FREE  = "free"
-TIER_PRO   = "pro"
-TIER_ELITE = "elite"
-TIER_ADMIN = "admin"
 
-TIER_HIERARCHY = {
-    TIER_FREE:  0,
-    TIER_PRO:   1,
-    TIER_ELITE: 2,
-    TIER_ADMIN: 3,
-}
 
-TIER_FEATURES = {
-    TIER_FREE: {
-        "signal_delay_minutes": 30,
-        "signals_per_day":      3,
-        "show_levels":          False,
-        "show_factors":         False,
-        "show_thesis":          False,
-        "show_ml":              False,
-        "show_positions":       False,
-        "show_performance":     False,
-        "show_full_history":    False,
-        "show_universe":        True,
-        "show_system":          False,
-        "api_key_access":       False,
-        "backtest_access":      False,
-        "coins_limit":          5,
-    },
-    TIER_PRO: {
-        "signal_delay_minutes": 0,
-        "signals_per_day":      999,
-        "show_levels":          True,
-        "show_factors":         False,
-        "show_thesis":          False,
-        "show_ml":              False,
-        "show_positions":       True,
-        "show_performance":     True,
-        "show_full_history":    True,
-        "show_universe":        True,
-        "show_system":          False,
-        "api_key_access":       False,
-        "backtest_access":      False,
-        "coins_limit":          999,
-    },
-    TIER_ELITE: {
-        "signal_delay_minutes": 0,
-        "signals_per_day":      999,
-        "show_levels":          True,
-        "show_factors":         True,
-        "show_thesis":          True,
-        "show_ml":              True,
-        "show_positions":       True,
-        "show_performance":     True,
-        "show_full_history":    True,
-        "show_universe":        True,
-        "show_system":          False,
-        "api_key_access":       True,
-        "backtest_access":      True,
-        "coins_limit":          999,
-    },
-    TIER_ADMIN: {
-        "signal_delay_minutes": 0,
-        "signals_per_day":      999,
-        "show_levels":          True,
-        "show_factors":         True,
-        "show_thesis":          True,
-        "show_ml":              True,
-        "show_positions":       True,
-        "show_performance":     True,
-        "show_full_history":    True,
-        "show_universe":        True,
-        "show_system":          True,
-        "api_key_access":       True,
-        "backtest_access":      True,
-        "coins_limit":          999,
-    },
-}
 
-TIER_PRICING = {
-    TIER_FREE: {
-        "name":          "Basic",
-        "price_monthly": 0,
-        "price_annual":  0,
-        "description":   "Delayed signals to get started",
-        "cta":           "Start Free",
-        "popular":       False,
-    },
-    TIER_PRO: {
-        "name":          "Pro",
-        "price_monthly": 29,
-        "price_annual":  23,
-        "description":   "Live signals with full entry levels",
-        "cta":           "Start Pro",
-        "popular":       True,
-    },
-    TIER_ELITE: {
-        "name":          "Elite",
-        "price_monthly": 79,
-        "price_annual":  63,
-        "description":   "Everything plus deep factor analysis",
-        "cta":           "Start Elite",
-        "popular":       False,
-    },
-}
+
 
 SCORE_THRESHOLDS = {
     "aplus": 80,
@@ -239,20 +138,12 @@ def _ensure(key: str, value: str) -> None:
     set_key(ENV_FILE, key, value)
 
 
-def get_tier_features(tier: str) -> dict:
-    return TIER_FEATURES.get(tier, TIER_FEATURES[TIER_FREE])
 
 
-def tier_has_feature(tier: str, feature: str) -> bool:
-    return bool(get_tier_features(tier).get(feature, False))
 
 
-def tier_rank(tier: str) -> int:
-    return TIER_HIERARCHY.get(tier, 0)
 
 
-def tier_meets_minimum(user_tier: str, required_tier: str) -> bool:
-    return tier_rank(user_tier) >= tier_rank(required_tier)
 
 
 def get_coin_config(coin: str) -> dict:
@@ -283,7 +174,7 @@ class Config:
 
     FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    DOMAIN       = os.getenv("DOMAIN", "https://app.vishalkool.top")
+    DOMAIN       = os.getenv("ADMIN_APP_ORIGIN", "https://admin-app.vishalkool.top")
 
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
@@ -299,6 +190,12 @@ class Config:
     ML_MIN_TRADES = 50
     ML_ENABLED    = False
 
+    TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
+    TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
+    TWITTER_ACCESS_TOKEN  = os.getenv("TWITTER_ACCESS_TOKEN", "")
+    TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
+    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "False").lower() == "true"
+    CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
     _FALLBACK_COINS: list = []
 
@@ -356,12 +253,14 @@ class Config:
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 
+    GITHUB_CLIENT_ID     = os.getenv("GITHUB_CLIENT_ID", "")
+    GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
-    FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+    FRONTEND_URL = os.getenv("PUBLIC_APP_ORIGIN", "https://app.vishalkool.top")
 
     ADMIN_EMAILS: list = [
         e.strip()
-        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        for e in os.getenv("ADMIN_EMAILS", "vishalkool166@gmail.com").split(",")
         if e.strip()
     ]
 
@@ -381,7 +280,7 @@ class Config:
     SESSION_COOKIE_SAMESITE = "lax"
     SESSION_COOKIE_MAX_AGE  = 60 * 60 * 24 * 7
 
-    DEFAULT_TIER = TIER_FREE
+
 
     CAPITAL = float(os.getenv("CAPITAL", "1000"))
 
@@ -473,67 +372,6 @@ class Config:
         return dict(RS_CONFIG)
 
 
-def _bootstrap_secrets() -> None:
-    import logging
-    log = logging.getLogger(__name__)
-    changed = False
-
-    if not os.getenv("TOTP_SECRET"):
-        import pyotp
-        secret = pyotp.random_base32()
-        _ensure("TOTP_SECRET", secret)
-        cfg.TOTP_SECRET = secret
-        log.info("[FIRST RUN] TOTP_SECRET generated (value redacted)")
-        changed = True
-
-    if not os.getenv("DASHBOARD_API_KEY"):
-        key = secrets.token_hex(32)
-        _ensure("DASHBOARD_API_KEY", key)
-        cfg.DASHBOARD_API_KEY = key
-        log.info("[FIRST RUN] DASHBOARD_API_KEY generated (value redacted)")
-        changed = True
-
-    if not os.getenv("WEBHOOK_SECRET"):
-        _ensure("WEBHOOK_SECRET", secrets.token_hex(16))
-        cfg.WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
-        changed = True
-
-    if not os.getenv("JWT_SECRET"):
-        _ensure("JWT_SECRET", secrets.token_hex(32))
-        cfg.JWT_SECRET = os.getenv("JWT_SECRET", "")
-        changed = True
-
-    if not os.getenv("OAUTH_JWT_SECRET"):
-        _ensure("OAUTH_JWT_SECRET", secrets.token_hex(32))
-        cfg.OAUTH_JWT_SECRET = os.getenv("OAUTH_JWT_SECRET", "")
-        changed = True
-
-    if not os.getenv("DASHBOARD_USERNAME"):
-        _ensure("DASHBOARD_USERNAME", "admin")
-        cfg.DASHBOARD_USERNAME = "admin"
-        changed = True
-
-    if not os.getenv("TRADING_MODE"):
-        _ensure("TRADING_MODE", "paper")
-        cfg.TRADING_MODE  = "paper"
-        cfg.PAPER_TRADING = True
-        changed = True
-
-    if not os.getenv("SYSTEM_VERSION"):
-        _ensure("SYSTEM_VERSION", "2.0.0")
-        cfg.SYSTEM_VERSION = "2.0.0"
-        changed = True
-
-    if changed:
-        log.info("[FIRST RUN] Secrets written to .env — visit /auth/setup to complete setup")
-
-    if cfg.TRADING_MODE == "paper" and not cfg.is_demo_configured():
-        log.warning("TRADING_MODE=paper but BINANCE_DEMO_API_KEY not set")
-
-    if cfg.TRADING_MODE == "live" and not cfg.is_live_configured():
-        log.warning("TRADING_MODE=live but BINANCE_API_KEY not set — switching to paper")
-        cfg.TRADING_MODE  = "paper"
-        cfg.PAPER_TRADING = True
 
 
 cfg = Config()

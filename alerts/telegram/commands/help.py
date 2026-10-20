@@ -3,7 +3,7 @@ from alerts.telegram.client import send
 
 async def cmd_help() -> None:
     await send(
-        "🤖 *Signal Engine v5 — Commands*\n\n"
+        "🤖 *Signal Engine — Commands*\n\n"
         "*TRADING*\n"
         "/status   — bot status\n"
         "/scan     — manual scan\n"
@@ -15,9 +15,9 @@ async def cmd_help() -> None:
         "/coin ETH · /funding · /fear · /brief\n\n"
         "*PERFORMANCE*\n"
         "/pnl · /daily · /stats · /history\n"
-        "/backtest BTC · /performance\n\n"
+        "/backtest ETH · /performance\n\n"
         "*DATA*\n"
-        "/backfill BTC · /candles · /mode\n\n"
+        "/backfill ETH · /candles · /mode\n\n"
         "*🇮🇳 INDIAN MARKET*\n"
         "/india       — market status + signals\n"
         "/orb         — BANKNIFTY ORB levels\n"

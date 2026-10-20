@@ -1,45 +1,37 @@
-# Engineering status and verification ledger
+# Release verification
 
-**Baseline:** consolidated source from the P0/P1 continuation; includes earlier security, order-intent journal, Angel One quota changes and trading-safety fixes. **This is not an approved live-trading release.**
+Rebuild candidate: 2026-10-20. Production deployment is pending account-side configuration and acceptance checks.
 
-## Verified locally in this handoff
+## Verified locally
 
-- 139 isolated Python tests passed. This number includes existing tests plus shared UTC-session, replay-end-boundary, net-P&L and research-evidence-gate regression coverage.
-- Python compilation succeeded.
-- Binance read-only metadata shows all 18 configured USDⓈ-M perpetual symbols active (snapshot 2026-10-14). This is metadata validation, **not strategy validation**.
-- Source research integrity: manifest hashing, required funding presence, chronological training/holdout boundaries, conservative simulator assumptions, dataset-end embargo.
-- Docs reorganized into stable technical references, with one authoritative status ledger rather than many pass-specific root files.
+| Check | Result |
+| --- | --- |
+| Python regression/security tests | 155 passed |
+| Gateway authorization/routing tests | 5 passed |
+| Browser contract tests | 5 passed |
+| TypeScript and two production builds | Passed |
+| Worker bundle dry run | Passed; no deployment performed |
+| Browser sweep against local backend | All 5 public views, Google login view, 10 authenticated admin views rendered; no uncaught page errors |
+| Responsive visual inspection | Public/admin desktop and 390px mobile; no page overflow on inspected routes |
+| Python, frontend and gateway dependency audits | No known advisories in installed versions at verification time |
+| Retired frontend and host | Removed; dashboard/ is the only frontend source |
 
-## Implemented; not integration-certified
+Browser contract tests use isolated API fixtures. The separate local-backend sweep used a disposable empty database, local test-only operator session, disabled scheduler, and blocked external sockets. It did not authenticate against Google or connect to a broker. A genuinely empty installation now initializes the preserved 18-instrument configuration; it creates no signals/trades and never re-enables existing disabled rows.
 
-| Domain | Present in source | Remaining acceptance requirement |
-| --- | --- | --- |
-| API/session controls | Authentication, role restrictions, WebSocket boundary changes | Authenticated HTTP/WS end-to-end penetration and authorization tests |
-| Order safety | Durable intent reservation, ambiguous-response stops, live off by default | Binance testnet partial fills, crash recovery, protective-order reconciliation |
-| Account risk | Drawdown, loss limits, fail-closed position checks | Real broker equity integration and operational circuit-reset drill |
-| Angel One API | Redis Lua quota admission, caches and endpoint cooldowns | Real Redis/SmartAPI multi-worker and broker-policy verification |
-| Strategy signals | Per-coin ADX/TP/session, shared session policy, safer calculations | Historical OOS comparison for 18 symbols; tick-level execution validation |
-| Reliability | Offline tests, container configuration and documented runbooks | Actual Docker deployment, DB restore and incident simulations |
-| Frontend | Redesigned React/Vite source lives in `dashboard/`; Cloudflare Pages build output is `dashboard/dist/`. Backend static fallback remains at `frontend/`. | Browser-based visual/E2E review against a running API; production edge routing and TLS validation |
+Redis was not running in the local browser environment: the admin console correctly reported disconnected from its actual probe. The regression suite covers connected, failed and unknown health behavior. Compose supplies the private Redis service; production connectivity must be checked after startup.
 
-## Blocking constraints observed here
+## External checks still required
 
-- No complete 18-coin OHLCV-plus-funding dataset in the uploaded archives; Binance bulk-data endpoint unavailable from the runtime.
-- Python `ta` dependency unavailable here. The existing unit tests run with deterministic/mocked indicator pathways.
-- Redis/Angel One and authorized Binance testnet credentials were not connected; never request secrets in chat.
-- The frontend production build succeeds locally. Lint still reports unused-symbol and hook-dependency warnings. Build success does not replace browser/API acceptance.
-- Stripe checkout is not implemented in this bundle; paid plan purchase remains unavailable until backend checkout, webhook, and billing state are added and tested.
-- The deployment config is aligned to `app.vishalkool.top`; production acceptance still requires edge routing for `/api`, `/auth`, and `/ws`, plus a valid certificate on the deployment host.
+- Build/start containers on the target AWS host; Docker daemon was unavailable here.
+- Configure both Pages projects, Tunnel DNS and Worker Routes; verify HTTP and WebSocket upgrades through Cloudflare.
+- Complete real Google sign-in with the allowlisted account; test a denied account and logout.
+- Confirm the existing database backup, permissions, migration and restore on a test instance.
+- Verify actual Redis, Telegram delivery, Binance demo reconciliation, partial fills and restart recovery. Angel One remains a private optional integration.
+- Install/update the public PWA on a real mobile device, including migration from the prior service worker.
+- Set Cloudflare rate/WAF rules and review operational denials and provider limits.
 
-## Required sign-off sequence
+## Strategy status
 
-1. Acquire immutable research datasets and run all-coin walk-forward experiments; preserve raw evidence and negative results.
-2. Verify security and trading safety with real Redis plus Binance demo/testnet under failure injection.
-3. Confirm database migration/restore and reconciled broker equity; validate deployment observability and rollback.
-4. Build the backend and dashboard from the preserved `crypto-engine/dashboard` layout on a clean system; run API contracts and E2E tests before evaluating release readiness.
+Paper-only. No live activation or parameter promotion. The original per-coin strategy settings are preserved. Complete OHLCV/funding data and walk-forward experiments were not supplied or rerun; profitability and a winning-trade rate are not certified. Historical records are retained; their execution provenance is not inferred from the current paper runtime.
 
-All historical profitability claims are **NOT EVALUATED** as of this delivery. Strategy tuning, range trading and live-mode activation are intentionally not auto-applied.
-
-The research-evidence gate (`python -m backtest.evidence`) defaults to **not approved**, and refuses to mark a study complete if any required symbol, funding, metric or fold is missing. A positive simulated holdout is only eligible for human research review, never production approval.
-
-Hosted CI and production deployment were not run in this handoff. A local build is not evidence of a passing production deployment.
+No remote GitHub repository was modified or production service deployed in this handoff. See OPERATIONS.md for source replacement, provider configuration, smoke checks and rollback.

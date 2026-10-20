@@ -1,4 +1,7 @@
 import logging
+import html
+import re
+from datetime import datetime, timezone, timedelta
 import httpx
 from config import cfg
 
@@ -18,9 +21,9 @@ async def _post(endpoint: str, payload: dict) -> None:
                 timeout = 10,
             )
             if r.status_code != 200:
-                log.error("Telegram %s failed: %s", endpoint, r.text)
+                log.error("Telegram %s failed: HTTP %s", endpoint, r.status_code)
     except Exception as e:
-        log.error("Telegram error: %s", e)
+        log.error("Telegram transport failure: %s", type(e).__name__)
 
 
 def _split_message(text: str, limit: int = 4000) -> list:
@@ -39,12 +42,25 @@ def _split_message(text: str, limit: int = 4000) -> list:
     return chunks
 
 
+def render_message(message: str) -> str:
+    # Escape dynamic content before converting the retained command markup.
+    clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", message)
+    clean = re.sub(r"[━─═]{3,}", "—", clean)
+    clean = "\n".join(line.strip() for line in clean.splitlines())
+    escaped = html.escape(clean)
+    escaped = re.sub(r"\x60([^\x60\n]+)\x60", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\*([^*\n]+)\*", r"<b>\1</b>", escaped)
+    escaped = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<i>\1</i>", escaped)
+    when = datetime.now(timezone(timedelta(hours=5,minutes=30))).strftime("%d %b %Y · %H:%M IST")
+    return escaped + "\n\n<i>Signal Engine · PAPER · " + when + "</i>"
+
 async def send(message: str) -> None:
-    for chunk in _split_message(message):
+    for chunk in _split_message(message, limit=3000):
         await _post("sendMessage", {
-            "chat_id":    cfg.TELEGRAM_CHAT_ID,
-            "text":       chunk,
-            "parse_mode": "Markdown",
+            "chat_id": cfg.TELEGRAM_CHAT_ID,
+            "text": render_message(chunk),
+            "parse_mode": "HTML",
+            "link_preview_options": {"is_disabled": True},
         })
 
 
@@ -57,16 +73,16 @@ async def send_photo(chat_id: str, photo_path: str, caption: str = "") -> None:
                 f"{BASE}/sendPhoto",
                 data  = {
                     "chat_id":    chat_id,
-                    "caption":    caption,
-                    "parse_mode": "Markdown",
+                    "caption":    render_message(caption[:700]),
+                    "parse_mode": "HTML",
                 },
                 files   = {"photo": ("chart.png", photo_bytes, "image/png")},
                 timeout = 30,
             )
             if r.status_code != 200:
-                log.error("Photo send failed: %s", r.text)
+                log.error("Photo send failed: HTTP %s", r.status_code)
     except Exception as e:
-        log.error("Send photo error: %s", e)
+        log.error("Photo transport failure: %s", type(e).__name__)
 
 
 async def register_webhook() -> None:
@@ -77,7 +93,7 @@ async def register_webhook() -> None:
                 json    = {
                     "url":          f"{cfg.DOMAIN}/webhook/telegram",
                     "secret_token": cfg.WEBHOOK_SECRET,
-                    "drop_pending_updates": True,
+                    "drop_pending_updates": False,
                 },
                 timeout = 10,
             )
@@ -87,11 +103,14 @@ async def register_webhook() -> None:
             else:
                 log.error("Webhook failed: %s", data)
     except Exception as e:
-        log.error("Webhook register error: %s", e)
+        log.error("Webhook registration transport failure: %s", type(e).__name__)
 
 
 async def register_commands() -> None:
     commands = [
+        {"command": "health", "description": "Dependency health and data freshness"},
+        {"command": "queue", "description": "Current signal queue"},
+        {"command": "grade", "description": "Recorded performance by grade"},
         {"command": "status",       "description": "Bot status overview"},
         {"command": "scan",         "description": "Trigger manual scan"},
         {"command": "trades",       "description": "Open trades with live PnL"},
@@ -106,8 +125,8 @@ async def register_commands() -> None:
         {"command": "daily",        "description": "Today summary"},
         {"command": "stats",        "description": "Full all time stats"},
         {"command": "history",      "description": "Last 5 signals"},
-        {"command": "backtest",     "description": "Backtest a coin — /backtest BTC"},
-        {"command": "backfill",     "description": "Backfill candle data — /backfill BTC"},
+        {"command": "backtest",     "description": "Backtest a coin — /backtest ETH"},
+        {"command": "backfill",     "description": "Backfill candle data — /backfill ETH"},
         {"command": "candles",      "description": "Candle data status per coin"},
         {"command": "mode",         "description": "Current bot config"},
         {"command": "performance",  "description": "Performance by version and session"},
@@ -126,4 +145,4 @@ async def register_commands() -> None:
             if r.json().get("ok"):
                 log.info("Telegram commands registered")
     except Exception as e:
-        log.error("Commands register error: %s", e)
+        log.error("Command registration transport failure: %s", type(e).__name__)

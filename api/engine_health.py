@@ -8,7 +8,7 @@ router = APIRouter()
 
 
 def _auth(request: Request) -> None:
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
 
 
@@ -188,7 +188,7 @@ async def engine_filter_analysis(request: Request):
 
 @router.post("/engine/rejections/reset")
 async def engine_rejections_reset(request: Request):
-    from saas.security import require_admin_access
+    from access.security import require_admin_access
     require_admin_access(request)
     try:
         from auth import verify_totp

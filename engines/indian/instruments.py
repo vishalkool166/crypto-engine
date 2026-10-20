@@ -110,12 +110,12 @@ def refresh_instruments() -> dict:
     return _instruments
 
 
-def get_instruments() -> dict:
+def get_instruments(allow_refresh: bool = True) -> dict:
     global _cache_at
-    if not _instruments or (time.time() - _cache_at) > _cache_ttl:
+    if allow_refresh and (not _instruments or (time.time() - _cache_at) > _cache_ttl):
         refresh_instruments()
     return _instruments
 
 
-def get_instrument(name: str) -> dict | None:
-    return get_instruments().get(name)
+def get_instrument(name: str, allow_refresh: bool = True) -> dict | None:
+    return get_instruments(allow_refresh=allow_refresh).get(name)
