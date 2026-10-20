@@ -5,9 +5,9 @@ import logging
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.responses import JSONResponse, Response, RedirectResponse
-from pydantic import BaseModel, Field
-from saas.frontend_url import frontend_location
 from contextlib import asynccontextmanager
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -23,39 +23,25 @@ from scheduler        import start_scheduler, stop_scheduler
 from alerts.telegram  import send, register_webhook, handle_webhook, register_commands
 from config           import cfg, _bootstrap_secrets
 from events           import on_event, emit
-from observability    import request_id_var, request_id as choose_request_id, request_metrics, route_template
 import runtime_state  as rs
 
 logging.basicConfig(
     level  = logging.INFO,
-    format = "%(asctime)s — %(name)s — %(levelname)s — request_id=%(request_id)s — %(message)s"
+    format = "%(asctime)s — %(name)s — %(levelname)s — %(message)s"
 )
-_original_record_factory = logging.getLogRecordFactory()
-
-
-def _record_with_request_id(*args, **kwargs):
-    record = _original_record_factory(*args, **kwargs)
-    record.request_id = request_id_var.get()
-    return record
-
-
-logging.setLogRecordFactory(_record_with_request_id)
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
 logging.getLogger("websockets").setLevel(logging.WARNING)
 
 log       = logging.getLogger(__name__)
+templates = Jinja2Templates(directory="frontend")
 
 _dashboard_clients:   dict         = {}
-_last_payload_hash:   dict[str, str] = {}
+_last_payload_hash:   str          = ""
 _dashboard_push_task: asyncio.Task = None
 _cpu_warmup_task:     asyncio.Task = None
 
 limiter = Limiter(key_func=get_remote_address)
-
-
-class APIKeyCreateRequest(BaseModel):
-    name: str = Field(default="Default", min_length=1, max_length=64)
 
 
 def _get_ws_user(websocket: WebSocket) -> dict | None:
@@ -170,9 +156,9 @@ async def push_event(event_type: str, data: dict = None):
                 payload_hash = hashlib.md5(
                     (tier + payload_str).encode()
                 ).hexdigest()
-                if payload_hash == _last_payload_hash.get(tier):
+                if payload_hash == _last_payload_hash:
                     continue
-                _last_payload_hash[tier] = payload_hash
+                _last_payload_hash = payload_hash
             else:
                 payload     = await _build_ws_payload(tier)
                 payload_str = json.dumps(payload)
@@ -430,28 +416,6 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-
-@app.middleware("http")
-async def request_observability(request: Request, call_next):
-    rid = choose_request_id(request.headers.get('x-request-id'))
-    token = request_id_var.set(rid)
-    started = asyncio.get_running_loop().time()
-    status = 500
-    try:
-        response = await call_next(request)
-        status = response.status_code
-        response.headers['X-Request-ID'] = rid
-        return response
-    except Exception:
-        log.exception('request failed')
-        raise
-    finally:
-        elapsed = max(0.0, asyncio.get_running_loop().time() - started)
-        route = route_template(request)
-        request_metrics.record(request.method, route, status, elapsed)
-        log.info('http_request method=%s route=%s status=%s duration_ms=%.2f', request.method, route, status, elapsed * 1000)
-        request_id_var.reset(token)
-
 allowed_origins = [
     cfg.DOMAIN,
     cfg.FRONTEND_URL,
@@ -472,21 +436,6 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def session_origin_guard(request: Request, call_next):
-    # Optional rollout switch: legacy AWS behavior stays unchanged by default.
-    # Enable only after confirming the browser sends Origin and custom-domain
-    # cookies are working. Reject cookie-backed CSRF for unsafe requests.
-    import os as _env
-    if (_env.getenv('STRICT_SESSION_ORIGIN_CHECK', '').lower() == 'true'
-            and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
-            and (request.cookies.get(cfg.SESSION_COOKIE_NAME) or request.cookies.get('se_token'))):
-        from saas.origin_security import allowed_request_origin
-        if not allowed_request_origin(request.headers.get('origin'), allowed_origins):
-            return JSONResponse(status_code=403, content={'detail': 'Untrusted request origin'})
-    return await call_next(request)
-
-
-@app.middleware("http")
 async def cache_headers(request: Request, call_next):
     response = await call_next(request)
     path     = request.url.path
@@ -499,11 +448,6 @@ async def cache_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache, must-revalidate"
         response.headers["Pragma"]        = "no-cache"
         response.headers["Expires"]       = "0"
-    # Authenticated/account endpoints must not be stored by browsers or proxies.
-    # This is deliberately independent of the Cloudflare frontend's cache policy.
-    if path.startswith(('/api/', '/auth/')):
-        response.headers['Cache-Control'] = 'no-store, private'
-        response.headers['Pragma'] = 'no-cache'
     return response
 
 
@@ -511,19 +455,6 @@ async def cache_headers(request: Request, call_next):
 async def api_health():
     """Unprivileged liveness probe; not a proof of exchange/DB readiness."""
     return {"status": "alive"}
-
-
-@app.get("/api/ready", tags=["health"])
-async def api_readiness():
-    """Readiness is separate from liveness; no broker or account details returned."""
-    from saas.readiness import readiness_status
-    result = readiness_status()
-    return JSONResponse(content=result, status_code=200 if result['status'] == 'ready' else 503)
-
-
-# Email account routes register without touching the existing Google or admin paths.
-from saas.email_routes import router as email_router
-app.include_router(email_router)
 
 
 @app.get("/auth/google")
@@ -577,8 +508,8 @@ async def auth_callback_google(request: Request):
         avatar      = userinfo.get("picture", "")
         provider_id = userinfo.get("sub", "")
 
-        if not email or userinfo.get("email_verified") is not True or not provider_id:
-            raise HTTPException(401, "Verified Google identity required")
+        if not email:
+            raise HTTPException(400, "No email from Google")
 
         user = create_or_get_user(
             email       = email,
@@ -613,9 +544,7 @@ async def auth_callback_google(request: Request):
         }
         final_token = jose_jwt.encode(payload, cfg.OAUTH_JWT_SECRET, algorithm="HS256")
 
-        # AWS performs OAuth; Cloudflare owns all user-facing HTML.
-        # The destination is configured server-side, never taken from a request.
-        response = RedirectResponse(url=frontend_location("/"), status_code=302)
+        response = RedirectResponse(url=f"{cfg.DOMAIN}/")
         response.set_cookie(
             key      = cfg.SESSION_COOKIE_NAME,
             value    = final_token,
@@ -640,10 +569,7 @@ async def auth_callback_google(request: Request):
         raise
     except Exception as e:
         log.error("Google callback error: %s", e)
-        try:
-            return RedirectResponse(url=frontend_location("/login?error=oauth_failed"), status_code=302)
-        except ValueError:
-            raise HTTPException(500, "OAuth sign-in failed")
+        return RedirectResponse(url="/login?error=oauth_failed")
 
 
 @app.get("/auth/session")
@@ -681,7 +607,7 @@ async def auth_session(request: Request):
         return JSONResponse(status_code=401, content={"authenticated": False})
 
 
-@app.post("/auth/logout")
+@app.get("/auth/logout")
 async def auth_logout(request: Request):
     try:
         from saas.middleware import get_current_user
@@ -691,7 +617,7 @@ async def auth_logout(request: Request):
             revoke_session(user["session_id"])
     except Exception:
         pass
-    response = RedirectResponse(url=frontend_location("/"))
+    response = RedirectResponse(url="/")
     response.delete_cookie(cfg.SESSION_COOKIE_NAME)
     response.delete_cookie("se_token")
     return response
@@ -818,8 +744,7 @@ async def get_me(request: Request):
 
 
 @app.post("/api/me/api-keys")
-@limiter.limit("5/hour")
-async def create_api_key(request: Request, body: APIKeyCreateRequest):
+async def create_api_key(request: Request):
     try:
         from saas.middleware import get_current_user
         from saas.users     import create_api_key_for_user
@@ -830,9 +755,8 @@ async def create_api_key(request: Request, body: APIKeyCreateRequest):
         tier = user.get("tier", "free")
         if not tier_has_feature(tier, "api_key_access"):
             raise HTTPException(403, {"code": "upgrade_required", "required_tier": "elite"})
-        name    = body.name.strip()
-        if not name:
-            raise HTTPException(400, "API key name cannot be blank")
+        body    = await request.json()
+        name    = body.get("name", "Default")
         user_id = int(user.get("sub", 0))
         result  = create_api_key_for_user(user_id, name)
         if not result.get("success"):
@@ -872,15 +796,17 @@ async def auth_setup(request: Request):
     status = setup_status()
     if status["setup_complete"]:
         raise HTTPException(status_code=403, detail="Setup already complete.")
-    # Bootstrap metadata remains an API response; Cloudflare owns the setup UI.
+    # The previous implementation rendered frontend/setup.html, which is not
+    # included in the deployment. Serve explicit bootstrap metadata instead.
     return JSONResponse(content=status, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/login.html", include_in_schema=False)
-@app.get("/login", include_in_schema=False)
-async def login_page():
-    """Legacy browser entry points now lead to the Cloudflare login page."""
-    return RedirectResponse(url=frontend_location("/login"), status_code=302)
+@app.get("/login.html")
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "mode":    "live" if not cfg.PAPER_TRADING else "paper"
+    })
 
 
 @app.post("/auth/login")
@@ -1136,7 +1062,8 @@ async def dashboard_websocket(websocket: WebSocket):
     if user is None:
         await websocket.close(code=1008)
         return
-    is_admin = bool(user.get("is_admin")) and user.get("type") != "api_key"
+    from auth import is_admin_user
+    is_admin = is_admin_user(user)
     tier = "admin" if is_admin else user.get("tier", "free")
     await websocket.accept()
     ws_id = id(websocket)
@@ -1166,14 +1093,29 @@ app.include_router(trading_router,       prefix="/api")
 app.include_router(admin_router,         prefix="/api")
 app.include_router(engine_health_router, prefix="/api")
 app.include_router(indian_router,        prefix="/api")
-from api.observability import router as observability_router
-app.include_router(observability_router, prefix="/api")
 
-@app.get("/", include_in_schema=False)
-async def legacy_dashboard_home():
-    """Retain old AWS bookmarks, but serve no frontend bundles from AWS."""
-    return RedirectResponse(url=frontend_location("/"), status_code=302)
+from fastapi.responses import FileResponse
+import os as _os
 
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    from pathlib import Path
+    static_dir = Path("frontend").resolve()
+    file_path = (static_dir / full_path).resolve()
+    # Never serve ../.env, database files, or application source via the SPA fallback.
+    if not file_path.is_relative_to(static_dir):
+        raise HTTPException(404, "Not found")
+    if file_path.is_file():
+        return FileResponse(file_path)
+    return FileResponse(static_dir / "index.html")
+
+
+app.mount(
+    "/",
+    StaticFiles(directory="frontend", html=True),
+    name="frontend"
+)
 
 if __name__ == "__main__":
     uvicorn.run(

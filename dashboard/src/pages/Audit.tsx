@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import Pagination from '@/components/ui/Pagination'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Search, X, RefreshCw, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -65,13 +64,7 @@ function exportCsv(logs: AuditEntry[]) {
     l.ip ?? '',
     l.success ? 'true' : 'false',
   ])
-  // CSV injection defence: audit details may contain arbitrary external strings.
-  const escapeCsv = (v: string | number | boolean) => {
-    const raw = String(v)
-    const safe = /^[=+@\-\t\r]/.test(raw.trimStart()) ? `'${raw}` : raw
-    return `"${safe.replace(/"/g, '""')}"`
-  }
-  const csv     = [headers, ...rows].map(r => r.map(escapeCsv).join(',')).join('\n')
+  const csv     = [headers, ...rows].map(r => r.join(',')).join('\n')
   const blob    = new Blob([csv], { type: 'text/csv' })
   const url     = URL.createObjectURL(blob)
   const a       = document.createElement('a')
@@ -84,20 +77,11 @@ function exportCsv(logs: AuditEntry[]) {
 export default function Audit() {
   const { isDemoMode }                             = useDemoStore()
   const [search,       setSearch]                  = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
-    return () => window.clearTimeout(timer)
-  }, [search])
   const [statusFilter, setStatusFilter]            = useState<'all' | 'success' | 'failed'>('all')
   const [actionGroup,  setActionGroup]             = useState('all')
   const [page,         setPage]                    = useState(0)
 
-  const realAudit = useAuditLog(LIMIT, page * LIMIT, {
-    search: debouncedSearch,
-    actions: actionGroup === 'all' ? undefined : ACTION_GROUP_MAP[actionGroup]?.join(','),
-    success: statusFilter === 'all' ? undefined : statusFilter === 'success',
-  })
+  const realAudit = useAuditLog(LIMIT, page * LIMIT)
   const {
     data,
     isLoading,
@@ -111,7 +95,6 @@ export default function Audit() {
   const total: number       = data?.total ?? 0
 
   const filtered = logs.filter(entry => {
-    if (!isDemoMode) return true // filters already applied across all rows on the server
     if (statusFilter === 'success' && !entry.success) return false
     if (statusFilter === 'failed'  &&  entry.success) return false
     if (actionGroup !== 'all') {
@@ -139,7 +122,7 @@ export default function Audit() {
         <div>
           <h1 className="text-base font-semibold text-foreground">Audit Log</h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {isDemoMode ? 'Demo — sample audit events' : `${total} total events · filters cover all matching events`}
+            {isDemoMode ? 'Demo — sample audit events' : `${total} total events`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -149,7 +132,7 @@ export default function Audit() {
             className = "flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
           >
             <Download className="h-3.5 w-3.5" />
-            Export visible page
+            Export
           </button>
           {!isDemoMode && (
             <button
@@ -169,7 +152,7 @@ export default function Audit() {
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             value       = {search}
-            onChange    = {e => { setSearch(e.target.value); setPage(0) }}
+            onChange    = {e => setSearch(e.target.value)}
             placeholder = "Search actions, details, IP..."
             className   = "h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-foreground/40 transition-colors"
           />
@@ -187,7 +170,7 @@ export default function Audit() {
           {ACTION_GROUPS.map(g => (
             <button
               key       = {g.value}
-              onClick   = {() => { setActionGroup(g.value); setPage(0) }}
+              onClick   = {() => setActionGroup(g.value)}
               className = {cn(
                 'px-3 py-1.5 text-xs font-medium transition-colors',
                 actionGroup === g.value
@@ -204,7 +187,7 @@ export default function Audit() {
           {(['all', 'success', 'failed'] as const).map(f => (
             <button
               key       = {f}
-              onClick   = {() => { setStatusFilter(f); setPage(0) }}
+              onClick   = {() => setStatusFilter(f)}
               className = {cn(
                 'px-3 py-1.5 text-xs font-medium capitalize transition-colors',
                 statusFilter === f
@@ -292,7 +275,29 @@ export default function Audit() {
         )}
       </div>
 
-      {!isDemoMode && <Pagination page={page} pageSize={LIMIT} total={total} onChange={setPage} />}
+      {!isDemoMode && total > LIMIT && (
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            Showing {page * LIMIT + 1}–{Math.min((page + 1) * LIMIT, total)} of {total}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick   = {() => setPage(p => Math.max(0, p - 1))}
+              disabled  = {page === 0}
+              className = "rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              Previous
+            </button>
+            <button
+              onClick   = {() => setPage(p => p + 1)}
+              disabled  = {(page + 1) * LIMIT >= total}
+              className = "rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   )

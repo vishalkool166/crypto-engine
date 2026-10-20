@@ -17,10 +17,10 @@ export default function Pagination({
   className,
 }: PaginationProps) {
   const totalPages = Math.ceil(total / pageSize)
-  const from       = Math.min(page * pageSize + 1, total)
+  const from       = page * pageSize + 1
   const to         = Math.min((page + 1) * pageSize, total)
 
-  if (total <= pageSize || pageSize < 1) return null
+  if (total <= pageSize) return null
 
   return (
     <div className={cn(
@@ -33,8 +33,7 @@ export default function Pagination({
       <div className="flex items-center gap-1">
         <button
           onClick   = {() => onChange(page - 1)}
-          disabled  = {page <= 0}
-          aria-label = "Previous page"
+          disabled  = {page === 0}
           className = "flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
@@ -55,8 +54,6 @@ export default function Pagination({
               <button
                 key       = {pageNum}
                 onClick   = {() => onChange(pageNum)}
-                aria-label = {`Page ${pageNum + 1}`}
-                aria-current = {pageNum === page ? 'page' : undefined}
                 className = {cn(
                   'flex h-7 w-7 items-center justify-center rounded-md text-xs font-medium transition-colors',
                   pageNum === page
@@ -72,7 +69,6 @@ export default function Pagination({
         <button
           onClick   = {() => onChange(page + 1)}
           disabled  = {page >= totalPages - 1}
-          aria-label = "Next page"
           className = "flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <ChevronRight className="h-3.5 w-3.5" />

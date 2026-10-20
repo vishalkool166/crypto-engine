@@ -1,5 +1,4 @@
 import logging
-import json
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
@@ -7,7 +6,7 @@ log = logging.getLogger(__name__)
 
 async def record(trade_id: int) -> None:
     try:
-        from database import get_session, Trade as TradeModel, TradeOutcome, Signal as SignalModel
+        from database import get_session, Trade as TradeModel, TradeOutcome
         with get_session() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             if not trade:
@@ -20,16 +19,6 @@ async def record(trade_id: int) -> None:
             ).first()
             if existing:
                 return
-
-            signal = None
-            if trade.signal_id:
-                signal = db.query(SignalModel).filter(SignalModel.id == trade.signal_id).first()
-            try:
-                factors = json.loads(getattr(signal, 'factor_scores', None) or '{}')
-                if not isinstance(factors, dict):
-                    factors = {}
-            except (TypeError, ValueError):
-                factors = {}
 
             pnl      = float(trade.binance_net_pnl or trade.net_pnl or trade.pnl or 0)
             sl_dist  = abs(float(trade.entry_price or 0) - float(trade.sl_price or 0))
@@ -62,11 +51,6 @@ async def record(trade_id: int) -> None:
                 tp1_hit           = trade.tp1_hit,
                 session           = trade.session_at_entry,
                 regime            = trade.regime_at_entry,
-                day_of_week       = getattr(trade, 'day_of_week', None) if getattr(trade, 'day_of_week', None) is not None else getattr(signal, 'day_of_week', None),
-                hour_of_day       = getattr(trade, 'hour_of_day', None) if getattr(trade, 'hour_of_day', None) is not None else getattr(signal, 'hour_of_day', None),
-                sweep_score       = factors.get('sweep', getattr(signal, 'sweep_score', None)),
-                zone_score        = factors.get('zone', getattr(signal, 'retest_score', None)),
-                trigger_score     = factors.get('trigger', getattr(signal, 'disp_score', None)),
                 combined_score    = trade.score_at_entry,
                 drawdown_at_entry = trade.drawdown_at_entry,
                 win_rate_at_entry = trade.win_rate_at_entry,

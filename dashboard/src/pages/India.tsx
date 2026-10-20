@@ -21,13 +21,10 @@ import { useAuthStore } from '@/stores/authStore'
 import { useNavigate } from 'react-router-dom'
 import type {
   IndianInstrumentConfig, IndianOrbLevel,
-  IndianOpenSignal, IndianSignal, IndianPerformance,
+  IndianOpenSignal, IndianSignal, IndianTodaySignal, IndianPerformance,
 } from '@/types'
 
 const RUPEES_PER_POINT = 30
-const INDIA_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
-})
 
 function DirectionBadge({ direction }: { direction: string }) {
   const isLong = direction === 'LONG'
@@ -491,6 +488,37 @@ function ClosedSignalCard({ signal }: { signal: IndianSignal }) {
   )
 }
 
+function TodaySignalCard({ signal }: { signal: IndianTodaySignal }) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <DirectionBadge direction={signal.direction} />
+          <span className="text-sm font-mono font-semibold text-foreground">{signal.instrument}</span>
+          <span className="text-xs text-muted-foreground">Scanner candidate</span>
+        </div>
+        <span className="text-xs text-muted-foreground">R:R {signal.rr1.toFixed(2)}</span>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[
+          ['Entry', signal.entry],
+          ['Stop', signal.sl],
+          ['Target 1', signal.tp1],
+          ['Target 2', signal.tp2],
+        ].map(([label, value]) => (
+          <div key={label}>
+            <p className="label-xs">{label}</p>
+            <p className="mt-1 text-sm font-mono font-semibold text-foreground">{Number(value).toFixed(2)}</p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        ORB {signal.orb_low.toFixed(0)}–{signal.orb_high.toFixed(0)} · {signal.orb_size.toFixed(0)} pts
+      </p>
+    </div>
+  )
+}
+
 function PerformanceTab({ perf }: { perf: IndianPerformance | null }) {
   if (!perf || perf.total === 0) {
     return (
@@ -560,6 +588,7 @@ function PerformanceTab({ perf }: { perf: IndianPerformance | null }) {
           <div className="divide-y divide-border">
             {Object.entries(perf.by_direction).map(([dir, data]) => {
               const isLong = dir === 'LONG'
+              const rupees = Math.round((data.pnl_pts ?? 0) * RUPEES_PER_POINT)
               const pColor = (data.pnl_pts ?? 0) >= 0
                 ? 'text-[hsl(var(--chart-1))]'
                 : 'text-[hsl(var(--chart-2))]'
@@ -816,10 +845,7 @@ export default function India() {
   })
 
   const willTrade   = orbReady && marketOpen && allReady
-  const closedToday = (signals ?? []).filter(s =>
-    s.timestamp && s.outcome !== 'pending' &&
-    INDIA_DATE_FORMATTER.format(new Date(s.timestamp)) === (status?.date ?? '')
-  )
+  const todaysCandidates = todaySignals
 
   const TABS = [
     { id: 'today',       label: 'Today'       },
@@ -978,8 +1004,8 @@ export default function India() {
             )}
           </CollapsibleSection>
 
-          <CollapsibleSection title="Today's Signals" count={closedToday.length} defaultOpen>
-            {closedToday.length === 0 ? (
+          <CollapsibleSection title="Today's Signals" count={todaysCandidates.length} defaultOpen>
+            {todaysCandidates.length === 0 ? (
               <div className="px-6 py-4">
                 <p className="text-sm text-muted-foreground">
                   {orbReady && willTrade
@@ -992,8 +1018,8 @@ export default function India() {
               </div>
             ) : (
               <div className="p-4 space-y-3">
-                {closedToday.map(s => (
-                  <ClosedSignalCard key={s.id} signal={s} />
+                {todaysCandidates.map((signal, index) => (
+                  <TodaySignalCard key={`${signal.instrument}-${index}`} signal={signal} />
                 ))}
               </div>
             )}

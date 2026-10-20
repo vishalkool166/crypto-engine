@@ -22,12 +22,6 @@ export interface TierFeatures {
   api_key_access:         boolean
   backtest_access:        boolean
   coins_limit:            number
-  show_score:             boolean
-  show_session_breakdown: boolean
-  show_phase_breakdown:   boolean
-  show_mae_mfe:           boolean
-  content_generator:      boolean
-  ai_assistant:           boolean
 }
 
 export interface AuthUser {
@@ -588,7 +582,6 @@ export interface ApiKey {
   name:       string
   last_used:  string | null
   created_at: string | null
-  expires_at: string | null
 }
 
 export interface ModeStatus {
@@ -712,20 +705,20 @@ export interface IndianOpenSignal {
   outcome:       string
 }
 
-export interface IndianSetupSignal {
+export interface IndianTodaySignal {
   instrument: string
-  direction:  string
-  entry:      number
-  sl:         number
-  tp1:        number
-  tp2:        number
-  orb_high:   number
-  orb_low:    number
-  orb_size:   number
-  sl_pts:     number
-  tp_pts:     number
-  rr1:        number
-  pre_range:  number
+  direction: string
+  entry: number
+  sl: number
+  tp1: number
+  tp2: number
+  orb_high: number
+  orb_low: number
+  orb_size: number
+  sl_pts: number
+  tp_pts: number
+  rr1: number
+  pre_range: number
   prev_range: number
 }
 
@@ -763,7 +756,7 @@ export interface IndianStatus {
   prev_ranges:        Record<string, number>
   instruments_config: Record<string, IndianInstrumentConfig>
   signals_today:      number
-  signals:            IndianSetupSignal[]
+  signals:            IndianTodaySignal[]
   open_signals:       IndianOpenSignal[]
   rate_limited:       boolean
   data_age_secs:      number

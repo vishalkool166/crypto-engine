@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Activity } from 'lucide-react'
+import { Activity, Zap, Clock, TrendingUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useEngineHealth } from '@/hooks/useEngine'
 

@@ -7,7 +7,7 @@ import GradeTag from '@/components/ui/GradeTag'
 import EmptyState from '@/components/ui/EmptyState'
 import FilterBar from '@/components/ui/FilterBar'
 import Pagination from '@/components/ui/Pagination'
-import { useSignalPage } from '@/hooks/useSignalPage'
+import { useFilteredSignals } from '@/hooks/useFilteredSignals'
 import type { Signal } from '@/types'
 
 const GRADE_FILTERS = [
@@ -24,10 +24,17 @@ const OUTCOME_FILTERS = [
   { label: 'Pending', value: 'pending' },
 ]
 
-export default function SignalHistoryTable() {
+interface Props {
+  signals:   Signal[] | undefined
+  isLoading: boolean
+}
+
+export default function SignalHistoryTable({ signals, isLoading }: Props) {
   const {
-    filters, setFilter, page, setPage, paginated, total, pageSize, isLoading, isError,
-  } = useSignalPage()
+    filters, setFilter,
+    page, setPage,
+    paginated, total, pageSize,
+  } = useFilteredSignals(signals)
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -68,8 +75,6 @@ export default function SignalHistoryTable() {
         <div className="flex items-center justify-center py-12">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-border border-t-foreground" />
         </div>
-      ) : isError ? (
-        <div className="py-10 text-center text-sm text-destructive" role="alert">Signal history is unavailable. Try again later.</div>
       ) : paginated.length === 0 ? (
         <EmptyState
           icon        = {BarChart3}

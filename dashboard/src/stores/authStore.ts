@@ -18,12 +18,6 @@ const TIER_FEATURES: Record<Tier, TierFeatures> = {
     api_key_access:         false,
     backtest_access:        false,
     coins_limit:            5,
-    show_score:             true,
-    show_session_breakdown: false,
-    show_phase_breakdown:   false,
-    show_mae_mfe:           false,
-    content_generator:      false,
-    ai_assistant:           false,
   },
   pro: {
     signal_delay_minutes:   0,
@@ -40,12 +34,6 @@ const TIER_FEATURES: Record<Tier, TierFeatures> = {
     api_key_access:         false,
     backtest_access:        false,
     coins_limit:            999,
-    show_score:             true,
-    show_session_breakdown: true,
-    show_phase_breakdown:   false,
-    show_mae_mfe:           false,
-    content_generator:      false,
-    ai_assistant:           false,
   },
   elite: {
     signal_delay_minutes:   0,
@@ -62,12 +50,6 @@ const TIER_FEATURES: Record<Tier, TierFeatures> = {
     api_key_access:         true,
     backtest_access:        true,
     coins_limit:            999,
-    show_score:             true,
-    show_session_breakdown: true,
-    show_phase_breakdown:   true,
-    show_mae_mfe:           true,
-    content_generator:      true,
-    ai_assistant:           true,
   },
   admin: {
     signal_delay_minutes:   0,
@@ -84,12 +66,6 @@ const TIER_FEATURES: Record<Tier, TierFeatures> = {
     api_key_access:         true,
     backtest_access:        true,
     coins_limit:            999,
-    show_score:             true,
-    show_session_breakdown: true,
-    show_phase_breakdown:   true,
-    show_mae_mfe:           true,
-    content_generator:      true,
-    ai_assistant:           true,
   },
 }
 
@@ -104,7 +80,7 @@ interface AuthState {
   tier:            Tier
   features:        TierFeatures
   isLoading:       boolean
-  setUser:         (user: AuthUser | null, serverFeatures?: TierFeatures) => void
+  setUser:         (user: AuthUser | null) => void
   setLoading:      (loading: boolean) => void
   logout:          () => void
   hasFeature:      (feature: keyof TierFeatures) => boolean
@@ -125,7 +101,7 @@ export const useAuthStore = create<AuthState>()(
       features:        DEFAULT_FEATURES,
       isLoading:       true,
 
-      setUser: (user, serverFeatures) => {
+      setUser: (user) => {
         if (!user) {
           set({
             user:            null,
@@ -138,11 +114,9 @@ export const useAuthStore = create<AuthState>()(
         }
         const tier     = (user.tier ?? 'free') as Tier
         const isAdmin  = user.is_admin === true
-        // The backend returns actual entitlements via /api/me. The local map
-        // is a rendering fallback, never the authority for API permissions.
-        const features = serverFeatures ?? (isAdmin
+        const features = isAdmin
           ? TIER_FEATURES.admin
-          : TIER_FEATURES[tier] ?? DEFAULT_FEATURES)
+          : TIER_FEATURES[tier] ?? DEFAULT_FEATURES
         set({
           user,
           isAuthenticated: true,

@@ -1,15 +1,7 @@
-# Signal Engine Dashboard (Cloudflare Pages)
+# Signal Engine dashboard
 
-This source was merged from the separate frontend GitHub repo into the backend monorepo under `dashboard/`. The old original colors and Outfit/Geist typography are preserved. Build assets output to **`dist/`**, never to the backend's existing `frontend/` directory.
+Editable React 18, TypeScript, and Vite application. This directory is the Cloudflare Pages project root; the production build is written to `dist/`.
 
-```bash
-npm ci
-npm run lint
-npx tsc -b
-npm run build
-npm run dev
-```
+Run locally with `npm ci && npm run dev`. Build with `npm ci && npm run build`. For Cloudflare Pages, set the project root to this directory, the build command to `npm ci && npm run build`, and the output directory to `dist`.
 
-Use Node 22. For Cloudflare Git integration select root `dashboard`, build command `npm run build`, output `dist`, and set `VITE_API_URL` / `VITE_WS_URL` to the AWS API and websocket origins. Vite dev proxies to localhost unless explicitly overridden. Never put private tokens in `VITE_*`; those values become public browser JavaScript.
-
-The PWA caches build assets only, not authenticated trading API responses. Demonstration pages should be labeled as such. See `../docs/operations/AWS_CLOUDFLARE_ROLLOUT.md` for deployment gates and cookie/OAuth requirements.
+The production app sends API, authentication, and WebSocket traffic to the current origin. Forward `/api/*`, `/auth/*`, and `/ws/*` to the backend.

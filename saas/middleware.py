@@ -2,20 +2,13 @@ import logging
 from fastapi import HTTPException, Request
 from functools import wraps
 from config import cfg, tier_meets_minimum, TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN
-from auth import get_current_user_any, is_admin_user as _auth_is_admin_user, verify_api_key
+from auth import get_current_user_any, is_admin_user
 
 log = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request) -> dict | None:
-    api_key = getattr(request, "headers", {}).get("X-API-Key", "")
-    if api_key and verify_api_key(api_key):
-        user = get_current_user_any(request)
-    elif api_key.startswith("se_"):
-        from saas.api_keys import authenticate_personal_api_key
-        user = authenticate_personal_api_key(request)
-    else:
-        user = get_current_user_any(request)
+    user = get_current_user_any(request)
     if not user:
         return None
 
@@ -38,12 +31,6 @@ def get_current_user(request: Request) -> dict | None:
         user["email"] = session_data["email"]
 
     return user
-
-
-def is_admin_user(user: dict | None) -> bool:
-    if user and user.get("type") == "api_key":
-        return False
-    return _auth_is_admin_user(user)
 
 
 def require_auth(request: Request) -> dict:

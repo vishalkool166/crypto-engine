@@ -8,9 +8,7 @@
 - The `database/` volume **must** be mounted on durable storage. The exchange order-intent journal is stored in `database/signals.db` in `exchange_order_intents`. Do not run multiple server replicas against independent SQLite copies.
 - `TRADING_MODE=paper` is the normal mode; it uses Binance testnet/demo credentials, not an offline simulator. Even demo mode makes requests to an external exchange environment.
 - New live exposure is **denied** unless `SIGNAL_ENGINE_ALLOW_LIVE_TRADING=I_UNDERSTAND_REAL_ORDERS` is explicitly set. This is an additional guard, not a safety certification, and it is not recommended to enable live exposure.
-- After an authorized, staged upgrade, check `/api/health` returns `{"status":"alive"}`. This is **liveness only**, not Redis/database/exchange readiness.
-- For authenticated administrators, `GET /api/system/health` includes `redis_connected` from a backend ping. A missing response, 401/403 or browser network error is *unknown diagnostics*, not a Redis outage. Check Compose `redis` health separately before restarting anything.
-- Cloudflare frontend changes and AWS container updates are independent. Do not restart Redis or overwrite `/app/database` as part of dashboard maintenance.
+- After upgrading, restart the service and verify `/api/health` returns `{"status":"alive"}`. This is **liveness only**, not a database/exchange readiness check.
 - Scheduled jobs start after the startup reconciliation attempt. For unresolved trades, automatic re-creation of protective orders is intentionally disabled; intervention is required.
 
 ## Ambiguous exchange order: incident response
@@ -43,7 +41,7 @@
 
 ## Testing
 
-From the `crypto-engine` repository root:
+From `crypto-engine-main`:
 
 ```sh
 python -m pip install pytest pytest-asyncio fastapi httpx python-dotenv pandas pyotp
@@ -72,29 +70,3 @@ An offline test suite verifies these application-level behaviors but **does not 
 ## Release control
 
 No trading-enable changes, schema reset, database replacement, or live deployment is authorized by this source handoff. Run migrations against a restored staging copy first. Validate rollbacks, stop orders, incident response, and data reconciliation with an authorized exchange test environment.
-
-## Source-candidate upgrade control (AWS + Cloudflare)
-
-Current verified user-reported topology: Pages serves `app.vishalkool.top`,
-FastAPI and Google OAuth are reached through `signal-engine-v5.vishalkool.top`,
-with Redis inside Docker Compose. Do not infer the health of API, WebSocket,
-Redis, email or exchange services from a successful Pages build.
-
-1. Record the running Git commit/container image, sanitized environment key
-   names, Redis persistence configuration, mount paths and open paper positions.
-2. Take an application-consistent SQLite backup using the shipped backup
-   script and separately capture the Redis persistence backup per its documented
-   volume policy. Test restoration **off the production host**.
-3. Build this exact candidate against an isolated staging environment, with
-   `PAPER_TRADING=true`, disabled email-account flags and no real exchange
-   credentials. Check API and deep frontend routes, role boundaries, Google
-   redirect/logout, WebSockets, Redis diagnostics and provisioning.
-4. Rehearse a rollback to the previous image, config and compatible database
-   state. Migrations are additive in the candidate but still require rehearsal.
-5. Only after explicit approval deploy backend changes; monitor liveness,
-   Redis, auth, scanners, session validity and reconciliation, leaving the
-   existing Compose service name and persisted volumes untouched.
-
-Do not migrate the original public hostname to Cloudflare until a separate API
-hostname is provisioned, tested and its OAuth callback/CORS/session cookies
-are reviewed. Never use `docker compose down -v` during an upgrade.

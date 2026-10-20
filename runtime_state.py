@@ -19,7 +19,6 @@ _defaults = {
     "last_shutdown":    "clean",
     "paper_balance":    0.0,
     "loss_pause_until": 0,
-    "new_exposure_halt": {"enabled": False, "reason": "", "updated_at": 0},
 }
 
 _state: dict = {}
@@ -205,48 +204,6 @@ def loss_pause_remaining_hours() -> float:
         return 0.0
     remaining = until - time.time()
     return max(0.0, round(remaining / 3600, 1))
-
-
-def get_new_exposure_halt() -> dict:
-    """Return the durable entry halt; malformed persisted values fail closed."""
-    value = _state.get("new_exposure_halt", _defaults["new_exposure_halt"])
-    if isinstance(value, bool):
-        return {"enabled": value, "reason": "legacy_boolean", "updated_at": 0}
-    if (not isinstance(value, dict) or not isinstance(value.get("enabled"), bool)
-            or not isinstance(value.get("reason", ""), str)):
-        return {"enabled": True, "reason": "invalid_persisted_state", "updated_at": 0}
-    return dict(value)
-
-
-def set_new_exposure_halt(enabled: bool, reason: str = "") -> dict:
-    """Persist an entry-only halt; protective and reduce-only orders stay available."""
-    if not isinstance(enabled, bool):
-        raise ValueError("Entry halt state must be boolean")
-    if not isinstance(reason, str):
-        raise ValueError("Entry halt reason must be text")
-    value = {
-        "enabled": enabled,
-        "reason": reason.strip()[:200],
-        "updated_at": time.time(),
-    }
-    with _lock:
-        previous = _state.get("new_exposure_halt")
-        _state["new_exposure_halt"] = value
-    try:
-        save()
-    except Exception:
-        # A failed halt activation remains latched in memory (fail closed).
-        # A failed reset must restore the prior halt in memory.
-        if not enabled:
-            with _lock:
-                if previous is None:
-                    _state["new_exposure_halt"] = {
-                        "enabled": True, "reason": "reset_persistence_failed", "updated_at": time.time()
-                    }
-                else:
-                    _state["new_exposure_halt"] = previous
-        raise
-    return dict(value)
 
 
 load()

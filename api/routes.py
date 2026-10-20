@@ -237,7 +237,7 @@ async def dashboard_coin_detail(request: Request, coin: str):
         raise HTTPException(500, str(e))
 
 
-@router.post("/scan")
+@router.get("/scan")
 @limiter.limit("1/minute")
 async def scan(request: Request):
     from saas.security import require_admin_access
@@ -306,60 +306,6 @@ async def get_signals(
     except Exception as e:
         log.error(traceback.format_exc())
         raise HTTPException(500, str(e))
-
-
-@router.get("/signals/page")
-async def get_signals_page(
-    request: Request,
-    limit: int = 20,
-    offset: int = 0,
-    grade: str | None = None,
-    coin: str | None = None,
-    outcome: str | None = None,
-    db: Session = Depends(get_db),
-):
-    """Stable filtered history pagination, preserving plan-based visibility."""
-    _auth(request)
-    if not (1 <= limit <= 100 and 0 <= offset <= 1_000_000):
-        raise HTTPException(422, "Invalid pagination")
-    if grade and grade not in ("all", "A+", "A", "B"):
-        raise HTTPException(422, "Invalid grade")
-    if outcome and outcome not in ("all", "win", "loss", "pending"):
-        raise HTTPException(422, "Invalid outcome")
-    if coin and (len(coin) > 24 or not coin.isalnum()):
-        raise HTTPException(422, "Invalid coin")
-    from saas.middleware import get_user_tier
-    from saas.tiers import filter_signal_for_tier, get_signals_limit
-    from config import get_tier_features
-    from datetime import timedelta
-    tier = get_user_tier(request)
-    features = get_tier_features(tier)
-    q = db.query(SignalModel)
-    if grade and grade != 'all':
-        q = q.filter(SignalModel.grade == grade)
-    if outcome and outcome != 'all':
-        q = q.filter(SignalModel.outcome == outcome)
-    if coin:
-        q = q.filter(SignalModel.coin.ilike('%' + coin + '%'))
-    delay = features.get('signal_delay_minutes', 0)
-    if delay:
-        q = q.filter(SignalModel.timestamp <= datetime.now(timezone.utc) - timedelta(minutes=delay))
-    # Never expose an accurate total of records hidden by a plan's historical cap.
-    total = min(q.count(), get_signals_limit(tier))
-    bounded = max(0, min(limit, total - offset))
-    rows = q.order_by(SignalModel.timestamp.desc(), SignalModel.id.desc()).offset(offset).limit(bounded).all() if bounded else []
-    visible = [{
-        "id": item.id, "timestamp": item.timestamp.isoformat() if item.timestamp else None,
-        "coin": item.coin, "direction": item.direction, "grade": item.grade,
-        "score": item.score, "signal_type": item.signal_type,
-        "entry": item.entry, "sl": item.sl, "tp1": item.tp1,
-        "risk_amt": item.risk_amt, "outcome": item.outcome,
-        "exit_price": item.exit_price if features.get('show_full_history', False) else None,
-        "pnl": item.pnl if features.get('show_performance', False) else None,
-        "market": item.market,
-    } for item in rows]
-    return {"items": [filter_signal_for_tier(item, tier) for item in visible],
-            "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/signals/latest")
@@ -501,7 +447,7 @@ async def macro_events(request: Request):
 _backtest_lock: dict = {}
 
 
-@router.post("/backtest/{coin}")
+@router.get("/backtest/{coin}")
 async def backtest(request: Request, coin: str):
     _auth(request)
     coin = coin.upper()
@@ -531,7 +477,7 @@ async def backtest(request: Request, coin: str):
         _backtest_lock[coin] = False
 
 
-@router.post("/backtest/all/run")
+@router.get("/backtest/all/run")
 async def backtest_all(request: Request):
     from saas.security import require_admin_access
     require_admin_access(request)
@@ -576,11 +522,8 @@ async def backtest_history(request: Request, db: Session = Depends(get_db)):
     } for r in rows]))
 
 
-@router.get("/system/health")
+@router.get("/health")
 async def health(request: Request):
-    """Authenticated administrator diagnostics. /api/health remains liveness-only."""
-    from saas.security import require_admin_access
-    require_admin_access(request)
     if _health_cache["data"] and time.time() - _health_cache["at"] < 30:
         return JSONResponse(content=_health_cache["data"])
 
@@ -671,8 +614,12 @@ async def mode_toggle(request: Request):
 
         if new_mode == "live" and (not cfg.BINANCE_API_KEY or not cfg.BINANCE_SECRET):
             return JSONResponse(status_code=400, content={"success": False, "reason": "Live API keys not configured"})
-        from trade.safety import apply_trading_mode
-        await apply_trading_mode(new_mode)
+        from config import _ensure
+        from trade.exchange import close_exchange
+        _ensure("TRADING_MODE", new_mode)
+        cfg.TRADING_MODE  = new_mode
+        cfg.PAPER_TRADING = new_mode != "live"
+        await close_exchange()
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")
         invalidate_all()
         return JSONResponse(content={"success": True, "mode": new_mode})
@@ -969,14 +916,11 @@ async def chat_endpoint(request: Request):
         if not tier_meets_minimum(user.get("tier", "free"), TIER_ELITE):
             raise HTTPException(403, {"code": "upgrade_required"})
 
-        body = await request.json()
-        message = body.get("message") if isinstance(body, dict) else None
+        body    = await request.json()
+        message = body.get("message", "").strip()
 
-        if not isinstance(message, str) or not message.strip():
+        if not message:
             raise HTTPException(400, "Message required")
-        message = message.strip()
-        if len(message) > 2000:
-            raise HTTPException(413, "Message exceeds the 2000 character limit")
 
         from chatbot_rag import chat_with_sources
         result = await chat_with_sources(message)

@@ -1,4 +1,3 @@
-import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ThemeProvider } from 'next-themes'
 import { Toaster } from 'sonner'
@@ -7,26 +6,24 @@ import WebSocketProvider from '@/providers/WebSocketProvider'
 import AuthGuard from '@/components/layout/AuthGuard'
 import Layout from '@/components/layout/Layout'
 import DemoLayout from '@/demo/DemoLayout'
+import Chatbot from '@/components/Chatbot'
+import Login from '@/pages/Login'
+import Landing from '@/pages/Landing'
+import Demo from '@/pages/Demo'
+import Home from '@/pages/Home'
+import Signals from '@/pages/Signals'
+import Trades from '@/pages/Trades'
+import Performance from '@/pages/Performance'
+import Users from '@/pages/Users'
+import Coins from '@/pages/Coins'
+import System from '@/pages/System'
+import Audit from '@/pages/Audit'
+import Settings from '@/pages/Settings'
+import Profile from '@/pages/Profile'
+import Pricing from '@/pages/Pricing'
+import Engine from '@/pages/Engine'
+import India from '@/pages/India'
 import { useDemoStore } from '@/demo/demoStore'
-
-const Chatbot = lazy(() => import('@/components/Chatbot'))
-const Login = lazy(() => import('@/pages/Login'))
-const EmailAccess = lazy(() => import('@/pages/EmailAccess'))
-const Demo = lazy(() => import('@/pages/Demo'))
-const Home = lazy(() => import('@/pages/Home'))
-const Signals = lazy(() => import('@/pages/Signals'))
-const Trades = lazy(() => import('@/pages/Trades'))
-const Performance = lazy(() => import('@/pages/Performance'))
-const Users = lazy(() => import('@/pages/Users'))
-const Coins = lazy(() => import('@/pages/Coins'))
-const System = lazy(() => import('@/pages/System'))
-const Audit = lazy(() => import('@/pages/Audit'))
-const Settings = lazy(() => import('@/pages/Settings'))
-const Profile = lazy(() => import('@/pages/Profile'))
-const Pricing = lazy(() => import('@/pages/Pricing'))
-const Content = lazy(() => import('@/pages/Content'))
-const Engine = lazy(() => import('@/pages/Engine'))
-const India = lazy(() => import('@/pages/India'))
 
 function ChatbotGuard() {
   const { isDemoMode } = useDemoStore()
@@ -40,7 +37,7 @@ function ChatbotGuard() {
 
 export default function App() {
   return (
-    <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <QueryProvider>
         <BrowserRouter basename="/">
           <Toaster
@@ -56,12 +53,10 @@ export default function App() {
               },
             }}
           />
-          <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-background"><div className="h-6 w-6 animate-spin rounded-full border-2 border-border border-t-foreground" /></div>}>
           <Routes>
+            <Route path="/welcome" element={<Landing />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/account" element={<EmailAccess />} />
-            <Route path="/verify-email" element={<EmailAccess fixedMode="verify" />} />
-            <Route path="/reset-password" element={<EmailAccess fixedMode="reset" />} />
+            <Route path="/plans" element={<Pricing />} />
             <Route path="/demo"  element={<Demo />}  />
 
             <Route path="/demo" element={<DemoLayout />}>
@@ -69,7 +64,6 @@ export default function App() {
               <Route path="signals"     element={<Signals />}     />
               <Route path="trades"      element={<Trades />}      />
               <Route path="performance" element={<Performance />} />
-              <Route path="content"     element={<Content />}     />
               <Route path="coins"       element={<Coins />}       />
               <Route path="system"      element={<System />}      />
               <Route path="audit"       element={<Audit />}       />
@@ -93,7 +87,6 @@ export default function App() {
               <Route path="signals"     element={<Signals />}     />
               <Route path="trades"      element={<Trades />}      />
               <Route path="performance" element={<Performance />} />
-              <Route path="content"     element={<Content />}     />
               <Route path="engine"      element={<Engine />}      />
               <Route path="india"       element={<India />}       />
               <Route path="users"       element={<Users />}       />
@@ -108,7 +101,6 @@ export default function App() {
           </Routes>
 
           <ChatbotGuard />
-          </Suspense>
 
         </BrowserRouter>
       </QueryProvider>

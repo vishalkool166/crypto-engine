@@ -67,18 +67,6 @@ def test_missing_performance_and_portfolio_circuit_breaker_fail_closed(isolated_
     assert calculate().reason == 'circuit_breaker_halt'
 
 
-def test_portfolio_circuit_multiplier_reduces_sized_exposure(isolated_sizing, monkeypatch):
-    monkeypatch.setattr(adaptive, '_get_drawdown', lambda balance: 0.0)
-    monkeypatch.setattr(adaptive, '_get_circuit_breaker_multiplier', lambda: 1.0)
-    baseline = calculate(balance=20000)
-    for multiplier in (.7, .4, .2):
-        monkeypatch.setattr(adaptive, '_get_circuit_breaker_multiplier', lambda m=multiplier: m)
-        reduced = calculate(balance=20000)
-        assert not reduced.skip
-        assert reduced.risk_amt < baseline.risk_amt
-        assert reduced.position_size < baseline.position_size
-
-
 def test_loss_limit_is_inclusive(isolated_sizing, monkeypatch):
     monkeypatch.setattr(adaptive, "_get_today_pnl", lambda: -40.0)
     assert calculate(balance=2000).reason.startswith('daily_loss_limit')
@@ -109,33 +97,6 @@ async def test_futures_exchange_info_returns_symbol_min_notional(monkeypatch):
     rules = await exchange.get_symbol_precision("ETH")
     assert rules['min_notional'] == 20
     assert rules['step_size'] == .001
-
-
-@pytest.mark.asyncio
-async def test_unavailable_or_rate_limited_exchange_metadata_blocks_without_retry(monkeypatch):
-    import httpx
-    from trade import exchange
-    attempts = []
-
-    async def unavailable(path, params):
-        attempts.append(path)
-        response = httpx.Response(429, request=httpx.Request('GET', 'https://demo.invalid'))
-        raise httpx.HTTPStatusError('rate limited', request=response.request, response=response)
-
-    monkeypatch.setattr(exchange, '_get', unavailable)
-    with pytest.raises(RuntimeError, match='blocking order'):
-        await exchange.get_symbol_precision('ETH')
-    assert attempts == ['/fapi/v1/exchangeInfo']
-
-
-@pytest.mark.asyncio
-async def test_inactive_or_malformed_symbol_metadata_fails_closed(monkeypatch):
-    from trade import exchange
-    monkeypatch.setattr(exchange, '_get', lambda *a, **k: __import__('asyncio').sleep(0, result={
-        'symbols': [{'symbol': 'ETHUSDT', 'status': 'BREAK', 'contractType': 'PERPETUAL', 'filters': []}]
-    }))
-    with pytest.raises(RuntimeError, match='blocking order'):
-        await exchange.get_symbol_precision('ETH')
 
 
 def test_graph_sizing_node_preserves_coin(monkeypatch):

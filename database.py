@@ -7,16 +7,12 @@ from sqlalchemy import (
     UniqueConstraint, JSON
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.engine import URL
 
-DATABASE_PATH = os.environ.get("SIGNAL_ENGINE_DATABASE_PATH", "database/signals.db").strip()
-if not DATABASE_PATH:
-    DATABASE_PATH = "database/signals.db"
-os.makedirs(os.path.dirname(DATABASE_PATH) or ".", exist_ok=True)
+os.makedirs("database", exist_ok=True)
 
 Base = declarative_base()
 engine = create_engine(
-    URL.create("sqlite", database=DATABASE_PATH),
+    "sqlite:///database/signals.db",
     connect_args={"check_same_thread": False, "timeout": 30},
     pool_size=5,
     max_overflow=10
@@ -286,24 +282,6 @@ class DemoVisit(Base):
     cta_clicked   = Column(Boolean,  default=False)
     duration_secs = Column(Integer,  nullable=True)
 
-
-class ContentPost(Base):
-    __tablename__ = "content_posts"
-
-    id              = Column(Integer, primary_key=True)
-    signal_id       = Column(Integer, nullable=False)
-    chart_path      = Column(String, nullable=True)
-    twitter_draft   = Column(Text, nullable=True)
-    long_draft      = Column(Text, nullable=True)
-    hashtags        = Column(Text, nullable=True)
-    tone_used       = Column(String, nullable=True)
-    status          = Column(String, default="pending")
-    platform        = Column(String, default="twitter")
-    tweet_id        = Column(String, nullable=True)
-    posted_at       = Column(DateTime, nullable=True)
-    engagement_json = Column(Text, nullable=True)
-    created_at      = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    edited_text     = Column(Text, nullable=True)
 
 
 class User(Base):
@@ -775,8 +753,6 @@ class CoinLastOutcome(Base):
     pnl         = Column(Float, nullable=True)
 
 def init_db():
-    # Register optional email-account tables without changing existing user schema.
-    from saas import email_accounts  # noqa: F401
     Base.metadata.create_all(engine)
 
     from sqlalchemy import inspect, text

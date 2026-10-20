@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useSignals } from '@/hooks/useSignals'
+import { useSignals, useSignalHistory } from '@/hooks/useSignals'
+import { useSignalHistory as usePerfSignalHistory } from '@/hooks/usePerformance'
 import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 import { useSignalAccess } from '@/hooks/useSignalAccess'
@@ -112,6 +113,7 @@ export default function Signals() {
     isLoading, refetch, totalWatching,
   } = useSignals()
 
+  const { data: history, isLoading: histLoading } = usePerfSignalHistory({ limit: 500 })
 
   const handleScan = async () => {
     if (isDemoMode) { toast.success('Scan triggered (demo)'); return }
@@ -253,7 +255,10 @@ export default function Signals() {
         )}
       </CollapsibleSection>
 
-      <SignalHistoryTable />
+      <SignalHistoryTable
+        signals   = {history ?? []}
+        isLoading = {histLoading}
+      />
 
     </div>
   )

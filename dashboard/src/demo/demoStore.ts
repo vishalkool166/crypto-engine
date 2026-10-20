@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Tier } from '@/types'
+import { TIER_FEATURES_MAP } from '@/stores/authStore'
 
 interface DemoState {
   isDemoMode:  boolean

@@ -6,6 +6,7 @@ import {
   mockOpenTrades, mockClosedTrades, mockBalance,
   mockProfit, mockDailyPnl, mockCoinPerformance,
 } from '@/demo/mockData'
+import type { Trade } from '@/types'
 import api from '@/lib/api'
 
 export function useOpenTrades() {
@@ -50,7 +51,7 @@ export function useTradeHistory(limit = 20, offset = 0) {
     staleTime:       30_000,
     refetchInterval: !isDemoMode ? 60_000 : false,
     placeholderData: isDemoMode
-      ? { trades: mockClosedTrades, trades_count: mockClosedTrades.length, limit, offset }
+      ? { trades: mockClosedTrades, trades_count: mockClosedTrades.length }
       : undefined,
   })
 }
@@ -127,8 +128,7 @@ export function useForceSell() {
       tradesApi.forceSell(trade_id, totp_code),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trades-open']            })
-      queryClient.invalidateQueries({ queryKey: ['trades-history'] })
-      queryClient.invalidateQueries({ queryKey: ['trades-history-page'] })
+      queryClient.invalidateQueries({ queryKey: ['trades-history', 200, 0] })
       queryClient.invalidateQueries({ queryKey: ['trades-profit']          })
       queryClient.invalidateQueries({ queryKey: ['trades-balance']         })
     },

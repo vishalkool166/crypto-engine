@@ -1,4 +1,3 @@
-import { useCallback } from 'react'
 import { useDemoStore } from '@/demo/demoStore'
 import { useAuthStore } from '@/stores/authStore'
 
@@ -27,19 +26,19 @@ export function useSignalAccess() {
 
   const isFree = !isAdmin && effectiveTier === 'free'
 
-  const canSeeSignal = useCallback((timestamp: string | number | null | undefined): boolean => {
+  function canSeeSignal(timestamp: string | number | null | undefined): boolean {
     if (!isFree) return true
     const ts = getFirstTimestamp(timestamp)
     if (!ts) return false
     return Date.now() - ts >= DELAY_MS
-  }, [isFree])
+  }
 
-  const msUntilVisible = useCallback((timestamp: string | number | null | undefined): number => {
+  function msUntilVisible(timestamp: string | number | null | undefined): number {
     if (!isFree) return 0
     const ts = getFirstTimestamp(timestamp)
     if (!ts) return DELAY_MS
     return Math.max(0, DELAY_MS - (Date.now() - ts))
-  }, [isFree])
+  }
 
   return {
     isFree,

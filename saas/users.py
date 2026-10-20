@@ -1,21 +1,11 @@
 import hashlib
 import secrets
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from database import get_session, User, Subscription, ApiKey
-from sqlalchemy import or_, func
-from config import cfg, TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN
+from config import cfg, TIER_FREE, TIER_ADMIN
 
 log = logging.getLogger(__name__)
-API_KEY_TTL_DAYS = 90
-
-
-def _utc_iso(value):
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
 
 
 def create_or_get_user(
@@ -25,23 +15,11 @@ def create_or_get_user(
     provider:    str  = "google",
     provider_id: str  = None,
 ) -> dict:
-    email = (email or "").strip().lower()
-    if not email or "@" not in email:
-        raise ValueError("A valid email address is required")
-    if provider != "google":
-        raise ValueError("Only verified Google identities can be provisioned through this function")
-    if not provider_id:
-        raise ValueError("Google subject identifier is required")
-
     try:
         with get_session() as db:
-            user = db.query(User).filter(func.lower(User.email) == email).first()
+            user = db.query(User).filter(User.email == email).first()
 
             if user:
-                if not user.is_active:
-                    raise PermissionError("Account is disabled")
-                if user.provider != provider or (user.provider_id and user.provider_id != provider_id):
-                    raise PermissionError("Account linking requires separate identity verification")
                 user.last_seen  = datetime.now(timezone.utc)
                 user.last_login = datetime.now(timezone.utc)
                 if name   and not user.name:   user.name   = name
@@ -49,17 +27,6 @@ def create_or_get_user(
                 if provider_id and not user.provider_id:
                     user.provider_id = provider_id
 
-                # Some legacy Google users were created without subscription rows.
-                # Repair only their missing row, retaining existing tier decisions.
-                subscription = db.query(Subscription).filter(
-                    Subscription.user_id == user.id
-                ).order_by(Subscription.id.desc()).first()
-                if subscription is None:
-                    db.add(Subscription(
-                        user_id=user.id, tier=user.tier, status="active",
-                        created_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc),
-                    ))
                 is_first_time = False
 
             else:
@@ -139,8 +106,6 @@ def get_user_by_email(email: str) -> dict | None:
 
 
 def update_user_tier(user_id: int, new_tier: str) -> dict:
-    if new_tier not in {TIER_FREE, TIER_PRO, TIER_ELITE, TIER_ADMIN}:
-        return {"success": False, "reason": "Invalid tier"}
     try:
         with get_session() as db:
             user = db.query(User).filter(User.id == user_id).first()
@@ -225,33 +190,18 @@ def reactivate_user(user_id: int) -> dict:
 
 
 def list_all_users(
-    limit: int = 100,
+    limit:  int = 100,
     offset: int = 0,
-    tier: str = None,
-    search: str = None,
+    tier:   str = None,
 ) -> dict:
-    # Filter before pagination so search and record counts cover the full dataset.
-    if not 1 <= limit <= 100 or offset < 0:
-        raise ValueError('Invalid pagination bounds')
-    query_text = (search or '').strip().lower()
-    if len(query_text) > 120:
-        raise ValueError('Search is too long')
     try:
         with get_session() as db:
             query = db.query(User)
             if tier:
                 query = query.filter(User.tier == tier)
-            if query_text:
-                # SQLAlchemy parameters are bound, not interpolated into SQL.
-                escaped_query = query_text.replace('%', r'\%').replace('_', r'\_')
-                pattern = '%' + escaped_query + '%' 
-                query = query.filter(or_(
-                    func.lower(User.email).like(pattern, escape="\\"),
-                    func.lower(User.name).like(pattern, escape="\\"),
-                ))
             total = query.count()
             users = query.order_by(
-                User.created_at.desc(), User.id.desc()
+                User.created_at.desc()
             ).offset(offset).limit(limit).all()
 
             return {
@@ -316,7 +266,6 @@ def create_api_key_for_user(user_id: int, name: str = "Default") -> dict:
                     "reason":  "Maximum 3 active API keys allowed"
                 }
 
-            now = datetime.now(timezone.utc)
             api_key = ApiKey(
                 user_id    = user_id,
                 key_hash   = hashed,
@@ -324,8 +273,7 @@ def create_api_key_for_user(user_id: int, name: str = "Default") -> dict:
                 name       = name,
                 tier       = user.tier,
                 is_active  = True,
-                created_at = now,
-                expires_at = now + timedelta(days=API_KEY_TTL_DAYS),
+                created_at = datetime.now(timezone.utc),
             )
             db.add(api_key)
             db.flush()
@@ -339,7 +287,6 @@ def create_api_key_for_user(user_id: int, name: str = "Default") -> dict:
                 "prefix":     prefix,
                 "name":       name,
                 "created_at": api_key.created_at.isoformat(),
-                "expires_at": _utc_iso(api_key.expires_at),
             }
 
     except Exception as e:
@@ -360,7 +307,6 @@ def list_api_keys(user_id: int) -> list:
                 "name":       k.name,
                 "last_used":  k.last_used.isoformat() if k.last_used else None,
                 "created_at": k.created_at.isoformat() if k.created_at else None,
-                "expires_at": _utc_iso(k.expires_at),
             } for k in keys]
     except Exception as e:
         log.error(f"list_api_keys error: {e}")

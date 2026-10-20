@@ -1,6 +1,7 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? ''
+// Production APIs share the application origin. Vite proxies API paths in development.
+const BASE_URL = ''
 
 export const api = axios.create({
   baseURL:         BASE_URL,
@@ -27,7 +28,7 @@ api.interceptors.response.use(
         import('@/stores/authStore').then(({ useAuthStore }) => {
           useAuthStore.getState().logout()
         })
-        window.location.href = '/login'
+        window.location.href = '/welcome'
       }
     }
     return Promise.reject(error)

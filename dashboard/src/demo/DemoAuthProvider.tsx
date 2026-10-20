@@ -1,7 +1,6 @@
 import { useEffect, ReactNode } from 'react'
 import { useDemoStore } from '@/demo/demoStore'
 import { useAuthStore } from '@/stores/authStore'
-import { useDemoTracking } from '@/demo/useDemoTracking'
 import type { Tier } from '@/types'
 
 const DEMO_EMAILS: Record<Tier, string> = {
@@ -14,7 +13,6 @@ const DEMO_EMAILS: Record<Tier, string> = {
 export default function DemoAuthProvider({ children }: { children: ReactNode }) {
   const { demoTier, setDemoMode } = useDemoStore()
   const { setUser, setLoading }   = useAuthStore()
-  useDemoTracking()
 
   useEffect(() => {
     setDemoMode(true)
@@ -26,14 +24,14 @@ export default function DemoAuthProvider({ children }: { children: ReactNode }) 
       is_admin: false,
       type:     'demo',
     })
-  }, [demoTier, setDemoMode, setLoading, setUser])
+  }, [demoTier])
 
   useEffect(() => {
     return () => {
       setDemoMode(false)
       setUser(null)
     }
-  }, [setDemoMode, setUser])
+  }, [])
 
   return <>{children}</>
 }

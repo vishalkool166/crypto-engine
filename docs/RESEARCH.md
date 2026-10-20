@@ -51,17 +51,3 @@ The evidence gate is a **completeness filter**, not a statistical hypothesis tes
 ## Acceptance gate
 
 No automatic parameter promotion. A changed config needs positive **net** out-of-sample expectancy across multiple folds and market regimes, acceptable drawdown, robust signal frequency, statistical uncertainty, signed-off execution constraints, and a frozen holdout report. If evidence is inadequate, retain the original settings or disable the coin.
-
-## Frozen S0 research baseline
-
-The 15 strategy/configuration sources used to describe S0 are recorded in
-`docs/engineering/STRATEGY_S0_SHA256.json`. Before comparing research
-experiments, run `python scripts/freeze_strategy_baseline.py --check`. A
-changed source requires a reviewed new candidate identity; do **not** rewrite
-the original S0 manifest to hide drift. Changes to trading execution outside
-these 15 sources still require independent regression tests.
-
-This source package contains **no** validated, complete historical dataset for
-all 18 coins and makes **no** claim that signal quality has improved. Out-of-sample
-analysis, funding/fee assumptions, shadow signals, and paper-forward evidence
-must precede any threshold or ranking change.

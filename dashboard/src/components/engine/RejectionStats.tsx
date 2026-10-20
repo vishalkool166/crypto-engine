@@ -15,6 +15,18 @@ const TABS = [
   { label: 'Daily',  value: 'daily'  },
 ]
 
+type RejectionSummary = {
+  total_scans?: number
+  total_signals?: number
+  signal_rate?: number
+  by_reason?: Record<string, { count: number; pct: number }>
+}
+type RejectionData = {
+  total?: RejectionSummary
+  weekly?: RejectionSummary
+  daily?: Array<{ date: string; total: number }>
+}
+
 function RejectionBar({ reason, count, pct, max }: { reason: string; count: number; pct: number; max: number }) {
   const severity =
     pct > 30 ? 'bg-[hsl(var(--chart-2))]' :
@@ -69,25 +81,26 @@ export default function RejectionStats() {
     )
   }
 
-  const totalStats  = data?.total
-  const weeklyStats = data?.weekly
-  const dailyStats  = data?.daily ?? []
+  const stats       = data as RejectionData | undefined
+  const totalStats  = stats?.total
+  const weeklyStats = stats?.weekly
+  const dailyStats  = stats?.daily ?? []
 
   const activeStats = tab === 'total'
     ? totalStats?.by_reason
     : tab === 'weekly'
-    ? (weeklyStats as { by_reason?: Record<string, { count: number; pct: number }> } | undefined)?.by_reason
+    ? weeklyStats?.by_reason
     : null
 
   const summaryStats = tab === 'total' ? totalStats : tab === 'weekly' ? weeklyStats : null
 
-  const chartData = dailyStats.slice(-7).map(d => ({
+  const chartData = dailyStats.slice(-7).map((d: { date: string; total: number }) => ({
     date:  d.date.slice(5),
     total: d.total,
   }))
 
-  const entries: Array<[string, { count: number; pct: number }]> = activeStats
-    ? Object.entries(activeStats as Record<string, { count: number; pct: number }>)
+  const entries = activeStats
+    ? Object.entries(activeStats)
         .sort(([, a], [, b]) => b.count - a.count)
         .slice(0, 10)
     : []
@@ -119,9 +132,9 @@ export default function RejectionStats() {
       {summaryStats && (
         <div className="grid grid-cols-3 divide-x divide-border border-b border-border">
           {[
-            { label: 'Total Scans',   value: (summaryStats as { total_scans?: number }).total_scans    ?? 0 },
-            { label: 'Signals',       value: (summaryStats as { total_signals?: number }).total_signals ?? 0 },
-            { label: 'Signal Rate',   value: `${(summaryStats as { signal_rate?: number }).signal_rate ?? 0}%` },
+            { label: 'Total Scans',   value: summaryStats.total_scans ?? 0 },
+            { label: 'Signals',       value: summaryStats.total_signals ?? 0 },
+            { label: 'Signal Rate',   value: `${summaryStats.signal_rate ?? 0}%` },
           ].map(item => (
             <div key={item.label} className="px-4 py-3 text-center">
               <p className="label-xs">{item.label}</p>

@@ -91,8 +91,7 @@ def create_session(
 
     except Exception as e:
         log.error(f"create_session error: {e}")
-        # Never return a session identifier that was not persisted.
-        raise
+        return secrets.token_hex(32)
 
 
 def validate_session(session_id: str) -> dict | None:

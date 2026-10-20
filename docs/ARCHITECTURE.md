@@ -38,11 +38,9 @@ flowchart TB
 
 `engines/indian/` handles Angel One authentication, cached candle/price requests, an opening-range strategy, and signal/notification workflows. Client-code-scoped Redis quota gates coordinate requests across workers. A successful quota admission is not a substitute for real Redis or broker integration tests.
 
-## Frontend and API boundary
+## Frontend boundary
 
-React/Vite source is in this monorepo's `dashboard/` directory. Cloudflare Pages serves the entire browser application at `app.vishalkool.top`; AWS no longer serves the compiled frontend. The AWS service at `signal-engine-v5.vishalkool.top` retains OAuth, authenticated `/api/*` routes, `/ws/dashboard`, webhooks and all market/broker workloads.
-
-Cloudflare builds from `dashboard/` into `dist/`. Login callbacks originate on AWS but finish on the configured `FRONTEND_URL` to return to Cloudflare. `GET /api/health` remains public liveness; `GET /api/system/health` is administrator-only, reports live Redis connectivity, and is independent of the browser network's status. The dashboard retrieves tier entitlements from `/api/pricing` rather than duplicating the Python rules.
+The editable React/Vite source lives in `dashboard/`. Cloudflare Pages builds from that directory into `dashboard/dist/`. Browser API, authentication, and WebSocket requests use the current application origin; production edge routing must forward `/api/*`, `/auth/*`, and `/ws/*` to this backend. The backend retains its established `frontend/` static fallback path, mirrored from the dashboard build in this package.
 
 ## Safety invariants
 
@@ -53,15 +51,4 @@ Cloudflare builds from `dashboard/` into `dist/`. Login callbacks originate on A
 5. Historical tuning never mutates live per-coin configuration automatically.
 6. Invalid/nonfinite market data and wrong-side stops must be rejected before order creation.
 
-See [Research](RESEARCH.md), [Operations](OPERATIONS.md), and [release evidence](engineering/RELEASE_EVIDENCE.md).
-
-
-## Maintainer decisions
-
-- Keep a single GitHub monorepo, but do not rename the existing AWS Python entrypoints or Compose services.
-- Cloudflare Pages serves browser HTML/assets; AWS remains the only scheduler, OAuth callback host, API and broker executor.
-- Treat ambiguous exchange submissions as reconciliation-required instead of repeating orders; trade protection has its own operational checks.
-- Preserve UTC session definitions, score/grade calculations and original configured coin behavior until audited research supports changes.
-- Separate signal visibility tiers from trading-execution permissions; plan levels do not authorize live orders.
-- Use Resend for account setup/security email only. Retain Telegram for trading alerts.
-- No GitHub Actions; Cloudflare's native Git integration deploys the dashboard.
+See [Status](STATUS.md), [Research](RESEARCH.md), and [Operations](OPERATIONS.md).

@@ -16,7 +16,7 @@ export const authApi = {
       authenticated: boolean
       user?: { id: string; email: string; tier: string; is_admin: boolean }
     }>('/auth/session'),
-  logout: () => api.post('/auth/logout'),
+  logout: () => api.get('/auth/logout'),
 }
 
 export const dashboardApi = {
@@ -33,13 +33,11 @@ export const dashboardApi = {
 export const signalsApi = {
   list: (params?: { limit?: number; grade?: string; coin?: string; outcome?: string }) =>
     api.get<Signal[]>('/api/signals', { params }),
-  page: (params: { limit: number; offset: number; grade?: string; coin?: string; outcome?: string }) =>
-    api.get<{ items: Signal[]; total: number; limit: number; offset: number }>('/api/signals/page', { params }),
   active:  () => api.get('/api/signals/active'),
   latest:  () => api.get('/api/signals/latest'),
   byId:    (id: number) => api.get(`/api/signal/${id}`),
   analyze: (coin: string) => api.get(`/api/analyze/${coin}`),
-  scan:    () => api.post('/api/scan'),
+  scan:    () => api.get('/api/scan'),
 }
 
 export const coinsApi = {
@@ -56,10 +54,7 @@ export const tradesApi = {
   open:        () => api.get<Trade[]>('/api/trades/open'),
   profit:      () => api.get<TradesProfit>('/api/trades/profit'),
   balance:     () => api.get<TradesBalance>('/api/trades/balance'),
-  history:     (options: number | { limit: number; offset: number; grade?: string; outcome?: string; coin?: string } = 20, offset = 0) => {
-    const params = typeof options === 'number' ? { limit: options, offset } : options
-    return api.get<{ trades: Trade[]; trades_count: number; limit: number; offset: number }>('/api/trades/history', { params })
-  },
+  history:     (limit = 20, offset = 0) => api.get<{ trades: Trade[]; trades_count: number }>(`/api/trades/history?limit=${limit}&offset=${offset}`),
   daily:       (days = 7) => api.get<{ data: DailyEntry[] }>(`/api/trades/daily?days=${days}`),
   performance: () => api.get<CoinPerformance[]>('/api/trades/performance'),
   ping:        () => api.get('/api/trades/ping'),
@@ -70,7 +65,7 @@ export const tradesApi = {
 export const adminApi = {
   overview:          () => api.get('/api/admin/overview'),
   stats:             () => api.get<AdminStats>('/api/admin/stats'),
-  users:             (params?: { limit?: number; offset?: number; tier?: string; search?: string }) =>
+  users:             (params?: { limit?: number; offset?: number; tier?: string }) =>
     api.get<{ total: number; users: AdminUser[] }>('/api/admin/users', { params }),
   userById:          (id: number) => api.get(`/api/admin/users/${id}`),
   updateTier:        (id: number, tier: string) => api.post(`/api/admin/users/${id}/tier`, { tier }),
@@ -80,14 +75,14 @@ export const adminApi = {
   revokeSession:     (sessionId: string) => api.post(`/api/admin/sessions/${sessionId}/revoke`),
   revokeAllSessions: (userId: number) => api.post(`/api/admin/users/${userId}/sessions/revoke-all`),
   cleanupSessions:   () => api.post('/api/admin/sessions/cleanup'),
-  audit:             (params?: { limit?: number; offset?: number; search?: string; actions?: string; success?: boolean }) =>
+  audit:             (params?: { limit?: number; offset?: number }) =>
     api.get<{ total: number; logs: AuditEntry[] }>('/api/admin/audit', { params }),
   system:            () => api.get('/api/admin/system'),
   pricing:           () => api.get('/api/admin/pricing'),
 }
 
 export const systemApi = {
-  health:       () => api.get('/api/system/health'),
+  health:       () => api.get('/api/health'),
   disk:         () => api.get('/api/system/disk'),
   dockerPurge:  (totp_code: string) => api.post('/api/system/docker-purge', { totp_code }),
   modeStatus:   () => api.get<ModeStatus>('/api/mode/status'),
@@ -99,13 +94,13 @@ export const systemApi = {
 
 export const performanceApi = {
   stats:           () => api.get('/api/stats'),
-  backtest:        (coin: string) => api.post<BacktestResult>(`/api/backtest/${coin}`),
+  backtest:        (coin: string) => api.get<BacktestResult>(`/api/backtest/${coin}`),
   backtestHistory: () => api.get('/api/backtest/history/all'),
   factorAnalysis:  () => api.get<FactorAnalysis>('/api/analysis/factors'),
 }
 
 export const mlApi = {
-  status:                () => api.get('/api/system/health'),
+  status:                () => api.get('/api/health'),
   adaptationHistory:     (limit = 20) => api.get(`/api/admin/adaptations/history?limit=${limit}`),
   pendingRecommendations:() => api.get('/api/admin/adaptations/pending'),
   approveRecommendation: (id: number) => api.post(`/api/admin/adaptations/${id}/approve`),
@@ -121,12 +116,7 @@ export const mlApi = {
 
 export const engineApi = {
   health:              () => api.get<EngineHealth>('/api/engine/health'),
-  rejections:          () => api.get<{
-    total: RejectionStats
-    daily: Array<{ date: string; total: number; by_reason: Record<string, number> }>
-    weekly: { week: string; total: number; by_reason: Record<string, { count: number; pct: number }> }
-    top: unknown[]
-  }>('/api/engine/rejections'),
+  rejections:          () => api.get<{ total: RejectionStats; daily: unknown[]; weekly: unknown; top: unknown[] }>('/api/engine/rejections'),
   rejectionsByCoin:    (coin: string) => api.get(`/api/engine/rejections/coin/${coin}`),
   traces:              (limit = 50) => api.get<{ traces: DecisionTrace[]; summary: Record<string, unknown>; count: number }>(`/api/engine/traces?limit=${limit}`),
   tracesByCoin:        (coin: string) => api.get<{ coin: string; latest: DecisionTrace | null; traces: DecisionTrace[]; count: number }>(`/api/engine/traces/${coin}`),

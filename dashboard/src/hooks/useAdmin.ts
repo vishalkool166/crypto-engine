@@ -5,10 +5,6 @@ import { useDemoStore } from '@/demo/demoStore'
 import { mockCoins, mockAdminStats } from '@/demo/mockData'
 import { toast } from 'sonner'
 
-async function runUnlessDemo(isDemoMode: boolean, request: () => Promise<unknown>): Promise<void> {
-  if (!isDemoMode) await request()
-}
-
 export function useAdminStats() {
   const { isAdmin }    = useAuthStore()
   const { isDemoMode } = useDemoStore()
@@ -36,13 +32,13 @@ export function useAdminOverview() {
   })
 }
 
-export function useUsers(params?: { limit?: number; offset?: number; tier?: string; search?: string }) {
-  const { limit = 20, offset = 0, tier, search = '' } = params ?? {}
+export function useUsers(params?: { limit?: number; offset?: number; tier?: string }) {
+  const { limit = 20, offset = 0, tier } = params ?? {}
   const { isDemoMode }                   = useDemoStore()
 
   return useQuery({
-    queryKey:        ['admin-users', tier, limit, offset, search],
-    queryFn:         () => adminApi.users({ limit, offset, tier: tier !== 'all' ? tier : undefined, search }).then(r => r.data),
+    queryKey:        ['admin-users', tier, offset],
+    queryFn:         () => adminApi.users({ limit, offset, tier: tier !== 'all' ? tier : undefined }).then(r => r.data),
     enabled:         !isDemoMode,
     refetchInterval: !isDemoMode ? 30_000 : false,
     staleTime:       15_000,
@@ -67,7 +63,7 @@ export function useUpdateTier() {
 
   return useMutation({
     mutationFn: ({ id, tier }: { id: number; tier: string }) =>
-      runUnlessDemo(isDemoMode, () => adminApi.updateTier(id, tier)),
+      isDemoMode ? Promise.resolve() : adminApi.updateTier(id, tier).then(() => undefined),
     onSuccess: (_, { id }) => {
       if (isDemoMode) { toast.success('Tier updated (demo)'); return }
       toast.success('Tier updated')
@@ -83,7 +79,8 @@ export function useDeactivateUser() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: number) => runUnlessDemo(isDemoMode, () => adminApi.deactivate(id)),
+    mutationFn: (id: number) =>
+      isDemoMode ? Promise.resolve() : adminApi.deactivate(id).then(() => undefined),
     onSuccess: (_, id) => {
       if (isDemoMode) { toast.success('User deactivated (demo)'); return }
       toast.success('User deactivated')
@@ -99,7 +96,8 @@ export function useReactivateUser() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: number) => runUnlessDemo(isDemoMode, () => adminApi.reactivate(id)),
+    mutationFn: (id: number) =>
+      isDemoMode ? Promise.resolve() : adminApi.reactivate(id).then(() => undefined),
     onSuccess: (_, id) => {
       if (isDemoMode) { toast.success('User reactivated (demo)'); return }
       toast.success('User reactivated')
@@ -115,7 +113,8 @@ export function useRevokeSession() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (sessionId: string) => runUnlessDemo(isDemoMode, () => adminApi.revokeSession(sessionId)),
+    mutationFn: (sessionId: string) =>
+      isDemoMode ? Promise.resolve() : adminApi.revokeSession(sessionId).then(() => undefined),
     onSuccess: () => {
       if (isDemoMode) { toast.success('Session revoked (demo)'); return }
       toast.success('Session revoked')
@@ -130,7 +129,8 @@ export function useRevokeAllSessions() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (userId: number) => runUnlessDemo(isDemoMode, () => adminApi.revokeAllSessions(userId)),
+    mutationFn: (userId: number) =>
+      isDemoMode ? Promise.resolve() : adminApi.revokeAllSessions(userId).then(() => undefined),
     onSuccess: () => {
       if (isDemoMode) { toast.success('All sessions revoked (demo)'); return }
       toast.success('All sessions revoked')
@@ -140,12 +140,12 @@ export function useRevokeAllSessions() {
   })
 }
 
-export function useAuditLog(limit = 50, offset = 0, filters?: { search?: string; actions?: string; success?: boolean }) {
+export function useAuditLog(limit = 50, offset = 0) {
   const { isDemoMode } = useDemoStore()
 
   return useQuery({
-    queryKey:        ['audit-log', limit, offset, filters?.search, filters?.actions, filters?.success],
-    queryFn:         () => adminApi.audit({ limit, offset, ...filters }).then(r => r.data),
+    queryKey:        ['audit-log', limit, offset],
+    queryFn:         () => adminApi.audit({ limit, offset }).then(r => r.data),
     enabled:         !isDemoMode,
     refetchInterval: !isDemoMode ? 30_000 : false,
     staleTime:       15_000,
@@ -185,7 +185,7 @@ export function useToggleMode() {
 
   return useMutation({
     mutationFn: ({ mode, totp_code }: { mode: string; totp_code: string }) =>
-      runUnlessDemo(isDemoMode, () => systemApi.modeToggle(mode, totp_code)),
+      isDemoMode ? Promise.resolve() : systemApi.modeToggle(mode, totp_code).then(() => undefined),
     onSuccess: (_, { mode }) => {
       if (isDemoMode) { toast.success(`Switched to ${mode} mode (demo)`); return }
       toast.success(`Switched to ${mode} mode`)
@@ -201,14 +201,11 @@ export function useDockerPurge() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: async (totp_code: string) => {
-      if (isDemoMode) return { freed_mb: 0 }
-      const response = await systemApi.dockerPurge(totp_code)
-      return response.data as { freed_mb: number }
-    },
-    onSuccess: (data) => {
+    mutationFn: (totp_code: string) =>
+      isDemoMode ? Promise.resolve(0) : systemApi.dockerPurge(totp_code).then(r => r.data.freed_mb),
+    onSuccess: (freedMb) => {
       if (isDemoMode) { toast.success('Purge complete (demo)'); return }
-      toast.success(`Purge complete — freed ${data.freed_mb}MB`)
+      toast.success(`Purge complete — freed ${freedMb}MB`)
       queryClient.invalidateQueries({ queryKey: ['health'] })
     },
     onError: () => { throw new Error('Invalid TOTP code') },
@@ -220,7 +217,8 @@ export function useSyncOutcomes() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: () => runUnlessDemo(isDemoMode, () => systemApi.syncOutcomes()),
+    mutationFn: () =>
+      isDemoMode ? Promise.resolve() : systemApi.syncOutcomes().then(() => undefined),
     onSuccess: () => {
       if (isDemoMode) { toast.success('Outcomes synced (demo)'); return }
       toast.success('Outcomes synced')
@@ -250,7 +248,7 @@ export function useToggleCoin() {
 
   return useMutation({
     mutationFn: ({ coin, enabled }: { coin: string; enabled: boolean }) =>
-      runUnlessDemo(isDemoMode, () => coinsApi.toggle(coin, enabled)),
+      isDemoMode ? Promise.resolve() : coinsApi.toggle(coin, enabled).then(() => undefined),
     onSuccess: (_, { coin, enabled }) => {
       toast.success(`${coin} ${enabled ? 'enabled' : 'disabled'}${isDemoMode ? ' (demo)' : ''}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })
@@ -264,7 +262,8 @@ export function useRemoveCoin() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (coin: string) => runUnlessDemo(isDemoMode, () => coinsApi.remove(coin)),
+    mutationFn: (coin: string) =>
+      isDemoMode ? Promise.resolve() : coinsApi.remove(coin).then(() => undefined),
     onSuccess: (_, coin) => {
       toast.success(`${coin} removed${isDemoMode ? ' (demo)' : ''}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })
@@ -278,7 +277,8 @@ export function useAddCoin() {
   const queryClient     = useQueryClient()
 
   return useMutation({
-    mutationFn: (coin: string) => runUnlessDemo(isDemoMode, () => coinsApi.add(coin)),
+    mutationFn: (coin: string) =>
+      isDemoMode ? Promise.resolve() : coinsApi.add(coin).then(() => undefined),
     onSuccess: (_, coin) => {
       toast.success(`${coin} added${isDemoMode ? ' (demo)' : ' — backfill started'}`)
       if (!isDemoMode) queryClient.invalidateQueries({ queryKey: ['coins'] })

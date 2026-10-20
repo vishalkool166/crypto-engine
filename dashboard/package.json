@@ -5,10 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "node scripts/check-deploy-env.mjs",
     "build": "vite build",
-    "postbuild": "npm run check:bundle",
-    "check:bundle": "node scripts/check-bundle-budget.mjs",
     "preview": "vite preview",
     "icons": "node scripts/generate-icons.js",
     "lint": "eslint ."

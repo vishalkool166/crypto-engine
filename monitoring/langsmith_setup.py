@@ -21,7 +21,7 @@ def start_langsmith() -> bool:
     try:
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
         os.environ["LANGCHAIN_API_KEY"]    = api_key
-        os.environ["LANGCHAIN_PROJECT"]    = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
+        os.environ["LANGCHAIN_PROJECT"]    = os.getenv("LANGCHAIN_PROJECT", "signal-engine")
         os.environ["LANGCHAIN_ENDPOINT"]   = "https://api.smith.langchain.com"
 
         from langsmith import Client
@@ -43,12 +43,12 @@ def is_langsmith_enabled() -> bool:
 
 
 def get_langsmith_url() -> str:
-    project = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
+    project = os.getenv("LANGCHAIN_PROJECT", "signal-engine")
     return f"https://smith.langchain.com/projects/{project}"
 
 
 def get_langsmith_status() -> dict:
-    project = os.getenv("LANGCHAIN_PROJECT", "signal-engine-v5")
+    project = os.getenv("LANGCHAIN_PROJECT", "signal-engine")
     api_key = os.getenv("LANGCHAIN_API_KEY", "")
     return {
         "enabled":     _langsmith_enabled,

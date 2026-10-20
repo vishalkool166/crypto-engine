@@ -63,28 +63,15 @@ async def trades_profit(request: Request):
 
 
 @router.get("/trades/history")
-async def trades_history(request: Request, limit: int = 20, offset: int = 0,
-                         outcome: str | None = None, grade: str | None = None,
-                         coin: str | None = None):
+async def trades_history(request: Request, limit: int = 20, offset: int = 0):
     _auth(request)
-    if not 1 <= limit <= 100 or not 0 <= offset <= 1_000_000:
-        raise HTTPException(422, 'Pagination out of range')
-    if outcome and outcome not in ('all', 'win', 'loss', 'timeout', 'expired'):
-        raise HTTPException(422, 'Invalid outcome filter')
-    if grade and grade not in ('all', 'A+', 'A', 'B'):
-        raise HTTPException(422, 'Invalid grade filter')
-    if coin and (len(coin) > 24 or not coin.isalnum()):
-        raise HTTPException(422, 'Invalid coin filter')
     try:
-        from trade.monitor import get_trade_history, count_trade_history
-        filters = dict(outcome=outcome, grade=grade, coin=coin, closed_only=True)
-        trades = get_trade_history(limit=limit, offset=offset, **filters)
-        total = count_trade_history(**filters)
-        return JSONResponse(content={"trades": trades, "trades_count": total,
-                                     "limit": limit, "offset": offset})
+        from trade.monitor import get_trade_history
+        trades = get_trade_history(limit=limit, offset=offset)
+        return JSONResponse(content={"trades": trades, "trades_count": len(trades)})
     except Exception as e:
-        log.error("trades_history error: %s", type(e).__name__)
-        raise HTTPException(500, "Trade history unavailable")
+        log.error("trades_history error: %s", e)
+        raise HTTPException(500, str(e))
 
 
 @router.get("/trades/daily")
@@ -171,35 +158,26 @@ async def trades_close(request: Request):
         body      = await request.json()
         trade_id  = body.get("trade_id")
         totp_code = body.get("totp_code", "")
+        coin      = body.get("coin", "")
+        direction = body.get("direction", "")
 
-        if not isinstance(trade_id, int) or isinstance(trade_id, bool) or trade_id < 1:
-            raise HTTPException(400, "Valid trade_id required")
+        if not trade_id:
+            raise HTTPException(400, "trade_id required")
 
         if not verify_totp(totp_code):
-            from auth import audit
-            audit("manual_trade_close", "dashboard", f"trade_id:{trade_id}; invalid TOTP",
-                  ip=request.client.host if request.client else "", success=False)
             return JSONResponse(
                 status_code = 401,
                 content     = {"success": False, "reason": "Invalid TOTP code"}
             )
 
-        from database import get_session, Trade as TradeModel
-        with get_session() as db:
-            trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
-            if not trade:
-                from auth import audit
-                audit("manual_trade_close", "dashboard", f"trade_id:{trade_id}; not found",
-                      ip=request.client.host if request.client else "", success=False)
-                raise HTTPException(404, "Trade not found")
-            if not trade.is_active or trade.state != "open":
-                from auth import audit
-                audit("manual_trade_close", "dashboard", f"trade_id:{trade_id}; not active",
-                      ip=request.client.host if request.client else "", success=False)
-                raise HTTPException(409, "Trade is not an active open position")
-            # The durable trade row is authoritative. Ignore caller-provided
-            # coin/direction fields so an ID cannot be paired with another symbol.
-            coin, direction = trade.coin, trade.direction
+        if not coin or not direction:
+            from database import get_session, Trade as TradeModel
+            with get_session() as db:
+                trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+                if not trade:
+                    raise HTTPException(404, "Trade not found")
+                coin      = trade.coin
+                direction = trade.direction
 
         from trade.executor import close_position
         result = await close_position(
@@ -208,21 +186,11 @@ async def trades_close(request: Request):
             trade_id  = trade_id,
             reason    = "manual_close",
         )
-        from auth import audit
-        succeeded = bool(result.get("success")) if isinstance(result, dict) else False
-        audit("manual_trade_close", "dashboard", f"trade_id:{trade_id}; {coin} {direction}",
-              ip=request.client.host if request.client else "", success=succeeded)
         return JSONResponse(content=result)
 
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            from auth import audit
-            audit("manual_trade_close", "dashboard", f"request error:{type(e).__name__}",
-                  ip=request.client.host if request.client else "", success=False)
-        except Exception:
-            pass
         log.error("trades_close error: %s", e)
         raise HTTPException(500, str(e))
 
@@ -231,15 +199,8 @@ async def trades_close(request: Request):
 async def trades_start(request: Request):
     _auth(request)
     try:
-        body = await request.json()
-        if not verify_totp(body.get("totp_code", "")):
-            from auth import audit
-            audit("scanner_start", "dashboard", "invalid TOTP", ip=request.client.host if request.client else "", success=False)
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid TOTP code"})
         from alerts.scanner import scan_all_coins
         asyncio.create_task(scan_all_coins())
-        from auth import audit
-        audit("scanner_start", "dashboard", "scanner started", ip=request.client.host if request.client else "")
         return JSONResponse(content={"status": "ok", "message": "Scanner started"})
     except Exception as e:
         log.error("trades_start error: %s", e)
@@ -250,76 +211,12 @@ async def trades_start(request: Request):
 async def trades_stop(request: Request):
     _auth(request)
     try:
-        body = await request.json()
-        if not verify_totp(body.get("totp_code", "")):
-            from auth import audit
-            audit("monitor_stop", "dashboard", "invalid TOTP", ip=request.client.host if request.client else "", success=False)
-            return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid TOTP code"})
         from trade.monitor import stop_monitor
         stop_monitor()
-        from auth import audit
-        audit("monitor_stop", "dashboard", "monitor stopped", ip=request.client.host if request.client else "")
         return JSONResponse(content={"status": "ok", "message": "Monitor stopped"})
     except Exception as e:
         log.error("trades_stop error: %s", e)
         raise HTTPException(500, str(e))
-
-
-@router.post("/trades/kill-switch")
-async def trades_kill_switch(request: Request):
-    """Persist an entry-only halt; reset is gated by fresh exchange reconciliation."""
-    _auth(request)
-    body = await request.json()
-    action = body.get("action") if isinstance(body, dict) else None
-    ip = request.client.host if request.client else ""
-
-    if action not in ("halt", "reset"):
-        raise HTTPException(400, "action must be halt or reset")
-    if not verify_totp(body.get("totp_code", "")):
-        from auth import audit
-        audit("entry_kill_switch", "dashboard", f"{action}; invalid TOTP", ip=ip, success=False)
-        return JSONResponse(status_code=401, content={"success": False, "reason": "Invalid TOTP code"})
-
-    try:
-        import runtime_state as rs
-        if action == "halt":
-            state = rs.set_new_exposure_halt(True, str(body.get("reason") or "operator halt"))
-        else:
-            if not rs.get_new_exposure_halt().get("enabled"):
-                raise HTTPException(409, "New-exposure halt is not active")
-            if body.get("confirmation") != "I_HAVE_RECONCILED":
-                raise HTTPException(400, "Explicit reconciliation confirmation required")
-
-            # A reset never relies on a cached UI snapshot. Broker, local trade
-            # state, and durable order intents must all be known and clear.
-            from trade.exchange import get_positions
-            positions = await get_positions()
-            if positions:
-                raise HTTPException(409, "Exchange positions remain open; reconciliation required")
-            from database import get_session, Trade as TradeModel
-            with get_session() as db:
-                unresolved_trades = db.query(TradeModel).filter(
-                    TradeModel.state.in_(("pending", "open", "reconciliation_required"))
-                ).count()
-            if unresolved_trades:
-                raise HTTPException(409, "Local trade state requires reconciliation")
-            from trade.order_journal import unresolved
-            if unresolved():
-                raise HTTPException(409, "Order intents require reconciliation")
-            state = rs.set_new_exposure_halt(False, "operator reset after reconciliation")
-
-        from auth import audit
-        audit("entry_kill_switch", "dashboard", f"{action}; {state['reason']}", ip=ip)
-        return JSONResponse(content={"success": True, "halt": state})
-    except HTTPException as exc:
-        from auth import audit
-        audit("entry_kill_switch", "dashboard", f"{action}; denied:{exc.status_code}", ip=ip, success=False)
-        raise
-    except Exception as exc:
-        from auth import audit
-        audit("entry_kill_switch", "dashboard", f"{action}; error:{type(exc).__name__}", ip=ip, success=False)
-        log.error("trades_kill_switch error: %s", type(exc).__name__)
-        raise HTTPException(503, "Kill-switch state or reconciliation unavailable")
 
 
 @router.get("/trades/ping")
@@ -415,8 +312,14 @@ async def trades_mode(request: Request):
                 content     = {"success": False, "reason": "Binance live API keys not configured"}
             )
 
-        from trade.safety import apply_trading_mode
-        await apply_trading_mode(new_mode)
+        from config import _ensure
+        from trade.exchange import close_exchange
+
+        _ensure("TRADING_MODE", new_mode)
+        cfg.TRADING_MODE  = new_mode
+        cfg.PAPER_TRADING = new_mode != "live"
+
+        await close_exchange()
 
         from auth import audit
         audit("mode_toggle", "dashboard", f"mode:{new_mode}", ip=request.client.host if request.client else "")

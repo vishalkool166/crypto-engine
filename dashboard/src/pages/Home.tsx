@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
-import { DollarSign, Target, TrendingUp, TrendingDown, RotateCcw, Zap, Radio, Lock } from 'lucide-react'
+import { DollarSign, Target, TrendingUp, TrendingDown, Users, RotateCcw, Zap, Radio, Lock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatCurrency, formatPercent } from '@/lib/utils'
+import { formatCurrency, formatPercent, formatNumber } from '@/lib/utils'
 import { useSignals } from '@/hooks/useSignals'
 import { useTradeSummary } from '@/hooks/useTrades'
-import { useSyncOutcomes } from '@/hooks/useAdmin'
+import { useAdminStats, useSyncOutcomes } from '@/hooks/useAdmin'
 import { useSystemStatus, useScanStatus } from '@/hooks/useHealth'
 import { useWsStore } from '@/stores/wsStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -15,6 +15,7 @@ import { useSignalAccess } from '@/hooks/useSignalAccess'
 import { signalsApi } from '@/lib/endpoints'
 import KPICard from '@/components/ui/KPICard'
 import GradeTag from '@/components/ui/GradeTag'
+import EngineHealthCard from '@/components/engine/EngineHealthCard'
 import SignalCountdown from '@/components/ui/SignalCountdown'
 import { getDirectionConfig } from '@/lib/tokens'
 import { toast } from 'sonner'
@@ -26,10 +27,11 @@ export default function Home() {
   const { isAdmin, hasFeature }        = useAuthStore()
   const { isFree, canSeeSignal }       = useSignalAccess()
 
-  const { live, queue, isLoading: signalsLoading } = useSignals()
+  const { live, watching, queue, isLoading: signalsLoading } = useSignals()
   const { totalPnl, winRate, tradeCount, freeBalance, openCount } = useTradeSummary()
-  const { alerts }                                             = useSystemStatus()
-  const { countdown, watchingCount, inTradeCount } = useScanStatus()
+  const { data: adminStats }                                   = useAdminStats()
+  const { alerts, mlProgress }                                 = useSystemStatus()
+  const { countdown, watchingCount, inTradeCount, cooldownCount } = useScanStatus()
   const syncMutation                                           = useSyncOutcomes()
   const { summary }                                            = useWsStore()
 
@@ -60,12 +62,11 @@ export default function Home() {
   const getPath = (path: string) => isDemoMode ? `/demo${path}` : path
 
   return (
-    <div className="mx-auto max-w-[1380px] p-4 md:p-8 space-y-7">
+    <div className="p-4 md:p-6 space-y-6">
 
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground mb-1">Workspace / Overview</div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Market overview</h1>
+          <h1 className="text-base font-semibold text-foreground">Overview</h1>
           <div className="flex items-center gap-2 mt-0.5">
             <span className={cn(
               'h-1.5 w-1.5 rounded-full',
@@ -109,24 +110,25 @@ export default function Home() {
         </div>
       )}
 
-      <div className="rounded-xl border border-border bg-card px-5 py-4 shadow-sm">
-        <div className="grid grid-cols-2 gap-y-4 sm:grid-cols-4 sm:divide-x sm:divide-border">
+      <div className="rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-6 flex-wrap">
           {[
-            { label: 'Markets watching', value: watchingCount },
-            { label: 'Active trades', value: inTradeCount },
-            { label: 'Tracked assets', value: summary?.coins_count ?? 0 },
-            { label: 'Signals today', value: summary?.total_signals ?? 0 },
+            { label: 'Watching',      value: watchingCount,                 color: 'text-[hsl(var(--chart-4))]' },
+            { label: 'In Trade',      value: inTradeCount,                  color: 'text-[hsl(var(--chart-5))]' },
+            { label: 'Cooldown',      value: cooldownCount,                 color: 'text-muted-foreground'       },
+            { label: 'Coins',         value: summary?.coins_count ?? 0,     color: 'text-foreground'             },
+            { label: 'Signals Today', value: summary?.total_signals ?? 0,   color: 'text-foreground'             },
+            { label: 'Closed',        value: summary?.closed_signals ?? 0,  color: 'text-foreground'             },
+            { label: 'Pending',       value: summary?.pending_signals ?? 0, color: 'text-[hsl(var(--chart-4))]' },
           ].map(item => (
-            <div key={item.label} className="sm:px-5 first:pl-0 last:pr-0">
-              <div className="text-[11px] font-medium text-muted-foreground">{item.label}</div>
-              <div className="mt-1 text-xl font-semibold tabular-nums text-foreground">{item.value}</div>
+            <div key={item.label} className="flex items-center gap-2">
+              <span className="label-xs">{item.label}</span>
+              <span className={cn('text-sm font-mono font-semibold', item.color)}>{item.value}</span>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-        <div className="min-w-0">
       <HeroSection
         hasSignal     = {live.length > 0}
         topSignal     = {topSignal}
@@ -139,21 +141,7 @@ export default function Home() {
         onViewSignals = {() => navigate(getPath('/signals'))}
       />
 
-        </div>
-        <div className="min-w-0">
-          <SignalQueue queue={queue} onNavigate={() => navigate(getPath('/signals'))} />
-        </div>
-      </div>
-
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-foreground">Account performance</h2>
-          <p className="text-xs text-muted-foreground mt-1">Available metrics depend on your account plan.</p>
-        </div>
-        <button type="button" onClick={() => navigate(getPath('/performance'))}
-          className="text-xs font-medium text-muted-foreground hover:text-foreground">View analysis →</button>
-      </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         {showPositions ? (
           <KPICard
             title = "Free Balance"
@@ -189,20 +177,35 @@ export default function Home() {
           <LockedKPI title="Total PnL" requiredTier="Pro" />
         )}
 
-        <KPICard
-          title="Watching"
-          value={String(watchingCount)}
-          sub={`${summary?.coins_count ?? 0} assets monitored`}
-          icon={Radio}
+        {isAdmin && !isDemoMode && adminStats ? (
+          <KPICard
+            title = "Total Users"
+            value = {formatNumber(adminStats.users.total)}
+            sub   = {`+${adminStats.users.new_today} today`}
+            icon  = {Users}
+          />
+        ) : (
+          <KPICard
+            title = "Watching"
+            value = {String(watchingCount)}
+            sub   = {`${summary?.coins_count ?? 0} coins monitored`}
+            icon  = {Radio}
+          />
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-2">
+        <SignalQueue
+          queue      = {queue}
+          onNavigate = {() => navigate(getPath('/signals'))}
         />
+        <MLProgress progress={mlProgress} />
       </div>
 
       {isAdmin && !isDemoMode && (
-        <button type="button" onClick={() => navigate('/engine')}
-          className="w-full text-left rounded-xl border border-border bg-card px-5 py-4 hover:bg-muted/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring">
-          <span className="block text-sm font-semibold">Engine operations</span>
-          <span className="mt-1 block text-xs text-muted-foreground">Diagnostics, ML progression and system controls live in the administration workspace. →</span>
-        </button>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <EngineHealthCard />
+        </div>
       )}
 
     </div>
@@ -452,6 +455,43 @@ function SignalQueue({ queue, onNavigate }: { queue: QueueItem[]; onNavigate: ()
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+function MLProgress({ progress }: { progress: { closed: number; required: number; pct: number; message: string } }) {
+  return (
+    <div className="rounded-lg border border-border bg-card overflow-hidden">
+      <div className="border-b border-border px-6 py-4">
+        <p className="text-sm font-semibold text-foreground">ML Gate Progress</p>
+      </div>
+      <div className="p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-foreground font-mono">{progress.closed} / {progress.required}</span>
+          <span className={cn(
+            'text-xs font-medium px-2 py-0.5 rounded-md border',
+            progress.pct >= 100
+              ? 'border-[hsl(var(--chart-1)/0.2)] bg-[hsl(var(--chart-1)/0.08)] text-[hsl(var(--chart-1))]'
+              : 'border-[hsl(var(--chart-4)/0.2)] bg-[hsl(var(--chart-4)/0.08)] text-[hsl(var(--chart-4))]'
+          )}>
+            {progress.pct >= 100 ? 'Active' : `${progress.pct}%`}
+          </span>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+          <motion.div
+            initial    = {{ width: 0 }}
+            animate    = {{ width: `${progress.pct}%` }}
+            transition = {{ duration: 0.8, ease: 'easeOut' }}
+            className  = {cn('h-full rounded-full', progress.pct >= 100 ? 'bg-[hsl(var(--chart-1))]' : 'bg-[hsl(var(--chart-4))]')}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">{progress.message}</p>
+        <div className="rounded-md border border-border bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            ML activates after {progress.required} closed trades. It learns which setups win and filters low-probability signals automatically.
+          </p>
+        </div>
+      </div>
     </div>
   )
 }

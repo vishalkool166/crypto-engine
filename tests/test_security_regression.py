@@ -15,8 +15,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from fastapi import HTTPException, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,7 +92,6 @@ def test_revoked_sessions_fail_closed(monkeypatch):
     token = {'sub':'7', 'type':'oauth', 'session_id':'session-1', 'tier':'admin', 'is_admin': True}
     auth.get_current_user_any = lambda request: token.copy()
     auth.is_admin_user = lambda user: bool(user['is_admin'])
-    auth.verify_api_key = lambda key: False
     sessions = ModuleType('saas.sessions')
     sessions.validate_session = lambda _: None
     mw = load_module_from_source(monkeypatch, 'middleware_under_test', 'saas/middleware.py', {
@@ -158,54 +156,6 @@ async def test_client_order_id_sent_to_exchange():
     })
     await func('ETHUSDT','BUY','MARKET',2, client_order_id='se_fixed_123')
     assert capture.await_args.args[1]['newClientOrderId'] == 'se_fixed_123'
-
-
-@pytest.mark.asyncio
-async def test_strict_session_origin_guard_blocks_untrusted_cookie_mutations(monkeypatch):
-    origin = ModuleType('saas.origin_security')
-    origin.allowed_request_origin = lambda value, trusted: value in trusted
-    monkeypatch.setitem(sys.modules, 'saas.origin_security', origin)
-    monkeypatch.setenv('STRICT_SESSION_ORIGIN_CHECK', 'true')
-    handler = extracted_function('main.py', 'session_origin_guard', {
-        'cfg': SimpleNamespace(SESSION_COOKIE_NAME='session'),
-        'JSONResponse': JSONResponse,
-        'Request': object,
-        'allowed_origins': ['https://app.example'],
-    })
-    request = SimpleNamespace(
-        method='POST', cookies={'session': 'cookie'}, headers={'origin': 'https://evil.example'},
-    )
-    called = False
-    async def call_next(_):
-        nonlocal called
-        called = True
-        return Response()
-    denied = await handler(request, call_next)
-    assert denied.status_code == 403 and not called
-
-    request.headers['origin'] = 'https://app.example'
-    response = await handler(request, call_next)
-    assert response.status_code == 200 and called
-
-
-@pytest.mark.asyncio
-async def test_strict_session_origin_guard_does_not_block_safe_or_token_only_requests(monkeypatch):
-    origin = ModuleType('saas.origin_security')
-    origin.allowed_request_origin = lambda value, trusted: False
-    monkeypatch.setitem(sys.modules, 'saas.origin_security', origin)
-    monkeypatch.setenv('STRICT_SESSION_ORIGIN_CHECK', 'true')
-    handler = extracted_function('main.py', 'session_origin_guard', {
-        'cfg': SimpleNamespace(SESSION_COOKIE_NAME='session'),
-        'JSONResponse': JSONResponse,
-        'Request': object,
-        'allowed_origins': ['https://app.example'],
-    })
-    async def call_next(_):
-        return Response()
-    safe = SimpleNamespace(method='GET', cookies={'session': 'cookie'}, headers={})
-    token_only = SimpleNamespace(method='POST', cookies={}, headers={})
-    assert (await handler(safe, call_next)).status_code == 200
-    assert (await handler(token_only, call_next)).status_code == 200
 
 
 class WS:

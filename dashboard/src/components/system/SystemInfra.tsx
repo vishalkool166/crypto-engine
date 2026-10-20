@@ -34,7 +34,8 @@ interface WsStreams {
 interface Props {
   system:     SystemData | null
   wsStreams:  WsStreams
-  redisConnected: boolean | null
+  wsConnected:boolean
+  redisConnected: boolean
   engineOk:   boolean
   mlEnabled:  boolean
   mlProgress: { closed: number; required: number; pct: number; message: string }
@@ -79,7 +80,7 @@ function ServiceRow({
 }: {
   label:         string
   description:   string
-  ok:            boolean | null | undefined
+  ok:            boolean | undefined
   neutral?:      boolean
   neutralLabel?: string
 }) {
@@ -92,13 +93,13 @@ function ServiceRow({
       <div className="flex items-center gap-2">
         <span className={cn(
           'h-1.5 w-1.5 rounded-full',
-          neutral ? 'bg-[hsl(var(--chart-4))]' : ok == null ? 'bg-muted-foreground/50' : ok ? 'bg-[hsl(var(--chart-1))]' : 'bg-[hsl(var(--chart-2))]'
+          neutral ? 'bg-[hsl(var(--chart-4))]' : ok ? 'bg-[hsl(var(--chart-1))]' : 'bg-[hsl(var(--chart-2))]'
         )} />
         <span className={cn(
           'text-xs font-medium',
-          neutral ? 'text-[hsl(var(--chart-4))]' : ok == null ? 'text-muted-foreground' : ok ? 'text-[hsl(var(--chart-1))]' : 'text-[hsl(var(--chart-2))]'
+          neutral ? 'text-[hsl(var(--chart-4))]' : ok ? 'text-[hsl(var(--chart-1))]' : 'text-[hsl(var(--chart-2))]'
         )}>
-          {neutral ? neutralLabel : ok == null ? 'Unknown' : ok ? 'Operational' : 'Down'}
+          {neutral ? neutralLabel : ok ? 'Operational' : 'Down'}
         </span>
       </div>
     </div>
@@ -125,7 +126,7 @@ function WsRow({ label, description, ok }: { label: string; description: string;
   )
 }
 
-export default function SystemInfra({ system, wsStreams, redisConnected, engineOk, mlEnabled, mlProgress }: Props) {
+export default function SystemInfra({ system, wsStreams, wsConnected, redisConnected, engineOk, mlEnabled, mlProgress }: Props) {
   return (
     <div className="space-y-4">
       {system && (

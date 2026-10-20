@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatCurrency, formatPercent } from '@/lib/utils'
+import { pnlColor } from '@/lib/tokens'
 import {
-  useTradeSummary, useDailyPnl,
+  useTradeSummary, useTradeHistory, useDailyPnl,
   useCoinPerformance, useWsStatusTrades, useForceSell,
 } from '@/hooks/useTrades'
 import { useIndianStatus } from '@/hooks/useIndian'
-import { useTradePage } from '@/hooks/useTradePage'
+import { useFilteredTrades } from '@/hooks/useFilteredTrades'
 import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 import { useNavigate } from 'react-router-dom'
@@ -117,6 +118,7 @@ export default function Trades() {
   const queryClient                       = useQueryClient()
   const { hasFeature, isAdmin }           = useAuthStore()
   const { isDemoMode }                    = useDemoStore()
+  const navigate                          = useNavigate()
   const [totpOpen,      setTotpOpen]      = useState(false)
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
   const [drawerTrade,   setDrawerTrade]   = useState<Trade | null>(null)
@@ -124,21 +126,25 @@ export default function Trades() {
   const showPositions = hasFeature('show_positions') || isAdmin
 
   const {
-    trades, isLoading,
+    trades, profit, balance, isLoading,
     freeBalance, totalBalance, totalPnl, winRate, tradeCount,
-    openCount,
+    totalUnrealized, openCount,
   } = useTradeSummary()
 
   const { data: indianStatus }            = useIndianStatus()
+  const { data: histPage }                = useTradeHistory(200, 0)
   const { data: daily }                   = useDailyPnl(7)
   const { data: performance }             = useCoinPerformance()
   const { data: wsStatus }                = useWsStatusTrades()
   const forceSell                         = useForceSell()
 
+  const allHistory = histPage?.trades ?? []
+
   const {
-    filters, setFilter, page, setPage,
-    paginated, total, pageSize, isHistoryLoading, historyError,
-  } = useTradePage()
+    filters, setFilter,
+    page, setPage,
+    paginated, total, pageSize,
+  } = useFilteredTrades(allHistory)
 
   const wsConnected = (wsStatus?.mark_price_connected && wsStatus?.user_data_connected) ?? false
 
@@ -315,14 +321,10 @@ export default function Trades() {
               />
             </div>
 
-            {isHistoryLoading ? (
-              <div className="py-10 text-center text-sm text-muted-foreground" role="status">Loading trade history…</div>
-            ) : historyError ? (
-              <div className="py-10 text-center text-sm text-destructive" role="alert">Trade history is unavailable. Try refreshing the page.</div>
-            ) : paginated.length === 0 ? (
+            {paginated.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center px-6">
-                <p className="text-sm font-medium text-foreground">No matching closed trades</p>
-                <p className="text-xs text-muted-foreground mt-1">Change filters to see other completed trades.</p>
+                <p className="text-sm font-medium text-foreground">No closed trades</p>
+                <p className="text-xs text-muted-foreground mt-1">Completed trades appear here</p>
               </div>
             ) : (
               <>

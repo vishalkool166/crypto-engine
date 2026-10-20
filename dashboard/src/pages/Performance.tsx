@@ -6,10 +6,11 @@ import { formatCurrency, formatPercent } from '@/lib/utils'
 import { pnlColor, scoreToColor } from '@/lib/tokens'
 import {
   usePerformanceSummary, useFactorAnalysis,
-  useRunBacktest,
+  useSignalHistory, useRunBacktest,
   usePerformanceByVersion, usePerformanceByRegime,
 } from '@/hooks/usePerformance'
 import { useAuthStore } from '@/stores/authStore'
+import { useDemoStore } from '@/demo/demoStore'
 import KPICard from '@/components/ui/KPICard'
 import EmptyState from '@/components/ui/EmptyState'
 import { LockedSection } from '@/components/ui/TierGate'
@@ -18,7 +19,7 @@ import EquityCurve from '@/components/performance/EquityCurve'
 import GradeBreakdown from '@/components/performance/GradeBreakdown'
 import SignalHistoryTable from '@/components/performance/SignalHistoryTable'
 import {
-  PieChart, Pie, Cell, ResponsiveContainer,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from 'recharts'
 
 const ACTION_STYLES: Record<string, { text: string; bg: string; border: string }> = {
@@ -29,6 +30,7 @@ const ACTION_STYLES: Record<string, { text: string; bg: string; border: string }
 
 export default function Performance() {
   const { hasFeature, isAdmin }         = useAuthStore()
+  const { isDemoMode }                  = useDemoStore()
   const [backtestCoin, setBacktestCoin] = useState('')
   const [runCoin,      setRunCoin]      = useState<string | null>(null)
 
@@ -38,6 +40,7 @@ export default function Performance() {
 
   const { perf, isLoading, equityCurve, gradeStats } = usePerformanceSummary()
   const { data: factors }                             = useFactorAnalysis()
+  const { data: history, isLoading: histLoading }     = useSignalHistory({ limit: 500 })
   const { data: btResult, isLoading: btLoading }      = useRunBacktest(runCoin)
   const { data: versionPerf }                         = usePerformanceByVersion()
   const { data: regimePerf }                          = usePerformanceByRegime()
@@ -385,7 +388,7 @@ export default function Performance() {
         />
       )}
 
-      <SignalHistoryTable />
+      <SignalHistoryTable signals={history ?? []} isLoading={histLoading} />
 
     </div>
   )

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, X, ChevronRight, UserCheck, UserX, Monitor, Smartphone, TrendingUp } from 'lucide-react'
+import { Search, X, ChevronRight, UserCheck, UserX, Monitor, Smartphone, Clock, TrendingUp } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   formatTimeAgo, formatDateTime, truncate,
@@ -11,12 +11,11 @@ import {
   useRevokeSession, useRevokeAllSessions,
 } from '@/hooks/useAdmin'
 import { useQuery } from '@tanstack/react-query'
-import api from '@/lib/api'
+import { adminApi } from '@/lib/endpoints'
 import EmptyState from '@/components/ui/EmptyState'
 import { PageSkeleton } from '@/components/ui/LoadingSkeleton'
 import { getTierConfig } from '@/lib/tokens'
 import { Users } from 'lucide-react'
-import Pagination from '@/components/ui/Pagination'
 import type { AdminUser, Tier, UserSession } from '@/types'
 
 const TIERS: Tier[] = ['free', 'pro', 'elite', 'admin']
@@ -57,13 +56,25 @@ interface DemoStats {
   recent:            DemoVisit[]
 }
 
+function useDemoStats() {
+  return useQuery({
+    queryKey:        ['demo-stats'],
+    queryFn:         () => adminApi.pricing().then(() => {
+      return fetch('/api/admin/demo/stats', { credentials: 'include' })
+        .then(r => r.json()) as Promise<DemoStats>
+    }),
+    refetchInterval: 60_000,
+    staleTime:       30_000,
+  })
+}
+
 function useDemoStatsQuery() {
   return useQuery<DemoStats>({
     queryKey:        ['demo-stats'],
     queryFn:         async () => {
-      // Use configured AWS API origin when the dashboard runs on Cloudflare Pages.
-      const res = await api.get<DemoStats>('/api/admin/demo/stats')
-      return res.data
+      const res = await fetch('/api/admin/demo/stats', { credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to fetch demo stats')
+      return res.json()
     },
     refetchInterval: 60_000,
     staleTime:       30_000,
@@ -72,11 +83,6 @@ function useDemoStatsQuery() {
 
 export default function UsersPage() {
   const [search,       setSearch]       = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300)
-    return () => window.clearTimeout(timer)
-  }, [search])
   const [tierFilter,   setTierFilter]   = useState('all')
   const [page,         setPage]         = useState(0)
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null)
@@ -87,7 +93,6 @@ export default function UsersPage() {
     limit:  LIMIT,
     offset: page * LIMIT,
     tier:   isGuestTab ? undefined : tierFilter,
-    search: debouncedSearch,
   })
   const { data: userDetail } = useUserDetail(selectedUser?.id ?? null)
   const { data: demoStats, isLoading: demoLoading } = useDemoStatsQuery()
@@ -103,8 +108,12 @@ export default function UsersPage() {
   const users: AdminUser[] = data?.users ?? []
   const total              = data?.total ?? 0
 
-  // The server has already filtered the complete user dataset.
-  const filtered = users
+  const filtered = users.filter(u =>
+    search
+      ? u.email.toLowerCase().includes(search.toLowerCase()) ||
+        (u.name ?? '').toLowerCase().includes(search.toLowerCase())
+      : true
+  )
 
   return (
     <div className="flex h-full">
@@ -132,8 +141,8 @@ export default function UsersPage() {
                 <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
                   value       = {search}
-                  onChange    = {e => { setSearch(e.target.value); setPage(0) }}
-                  placeholder = "Search all users by name or email..."
+                  onChange    = {e => setSearch(e.target.value)}
+                  placeholder = "Search by email or name..."
                   className   = "h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-foreground/40 transition-colors"
                 />
                 {search && (
@@ -176,8 +185,8 @@ export default function UsersPage() {
             />
           ) : (
             <>
-              <div className="rounded-lg border border-border bg-card overflow-x-auto">
-                <table className="w-full min-w-[720px]">
+              <div className="rounded-lg border border-border bg-card overflow-hidden">
+                <table className="w-full">
                   <thead className="border-b border-border">
                     <tr>
                       {['User', 'Tier', 'Status', 'Subscription', 'Last Seen', ''].map(h => (
@@ -298,7 +307,29 @@ export default function UsersPage() {
                 </table>
               </div>
 
-              <Pagination page={page} pageSize={LIMIT} total={total} onChange={setPage} />
+              {total > LIMIT && (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {page * LIMIT + 1}–{Math.min((page + 1) * LIMIT, total)} of {total}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick   = {() => setPage(p => Math.max(0, p - 1))}
+                      disabled  = {page === 0}
+                      className = "rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick   = {() => setPage(p => p + 1)}
+                      disabled  = {(page + 1) * LIMIT >= total}
+                      className = "rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
 

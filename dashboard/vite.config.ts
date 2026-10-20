@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg', 'icons/*.png'],
       manifest: {
-        name: 'Signal Engine v5',
+        name: 'Signal Engine',
         short_name: 'Signal Engine',
-        description: 'Automated crypto futures intelligence dashboard',
+        description: 'Crypto market research and signal analysis workspace',
         theme_color: '#0a0a0f',
         background_color: '#0a0a0f',
         display: 'standalone',
@@ -43,8 +43,6 @@ export default defineConfig({
           /^\/ws\//,
           /^\/webhook\//,
         ],
-        // Security: NEVER service-worker-cache authenticated API or broker data.
-        runtimeCaching: [],
       },
       devOptions: {
         enabled: false,
@@ -64,17 +62,17 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: process.env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8000',
+        target: 'https://app.vishalkool.top',
         changeOrigin: true,
         secure: true,
       },
       '/auth': {
-        target: process.env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8000',
+        target: 'https://app.vishalkool.top',
         changeOrigin: true,
         secure: true,
       },
       '/ws': {
-        target: (process.env.VITE_DEV_API_TARGET || 'http://127.0.0.1:8000').replace(/^http/, 'ws'),
+        target: 'wss://app.vishalkool.top',
         changeOrigin: true,
         secure: true,
         ws: true,

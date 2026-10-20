@@ -4,14 +4,16 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Radio, Activity, User,
   MoreHorizontal, X, BarChart3,
-  Settings, Tag, Sparkles,
+  Settings, Tag,
 } from 'lucide-react'
 import Sidebar from '@/components/layout/Sidebar'
 import TopBar from '@/components/layout/TopBar'
 import CommandPalette from '@/components/modals/CommandPalette'
 import DemoBanner from '@/demo/DemoBanner'
 import DemoAuthProvider from '@/demo/DemoAuthProvider'
+import { DemoInit } from '@/pages/Demo'
 import { useUiStore } from '@/stores/uiStore'
+import { useAuthStore } from '@/stores/authStore'
 import { cn } from '@/lib/utils'
 
 const BOTTOM_NAV = [
@@ -23,7 +25,6 @@ const BOTTOM_NAV = [
 
 const MORE_ITEMS = [
   { path: '/demo/performance', label: 'Performance', icon: BarChart3  },
-  { path: '/demo/content',     label: 'Content',     icon: Sparkles   },
   { path: '/demo/pricing',     label: 'Pricing',     icon: Tag        },
   { path: '/demo/settings',    label: 'Settings',    icon: Settings   },
 ]
@@ -47,7 +48,7 @@ export default function DemoLayout() {
     }
     window.addEventListener('keydown', down)
     return () => window.removeEventListener('keydown', down)
-  }, [setCommandPaletteOpen])
+  }, [])
 
   useEffect(() => {
     setMoreOpen(false)
@@ -57,6 +58,7 @@ export default function DemoLayout() {
 
   return (
     <DemoAuthProvider>
+      <DemoInit />
       <div className="flex h-screen w-screen overflow-hidden bg-background flex-col">
         <DemoBanner />
 

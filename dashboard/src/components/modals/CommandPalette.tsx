@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   LayoutDashboard, Radio, Activity, BarChart3,
   Users, Coins, Server, ScrollText, Settings,
-  User, Tag, Search, ArrowRight, Sparkles, TrendingUp,
+  User, Tag, Search, ArrowRight, TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/authStore'
@@ -17,7 +17,6 @@ interface Command {
   action:     () => void
   adminOnly?: boolean
   minTier?:   'free' | 'pro' | 'elite' | 'admin'
-  eliteOnly?: boolean
 }
 
 interface Props {
@@ -29,9 +28,7 @@ export default function CommandPalette({ open, onClose }: Props) {
   const [query,       setQuery]       = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const navigate                      = useNavigate()
-  const { isAdmin, canAccess, hasFeature } = useAuthStore()
-
-  const isElite = hasFeature('api_key_access') || isAdmin
+  const { isAdmin, canAccess } = useAuthStore()
 
   const go = (path: string) => {
     navigate(path)
@@ -44,7 +41,6 @@ export default function CommandPalette({ open, onClose }: Props) {
     { id: 'signals',     label: 'Signals',     description: 'Signal radar',             icon: Radio,           action: () => go('/signals')     },
     { id: 'trades',      label: 'Trades',      description: 'Live positions',           icon: Activity,        action: () => go('/trades'),      minTier: 'pro'   },
     { id: 'performance', label: 'Performance', description: 'Analytics',                icon: BarChart3,       action: () => go('/performance'), minTier: 'pro'   },
-    { id: 'content',     label: 'Content',     description: 'Content generator',        icon: Sparkles,        action: () => go('/content'),     eliteOnly: true  },
     { id: 'india',       label: 'India',       description: 'Indian market ORB signals',    icon: TrendingUp,      action: () => go('/india'),       adminOnly: true  },
     { id: 'users',       label: 'Users',       description: 'User management',          icon: Users,           action: () => go('/users'),       adminOnly: true  },
     { id: 'coins',       label: 'Coins',       description: 'Coin universe',            icon: Coins,           action: () => go('/coins'),       adminOnly: true  },
@@ -57,7 +53,6 @@ export default function CommandPalette({ open, onClose }: Props) {
 
   const visible = ALL.filter(cmd => {
     if (cmd.adminOnly) return isAdmin
-    if (cmd.eliteOnly) return isElite
     if (cmd.minTier)   return canAccess(cmd.minTier)
     return true
   })
@@ -198,3 +193,5 @@ export default function CommandPalette({ open, onClose }: Props) {
     </AnimatePresence>
   )
 }
+
+

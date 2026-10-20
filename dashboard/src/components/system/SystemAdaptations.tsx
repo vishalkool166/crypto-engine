@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion } from 'framer-motion'
 import { TrendingUp, TrendingDown, Check, X, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { formatTimeAgo } from '@/lib/utils'
@@ -6,10 +7,11 @@ import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import TotpModal from '@/components/modals/TotpModal'
 import {
   useAdaptationHistory, usePendingRecommendations,
-  useVersionHistory,
+  useActiveCheckpoints, useVersionHistory,
   useApproveRecommendation, useRejectRecommendation,
   useManualRollback, useCurrentParameters,
 } from '@/hooks/useAdaptations'
+import { useAuthStore } from '@/stores/authStore'
 import { useDemoStore } from '@/demo/demoStore'
 
 const CONFIDENCE_STYLES: Record<string, { text: string; bg: string; border: string }> = {

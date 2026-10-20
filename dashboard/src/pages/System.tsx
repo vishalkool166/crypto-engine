@@ -11,6 +11,7 @@ import SystemML from '@/components/system/SystemML'
 import SystemAdaptations from '@/components/system/SystemAdaptations'
 import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import { PageSkeleton } from '@/components/ui/LoadingSkeleton'
+import { toast } from 'sonner'
 
 const TABS = [
   { id: 'infra',       label: 'Infrastructure' },
@@ -27,8 +28,8 @@ export default function System() {
   const [pendingMode,   setPendingMode]   = useState<'live' | 'paper' | null>(null)
 
   const {
-    system, wsStreams, redisConnected,
-    engineOk, mlEnabled, mlProgress, alerts, isLoading, healthUnavailable,
+    system, wsStreams, wsConnected, redisConnected,
+    engineOk, mlEnabled, mlProgress, alerts, isLoading,
   } = useSystemStatus()
 
   const { data: modeStatus } = useModeStatus()
@@ -66,12 +67,6 @@ export default function System() {
         </button>
       </div>
 
-      {healthUnavailable && (
-        <p role="status" className="rounded-lg border border-border bg-card px-4 py-3 text-xs text-muted-foreground">
-          System diagnostics unavailable. Check your administrator session and AWS API connection.
-        </p>
-      )}
-
       {alerts.length > 0 && (
         <div className="rounded-lg border border-[hsl(var(--chart-2)/0.2)] bg-[hsl(var(--chart-2)/0.06)] px-4 py-3 space-y-1">
           {alerts.map((a, i) => (
@@ -101,6 +96,7 @@ export default function System() {
         <SystemInfra
           system         = {system}
           wsStreams       = {wsStreams}
+          wsConnected    = {wsConnected}
           redisConnected = {redisConnected}
           engineOk       = {engineOk}
           mlEnabled      = {mlEnabled}

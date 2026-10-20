@@ -1,6 +1,8 @@
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { formatPrice, formatCurrency } from '@/lib/utils'
+import { getDirectionConfig } from '@/lib/tokens'
+import GradeTag from '@/components/ui/GradeTag'
 import { LockedSection } from '@/components/ui/TierGate'
 import SignalCountdown from '@/components/ui/SignalCountdown'
 import { useAuthStore } from '@/stores/authStore'
@@ -8,7 +10,7 @@ import { useSignalAccess } from '@/hooks/useSignalAccess'
 import { useCoinDetail } from '@/hooks/useSignals'
 import { useDemoStore } from '@/demo/demoStore'
 import { mockRadar, mockQueue } from '@/demo/mockData'
-import type { CoinDetail } from '@/types'
+import type { CoinDetail, RadarItem } from '@/types'
 
 function DetailBox({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
   return (

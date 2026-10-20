@@ -1,3 +1,4 @@
+import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import EmptyState from '@/components/ui/EmptyState'
 import { BarChart3 } from 'lucide-react'

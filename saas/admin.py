@@ -1,7 +1,6 @@
 import logging
 from datetime import datetime, timezone, timedelta
-from sqlalchemy import or_, func
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from saas.middleware import require_admin
 from saas.users import (
@@ -99,12 +98,10 @@ async def admin_overview(request: Request):
 
 
 @router.get("/admin/users")
-async def admin_users(request: Request, limit: int = Query(50, ge=1, le=100),
-                      offset: int = Query(0, ge=0), tier: str = None,
-                      search: str = Query('', max_length=120)):
+async def admin_users(request: Request, limit: int = 50, offset: int = 0, tier: str = None):
     _auth(request)
     try:
-        result = list_all_users(limit=limit, offset=offset, tier=tier, search=search)
+        result = list_all_users(limit=limit, offset=offset, tier=tier)
         return JSONResponse(content=result)
     except Exception as e:
         log.error("admin_users error: %s", e)
@@ -387,33 +384,13 @@ async def admin_demo_stats(request: Request):
 
 
 @router.get("/admin/audit")
-async def admin_audit(request: Request, limit: int = Query(100, ge=1, le=100),
-                      offset: int = Query(0, ge=0), search: str = Query('', max_length=120),
-                      actions: str = Query('', max_length=240),
-                      success: bool | None = None):
+async def admin_audit(request: Request, limit: int = 100, offset: int = 0):
     _auth(request)
     try:
         with get_session() as db:
-            query = db.query(AuditLog)
-            if success is not None:
-                query = query.filter(AuditLog.success == success)
-            if actions:
-                selected = [s.strip() for s in actions.split(',') if s.strip()]
-                if not selected or len(selected) > 30 or any(len(s) > 64 for s in selected):
-                    raise HTTPException(422, 'Invalid audit action filter')
-                query = query.filter(AuditLog.action.in_(selected))
-            if search.strip():
-                needle = search.strip().lower().replace('%', r'\%').replace('_', r'\_')
-                match = f'%{needle}%'
-                query = query.filter(or_(
-                    func.lower(AuditLog.action).like(match, escape="\\"),
-                    func.lower(AuditLog.source).like(match, escape="\\"),
-                    func.lower(AuditLog.detail).like(match, escape="\\"),
-                    func.lower(AuditLog.ip).like(match, escape="\\"),
-                ))
-            total = query.count()
-            logs  = query.order_by(
-                AuditLog.timestamp.desc(), AuditLog.id.desc()
+            total = db.query(AuditLog).count()
+            logs  = db.query(AuditLog).order_by(
+                AuditLog.timestamp.desc()
             ).offset(offset).limit(limit).all()
 
             result = [{
@@ -428,8 +405,6 @@ async def admin_audit(request: Request, limit: int = Query(100, ge=1, le=100),
 
         return JSONResponse(content={"total": total, "logs": result})
 
-    except HTTPException:
-        raise
     except Exception as e:
         log.error("admin_audit error: %s", e)
         raise HTTPException(500, str(e))

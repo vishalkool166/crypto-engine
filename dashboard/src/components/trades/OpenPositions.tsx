@@ -1,13 +1,13 @@
 import { motion } from 'framer-motion'
 import { ShieldAlert } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { formatPrice, formatCurrency } from '@/lib/utils'
+import { formatPrice, formatCurrency, formatPercent } from '@/lib/utils'
 import { getDirectionConfig, getHealthConfig, pnlColor } from '@/lib/tokens'
 import GradeTag from '@/components/ui/GradeTag'
 import TradeProgressBar from '@/components/ui/TradeProgressBar'
 import EmptyState from '@/components/ui/EmptyState'
 import { Activity } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Trade } from '@/types'
 
 function useTimer(openedAt: string | null | undefined): string {

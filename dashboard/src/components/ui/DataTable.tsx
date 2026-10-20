@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -7,7 +7,6 @@ export interface Column<T> {
   header:           string
   cell:             (row: T) => React.ReactNode
   sortable?:        boolean
-  sortValue?:       (row: T) => string | number | null | undefined
   className?:       string
   headerClassName?: string
   align?:           'left' | 'right' | 'center'
@@ -47,23 +46,6 @@ export default function DataTable<T>({
     setSortKey(null); setSortDir(null)
   }
 
-  const sortedData = useMemo(() => {
-    if (!sortKey || !sortDir) return data
-    const column = columns.find(c => c.key === sortKey)
-    if (!column?.sortable) return data
-    const direction = sortDir === 'asc' ? 1 : -1
-    return [...data].sort((a, b) => {
-      const value = (row: T) => column.sortValue
-        ? column.sortValue(row)
-        : (row as unknown as Record<string, unknown>)[sortKey]
-      const left = value(a), right = value(b)
-      if (left == null) return right == null ? 0 : 1
-      if (right == null) return -1
-      if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction
-      return String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' }) * direction
-    })
-  }, [data, columns, sortKey, sortDir])
-
   const cellPad = compact ? 'px-4 py-2.5' : 'px-4 py-3'
 
   return (
@@ -79,7 +61,7 @@ export default function DataTable<T>({
             {columns.map((col) => (
               <th
                 key       = {col.key}
-                aria-sort = {col.sortable && sortKey === col.key ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}
+                onClick   = {() => col.sortable && handleSort(col.key)}
                 className = {cn(
                   cellPad,
                   'label-xs',
@@ -95,18 +77,14 @@ export default function DataTable<T>({
                   col.align === 'right'  && 'justify-end',
                   col.align === 'center' && 'justify-center',
                 )}>
-                  {col.sortable ? (
-                    <button type="button" onClick={() => handleSort(col.key)}
-                      className="inline-flex items-center gap-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                      aria-label={`Sort ${col.header}`}>
-                      {col.header}
-                      {sortKey === col.key && sortDir === 'asc'
-                        ? <ChevronUp className="h-3 w-3" />
-                        : sortKey === col.key && sortDir === 'desc'
-                          ? <ChevronDown className="h-3 w-3" />
-                          : <ChevronsUpDown className="h-3 w-3 text-muted-foreground/40" />}
-                    </button>
-                  ) : col.header}
+                  {col.header}
+                  {col.sortable && (
+                    sortKey === col.key
+                      ? sortDir === 'asc'
+                        ? <ChevronUp   className="h-3 w-3 text-foreground" />
+                        : <ChevronDown className="h-3 w-3 text-foreground" />
+                      : <ChevronsUpDown className="h-3 w-3 text-muted-foreground/40" />
+                  )}
                 </div>
               </th>
             ))}
@@ -137,20 +115,13 @@ export default function DataTable<T>({
               </td>
             </tr>
           ) : (
-            sortedData.map((row) => (
+            data.map((row) => (
               <tr
                 key       = {keyExtractor(row)}
                 onClick   = {() => onRowClick?.(row)}
-                onKeyDown = {(event) => {
-                  if (!onRowClick || (event.key !== 'Enter' && event.key !== ' ')) return
-                  if (event.target !== event.currentTarget) return
-                  event.preventDefault()
-                  onRowClick(row)
-                }}
-                tabIndex  = {onRowClick ? 0 : undefined}
                 className = {cn(
                   'transition-colors',
-                  onRowClick && 'cursor-pointer hover:bg-muted/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring'
+                  onRowClick && 'cursor-pointer hover:bg-muted/40'
                 )}
               >
                 {columns.map((col) => (

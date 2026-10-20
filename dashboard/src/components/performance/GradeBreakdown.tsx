@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { pnlColor } from '@/lib/tokens'

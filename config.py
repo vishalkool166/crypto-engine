@@ -283,7 +283,7 @@ class Config:
 
     FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    DOMAIN       = os.getenv("DOMAIN")
+    DOMAIN       = os.getenv("DOMAIN", "https://app.vishalkool.top")
 
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
@@ -299,12 +299,6 @@ class Config:
     ML_MIN_TRADES = 50
     ML_ENABLED    = False
 
-    TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
-    TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
-    TWITTER_ACCESS_TOKEN  = os.getenv("TWITTER_ACCESS_TOKEN", "")
-    TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
-    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "False").lower() == "true"
-    CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
     _FALLBACK_COINS: list = []
 
@@ -362,8 +356,6 @@ class Config:
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 
-    GITHUB_CLIENT_ID     = os.getenv("GITHUB_CLIENT_ID", "")
-    GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 

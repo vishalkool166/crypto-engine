@@ -81,6 +81,7 @@ export default function TradeDrawer({ trade, onClose, onForceSell }: Props) {
   const isOpen    = trade.is_open ?? false
   const pnl       = isOpen ? (trade.profit_abs ?? 0) : (trade.pnl ?? 0)
   const dirCfg    = getDirectionConfig(trade.direction)
+  const DirIcon   = dirCfg?.icon
   const health    = trade.health
   const hCfg      = health ? getHealthConfig(health.state) : null
   const reasonCfg = getCloseReasonConfig(trade.close_reason)

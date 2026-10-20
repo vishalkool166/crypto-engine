@@ -2,6 +2,13 @@ import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDemoStore } from '@/demo/demoStore'
 import { useAuthStore } from '@/stores/authStore'
+import { useDemoTracking } from '@/demo/useDemoTracking'
+
+function DemoInit() {
+  const { isDemoMode, demoTier } = useDemoStore()
+  useDemoTracking()
+  return null
+}
 
 export default function Demo() {
   const { setDemoMode, setDemoTier } = useDemoStore()
@@ -20,8 +27,9 @@ export default function Demo() {
       type:     'demo',
     })
     navigate('/demo/home', { replace: true })
-  }, [navigate, setDemoMode, setDemoTier, setLoading, setUser])
+  }, [])
 
   return null
 }
 
+export { DemoInit }

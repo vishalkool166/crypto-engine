@@ -1,5 +1,6 @@
 import {
   createContext,
+  useContext,
   useEffect,
   useRef,
   ReactNode,
@@ -7,8 +8,7 @@ import {
 import { useWsStore } from '@/stores/wsStore'
 import { useAuthStore } from '@/stores/authStore'
 
-// Cloudflare Pages is not the WebSocket host. Derive AWS socket origin from API.
-const WS_URL = (import.meta.env.VITE_WS_URL || (import.meta.env.VITE_API_URL ?? '').replace(/^http/, 'ws')).replace(/\/$/, '')
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
 const BASE_DELAY          = 1_000
 const MAX_DELAY           = 30_000
 
@@ -18,13 +18,15 @@ interface WebSocketContextValue {
 
 const WebSocketContext = createContext<WebSocketContextValue>({ send: () => {} })
 
+export function useWebSocket() {
+  return useContext(WebSocketContext)
+}
+
 export default function WebSocketProvider({ children }: { children: ReactNode }) {
   const wsRef             = useRef<WebSocket | null>(null)
   const reconnectRef      = useRef<ReturnType<typeof setTimeout> | null>(null)
   const delayRef          = useRef(BASE_DELAY)
   const mountedRef        = useRef(true)
-  const connectRef        = useRef<() => void>(() => {})
-  const scheduleRef       = useRef<() => void>(() => {})
 
   const { setStatus, setPayload, incrementReconnect, resetReconnect } = useWsStore()
   const { isAuthenticated } = useAuthStore()
@@ -52,7 +54,7 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
         const payload = JSON.parse(event.data)
         setPayload(payload)
       } catch {
-        // Ignore malformed frames; a later valid frame can still update the dashboard.
+        setStatus('error')
       }
     }
 
@@ -65,7 +67,7 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
       if (!mountedRef.current) return
       setStatus('disconnected')
       wsRef.current = null
-      scheduleRef.current()
+      schedule()
     }
   }
 
@@ -74,7 +76,7 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
     incrementReconnect()
     reconnectRef.current = setTimeout(() => {
       delayRef.current = Math.min(delayRef.current * 2, MAX_DELAY)
-      connectRef.current()
+      connect()
     }, delayRef.current)
   }
 
@@ -84,12 +86,9 @@ export default function WebSocketProvider({ children }: { children: ReactNode })
     }
   }
 
-  connectRef.current = connect
-  scheduleRef.current = schedule
-
   useEffect(() => {
     mountedRef.current = true
-    if (isAuthenticated) connectRef.current()
+    if (isAuthenticated) connect()
 
     return () => {
       mountedRef.current = false

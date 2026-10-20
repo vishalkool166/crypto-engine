@@ -2,18 +2,6 @@ import logging
 from config import cfg
 
 log = logging.getLogger(__name__)
-MAX_CHAT_MESSAGE_CHARS = 2000
-
-
-def _validate_message(message: str) -> str:
-    if not isinstance(message, str):
-        raise ValueError('Message must be text')
-    value = message.strip()
-    if not value:
-        raise ValueError('Message is empty')
-    if len(value) > MAX_CHAT_MESSAGE_CHARS:
-        raise ValueError('Message exceeds the resource limit')
-    return value
 
 
 def _is_rag_ready() -> bool:
@@ -38,10 +26,6 @@ def _is_off_topic(message: str) -> bool:
 
 
 async def chat(user_message: str) -> str:
-    try:
-        user_message = _validate_message(user_message)
-    except ValueError:
-        return "Message must be between 1 and 2000 characters."
     if not cfg.GROQ_API_KEY:
         return "AI assistant not configured. Add GROQ_API_KEY to .env and restart."
 
@@ -69,13 +53,6 @@ async def chat(user_message: str) -> str:
 
 
 async def chat_with_sources(user_message: str) -> dict:
-    try:
-        user_message = _validate_message(user_message)
-    except ValueError:
-        return {
-            "answer": "Message must be between 1 and 2000 characters.",
-            "sources": [], "chunks": 0, "rag_used": False,
-        }
     if not cfg.GROQ_API_KEY:
         return {
             "answer":   "AI assistant not configured.",

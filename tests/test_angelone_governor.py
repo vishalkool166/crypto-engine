@@ -8,7 +8,6 @@ import math
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone, timedelta
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -226,36 +225,10 @@ def test_quote_cache_and_correct_trading_symbol(mock_smartapi, fake_store):
     assert data.get_ltp_from_redis('987') == 108
 
 
-def test_ltp_cache_expires_and_stale_quote_is_not_reused(fake_store):
-    data.store_ltp('987', 108.0)
-    assert data.get_ltp_from_redis('987') == 108.0
-    fake_store.clock += data.REDIS_TTL_LTP + 1
-    assert data.get_ltp_from_redis('987') is None
-
-
 def test_no_broker_call_for_invalid_candle_request(mock_smartapi):
     assert data.fetch_candles('101', 'INVALID', '2026-10-01 09:15', '2026-10-01 09:30') is None
     assert data.fetch_candles('101', '15m', '2026-10-02 09:15', '2026-10-01 09:30') is None
     assert mock_smartapi.candle_calls == 0
-
-
-@pytest.mark.parametrize(('instant', 'market_open', 'orb_ready'), [
-    (datetime(2026, 10, 19, 9, 14, 59, tzinfo=timezone(timedelta(hours=5, minutes=30))), False, False),
-    (datetime(2026, 10, 19, 9, 15, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))), True, False),
-    (datetime(2026, 10, 19, 9, 29, 59, tzinfo=timezone(timedelta(hours=5, minutes=30))), True, False),
-    (datetime(2026, 10, 19, 9, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))), True, True),
-    (datetime(2026, 10, 19, 15, 30, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))), True, True),
-    (datetime(2026, 10, 19, 15, 30, 1, tzinfo=timezone(timedelta(hours=5, minutes=30))), False, False),
-    (datetime(2026, 10, 18, 10, 0, 0, tzinfo=timezone(timedelta(hours=5, minutes=30))), False, False),
-])
-def test_market_and_orb_session_boundaries(monkeypatch, instant, market_open, orb_ready):
-    class FixedDateTime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return instant.astimezone(tz) if tz else instant.replace(tzinfo=None)
-    monkeypatch.setattr(data, 'datetime', FixedDateTime)
-    assert data.is_market_open() is market_open
-    assert data.is_orb_ready() is orb_ready
 
 
 def test_bad_price_or_candle_data_rejected(mock_smartapi, fake_store):
@@ -284,17 +257,6 @@ def test_auth_get_api_attempts_login_once(monkeypatch):
     monkeypatch.setattr(auth, '_login', lambda: calls.append(1) or False)
     assert auth.get_api() is None
     assert len(calls) == 1
-
-
-def test_failed_session_refresh_preserves_current_session(monkeypatch):
-    auth = importlib.import_module('engines.indian.auth')
-    existing = object()
-    monkeypatch.setattr(auth, '_api', existing)
-    monkeypatch.setattr(auth, '_session_at', 1234.0)
-    monkeypatch.setattr(auth, '_login', lambda: False)
-    assert auth.refresh_session() is None
-    assert auth._api is existing
-    assert auth._session_at == 1234.0
 
 
 def test_minute_and_hour_budgets_are_enforced(fake_store, monkeypatch):

@@ -367,9 +367,6 @@ def run_backtest(
     }
     report = {
         **metrics,
-        'result_type': 'simulated_backtest',
-        'pnl_provenance': 'simulated_not_exchange_realized',
-        'exchange_verified': False,
         'coin': coin, 'period_start': trades[0]['date'], 'period_end': trades[-1]['date'],
         'capital': capital, 'total_signals': signal_count,
         'aplus_signals': grades['A+']['total_trades'],

@@ -10,7 +10,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 async def send_morning_briefing():
     try:
-        from alerts.telegram.commands.content import cmd_brief
+        from alerts.telegram.commands.market import cmd_brief
         await cmd_brief()
         log.info("Morning briefing sent")
     except Exception as e:
@@ -19,7 +19,7 @@ async def send_morning_briefing():
 
 async def send_evening_briefing():
     try:
-        from alerts.telegram.commands.content import cmd_brief
+        from alerts.telegram.commands.market import cmd_brief
         await cmd_brief()
         log.info("Evening briefing sent")
     except Exception as e:
