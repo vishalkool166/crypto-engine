@@ -1,3 +1,18 @@
+## Unreleased — dashboard accessibility follow-up (2026-10-20, local only)
+
+- Added modal semantics, keyboard focus containment, initial focus and focus return to mobile navigation; named collapsed sidebar controls for assistive technology.
+- Browser-based responsive and accessibility approval remains pending until the dashboard can be served and reviewed.
+
+## Unreleased — repository handoff cleanup (2026-10-20, local only)
+
+- Rewrote the root README as a concise project, development and deployment guide; added a documentation index.
+- Added an environment-variable reference and completed the safe placeholder inventory in `.env.example`; live-order override remains intentionally absent.
+- Added a static environment-template check to the manual verification script; it passed against the current Python source and documents generated, test-only and dangerous or unsupported variables.
+- Replaced the chronological release-evidence log with one current status and gate summary. Older test counts are not presented as current verification.
+- Removed the superseded initial assessment and generated TypeScript build metadata; ignored future `*.tsbuildinfo` files.
+- No application code, strategy parameters, AWS runtime files or deployment configuration were changed.
+- Local monorepo, source-hygiene, task-ledger, API inventory, Indian paper-scope and S0 checksum checks pass. Full Python/OpenAPI/schema verification could not be reproduced in this workspace because runtime dependencies are absent.
+
 ## Unreleased — Phases 04–06 local continuation (2026-10-20, not deployed)
 
 - Hardened Telegram webhook controls with shared Redis update replay claims, explicit sender allowlisting for `/scan`, `/backfill`, and `/discard`, a narrow configured private-chat fallback, and durable audit-before-mutation behavior. Replay protection or audit failure blocks mutating commands.

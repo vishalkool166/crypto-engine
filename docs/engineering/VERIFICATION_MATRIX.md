@@ -41,7 +41,7 @@
 | VT-035 | P1 | Performance | Cold/warm bundle, long trade lists and WS update render time measured, no target invented | SE-08-015 |
 | VT-036 | P1 | Strategy research | 18 coins, 4h/1h/funding hashes, walk-forward chronology, all omissions shown | SE-06-007, SE-11-007 |
 | VT-037 | P0 | Staging cutover | Deploy update, verify API/WS/UI/session, restart and rollback without lost data | SE-11-005, SE-11-009 |
-| VT-038 | P0 | CI integrity | Hosted GitHub required checks pass; actions permissions audited; artifacts versioned | SE-10-008, SE-10-009 |
+| VT-038 | P0 | Manual release integrity | Run the documented local checks and security/dependency scans; inspect the packaged source and record artifacts. No GitHub Actions workflow is used. | SE-10-008, SE-10-009 |
 | VT-039 | P0 | Final status | All open P0 risks listed; no claim of production ready without testnet and independent reviews | SE-11-010, SE-11-011 |
 
 ## Evidence record schema (required for each claimed verification)
@@ -63,7 +63,7 @@ limitations: <what this does not establish>
 
 ## Release gate checklist
 
-- `G-A` GitHub-ready = VT-001, 002, 003, 004, 014, 038 + docs/source migration checks.
+- `G-A` Repository-ready = VT-001, 002, 003, 004, 014, 038 + docs/source migration checks.
 - `G-B` Working paper/demo app = VT-005 through 013, 024 through 034, 037 + security review findings disposition.
 - `G-C` Broker testnet and operational safety = VT-015 through 023, 025, 026, 033, 037 + operator drills.
 - `G-D` Research integrity = VT-036 plus independent review of report and completeness.

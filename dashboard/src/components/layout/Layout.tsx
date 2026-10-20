@@ -1,5 +1,5 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Radio, Activity, User,
@@ -38,6 +38,8 @@ export default function Layout() {
   const { commandPaletteOpen, setCommandPaletteOpen } = useUiStore()
   const { isAdmin, canAccess, hasFeature }            = useAuthStore()
   const [moreOpen, setMoreOpen]                       = useState(false)
+  const moreTriggerRef                                = useRef<HTMLButtonElement>(null)
+  const moreDialogRef                                 = useRef<HTMLDivElement>(null)
   const location                                      = useLocation()
   const navigate                                      = useNavigate()
 
@@ -61,6 +63,42 @@ export default function Layout() {
   useEffect(() => {
     setMoreOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    if (!moreOpen) return
+    const dialog = moreDialogRef.current
+    const trigger = moreTriggerRef.current
+    const firstFocusable = dialog?.querySelector<HTMLElement>(
+      'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    )
+    firstFocusable?.focus()
+
+    return () => {
+      if (trigger?.isConnected) trigger.focus()
+    }
+  }, [moreOpen])
+
+  const trapMoreDialogFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Tab') return
+    const dialog = moreDialogRef.current
+    if (!dialog) return
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+    ))
+    if (!focusable.length) {
+      event.preventDefault()
+      return
+    }
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 
   const visibleMore = MORE_ITEMS.filter(item => {
     if (item.adminOnly) return isAdmin
@@ -93,7 +131,7 @@ export default function Layout() {
         </main>
       </div>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden border-t border-border bg-background/95 backdrop-blur-sm">
+      <nav aria-label="Primary navigation" className="fixed bottom-0 left-0 right-0 z-50 md:hidden border-t border-border bg-background/95 backdrop-blur-sm">
         <div className="flex items-center justify-around px-2 py-1 pb-safe">
           {BOTTOM_NAV.map(item => {
             if (item.minTier && !canAccess(item.minTier)) return null
@@ -106,6 +144,7 @@ export default function Layout() {
               <button
                 key       = {item.path}
                 onClick   = {() => navigate(item.path)}
+                aria-current = {isActive ? 'page' : undefined}
                 className = {cn(
                   'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg min-w-[56px] transition-colors',
                   isActive ? 'text-foreground' : 'text-muted-foreground'
@@ -127,7 +166,12 @@ export default function Layout() {
           })}
 
           <button
+            ref       = {moreTriggerRef}
             onClick   = {() => setMoreOpen(true)}
+            aria-label = "More navigation options"
+            aria-haspopup = "dialog"
+            aria-expanded = {moreOpen}
+            aria-controls = "mobile-more-dialog"
             className = {cn(
               'flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg min-w-[56px] transition-colors',
               isMoreActive ? 'text-foreground' : 'text-muted-foreground'
@@ -149,8 +193,15 @@ export default function Layout() {
               transition = {{ duration: 0.15 }}
               className  = "fixed inset-0 z-50 bg-background/60 backdrop-blur-sm md:hidden"
               onClick    = {() => setMoreOpen(false)}
+              aria-hidden = "true"
             />
             <motion.div
+              ref       = {moreDialogRef}
+              id        = "mobile-more-dialog"
+              role      = "dialog"
+              aria-modal = "true"
+              aria-labelledby = "mobile-more-title"
+              onKeyDown = {trapMoreDialogFocus}
               initial    = {{ y: '100%' }}
               animate    = {{ y: 0 }}
               exit       = {{ y: '100%' }}
@@ -161,9 +212,10 @@ export default function Layout() {
                 <div className="h-1 w-10 rounded-full bg-muted-foreground/20" />
               </div>
               <div className="flex items-center justify-between px-4 py-2 border-b border-border">
-                <p className="text-sm font-semibold text-foreground">More</p>
+                <p id="mobile-more-title" className="text-sm font-semibold text-foreground">More</p>
                 <button
                   onClick   = {() => setMoreOpen(false)}
+                  aria-label = "Close navigation options"
                   className = "flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent"
                 >
                   <X className="h-4 w-4" />
@@ -177,6 +229,7 @@ export default function Layout() {
                     <button
                       key       = {item.path}
                       onClick   = {() => navigate(item.path)}
+                      aria-current = {isActive ? 'page' : undefined}
                       className = {cn(
                         'flex flex-col items-center gap-1.5 rounded-xl p-3 transition-colors',
                         isActive

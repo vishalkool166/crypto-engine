@@ -1,6 +1,6 @@
 # Signal Engine — Master Engineering Blueprint v1.1 (AWS + Pages deployment)
 
-**Status:** historical master plan with current topology below • **Artifact type:** controlled implementation specification • **Audience:** owner, implementer and independent reviewer.
+**Status:** controlled project requirements • **Audience:** owner, implementer and independent reviewer.
 **Source-of-truth tracker:** `MASTER_TASK_LEDGER.csv` (one canonical file, checked for ID uniqueness and dependency cycles).
 **Scope lock:** The original source archive remains protected; no deployment, trading enablement or source rewrite is authorized by this blueprint.
 

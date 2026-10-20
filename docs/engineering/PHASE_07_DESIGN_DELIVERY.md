@@ -38,9 +38,9 @@ Unknown signed-in routes return to Overview. Deep links are retained by the rout
 
 ## Responsive and accessibility rules
 
-- Reference widths: 1440px desktop, 1024px tablet, 768px compact layout, 390px and 320px mobile. Sidebar becomes bottom navigation with a keyboard-operable More sheet on small screens.
+- Reference widths: 1440px desktop, 1024px tablet, 768px compact layout, 390px and 320px mobile. Sidebar becomes bottom navigation with a keyboard-operable More dialog on small screens. The dialog now has an accessible name, modal semantics, initial focus, Tab containment, Escape dismissal and focus return; collapsed sidebar links and controls have accessible names.
 - Wide history remains horizontally scrollable only when the row is still usable; otherwise use focused record/detail views. Critical actions must remain discoverable without hover.
-- Sortable table headers are buttons. Clickable rows accept Enter and Space. Focus indicators, labelled status, dialog focus handling and form error association are required.
+- Sortable table headers are buttons. Clickable rows accept Enter and Space. Focus indicators, labelled status, dialog focus handling and form error association are required. The mobile More dialog's code-level focus handling is implemented; keyboard, screen-reader and responsive browser checks remain open under SE-08-013.
 - `prefers-reduced-motion: reduce` suppresses nonessential animation and smooth scrolling.
 - Values identify currency/units and signs. State is conveyed by text/icon as well as color. WCAG 2.2 AA remains the audit target, not a claim of completed certification.
 

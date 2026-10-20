@@ -127,6 +127,7 @@ export default function Sidebar() {
           {!sidebarCollapsed && (
             <button
               onClick   = {toggleSidebar}
+              aria-label = "Collapse sidebar"
               className = "flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-sidebar-foreground/40 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors"
             >
               <ChevronLeft className="h-3 w-3" />
@@ -181,6 +182,7 @@ export default function Sidebar() {
 
           <button
             onClick   = {handleLogout}
+            aria-label = {sidebarCollapsed ? (isDemoMode ? 'Exit demo' : 'Sign out') : undefined}
             className = {cn(
               'flex h-9 w-full items-center gap-3 rounded-md px-2.5',
               'text-sm text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-foreground transition-colors',
@@ -232,6 +234,7 @@ export default function Sidebar() {
       {sidebarCollapsed && (
         <button
           onClick   = {toggleSidebar}
+          aria-label = "Expand sidebar"
           className = "fixed left-[44px] top-4 z-50 flex h-6 w-6 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground transition-colors shadow-sm"
         >
           <ChevronRight className="h-3 w-3" />
@@ -247,6 +250,8 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
     <NavLink
       to        = {item.path}
       end       = {item.path === '/' || item.path === '/demo/home'}
+      aria-label = {item.label}
+      title      = {collapsed ? item.label : undefined}
       className = {({ isActive }) => cn(
         'flex h-9 w-full items-center gap-3 rounded-md px-2.5 text-sm transition-colors',
         isActive

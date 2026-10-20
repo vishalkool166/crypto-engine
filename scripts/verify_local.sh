@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 python -m compileall -q -x '(^\./frontend/|^\./dashboard/)' .
 python scripts/check_monorepo_contract.py
 python scripts/check_source_hygiene.py
+python scripts/check_env_template.py
 python scripts/check_task_ledger.py
 python scripts/check_openapi_contract.py
 python scripts/check_api_inventory.py

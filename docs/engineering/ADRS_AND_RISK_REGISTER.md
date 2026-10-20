@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | R-01 | Critical | Trading error could create unintended real exposure | Live off default, journal and broker testnet drills, manual reconciliation runbooks | SE-04-003, SE-04-004, SE-11-008 |
 | R-02 | Critical | EC2/source divergence unknown; source ZIP lacks live data | Inventory production revision safely, backup/restore before deploy | SE-00-002, SE-06-004 |
-| R-03 | High | AWS CodeArtifact lockfile blocks clean frontend clone | Regenerate verified lockfile and test npm ci clean | SE-01-004 |
+| R-03 | High | Python requirements still contain unpinned packages and transitive dependencies | Add a reviewed Python lock/constraints file and prove a clean Python 3.11 install | SE-01-005 |
 | R-04 | High | API role/session/websocket vulnerabilities not penetration-tested | Authz matrix, CSRF/Origin/OAuth reviews, browser E2E | SE-03-003, SE-10-003 |
 | R-05 | Critical | Scheduler in app could duplicate work if replicated | Single logical leader and multi-worker failure/restart test | SE-02-009 |
 | R-06 | High | SQLite WAL/journal loss or unsafe migration | Backups with SQLite API, safe migrations, restore drill | SE-06-002, SE-06-004 |
