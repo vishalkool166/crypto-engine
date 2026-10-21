@@ -41,5 +41,21 @@ services:
       retries: 3
       start_period: 45s
 
+  # Optional outbound-only Cloudflare Tunnel. Starts independently from the
+  # application and automatically restarts after container or Docker restarts.
+  cloudflared:
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.10.2}
+    container_name: signal-engine-tunnel
+    command: ["tunnel", "--no-autoupdate", "--protocol", "${TUNNEL_PROTOCOL:-http2}", "--metrics", "0.0.0.0:2000", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in the server .env}
+    restart: always
+    stop_grace_period: 20s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
 volumes:
   redis_data:
