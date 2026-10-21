@@ -93,7 +93,6 @@ export async function proxy(request, env, kind) {
   const isPublicSocket = url.pathname === "/ws/public";
   const isAdminSocket = url.pathname === "/ws/admin";
   if (appTarget === "public" && kind === "auth") return error(404, "Not found");
-  if (appTarget === "public" && kind === "webhook") return error(404, "Not found");
   if (appTarget === "public" && kind === "api" && !isPublicApi) return error(404, "Not found");
   if (appTarget === "public" && kind === "api" && !["GET", "HEAD"].includes(request.method)) return error(405, "Method not allowed");
   if (kind === "ws" && !(isPublicSocket || (appTarget === "admin" && isAdminSocket))) return error(404, "Not found");

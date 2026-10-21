@@ -1,94 +1,65 @@
-# Docker and Cloudflare operation
+# Self-host Signal Engine
 
-The complete domain, OAuth, Pages, secret, and DNS setup remains in
-[DEPLOY.md](../DEPLOY.md). Apply the [2.1 upgrade guide](UPGRADE_2_1.md) when using
-an existing database.
+Choose a public site, a private admin site, or both. You may host the interfaces on any static host and run FastAPI/Redis on any supported server. Cloudflare is an optional example in [Cloudflare setup](CLOUDFLARE.md).
 
-## Container startup
+## 1. Choose the interfaces
 
-Use Docker Engine with the Compose plugin on Linux. The included stack runs Redis,
-the API/engine, and Cloudflare Tunnel on the same private Docker network. Port 8000
-is not published to the host. The tunnel's published hostname should route to
-`http://signal-engine:8000`.
+| Deployment | `.env` settings | Frontend build |
+| --- | --- | --- |
+| Public only | `PUBLIC_APP_ENABLED=true`, `ADMIN_APP_ENABLED=false` | `npm run build:public` |
+| Admin only | `PUBLIC_APP_ENABLED=false`, `ADMIN_APP_ENABLED=true` | `npm run build:admin` |
+| Both | Set both to `true`; configure distinct origins | Build each interface |
 
-Configure `.env`, initialize directory ownership as described in DEPLOY.md, then:
+Set the enabled interface origins exactly, including `https://` in production. Public-only hosting does not require Google credentials. Admin hosting requires Google OAuth, the `ADMIN_EMAILS` allowlist, HTTPS, and a strong session secret. The admin build has a dedicated PWA manifest and service worker.
+
+## 2. Prepare the server
+
+Requirements: Docker Engine with Compose, persistent storage, and outbound access to Redis/exchange/Telegram endpoints as configured. Do not expose the FastAPI or Redis ports directly to the Internet. Keep SQLite, the RAG index, and `.env` on protected persistent storage.
 
 ```bash
+cp .env.example .env
+chmod 600 .env
+python scripts/setup_env.py
+mkdir -p database
 docker compose config --quiet
-docker compose pull redis cloudflared
-docker compose up -d --build --remove-orphans
+docker compose up -d --build
 docker compose ps
-docker compose logs --tail=100 cloudflared
-```
-
-The tunnel no longer waits on the engine healthcheck. A healthy connector does
-not prove the engine is ready: check Admin → System health separately.
-`TUNNEL_TOKEN` is required; Compose stops early with a readable error if missing.
-HTTP/2 uses outbound TCP port 7844. If your network permits QUIC, you can set
-`TUNNEL_PROTOCOL=auto`. Do not open inbound application ports to solve a tunnel
-connection failure.
-
-Cloudflared reconnects after network interruptions. Docker's `restart: always`
-restarts an exited connector and restarts it when the daemon returns. A running
-container marked unhealthy is not automatically restarted merely because it is
-unhealthy. Logs and external uptime monitoring are still needed to detect a
-persistent host/network/provider failure.
-
-## Start after host reboot
-
-On a systemd Linux host:
-
-```bash
-sudo systemctl enable --now docker
-```
-
-Use the supplied `deploy/signal-engine.service` if you also want systemd to run
-Compose at boot. Put the repository at `/opt/signal-engine`, or edit WorkingDirectory
-in the unit to your actual installation path. Then:
-
-```bash
-sudo cp deploy/signal-engine.service /etc/systemd/system/signal-engine.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now signal-engine.service
-sudo systemctl status signal-engine.service
-```
-
-The unit does not install Docker or copy secrets. Complete the configuration and
-image build before enabling it. On Docker Desktop, enable Docker Desktop startup
-in the operating system; Linux systemd instructions do not apply.
-
-## Diagnose the tunnel
-
-```bash
-docker compose ps
-docker compose logs --tail=100 cloudflared
 docker compose logs --tail=100 signal-engine
 ```
 
-- Token error: replace TUNNEL_TOKEN with the connector token for the intended tunnel.
-- Connection refusal/502: verify `http://signal-engine:8000` in the tunnel route and
-  inspect the engine logs. Do not use localhost as the service hostname there.
-- Tunnel stays stopped after editing Compose: apply `docker compose up -d
-  --force-recreate cloudflared`; `restart` does not recreate container settings.
-- Host reboot: verify Docker is enabled and the containers exist. Compose must
-  have created them at least once.
-- Polling commands fail: inspect Telegram operations and Redis, not inbound tunnel
-  routing. Polling only needs outbound Telegram HTTPS.
+Before first boot, review `.env`: choose enabled interfaces, set their origins, configure `ORIGIN_PROXY_SECRET`, and leave `ENGINE_ENABLED=false` with `TRADING_MODE=paper`. `setup_env.py` creates missing application secrets without printing them or replacing an existing `.env`.
 
-Keep BACKEND_ORIGIN and ORIGIN_PROXY_SECRET configured as server-side secrets in
-both Pages projects. Backend requests require the trusted Pages proxy header;
-normal browser calls to the tunnel origin are deliberately rejected.
+## 3. Build and host the interface(s)
 
-## Backups
+From `dashboard/`:
 
-Back up the complete `database/` directory with the engine stopped or by using
-SQLite's backup API for a consistent live backup. Preserve runtime_state.json and
-the order journal with the trade data. Retain `.env` in a separate encrypted
-secret backup. Do not delete Docker volumes during routine upgrades.
+```bash
+npm ci
+npm run check
+npm run build:public
+npm run build:admin
+```
 
-## Official references
+Publish `dist/public`, `dist/admin`, or both. Configure each static host to rewrite client-side routes to `index.html` and provide same-origin proxy routes for `/api/*`, `/auth/*`, `/ws/*`, and `/webhook/*`. The proxy must inject `X-Origin-Verify` from the server-side `ORIGIN_PROXY_SECRET` and forward the original app host in `X-Forwarded-App-Host`. Do not expose these secrets as frontend build variables.
 
-- [Compose startup order](https://docs.docker.com/compose/how-tos/startup-order/)
-- [Compose service settings and restart policies](https://docs.docker.com/reference/compose-file/services/)
-- [Tunnel run parameters](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/configure-tunnels/run-parameters/)
-- [Cloudflared releases](https://github.com/cloudflare/cloudflared/releases)
+`deploy/Caddyfile.example` demonstrates serving both builds and proxying the required routes. Remove the unused site block if hosting only one interface. Adapt the same routing and trusted headers for Nginx or another reverse proxy. Keep the FastAPI container private behind that proxy.
+
+## 4. Configure Google OAuth (admin only)
+
+1. Create a Google OAuth client of type **Web application**.
+2. Add the admin origin as an authorized JavaScript origin.
+3. Add `https://<your-admin-host>/auth/callback/google` as an authorized redirect URI.
+4. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `ADMIN_EMAILS` in the backend `.env`.
+5. Ensure the admin host routes `/auth/*` to FastAPI and matches `ADMIN_APP_ORIGIN` exactly.
+
+Google is the only browser login. Only allowlisted administrator emails can access private routes. Do not add OAuth secrets to client-side variables.
+
+## 5. Configure Telegram
+
+Set `TELEGRAM_TRANSPORT=webhook`, `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_ALLOWED_USER_IDS`, and `WEBHOOK_SECRET` in the backend `.env`. The proxy must deliver `/webhook/telegram` to FastAPI without a login or interactive bot challenge. For public-only hosting, set `TELEGRAM_WEBHOOK_URL` to a reachable HTTPS route on the public host. Follow [Telegram setup](TELEGRAM.md) to register and verify commands.
+
+## 6. Preserve data and verify
+
+Back up `.env`, `database/`, and `database/chroma/` before upgrades. Never replace these with the clean directories from a new source archive. Use `python scripts/backup.py <new-backup-file>` for a consistent SQLite backup. Follow [Operations](OPERATIONS.md) for restore, mode safety, health checks, and rollback.
+
+Verify the selected site(s), a client-side route, Google login if admin is enabled, a live market-data refresh, Telegram `/ping`, and the research assistant when `GROQ_API_KEY` is configured. An enabled engine also requires valid demo credentials and successful account reconciliation.

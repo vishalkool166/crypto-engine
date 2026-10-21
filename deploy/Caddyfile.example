@@ -1,0 +1,59 @@
+# Use one or both site blocks. Caddy and signal-engine must share a private
+# network so the backend service name resolves. Set the variables in Caddy's
+# protected service environment, never in a frontend build.
+
+{$PUBLIC_HOST} {
+	root * /srv/signal-engine/public
+	encode zstd gzip
+
+	@public_api path /api/v1/public/*
+	handle @public_api {
+		reverse_proxy signal-engine:8000 {
+			header_up X-Origin-Verify {$ORIGIN_PROXY_SECRET}
+			header_up X-Forwarded-App-Host {host}
+			header_up X-Visitor-IP {remote_host}
+		}
+	}
+
+	@public_ws path /ws/public
+	handle @public_ws {
+		reverse_proxy signal-engine:8000 {
+			header_up X-Origin-Verify {$ORIGIN_PROXY_SECRET}
+			header_up X-Forwarded-App-Host {host}
+			header_up X-Visitor-IP {remote_host}
+		}
+	}
+
+	@public_telegram_webhook path /webhook/telegram
+	handle @public_telegram_webhook {
+		reverse_proxy signal-engine:8000 {
+			header_up X-Origin-Verify {$ORIGIN_PROXY_SECRET}
+			header_up X-Forwarded-App-Host {host}
+			header_up X-Visitor-IP {remote_host}
+		}
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+{$ADMIN_HOST} {
+	root * /srv/signal-engine/admin
+	encode zstd gzip
+
+	@admin_backend path /api/v1/admin/* /auth/* /webhook/* /ws/admin
+	handle @admin_backend {
+		reverse_proxy signal-engine:8000 {
+			header_up X-Origin-Verify {$ORIGIN_PROXY_SECRET}
+			header_up X-Forwarded-App-Host {host}
+			header_up X-Visitor-IP {remote_host}
+		}
+	}
+
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

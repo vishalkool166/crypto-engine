@@ -24,6 +24,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379/0
       MODE_SWITCH_RESTART: "true"
+      HF_HOME: /app/database/model-cache
     depends_on:
       redis:
         condition: service_healthy
@@ -39,21 +40,6 @@ services:
       timeout: 5s
       retries: 3
       start_period: 45s
-
-  # Tunnel starts independently. An origin boot failure must not prevent its creation.
-  cloudflared:
-    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.10.2}
-    container_name: signal-engine-tunnel
-    command: ["tunnel", "--no-autoupdate", "--protocol", "${TUNNEL_PROTOCOL:-http2}", "--metrics", "0.0.0.0:2000", "run"]
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in the server .env}
-    restart: always
-    stop_grace_period: 20s
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    logging:
-      driver: json-file
-      options: {max-size: "10m", max-file: "3"}
 
 volumes:
   redis_data:

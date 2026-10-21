@@ -171,9 +171,12 @@ class Config:
 
     TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    TELEGRAM_WEBHOOK_URL = os.getenv("TELEGRAM_WEBHOOK_URL", "")
+    WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
     FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
     DOMAIN       = os.getenv("ADMIN_APP_ORIGIN", "http://localhost:5174")
 
     PORT = int(os.getenv("PORT", 8000))
@@ -186,12 +189,6 @@ class Config:
     ML_MIN_TRADES = 50
     ML_ENABLED    = False
 
-    TWITTER_API_KEY       = os.getenv("TWITTER_API_KEY", "")
-    TWITTER_API_SECRET    = os.getenv("TWITTER_API_SECRET", "")
-    TWITTER_ACCESS_TOKEN  = os.getenv("TWITTER_ACCESS_TOKEN", "")
-    TWITTER_ACCESS_SECRET = os.getenv("TWITTER_ACCESS_SECRET", "")
-    CONTENT_ENABLED       = os.getenv("CONTENT_ENABLED", "False").lower() == "true"
-    CONTENT_AUTO_APPROVE  = os.getenv("CONTENT_AUTO_APPROVE", "False").lower() == "true"
 
     _FALLBACK_COINS: list = []
 

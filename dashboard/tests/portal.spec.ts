@@ -261,10 +261,10 @@ test("private admin restores full performance and trade journey views", async ({
   await expect(page.getByText("Cumulative net P&L")).toBeVisible();
   await expect(page.getByText("Results by instrument")).toBeVisible();
   await page.getByRole("link", { name: "Trades & journey" }).click();
-  await page.getByRole("button", { name: "Trade journey" }).first().click();
-  await expect(
-    page.getByRole("heading", { name: "ETH · trade journey" }),
-  ).toBeVisible();
+  await page.getByRole("button", { name: "Open details" }).first().click();
+  await expect(page.getByRole("heading", { name: /ETH/ })).toBeVisible();
+  await expect(page.getByText("Position", { exact: true })).toBeVisible();
+  await expect(page.getByText("Timing & context")).toBeVisible();
   await expect(page.getByText("Entry 2,000")).toBeVisible();
 });
 

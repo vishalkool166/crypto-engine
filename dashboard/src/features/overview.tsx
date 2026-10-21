@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, Radio, FlaskConical, Send, Wallet } from "lucide-react";
+import { ArrowUpRight, Radio, FlaskConical, Wallet } from "lucide-react";
 import { request, useResource, number, price, time, words } from "../api";
 import { base } from "../lib/app";
 import { Button } from "../components/ui/button";
@@ -196,12 +196,6 @@ export function AdminOverview() {
               title: "Research & evidence",
               note: "Backtests and strategy diagnostics",
               icon: FlaskConical,
-            },
-            {
-              path: "/telegram",
-              title: "Telegram commands",
-              note: "Transport, delivery, and bot diagnostics",
-              icon: Send,
             },
           ].map(({ path, title, note, icon: Icon }) => (
             <Link className="quick-link" to={path} key={path}>

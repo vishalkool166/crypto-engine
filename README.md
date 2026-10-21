@@ -1,82 +1,61 @@
-# Signal Engine 2.1
+# Signal Engine 2.2.0
 
-Signal Engine is a self-hosted market research and trading application. It has a public read-only site and a private, Google-authenticated operator console. The application intentionally has no customer accounts, SaaS plans, or billing.
+Signal Engine is a self-hosted market research and trading workspace. It has a public market view and an optional private operator console. It has no customer accounts, SaaS plans, or billing.
 
-## What is included
+## Included
 
-| Area | What it provides |
-| --- | --- |
-| Public site | Published signals, market context, methodology, and public service status. It does not expose private account, position, or monetary performance data. |
-| Admin console | Google-only operator access to the engine, trades, trade journeys, performance, research, Telegram, audit and stored database records. |
-| Engine | Existing strategy, exchange reconciliation, order management, risk controls and scheduled scans. It starts disabled until configured. |
-| Telegram | Outbound signal alerts plus allowlisted private operator commands through outbound polling by default, with an optional webhook transport. |
-| Storage | SQLite application database and Redis coordination store. Existing SQLite files must be retained during upgrades. |
+- **Public site:** market context, published signals, outcomes, and methodology.
+- **Private console:** Google allowlisted sign-in, live positions, trade journeys, performance, Indian-market monitoring, research assistant, system health, audit, and settings. Responsive visuals use brief motion and respect reduced-motion preferences.
+- **Trading service:** Binance USDⓈ-M demo trading by default, with guarded live-mode support that requires server opt-in and TOTP.
+- **Telegram:** webhook alerts and focused operator commands, including `/ping`, `/trades`, `/journey`, `/performance`, `/india`, and `/help`.
+- **Persistent records:** SQLite trade and signal history, journeys, runtime state, plus the local RAG index. Preserve these during upgrades.
 
-The admin console includes a **Stored data** view for inspecting application tables. Secret-like fields are masked there. SaaS-era records remain in the database and are not deleted by this release; customer billing and signup are not part of the product.
+The public and admin interfaces can be hosted separately, together, or individually. Cloudflare is optional. See [Self-hosting](docs/SELF_HOSTING.md) for the complete setup, [Operations and safety](docs/OPERATIONS.md) for backups and trading controls, [Telegram setup](docs/TELEGRAM.md) for bot instructions, and [Research methodology](docs/RESEARCH.md) for strategy and evidence limits.
 
-## What changed in 2.1
+## Quick start
 
-- Public and admin finance-dashboard layouts with a consistent neutral shadcn/Radix component system.
-- One semantic palette per theme, a blocking theme initialization script, and mobile navigation with focus management.
-- Interactive ledger charts, individual metric cards, and retained Performance and Trade Journey pages.
-- TOTP-confirmed paper/live switching through a verified account transition and a fresh engine process.
-- Telegram polling starts independently of the trading scheduler, with `/start`, `/ping`, and visible inbound diagnostics.
-- Independent Cloudflare Tunnel startup, HTTP/2 by default, automatic container restart, and an optional systemd unit.
-
-**Existing installation:** start with [docs/UPGRADE_2_1.md](docs/UPGRADE_2_1.md).
-
-## Start here
-
-1. Read [DEPLOY.md](DEPLOY.md) for the full self-host and Cloudflare setup.
-2. Read [docs/OPERATIONS.md](docs/OPERATIONS.md) before enabling the paper engine.
-3. Copy [.env.example](.env.example) to `.env` and fill only the values needed for your deployment.
-4. Configure Telegram using [docs/TELEGRAM.md](docs/TELEGRAM.md).
-5. Use [docs/ADMIN_GUIDE.md](docs/ADMIN_GUIDE.md) for the operator console and [docs/DATA.md](docs/DATA.md) for stored records and backups.
-6. Review [docs/SECURITY.md](docs/SECURITY.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/RESEARCH.md](docs/RESEARCH.md).
-
-## Local development
-
-Use Python 3.12 and Node.js 22. From the repository root:
+Use Python 3.12 and Node.js 22. First prepare the environment and leave execution disabled:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
 cp .env.example .env
+chmod 600 .env
+python scripts/setup_env.py
+```
+
+Review `.env`, set at least one interface enabled, set its exact origin, and keep `ENGINE_ENABLED=false` and `TRADING_MODE=paper` for initial setup. Then start the backend:
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 signal-engine
+```
+
+Build the interface(s) you plan to host from `dashboard/`:
+
+```bash
+npm ci
+npm run build:public
+npm run build:admin
+```
+
+The public build is `dashboard/dist/public`; the installable operator PWA is `dashboard/dist/admin`. Build only the site(s) you enable. Your static host must provide SPA fallback and proxy `/api/`, `/auth/`, `/ws/`, and `/webhook/` to the backend. See [Self-hosting](docs/SELF_HOSTING.md); Cloudflare Pages and Tunnel instructions are in [Cloudflare hosting](docs/CLOUDFLARE.md).
+
+## Development and checks
+
+```bash
+python -m pip install -r requirements-dev.txt
 npm --prefix dashboard ci
-ENV=development \
-PUBLIC_APP_ORIGIN=http://localhost:5173 \
-ADMIN_APP_ORIGIN=http://localhost:5174 \
-ENGINE_ENABLED=false \
-TRADING_MODE=paper \
-uvicorn main:app --host 127.0.0.1 --port 8000
-```
-
-In separate terminals, run the two Vite apps:
-
-```bash
-npm --prefix dashboard run dev
-npm --prefix dashboard run dev:admin
-```
-
-The public site is at `http://localhost:5173`; the admin site is at `http://localhost:5174`. To complete a local Google sign-in, configure a Google OAuth client with `http://localhost:5174/auth/callback/google`, then add its credentials and your email to `.env`. The Playwright tests use mocked operator APIs.
-
-## Build and verification
-
-```bash
+npm --prefix dashboard run check
 npm --prefix dashboard run build
 python -m pytest -q tests
-npm --prefix dashboard exec -- playwright install chromium
 npm --prefix dashboard test
 ```
 
-The two Pages outputs are `dashboard/dist/public` and `dashboard/dist/admin`. Cloudflare Pages must deploy the repository `dashboard/functions/` directory for API/auth/webhook proxying; a static-only upload is incomplete.
+For local development, run FastAPI on `127.0.0.1:8000`, then use `npm --prefix dashboard run dev` for public or `npm --prefix dashboard run dev:admin` for admin. Configure a local Google OAuth client to test the admin login. Playwright tests use mocked services.
 
-## Operating boundaries
+## Operating limits
 
-- Paper is the initial default. Live activation requires server opt-in, configured live credentials, TOTP, flat-account checks, and a managed restart. See [docs/EXECUTION_MODES.md](docs/EXECUTION_MODES.md).
-- `ENGINE_ENABLED=false` is the safe first boot. Enable only after the database is backed up, demo credentials are valid, and reconciliation is healthy.
-- Redis is required for authenticated sessions, request limits, scheduler coordination, and Telegram command deduplication.
-- A scan alert proves outbound Telegram delivery only. Use the setup checks in [docs/TELEGRAM.md](docs/TELEGRAM.md) to verify inbound commands.
-- Strategy grades are rule-based scores. Historical results do not establish future profitability.
-- No license is included. Select a license before redistributing the repository as open source.
+Paper mode uses Binance's USDⓈ-M demo environment. Live mode can submit real orders and stays unavailable until explicitly enabled on the server. Review [Operations and safety](docs/OPERATIONS.md) before starting the engine or switching modes. Historical performance and research outputs do not guarantee future results.
+
+Licensed under Apache-2.0; see [LICENSE](LICENSE). Service providers, market data, models, and dependencies retain their own terms.

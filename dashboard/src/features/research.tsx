@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 
-import { FlaskConical } from "lucide-react";
+import { FlaskConical, Bot, Database, Sparkles } from "lucide-react";
 import { request, useResource, number, time, words } from "../api";
 import { base } from "../lib/app";
 import { Button } from "../components/ui/button";
@@ -26,7 +26,9 @@ export function Research() {
     [error, setError] = useState(""),
     [question, setQuestion] = useState(""),
     [answer, setAnswer] = useState<any>(null),
-    [asking, setAsking] = useState(false);
+    [asking, setAsking] = useState(false),
+    [indexing, setIndexing] = useState(false),
+    [assistantError, setAssistantError] = useState("");
   async function replay(e: FormEvent) {
     e.preventDefault();
     setPending(true);
@@ -60,6 +62,18 @@ export function Research() {
       setAnswer({ answer: (e as Error).message });
     } finally {
       setAsking(false);
+    }
+  }
+  async function updateIndex() {
+    setIndexing(true);
+    setAssistantError("");
+    try {
+      await request(base + "/assistant/index", { method: "POST" });
+      assistant.refresh();
+    } catch (e) {
+      setAssistantError((e as Error).message);
+    } finally {
+      setIndexing(false);
     }
   }
   return (
@@ -173,54 +187,81 @@ export function Research() {
           />
         </Resource>
       </Panel>
-      <Panel title="Private research assistant">
+      <Panel
+        title="Private research assistant"
+        aside={
+          <Badge tone={assistant.data?.configured ? "green" : "amber"}>
+            {assistant.data?.configured ? "Assistant ready" : "Needs Groq key"}
+          </Badge>
+        }
+      >
         <Resource resource={assistant}>
-          {assistant.data?.configured ? (
-            <form className="assistant-form" onSubmit={ask}>
-              <p className="muted">
-                Queries may send relevant private trade context to Groq.
-                Generated answers require verification against source records.
+          <div className="assistant-workspace">
+            <div className="assistant-status-grid">
+              <div className="assistant-status-item">
+                <Database size={16} />
+                <span>Indexed research</span>
+                <strong>{number(assistant.data?.indexed_chunks, 0)} chunks</strong>
+              </div>
+              <div className="assistant-status-item">
+                <Sparkles size={16} />
+                <span>Retrieval mode</span>
+                <strong>{assistant.data?.indexed_chunks ? "RAG enabled" : "Stored-record fallback"}</strong>
+              </div>
+              <Button variant="outline" disabled={indexing} onClick={() => void updateIndex()}>
+                {indexing ? "Indexing…" : "Index stored research"}
+              </Button>
+            </div>
+            <p className="assistant-disclosure">
+              Answers use indexed trade, signal, performance, and documentation records when available. Relevant context is sent to Groq. Responses are research summaries, not trading instructions.
+            </p>
+            {!assistant.data?.configured && (
+              <p className="notice" role="status">
+                Add <code>GROQ_API_KEY</code> to the server environment to enable answers. You can prepare the local index first.
               </p>
+            )}
+            {assistantError && <p className="error-text" role="alert">{assistantError}</p>}
+            <form className="assistant-form" onSubmit={ask}>
               <label className="field">
-                Question
+                Ask about the records
                 <textarea
                   required
                   minLength={3}
                   maxLength={1000}
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
-                  placeholder="Ask about recorded trade history"
+                  placeholder="For example: Which sessions have produced the most losses?"
+                  disabled={!assistant.data?.configured || asking}
                 />
               </label>
-              <Button disabled={asking} type="submit">
-                {asking ? "Retrieving context…" : "Ask assistant"}
+              <Button disabled={!assistant.data?.configured || asking || question.trim().length < 3} type="submit">
+                <Bot size={15} />
+                {asking ? "Searching records…" : "Ask research assistant"}
               </Button>
-              {answer && (
-                <div className="assistant-answer">
-                  {answer.answer ||
-                    answer.response ||
-                    answer.message ||
-                    "No answer returned."}
-                  {answer.sources && (
-                    <small>
-                      Sources:{" "}
-                      {Array.isArray(answer.sources)
-                        ? answer.sources.join(", ")
-                        : String(answer.sources)}
-                    </small>
-                  )}
-                </div>
-              )}
             </form>
-          ) : (
-            <div className="reading">
-              <p>
-                The private research assistant is not configured. The retained
-                RAG and ML modules remain research tools; no generated analysis
-                is shown as a trading decision.
-              </p>
-            </div>
-          )}
+            {answer && (
+              <div className="assistant-answer" aria-live="polite">
+                <div className="assistant-answer-heading">
+                  <strong>Research response</strong>
+                  <Badge tone={answer.rag_used ? "blue" : "neutral"}>
+                    {answer.rag_used ? "RAG sources used" : "Record fallback"}
+                  </Badge>
+                </div>
+                <p>{answer.answer || answer.response || answer.message || "No answer returned."}</p>
+                {Array.isArray(answer.sources) && answer.sources.length > 0 && (
+                  <div className="assistant-source-list">
+                    {answer.sources.map((source: any, i: number) => (
+                      <span key={`${source.type || source.collection || "source"}-${i}`}>
+                        {source.label || source.type || source.collection || "Stored source"}
+                        {source.coin ? ` · ${source.coin}` : ""}
+                        {source.similarity != null ? ` · ${Math.round(source.similarity * 100)}% match` : ""}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </Resource>
       </Panel>
     </>

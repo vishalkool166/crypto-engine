@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import time
+from datetime import datetime, timezone
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException
@@ -33,7 +34,7 @@ log = logging.getLogger(__name__)
 settings.validate()
 app = FastAPI(
     title="Signal Engine",
-    version="2.1.0",
+    version="2.2.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
@@ -91,11 +92,19 @@ async def boundary(request: Request, call_next):
     )
     # A public Pages host must never inherit the local development allowance,
     # even when local defaults are used by the test/development environment.
-    admin_host = host == settings.admin_host or (
-        local_host and host != settings.public_host
-    )
     public_path = path.startswith("/api/v1/public/")
-    if not admin_host and not public_path:
+    public_host = settings.public_enabled and host == settings.public_host
+    webhook_path = path == "/webhook/telegram"
+    admin_host = settings.admin_enabled and (
+        host == settings.admin_host
+        or (local_host and (not settings.public_enabled or host != settings.public_host))
+    )
+    if public_path:
+        if not settings.public_enabled:
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+    elif webhook_path and (public_host or admin_host or local_host):
+        pass
+    elif not admin_host:
         return JSONResponse({"detail": "Not found"}, status_code=404)
     ip = (
         request.headers.get("x-visitor-ip", "")
@@ -284,6 +293,9 @@ async def stream(websocket, private):
     if not trusted_edge(websocket.headers):
         await websocket.close(code=1008)
         return
+    if (private and not settings.admin_enabled) or (not private and not settings.public_enabled):
+        await websocket.close(code=1008)
+        return
     origin = websocket.headers.get("origin", "")
     expected = settings.admin_origin if private else settings.public_origin
     local = (
@@ -312,20 +324,34 @@ async def stream(websocket, private):
         return
     _ws_counts[ip] = _ws_counts.get(ip, 0) + 1
     await websocket.accept()
+    last_health_at = 0.0
+    health_data = None
     try:
         while True:
             if private and not current_operator(websocket):
                 await websocket.close(code=1008)
                 break
             if private:
+                import time
                 from api.portal import private_health
+                from trade.ws import get_all_mark_prices
 
-                data = await asyncio.to_thread(private_health, websocket)
+                now = time.monotonic()
+                if health_data is None or now - last_health_at >= 15:
+                    health_data = await asyncio.to_thread(private_health, websocket)
+                    last_health_at = now
+                data = {
+                    **health_data,
+                    "mark_prices": get_all_mark_prices(),
+                    "mark_prices_at": datetime.now(timezone.utc).isoformat(),
+                }
+                interval = 1
             else:
                 data = await asyncio.to_thread(public_snapshot)
+                interval = 30
             await asyncio.wait_for(websocket.send_json(data), timeout=10)
             # Client input is never treated as a trading command.
-            await asyncio.sleep(15 if private else 30)
+            await asyncio.sleep(interval)
     except (WebSocketDisconnect, RuntimeError, asyncio.TimeoutError):
         pass
     except Exception:

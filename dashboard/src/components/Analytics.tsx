@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -14,6 +14,26 @@ import {
   YAxis,
 } from "recharts";
 import { number, words } from "../api";
+
+function useChartMotion() {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-reduced-motion: no-preference)");
+    const update = () => setEnabled(preference.matches);
+    update();
+    preference.addEventListener?.("change", update);
+    return () => preference.removeEventListener?.("change", update);
+  }, []);
+  return enabled;
+}
+
+function outcomeColor(name: string, index: number) {
+  const key = name.toLowerCase();
+  if (/(win|profit|positive)/.test(key)) return "hsl(var(--chart-1))";
+  if (/(loss|negative|stop)/.test(key)) return "hsl(var(--destructive))";
+  if (/(break|timeout|pending|neutral)/.test(key)) return "hsl(var(--muted-foreground))";
+  return ["hsl(var(--chart-3))", "hsl(var(--info))", "hsl(var(--chart-4))"][index % 3];
+}
 const tooltip = {
   background: "hsl(var(--popover))",
   color: "hsl(var(--popover-foreground))",
@@ -33,6 +53,7 @@ export function TrendChart({
   bars?: boolean;
 }) {
   const id = useId().replace(/:/g, "");
+  const animate = useChartMotion();
   if (!data.length)
     return (
       <div className="chart-empty">
@@ -74,6 +95,7 @@ export function TrendChart({
   return (
     <div
       className="analytics-chart"
+      data-chart-reveal
       role="img"
       aria-label={`${label}: ${data.length} recorded observations; latest ${number(data[data.length - 1]?.[valueKey], 4)}`}
     >
@@ -86,11 +108,15 @@ export function TrendChart({
             {common}
             <Bar
               dataKey={valueKey}
-              fill="hsl(var(--foreground) / .6)"
+              fill="hsl(var(--chart-1))"
               radius={[5, 5, 0, 0]}
               maxBarSize={34}
               isAnimationActive={false}
-            />
+            >
+              {data.map((point, index) => (
+                <Cell key={`${point.date || index}`} fill={outcomeColor(Number(point[valueKey]) < 0 ? "loss" : "win", index)} />
+              ))}
+            </Bar>
           </BarChart>
         ) : (
           <AreaChart
@@ -101,12 +127,12 @@ export function TrendChart({
               <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
                 <stop
                   offset="0%"
-                  stopColor="hsl(var(--chart-3))"
+                  stopColor={Number(data[data.length - 1]?.[valueKey]) < 0 ? "hsl(var(--destructive))" : "hsl(var(--chart-1))"}
                   stopOpacity={0.2}
                 />
                 <stop
                   offset="100%"
-                  stopColor="hsl(var(--chart-3))"
+                  stopColor={Number(data[data.length - 1]?.[valueKey]) < 0 ? "hsl(var(--destructive))" : "hsl(var(--chart-1))"}
                   stopOpacity={0}
                 />
               </linearGradient>
@@ -115,10 +141,11 @@ export function TrendChart({
             <Area
               type="linear"
               dataKey={valueKey}
-              stroke="hsl(var(--chart-3))"
-              strokeWidth={2}
+              stroke={Number(data[data.length - 1]?.[valueKey]) < 0 ? "hsl(var(--destructive))" : "hsl(var(--chart-1))"}
+              strokeWidth={2.25}
               fill={`url(#${id})`}
               isAnimationActive={false}
+              className={animate ? "analytics-area-curve" : undefined}
             />
           </AreaChart>
         )}
@@ -131,21 +158,16 @@ export function OutcomeDonut({
 }: {
   outcomes: Record<string, number>;
 }) {
+  const animate = useChartMotion();
   const entries = Object.entries(outcomes || {})
     .filter(([, n]) => n > 0)
     .map(([name, value]) => ({ name, value }));
   const total = entries.reduce((sum, e) => sum + e.value, 0);
-  const colors = [
-    "hsl(var(--foreground))",
-    "hsl(var(--muted-foreground))",
-    "hsl(var(--input))",
-    "hsl(var(--border))",
-    "hsl(var(--chart-3))",
-  ];
   return (
     <div className="distribution">
       <div
         className="donut-wrap"
+        data-chart-reveal
         role="img"
         aria-label={`${number(total, 0)} recorded outcomes`}
       >
@@ -160,10 +182,13 @@ export function OutcomeDonut({
                 outerRadius="90%"
                 paddingAngle={2}
                 stroke="none"
-                isAnimationActive={false}
+                isAnimationActive={animate}
+                animationBegin={90}
+                animationDuration={650}
+                animationEasing="ease-out"
               >
                 {entries.map((e, i) => (
-                  <Cell key={e.name} fill={colors[i % colors.length]} />
+                  <Cell key={e.name} fill={outcomeColor(e.name, i)} />
                 ))}
               </Pie>
               <Tooltip
@@ -184,7 +209,7 @@ export function OutcomeDonut({
         {entries.length ? (
           entries.map((e, i) => (
             <div key={e.name}>
-              <span style={{ background: colors[i % colors.length] }} />
+              <span style={{ background: outcomeColor(e.name, i) }} />
               <span>{words(e.name)}</span>
               <strong>{number((e.value / total) * 100, 1)}%</strong>
             </div>

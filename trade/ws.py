@@ -14,6 +14,7 @@ from config import cfg
 log = logging.getLogger(__name__)
 
 _mark_prices:           dict                = {}
+_mark_price_updated_at: dict                = {}
 _ws_task:               asyncio.Task | None = None
 _user_ws_task:          asyncio.Task | None = None
 _kline_ws_task:         asyncio.Task | None = None
@@ -47,11 +48,19 @@ def on_kline_closed(callback) -> None:
 
 
 def get_mark_price(coin: str) -> float:
-    return _mark_prices.get(f"{coin}USDT", 0.0)
+    symbol = f"{coin}USDT"
+    if time.time() - _mark_price_updated_at.get(symbol, 0) > 15:
+        return 0.0
+    return _mark_prices.get(symbol, 0.0)
 
 
 def get_all_mark_prices() -> dict:
-    return dict(_mark_prices)
+    now = time.time()
+    return {
+        symbol.removesuffix("USDT"): price
+        for symbol, price in _mark_prices.items()
+        if now - _mark_price_updated_at.get(symbol, 0) <= 15
+    }
 
 
 def get_pending_commission(order_id: str) -> dict | None:
@@ -78,12 +87,16 @@ def get_binance_unrealized_pnl(coin: str) -> float | None:
 
 
 def get_ws_status() -> dict:
+    last_mark_update = max(_mark_price_updated_at.values(), default=0)
+    mark_age = time.time() - last_mark_update if last_mark_update else None
     return {
         "mark_price_connected": _ws_connected,
         "user_data_connected":  _user_ws_connected,
         "kline_ws_connected":   _kline_ws_connected,
         "ticker_ws_connected":  _ticker_ws_connected,
         "prices_cached":        len(_mark_prices),
+        "mark_price_age_seconds": round(mark_age, 1) if mark_age is not None else None,
+        "mark_price_fresh":     mark_age is not None and mark_age <= 15,
         "mode":                 cfg.TRADING_MODE,
         "binance_account_age":  round(time.time() - _binance_account["updated_at"], 0),
     }
@@ -122,6 +135,7 @@ async def _mark_price_stream() -> None:
                             p = float(item.get("p", 0))
                             if s and p:
                                 _mark_prices[s] = p
+                                _mark_price_updated_at[s] = time.time()
                     except Exception:
                         pass
         except websockets.exceptions.ConnectionClosedError as e:

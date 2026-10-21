@@ -17,14 +17,12 @@ import {
   FlaskConical,
   Globe2,
   Settings2,
-  Send,
   Menu,
   X,
   LogOut,
   Check,
   ChevronRight,
   Wallet,
-  Database,
   ScrollText,
   Search,
 } from "lucide-react";
@@ -36,8 +34,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
 import { request, useResource, useConnection, ApiError } from "./api";
-const PWA =
-  __APP_TARGET__ === "public" ? lazy(() => import("./PWA")) : () => null;
+const PWA = lazy(() => import("./PWA"));
 
 import { ADMIN } from "./lib/app";
 import { Brand, ThemeToggle, PageHead, Resource } from "./components/workspace";
@@ -54,8 +51,7 @@ import { AdminPerformance } from "./features/performance";
 import { System } from "./features/system";
 import { Markets, India } from "./features/markets";
 import { Research } from "./features/research";
-import { Telegram } from "./features/telegram";
-import { StoredData, Audit, Settings } from "./features/data";
+import { Audit, Settings } from "./features/data";
 
 function Login() {
   const reason = new URLSearchParams(location.search).get("error");
@@ -168,9 +164,7 @@ const adminNav = [
   { path: "/markets", name: "Crypto universe", icon: Globe2 },
   { path: "/india", name: "Indian markets", icon: Activity },
   { path: "/research", name: "Research", icon: FlaskConical },
-  { path: "/data", name: "Stored data", icon: Database },
   { path: "/system", name: "System health", icon: Activity },
-  { path: "/telegram", name: "Telegram", icon: Send },
   { path: "/audit", name: "Audit trail", icon: ScrollText },
   { path: "/settings", name: "Settings", icon: Settings2 },
 ];
@@ -211,7 +205,7 @@ function NavigationSearch() {
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Performance, trade journey, Telegram…"
+            placeholder="Performance, trade journey, research…"
           />
         </label>
         <ul className="command-results">
@@ -379,9 +373,7 @@ function AdminShell({ email }: { email: string }) {
             <Route path="/markets" element={<Markets />} />
             <Route path="/india" element={<India />} />
             <Route path="/research" element={<Research />} />
-            <Route path="/data" element={<StoredData />} />
             <Route path="/system" element={<System />} />
-            <Route path="/telegram" element={<Telegram />} />
             <Route path="/audit" element={<Audit />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />

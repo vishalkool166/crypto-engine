@@ -222,6 +222,8 @@ async def trades_ws_status(request: Request):
             "mark_price_connected": status["mark_price_connected"],
             "user_data_connected":  status["user_data_connected"],
             "prices_cached":        status["prices_cached"],
+            "mark_price_fresh":     status["mark_price_fresh"],
+            "mark_price_age_seconds": status["mark_price_age_seconds"],
             "mode":                 cfg.TRADING_MODE,
         })
     except Exception as e:

@@ -1,8 +1,4 @@
-"""Inbound Telegram lifecycle, independent of the trading scheduler.
-
-Polling is the default: inbound commands require no public webhook or Access
-bypass. Only one process may consume this bot's updates (Redis lease).
-"""
+"""Inbound Telegram webhook lifecycle, independent of the trading scheduler."""
 import asyncio
 import logging
 import os
@@ -88,7 +84,7 @@ async def start():
     if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID:
         _status.update(transport="not_configured", last_error="Configure TELEGRAM_TOKEN and TELEGRAM_CHAT_ID")
         return
-    transport = os.getenv("TELEGRAM_TRANSPORT", "polling").lower()
+    transport = os.getenv("TELEGRAM_TRANSPORT", "webhook").lower()
     if transport not in ("polling", "webhook"):
         raise RuntimeError("TELEGRAM_TRANSPORT must be polling or webhook")
     _status["transport"] = transport

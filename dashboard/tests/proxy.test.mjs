@@ -40,7 +40,7 @@ test("scoped public API forwards method, path, query and trusted edge headers", 
   }
 });
 
-test("public Pages target cannot reach admin APIs, auth, webhooks, or mutate public data", async () => {
+test("public Pages target cannot reach admin APIs, auth, or mutate public data", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("must not reach backend"); };
   try {
@@ -48,13 +48,35 @@ test("public Pages target cannot reach admin APIs, auth, webhooks, or mutate pub
       ["/api/v1/admin/overview", "api", "GET", 404],
       ["/api/v1/public/status", "api", "POST", 405],
       ["/auth/session", "auth", "GET", 404],
-      ["/webhook/telegram", "webhook", "POST", 404],
       ["/ws/admin", "ws", "GET", 404],
     ]) {
       const request = new Request("https://app.example.com" + path, { method });
       const response = await proxy(request, env, kind);
       assert.equal(response.status, status, path);
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("public-only Pages deployment can forward the Telegram webhook", async () => {
+  const originalFetch = globalThis.fetch;
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = { url: String(url), init };
+    return Response.json({ ok: true });
+  };
+  try {
+    const request = new Request("https://app.example.com/webhook/telegram", {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "198.51.100.9" },
+      body: JSON.stringify({ update_id: 7 }),
+    });
+    const response = await proxy(request, env, "webhook");
+    assert.equal(response.status, 200);
+    assert.equal(sent.url, "https://api.example.com/webhook/telegram");
+    assert.equal(sent.init.headers.get("x-origin-verify"), env.ORIGIN_PROXY_SECRET);
+    assert.equal(sent.init.headers.get("x-forwarded-app-host"), "app.example.com");
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -103,7 +103,19 @@ export function useConnection(privateApp: boolean) {
         attempt = 0;
         setState("connected");
       };
-      socket.onmessage = () => setState("connected");
+      socket.onmessage = (event) => {
+        setState("connected");
+        if (privateApp) {
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload?.mark_prices && typeof payload.mark_prices === "object") {
+              window.dispatchEvent(new CustomEvent("signal-engine-stream", { detail: payload }));
+            }
+          } catch {
+            // The stream can carry non-JSON control frames; connection state still updates.
+          }
+        }
+      };
       socket.onerror = () => setState("reconnecting");
       socket.onclose = () => {
         if (!stopped) {

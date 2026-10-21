@@ -17,7 +17,7 @@ def get_llm() -> ChatGroq:
         return _llm
     _llm = ChatGroq(
         api_key      = cfg.GROQ_API_KEY,
-        model        = "groq/compound-mini",
+        model        = cfg.GROQ_MODEL,
         temperature  = 0.3,
         max_tokens   = 500,
     )
@@ -131,6 +131,14 @@ async def ask(question: str) -> dict:
             "chunks":   0,
             "question": question,
         }
+
+
+def index_status() -> dict:
+    """Return stored vector counts without exposing documents or credentials."""
+    from rag.vectorstore import get_collection_stats
+
+    counts = get_collection_stats()
+    return {"collections": counts, "total_chunks": sum(counts.values())}
 
 
 async def ask_with_fallback(question: str) -> dict:

@@ -355,8 +355,8 @@ async def integrations(request: Request):
         "telegram": {
             "configured": bool(cfg.TELEGRAM_TOKEN and cfg.TELEGRAM_CHAT_ID),
             "webhook": None,
-            "transport": os.getenv("TELEGRAM_TRANSPORT", "polling"),
-            "expected_webhook_url": cfg.DOMAIN.rstrip("/") + "/webhook/telegram",
+            "transport": os.getenv("TELEGRAM_TRANSPORT", "webhook"),
+            "expected_webhook_url": cfg.TELEGRAM_WEBHOOK_URL or (cfg.DOMAIN.rstrip("/") + "/webhook/telegram"),
             "allowed_users_configured": bool(os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").strip()),
         }
     }
@@ -404,11 +404,11 @@ async def integrations(request: Request):
 async def register_telegram(request: Request):
     from config import cfg
 
-    if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID or (os.getenv("TELEGRAM_TRANSPORT", "polling") == "webhook" and not cfg.WEBHOOK_SECRET):
+    if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID or (os.getenv("TELEGRAM_TRANSPORT", "webhook") == "webhook" and not cfg.WEBHOOK_SECRET):
         raise HTTPException(409, "Telegram credentials and webhook secret are required")
     from alerts.telegram.client import register_webhook, register_commands
 
-    if os.getenv("TELEGRAM_TRANSPORT", "polling") == "polling":
+    if os.getenv("TELEGRAM_TRANSPORT", "webhook") == "polling":
         from alerts.telegram.service import start
         await start()
         commands_registered = await register_commands()
@@ -694,14 +694,8 @@ class AssistantRequest(BaseModel):
 
 @router.get("/admin/assistant/status")
 def assistant_status():
-    from config import cfg
-    import os
-
-    return {
-        "configured": bool(os.getenv("GROQ_API_KEY")),
-        "scope": "private_trade_history",
-        "external_provider": "Groq",
-    }
+    from chatbot_rag import get_assistant_status
+    return get_assistant_status()
 
 
 @router.post("/admin/assistant")
@@ -713,3 +707,28 @@ async def assistant(body: AssistantRequest):
     from chatbot_rag import chat_with_sources
 
     return await asyncio.wait_for(chat_with_sources(body.question), timeout=45)
+
+
+_assistant_index_lock = asyncio.Lock()
+
+
+@router.post("/admin/assistant/index")
+async def assistant_index():
+    """Build or update the local RAG index from stored records and documentation."""
+    from fastapi import HTTPException
+
+    if _assistant_index_lock.locked():
+        raise HTTPException(409, "Assistant indexing is already running")
+    async with _assistant_index_lock:
+        try:
+            from rag.indexer import run_incremental_index
+            from rag.chain import index_status
+
+            indexed = await asyncio.to_thread(run_incremental_index)
+            status = await asyncio.to_thread(index_status)
+            return {"indexed": indexed, **status}
+        except ImportError as exc:
+            raise HTTPException(503, "RAG dependencies are not installed") from exc
+        except Exception as exc:
+            log.exception("Assistant index update failed")
+            raise HTTPException(503, "Assistant index update failed; inspect server logs") from exc

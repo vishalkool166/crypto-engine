@@ -6,21 +6,19 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
-    ...(mode === "public"
-      ? [
-          VitePWA({
-            registerType: "prompt",
-            includeAssets: ["favicon.svg", "icons/*.png"],
-            manifest: {
-              id: "/",
-              name: "Signal Engine",
-              short_name: "Signal Engine",
-              description: "Market research and paper-signal monitoring",
+    VitePWA({
+      registerType: "prompt",
+      includeAssets: ["favicon.svg", "icons/*.png"],
+      manifest: {
+              id: mode === "admin" ? "/?app=admin" : "/",
+              name: mode === "admin" ? "Signal Engine Operator" : "Signal Engine",
+              short_name: mode === "admin" ? "SE Operator" : "Signal Engine",
+              description: mode === "admin" ? "Private Signal Engine operator workspace" : "Market research and paper-signal monitoring",
               theme_color: "#141714",
               background_color: "#f4f3ee",
               display: "standalone",
               scope: "/",
-              start_url: "/",
+              start_url: mode === "admin" ? "/?app=admin" : "/",
               icons: [
                 {
                   src: "/icons/icon-192.png",
@@ -36,7 +34,7 @@ export default defineConfig(({ mode }) => ({
                 },
               ],
             },
-            workbox: {
+      workbox: {
               globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
               navigateFallback: "/index.html",
               navigateFallbackDenylist: [
@@ -48,10 +46,8 @@ export default defineConfig(({ mode }) => ({
               cleanupOutdatedCaches: true,
               importScripts: ["/sw-cleanup.js"],
             },
-            devOptions: { enabled: false },
+      devOptions: { enabled: false },
           }),
-        ]
-      : []),
   ],
   cacheDir: "node_modules/.vite-" + mode,
   optimizeDeps: { exclude: ["virtual:pwa-register/react"] },

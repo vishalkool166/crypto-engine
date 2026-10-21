@@ -75,24 +75,19 @@ async def handle_update(data: dict) -> None:
 async def _handle_command(text: str, chat_id: str = "") -> None:
     from alerts.telegram.client import send
     from alerts.telegram.commands.status      import (
-        cmd_status, cmd_mode, cmd_health, cmd_balance, cmd_profit,
+        cmd_status, cmd_health,
     )
     from alerts.telegram.commands.trading     import (
-        cmd_trades, cmd_position, cmd_scan, cmd_queue, cmd_journey,
+        cmd_trades, cmd_position, cmd_scan, cmd_journey,
     )
     from alerts.telegram.commands.signals     import (
-        cmd_coin, cmd_btc, cmd_funding, cmd_fear,
+        cmd_coin,
     )
     from alerts.telegram.commands.performance import (
-        cmd_pnl, cmd_daily, cmd_stats, cmd_grade,
-        cmd_history, cmd_performance,
+        cmd_performance,
     )
-    from alerts.telegram.commands.content     import (
-        cmd_brief, cmd_pending, cmd_show_post, cmd_discard,
-    )
-    from alerts.telegram.commands.backtest    import (
-        cmd_backtest, cmd_backfill, cmd_candle_status,
-    )
+    from alerts.telegram.commands.market_report import cmd_brief
+    from alerts.telegram.commands.backtest import cmd_backtest
     from alerts.telegram.commands.help        import cmd_help
     from alerts.telegram.commands.indian      import (
         cmd_india, cmd_orb, cmd_indianstats,
@@ -145,29 +140,6 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
             await send("⚠️ Usage: `/backtest ETH`")
         return
 
-    if t.split(" ")[0] == "/backfill":
-        parts = t.split()
-        await cmd_backfill(parts[1].upper() if len(parts) > 1 else None)
-        return
-
-    if t.split(" ")[0] == "/discard":
-        parts = t.split()
-        if len(parts) > 1:
-            try:
-                await cmd_discard(int(parts[1].replace("#", "")))
-            except ValueError:
-                await send("⚠️ Usage: `/discard 5`")
-        else:
-            await send("⚠️ Usage: `/discard 5`")
-        return
-
-    if t.startswith("#") and len(t) > 1:
-        try:
-            await cmd_show_post(int(t.replace("#", "").strip()))
-        except ValueError:
-            pass
-        return
-
     async def cmd_ping():
         await send("📡 *Connected*\nYour command reached Signal Engine and this reply came from the server.\nUse /help for the operator menu.")
 
@@ -175,25 +147,11 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         "/ping":        cmd_ping,
         "/start":       cmd_help,
         "/status":      cmd_status,
-        "/pnl":         cmd_pnl,
-        "/queue":       cmd_queue,
-        "/daily":       cmd_daily,
         "/scan":        cmd_scan,
         "/help":        cmd_help,
-        "/btc":         cmd_btc,
-        "/funding":     cmd_funding,
-        "/fear":        cmd_fear,
-        "/history":     cmd_history,
-        "/stats":       cmd_stats,
-        "/grade":       cmd_grade,
-        "/mode":        cmd_mode,
         "/brief":       cmd_brief,
         "/trades":      cmd_trades,
-        "/balance":     cmd_balance,
-        "/profit":      cmd_profit,
         "/health":      cmd_health,
-        "/pending":     cmd_pending,
-        "/candles":     cmd_candle_status,
         "/india":       cmd_india,
         "/orb":         cmd_orb,
         "/indianstats": cmd_indianstats,
