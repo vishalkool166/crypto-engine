@@ -28,18 +28,19 @@ async def cmd_trades() -> None:
 
         if not trades:
             await send(
-                f"📊 *Open Trades*\n"
+                f"📊 *Open Paper Trades*\n"
                 f"🕐 `{_now_ist()}`\n\n"
                 f"😴 No open trades"
             )
             return
 
         lines = [
-            f"📊 *Open Trades — {len(trades)}*\n"
+            f"📊 *Open Paper Trades — {len(trades)}*\n"
             f"🕐 `{_now_ist()}`\n"
         ]
 
         for t in trades:
+            trade_id = t.get("trade_id", t.get("id", "—"))
             coin      = t.get("coin", "--")
             direction = t.get("direction", "--")
             grade     = t.get("grade", "--")
@@ -60,22 +61,59 @@ async def cmd_trades() -> None:
             h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
             h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
 
-            lines.append(
-                f"\n{d_emoji} *{coin}USDT* {g_emoji} `{grade}`\n"
-                f"💲 Entry:   `{entry:.6f}`\n"
-                f"💲 Live:    `{live:.6f}`\n"
-                f"{pnl_emoji} PnL:     `{pnl_str}` ({pnl_pct:.2f}%)\n"
-                f"🛑 SL:      `{sl:.6f}`\n" if sl else ""
-                f"✅ TP:      `{tp:.6f}`\n" if tp else ""
-                f"⚖️ Lev:     `{leverage}x`  💰 Margin: `${margin:.2f}`\n"
-                f"{h_emoji} Health:  `{h_state}`  ⏱️ `{duration}`"
-            )
+            details = [
+                f"🧭 Trade ID: `#{trade_id}` · `/journey {trade_id}`",
+                f"💲 Entry: `{entry:.6f}` · Live: `{live:.6f}`",
+                f"{pnl_emoji} P&L: `{pnl_str}` ({pnl_pct:.2f}%)",
+            ]
+            if sl:
+                details.append(f"🛑 Stop: `{float(sl):.6f}`")
+            if tp:
+                details.append(f"🎯 Target: `{float(tp):.6f}`")
+            details.append(f"⚖️ {leverage}× leverage · 💰 ${margin:.2f} margin")
+            details.append(f"{h_emoji} {h_state} · ⏱️ {duration}")
+            lines.append(f"\n{d_emoji} *{coin}USDT* {g_emoji} `{grade}`\n" + "\n".join(details))
 
         await send("\n".join(lines))
 
     except Exception as e:
         log.error("cmd_trades error: %s", e)
         await send("❌ Could not fetch trades.")
+
+
+async def cmd_journey(trade_id: int) -> None:
+    """Summarize the recorded price path for one stored paper trade."""
+    try:
+        from trade.monitor import get_trade_journey
+
+        points = get_trade_journey(trade_id)
+        if not points:
+            await send(
+                f"🧭 *Trade journey #{trade_id}*\n\n"
+                "No price snapshots are stored for this trade yet. Check the trade ID, "
+                "or confirm that the monitor recorded this trade while it was open."
+            )
+            return
+
+        first, latest = points[0], points[-1]
+        pnl = float(latest.get("pnl_pct") or 0)
+        emoji = "🟢" if pnl >= 0 else "🔴"
+        lines = [
+            f"🧭 *Trade journey #{trade_id}*",
+            f"{_dir_emoji(first.get('direction', 'LONG'))} *{first.get('coin', 'Trade')}* · {len(points)} recorded points",
+            f"📍 Entry: `{float(first.get('entry_price') or first.get('price') or 0):.6f}`",
+            f"📈 Latest: `{float(latest.get('price') or 0):.6f}`",
+            f"{emoji} Recorded move: `{pnl:+.2f}%`",
+        ]
+        if first.get("sl_price") is not None:
+            lines.append(f"🛑 Stop: `{float(first['sl_price']):.6f}`")
+        if first.get("tp_price") is not None:
+            lines.append(f"🎯 Target: `{float(first['tp_price']):.6f}`")
+        lines.append(f"🕒 `{_now_ist()}` · paper record")
+        await send("\n".join(lines))
+    except Exception as e:
+        log.error("cmd_journey %s error: %s", trade_id, e)
+        await send(f"⚠️ Could not load journey for trade `#{trade_id}`. Check the operator logs.")
 
 
 async def cmd_position(coin: str) -> None:
@@ -115,35 +153,43 @@ async def cmd_position(coin: str) -> None:
         warnings  = health.get("warnings", []) if health else []
 
         sl_pct  = abs(entry - sl)  / entry * 100 if sl  and entry else 0
-        sl_dist = abs(live  - sl)  / entry * 100 if sl  and entry else 0
         tp_dist = abs(tp    - live) / entry * 100 if tp  and entry else 0
 
-        msg = (
-            f"{d_emoji} *{coin}USDT — Position Detail*\n"
-            f"🕐 `{_now_ist()}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"{g_emoji} Grade:    `{grade}`  🎯 Score: `{score}`\n"
-            f"⏰ Session:  `{session}`\n"
-            f"📍 Regime:   `{regime}`\n"
-            f"📦 Version:  `{version}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💲 Entry:    `${entry:.6f}`\n"
-            f"💲 Live:     `${live:.6f}`\n"
-            f"{pnl_emoji} PnL:      `{pnl_str}` ({pnl_pct:.2f}%)\n\n"
-            f"🛑 SL:       `${sl:.6f}` ({sl_pct:.2f}% from entry)\n" if sl else ""
-            f"✅ TP:       `${tp:.6f}` ({tp_dist:.2f}% away)\n\n" if tp else ""
-            f"⚖️ Leverage: `{leverage}x`  💰 Margin: `${margin:.2f}`\n"
-            f"⏱️ Open:     `{duration}`\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"{h_emoji} Health:   `{h_state}`\n"
-        )
+        lines = [
+            f"{d_emoji} *{coin}USDT — Position Detail*",
+            f"🕐 `{_now_ist()}`",
+            "",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"{g_emoji} Grade: `{grade}` · 🎯 Score: `{score}`",
+            f"⏰ Session: `{session}`",
+            f"📍 Regime: `{regime}`",
+            f"📦 Version: `{version}`",
+            "",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"💲 Entry: `${entry:.6f}`",
+            f"💲 Live: `${live:.6f}`",
+            f"{pnl_emoji} P&L: `{pnl_str}` ({pnl_pct:.2f}%)",
+        ]
+        if sl:
+            lines.append(f"🛑 Stop: `${sl:.6f}` ({sl_pct:.2f}% from entry)")
+        if tp:
+            lines.append(f"🎯 Target: `${tp:.6f}` ({tp_dist:.2f}% away)")
+        lines.extend([
+            "",
+            f"⚖️ Leverage: `{leverage}×` · 💰 Margin: `${margin:.2f}`",
+            f"⏱️ Open: `{duration}`",
+            "",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"{h_emoji} Health: `{h_state}`",
+        ])
+        msg = "\n".join(lines)
 
         if failures:
             msg += f"\n❌ _{failures[0]}_"
         elif warnings:
             msg += f"\n⚠️ _{warnings[0]}_"
 
-        msg += "\n\n_Use dashboard Force Sell to close._"
+        msg += "\n\n_Use the admin paper-trade close action to close this position._"
 
         await send(msg)
 

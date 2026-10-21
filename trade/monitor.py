@@ -719,6 +719,9 @@ def get_trade_journey(trade_id: int) -> list:
                 TradeJourney.market   == "crypto",
             ).order_by(TradeJourney.timestamp.asc()).all()
         return [{
+            "trade_id":   s.trade_id,
+            "coin":       s.coin,
+            "direction":  s.direction,
             "timestamp":  s.timestamp.isoformat() if s.timestamp else None,
             "price":      s.price,
             "pnl_pts":    s.pnl_pts,

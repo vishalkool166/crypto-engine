@@ -18,13 +18,13 @@ LISTEN_KEY_TTL = 1800.0
 def _base_url() -> str:
     if cfg.TRADING_MODE == "live":
         return "https://fapi.binance.com"
-    return cfg.BINANCE_DEMO_BASE_URL or "https://testnet.binancefuture.com"
+    return cfg.BINANCE_DEMO_BASE_URL or "https://demo-fapi.binance.com"
 
 
 def _ws_base_url() -> str:
     if cfg.TRADING_MODE == "live":
-        return "wss://fstream.binancefuture.com"
-    return "wss://stream.binancefuture.com"
+        return "wss://fstream.binance.com"
+    return "wss://demo-fstream.binance.com"
 
 
 def _api_key() -> str:

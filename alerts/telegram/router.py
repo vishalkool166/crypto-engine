@@ -14,12 +14,19 @@ async def handle_webhook(request: Request) -> None:
     data=await request.json()
     msg=data.get("message",{})
     chat_id=str(msg.get("chat",{}).get("id",""))
-    if chat_id!=str(cfg.TELEGRAM_CHAT_ID): return
+    if chat_id!=str(cfg.TELEGRAM_CHAT_ID):
+        log.warning("Telegram update ignored: chat does not match the configured operator chat")
+        return
     text=msg.get("text","")
     if not isinstance(text,str) or len(text)>2000: return
     allowed={x.strip() for x in os.getenv("TELEGRAM_ALLOWED_USER_IDS","").split(",") if x.strip()}
-    if not allowed and not chat_id.startswith("-"): allowed={chat_id}
-    if str(msg.get("from",{}).get("id","")) not in allowed: return
+    sender_id=str(msg.get("from",{}).get("id",""))
+    if not allowed and not chat_id.startswith("-"):
+        # In a private chat Telegram uses the operator's user ID as chat ID.
+        allowed={chat_id}
+    if sender_id not in allowed:
+        log.warning("Telegram update ignored: sender is not in TELEGRAM_ALLOWED_USER_IDS")
+        return
     from redis_client import get_redis
     redis=get_redis()
     # Deduplication and command budgets fail closed without the coordination store.
@@ -56,7 +63,7 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
         cmd_status, cmd_mode, cmd_health, cmd_balance, cmd_profit,
     )
     from alerts.telegram.commands.trading     import (
-        cmd_trades, cmd_position, cmd_scan, cmd_queue,
+        cmd_trades, cmd_position, cmd_scan, cmd_queue, cmd_journey,
     )
     from alerts.telegram.commands.signals     import (
         cmd_coin, cmd_btc, cmd_funding, cmd_fear,
@@ -104,6 +111,14 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
             await send("⚠️ Usage: `/position ETH`")
         else:
             await cmd_position(coin)
+        return
+
+    if t.split(" ")[0] == "/journey":
+        parts = t.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await send("🧭 Usage: `/journey TRADE_ID`\nFind the ID in the admin Trades table or `/trades`.")
+        else:
+            await cmd_journey(int(parts[1]))
         return
 
     if t.split(" ")[0] == "/backtest":

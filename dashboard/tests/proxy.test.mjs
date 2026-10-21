@@ -5,7 +5,7 @@ import { proxy } from "../functions/_shared/proxy.js";
 
 const env = {
   APP_TARGET: "public",
-  BACKEND_ORIGIN: "https://api.vishalkool.top",
+  BACKEND_ORIGIN: "https://api.example.com",
   ORIGIN_PROXY_SECRET: "x".repeat(48),
 };
 
@@ -24,15 +24,15 @@ test("scoped public API forwards method, path, query and trusted edge headers", 
     return Response.json({ status: "ok" });
   };
   try {
-    const request = new Request("https://app.vishalkool.top/api/v1/public/status?view=full", {
+    const request = new Request("https://app.example.com/api/v1/public/status?view=full", {
       method: "GET",
-      headers: { host: "app.vishalkool.top", "cf-connecting-ip": "198.51.100.9", "x-origin-verify": "forged" },
+      headers: { host: "app.example.com", "cf-connecting-ip": "198.51.100.9", "x-origin-verify": "forged" },
     });
     const response = await proxy(request, env, "api");
     assert.equal(response.status, 200);
-    assert.equal(sent.url, "https://api.vishalkool.top/api/v1/public/status?view=full");
+    assert.equal(sent.url, "https://api.example.com/api/v1/public/status?view=full");
     assert.equal(sent.init.headers.get("x-origin-verify"), env.ORIGIN_PROXY_SECRET);
-    assert.equal(sent.init.headers.get("x-forwarded-app-host"), "app.vishalkool.top");
+    assert.equal(sent.init.headers.get("x-forwarded-app-host"), "app.example.com");
     assert.equal(sent.init.headers.get("x-visitor-ip"), "198.51.100.9");
     assert.equal(sent.init.headers.get("host"), null);
   } finally {
@@ -51,7 +51,7 @@ test("public Pages target cannot reach admin APIs, auth, webhooks, or mutate pub
       ["/webhook/telegram", "webhook", "POST", 404],
       ["/ws/admin", "ws", "GET", 404],
     ]) {
-      const request = new Request("https://app.vishalkool.top" + path, { method });
+      const request = new Request("https://app.example.com" + path, { method });
       const response = await proxy(request, env, kind);
       assert.equal(response.status, status, path);
     }
@@ -65,12 +65,12 @@ test("OAuth response keeps redirect and session cookie intact", async () => {
   const adminEnv = { ...env, APP_TARGET: "admin" };
   globalThis.fetch = async () => new Response(null, {
     status: 303,
-    headers: { location: "https://admin-app.vishalkool.top/", "set-cookie": "__Host-se_operator=opaque; Secure; HttpOnly; Path=/; SameSite=Lax" },
+    headers: { location: "https://admin.example.com/", "set-cookie": "__Host-se_operator=opaque; Secure; HttpOnly; Path=/; SameSite=Lax" },
   });
   try {
-    const response = await proxy(new Request("https://admin-app.vishalkool.top/auth/callback/google"), adminEnv, "auth");
+    const response = await proxy(new Request("https://admin.example.com/auth/callback/google"), adminEnv, "auth");
     assert.equal(response.status, 303);
-    assert.equal(response.headers.get("location"), "https://admin-app.vishalkool.top/");
+    assert.equal(response.headers.get("location"), "https://admin.example.com/");
     assert.match(response.headers.get("set-cookie"), /HttpOnly/);
   } finally {
     globalThis.fetch = originalFetch;
@@ -105,18 +105,18 @@ test("WebSocket bridge connects both directions and strips browser handshake key
   };
   const upstream = new FakeSocket();
   globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), "https://api.vishalkool.top/ws/public");
+    assert.equal(String(url), "https://api.example.com/ws/public");
     assert.equal(init.headers.get("cookie"), "se_operator=opaque");
-    assert.equal(init.headers.get("origin"), "https://app.vishalkool.top");
+    assert.equal(init.headers.get("origin"), "https://app.example.com");
     assert.equal(init.headers.get("sec-websocket-key"), null);
     assert.equal(init.headers.get("x-origin-verify"), env.ORIGIN_PROXY_SECRET);
     return { webSocket: upstream };
   };
   try {
-    const request = new Request("https://app.vishalkool.top/ws/public", {
+    const request = new Request("https://app.example.com/ws/public", {
       headers: {
         upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": "browser-key",
-        cookie: "se_operator=opaque", origin: "https://app.vishalkool.top",
+        cookie: "se_operator=opaque", origin: "https://app.example.com",
       },
     });
     const response = await proxy(request, env, "ws");

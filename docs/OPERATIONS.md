@@ -17,7 +17,7 @@ The liveness endpoint only confirms that FastAPI responds. It does not report wh
 Run the online SQLite backup before deployment or migration:
 
 ```bash
-python scripts/backup.py backups/signals-$(date +%F).db
+python scripts/backup.py "backups/signals-$(date +%Y%m%d-%H%M%S).db"
 ```
 
 Copy the backup to protected storage and periodically verify `PRAGMA integrity_check` on a separate test database. The database folder is bind-mounted; preserve its contents and correct UID 10001 ownership when updating the container.

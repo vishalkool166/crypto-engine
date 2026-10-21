@@ -2,8 +2,10 @@
 @import "@fontsource/outfit/500.css";
 @import "@fontsource/outfit/600.css";
 
+/* One semantic palette drives the public and private applications. */
 :root {
-  color-scheme: light; --background: 0 0% 100%; --foreground: 0 0% 3.9%;
+  color-scheme: light;
+  --background: 0 0% 100%; --foreground: 0 0% 3.9%;
   --card: 0 0% 98%; --card-foreground: 0 0% 3.9%; --popover: 0 0% 100%;
   --popover-foreground: 0 0% 3.9%; --primary: 0 0% 9%; --primary-foreground: 0 0% 98%;
   --secondary: 0 0% 96.1%; --secondary-foreground: 0 0% 9%; --muted: 0 0% 96.1%;
@@ -16,29 +18,24 @@
   --sidebar-primary: 0 0% 9%; --sidebar-primary-foreground: 0 0% 98%;
   --sidebar-accent: 0 0% 94%; --sidebar-accent-foreground: 0 0% 9%;
   --sidebar-border: 0 0% 89.8%; --sidebar-ring: 217.2 91.2% 59.8%;
+  --ink: #09090b; --muted: #71717a; --line: #e4e4e7; --surface: #fafafa;
   font-family: Outfit, sans-serif; color: hsl(var(--foreground)); background: hsl(var(--background));
-  font-synthesis: none; font-size: 14px; --ink: light-dark(#09090b,#f6f6f4); --muted: light-dark(#71717a,#bcbce6); --line: light-dark(#e4e4e7,#a8a8fa); --surface: light-dark(#fafafa,#fea4a4);
+  font-synthesis: none; font-size: 14px;
 }
-.dark { color-scheme: dark; --background: 0 0% 3.9%; --foreground: 0 0% 98%;
-  --card: 0 0% 5.5%; --card-foreground: 0 0% 98%; --popover: 0 0% 5.5%; --popover-foreground: 0 0% 98%;
-  --primary: 0 0% 98%; --primary-foreground: 0 0% 9%; --secondary: 0 0% 10%; --secondary-foreground: 0 0% 98%;
-  --muted: 0 0% 10%; --muted-foreground: 0 0% 63.9%; --accent: 0 0% 10%; --accent-foreground: 0 0% 98%;
-  --destructive: 0 62.8% 30.6%; --destructive-foreground: 0 0% 98%; --border: 0 0% 12%; --input: 0 0% 12%; --ring: 0 0% 83.1%;
-  --sidebar-background: 0 0% 5.5%; --sidebar-foreground: 0 0% 98%; --sidebar-primary: 217.2 91.2% 59.8%;
-  --sidebar-primary-foreground: 0 0% 100%; --sidebar-accent: 0 0% 10%; --sidebar-accent-foreground: 0 0% 98%;
-  --sidebar-border: 0 0% 12%; --sidebar-ring: 217.2 91.2% 59.8%; --ink: light-dark(#fafafa,#fea4a4); --muted: light-dark(#a1a1aa,#b3b3ef); --line: light-dark(#27272a,#d8d8d5); --surface: light-dark(#09090b,#f6f6f4);
-}
-:root {
-  font-family: Outfit, sans-serif;
-  color: hsl(var(--foreground));
-  background: hsl(var(--background));
-  font-synthesis: none;
-  font-size: 14px;
-  --ink: light-dark(#09090b,#f6f6f4);
-  --muted: light-dark(#71717a,#bcbce6);
-  --line: light-dark(#e4e4e7,#a8a8fa);
-  --surface: light-dark(#fafafa,#fea4a4);
-  --accent: light-dark(#f4f4f5,#a5a5fd);
+.dark {
+  color-scheme: dark;
+  --background: 0 0% 3.9%; --foreground: 0 0% 98%;
+  --card: 0 0% 5.5%; --card-foreground: 0 0% 98%; --popover: 0 0% 5.5%;
+  --popover-foreground: 0 0% 98%; --primary: 0 0% 98%; --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 10%; --secondary-foreground: 0 0% 98%; --muted: 0 0% 10%;
+  --muted-foreground: 0 0% 63.9%; --accent: 0 0% 10%; --accent-foreground: 0 0% 98%;
+  --destructive: 0 62.8% 30.6%; --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 12%; --input: 0 0% 12%; --ring: 0 0% 83.1%;
+  --sidebar-background: 0 0% 5.5%; --sidebar-foreground: 0 0% 98%;
+  --sidebar-primary: 217.2 91.2% 59.8%; --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 0 0% 10%; --sidebar-accent-foreground: 0 0% 98%;
+  --sidebar-border: 0 0% 12%; --sidebar-ring: 217.2 91.2% 59.8%;
+  --ink: #f6f6f4; --muted: #bcbce6; --line: #27272a; --surface: #09090b;
 }
 * {
   box-sizing: border-box;
@@ -1884,7 +1881,7 @@ body { background: hsl(var(--background)); color: hsl(var(--foreground)); -webki
 .research-intro .intro-number { color: hsl(var(--primary-foreground) / .64); }
 .metric { background: transparent; } .metric strong { font-family: Outfit, sans-serif; font-variant-numeric: tabular-nums; }
 .metric small, .panel-note { color: hsl(var(--muted-foreground)); }
-.universe-strip { background: hsl(var(--muted)); border-top: 1px solid hsl(var(--border)); }
+.universe-strip { background: hsl(var(--secondary)); border-top: 1px solid hsl(var(--border)); }
 .universe-strip span { background: hsl(var(--background)); border: 1px solid hsl(var(--border)); border-radius: 5px; }
 .badge-green, .positive { color: #15803d; } .badge-green { background: #f0fdf4; border-color: #bbf7d0; }
 .badge-red, .negative { color: #b91c1c; } .badge-red { background: #fef2f2; border-color: #fecaca; }
@@ -1896,3 +1893,20 @@ body { background: hsl(var(--background)); color: hsl(var(--foreground)); -webki
 .dark .badge-amber { color: #fcd34d; background: #451a03; border-color: #92400e; }
 .outcome-bars > .positive .bar-track > span { background: #22c55e; }
 .outcome-bars > .negative .bar-track > span { background: #ef4444; }
+
+/* Performance and trade journey details */
+.performance-metrics { margin-bottom: 18px; }
+.performance-grid { align-items: stretch; margin-bottom: 18px; }
+.equity-chart svg, .journey-chart-wrap svg { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
+.chart-line { fill: none; stroke: hsl(var(--chart-3)); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
+.chart-zero { stroke: hsl(var(--border)); stroke-dasharray: 4 5; vector-effect: non-scaling-stroke; }
+.chart-caption, .journey-stats { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: hsl(var(--muted-foreground)); font-size: 12px; }
+.journey-entry { fill: hsl(var(--chart-1)); stroke: hsl(var(--card)); stroke-width: 2; }
+.journey-exit { fill: hsl(var(--chart-2)); stroke: hsl(var(--card)); stroke-width: 2; }
+.journey-level { stroke-dasharray: 5 4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.journey-level-entry { stroke: hsl(var(--chart-1)); }
+.journey-level-stop { stroke: hsl(var(--destructive)); }
+.journey-level-target { stroke: hsl(var(--chart-2)); }
+.journey-stats { justify-content: flex-start; margin-top: 12px; }
+.dialog-content { max-width: min(760px, calc(100vw - 32px)); }
+@media (max-width: 640px) { .performance-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .performance-grid { grid-template-columns: 1fr; } }

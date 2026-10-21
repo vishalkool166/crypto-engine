@@ -86,9 +86,13 @@ async def boundary(request: Request, call_next):
     if not trusted_edge(request.headers):
         return JSONResponse({"detail": "Forbidden"}, status_code=403)
     host = app_host(request)
+    local_host = not settings.production and host.split(":")[0] in (
+        "localhost", "127.0.0.1", "testserver"
+    )
+    # A public Pages host must never inherit the local development allowance,
+    # even when local defaults are used by the test/development environment.
     admin_host = host == settings.admin_host or (
-        not settings.production
-        and host.split(":")[0] in ("localhost", "127.0.0.1", "testserver")
+        local_host and host != settings.public_host
     )
     public_path = path.startswith("/api/v1/public/")
     if not admin_host and not public_path:

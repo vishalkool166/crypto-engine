@@ -37,6 +37,7 @@ import {
   ExternalLink,
   BookOpen,
   Wallet,
+  Database,
   ScrollText,
   Moon,
   Sun,
@@ -74,7 +75,9 @@ function Brand({ admin = false }: { admin?: boolean }) {
   );
 }
 function ThemeToggle() {
-  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  const [dark, setDark] = useState(
+    () => localStorage.getItem("signal-engine-theme") !== "light",
+  );
   function toggle() {
     const next = !dark;
     document.documentElement.classList.toggle("dark", next);
@@ -776,6 +779,258 @@ function PublicPerformance() {
     </>
   );
 }
+function EquityCurve({ points }: { points: any[] }) {
+  const valid = points.filter((p) => Number.isFinite(Number(p.equity)));
+  if (valid.length < 2)
+    return (
+      <Empty title="Not enough closed trades for a curve">
+        The curve appears after at least two closed paper trades have recorded
+        their net result.
+      </Empty>
+    );
+  const width = 720,
+    height = 220,
+    pad = 16,
+    values = valid.map((p) => Number(p.equity)),
+    min = Math.min(0, ...values),
+    max = Math.max(0, ...values),
+    span = Math.max(max - min, 1),
+    coords = values.map((value, i) => ({
+      x: pad + (i / Math.max(values.length - 1, 1)) * (width - 2 * pad),
+      y: height - pad - ((value - min) / span) * (height - 2 * pad),
+    })),
+    path = coords.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
+  return (
+    <div className="equity-chart">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="Cumulative net paper trade equity curve"
+        preserveAspectRatio="none"
+      >
+        <line
+          x1={pad}
+          x2={width - pad}
+          y1={height - pad - ((0 - min) / span) * (height - 2 * pad)}
+          y2={height - pad - ((0 - min) / span) * (height - 2 * pad)}
+          className="chart-zero"
+        />
+        <path d={path} className="chart-line" />
+      </svg>
+      <div className="chart-caption">
+        <span>{valid[0]?.date || "First recorded close"}</span>
+        <span>{valid[valid.length - 1]?.date || "Latest close"}</span>
+      </div>
+    </div>
+  );
+}
+function AdminPerformance() {
+  const perf = useResource(base + "/dashboard/performance"),
+    byCoin = useResource(base + "/trades/performance"),
+    history = useResource(base + "/dashboard/history?limit=100"),
+    signals = useResource(base + "/signals?limit=100"),
+    context = useResource(base + "/performance/context");
+  const p = perf.data || {},
+    historyRows = Array.isArray(history.data) ? history.data : [];
+  return (
+    <>
+      <PageHead
+        eyebrow="PRIVATE PERFORMANCE RECORD"
+        title="See what the closed trades say."
+        description="This page reports recorded paper results. Metrics use stored net P&L where available and do not establish a profitable strategy."
+        action={
+          <Refresh
+            onClick={() => {
+              perf.refresh();
+              byCoin.refresh();
+              history.refresh();
+              signals.refresh();
+              context.refresh();
+            }}
+          />
+        }
+      />
+      <Resource resource={perf}>
+        <div className="metric-grid performance-metrics">
+          <Metric label="Closed trades" value={number(p.closed, 0)} note="Wins and losses recorded" />
+          <Metric label="Win rate" value={`${number(p.win_rate, 1)}%`} note={`${number(p.wins, 0)} wins · ${number(p.losses, 0)} losses`} />
+          <Metric label="Net P&L" value={number(p.total_pnl, 4)} note="Recorded closed-trade net result" />
+          <Metric label="Profit factor" value={number(p.profit_factor, 2)} note="Gross profit ÷ gross loss" />
+          <Metric label="Maximum drawdown" value={`${number(p.max_drawdown, 2)}%`} note="Calculated from cumulative closed-trade P&L" />
+          <Metric label="Best trade" value={number(p.best_trade, 4)} note={p.best_trade_coin || "No trade recorded"} />
+        </div>
+        <div className="two-column performance-grid">
+          <Panel title="Cumulative net P&L">
+            <EquityCurve points={p.equity_curve || []} />
+          </Panel>
+          <Panel title="Performance by signal grade">
+            <DataTable
+              rows={[
+                { grade: "A+", ...(p.aplus || {}) },
+                { grade: "A", ...(p.a || {}) },
+                { grade: "B", ...(p.b || {}) },
+              ]}
+              columns={[
+                { key: "grade", label: "Grade" },
+                { key: "total", label: "Closed" },
+                { key: "wins", label: "Wins" },
+                { key: "win_rate", label: "Win rate", render: (r) => `${number(r.win_rate, 1)}%` },
+                { key: "pnl", label: "Net P&L", render: (r) => number(r.pnl, 4) },
+              ]}
+            />
+          </Panel>
+        </div>
+        <Panel title="Results by instrument">
+          <Resource resource={byCoin}>
+            <DataTable
+              rows={Array.isArray(byCoin.data) ? byCoin.data : []}
+              columns={[
+                { key: "coin", label: "Instrument" },
+                { key: "wins", label: "Wins" },
+                { key: "losses", label: "Losses" },
+                { key: "win_rate", label: "Win rate", render: (r) => `${number(r.win_rate, 1)}%` },
+                { key: "profit_abs", label: "Net P&L", render: (r) => number(r.profit_abs, 4) },
+                { key: "commission", label: "Fees", render: (r) => number(r.commission, 4) },
+                { key: "funding", label: "Funding", render: (r) => number(r.funding, 4) },
+              ]}
+            />
+          </Resource>
+        </Panel>
+        <div className="two-column">
+          <Panel title="Performance by system version">
+            <Resource resource={context}>
+              <DataTable
+                rows={context.data?.by_version || []}
+                columns={[
+                  { key: "system_version", label: "Version" },
+                  { key: "total", label: "Trades" },
+                  { key: "win_rate", label: "Win rate", render: (row) => `${number(row.win_rate, 1)}%` },
+                  { key: "pnl", label: "Net P&L", render: (row) => number(row.pnl, 4) },
+                ]}
+                empty="No closed trades have a recorded system version"
+              />
+            </Resource>
+          </Panel>
+          <Panel title="Performance by market regime">
+            <Resource resource={context}>
+              <DataTable
+                rows={context.data?.by_regime || []}
+                columns={[
+                  { key: "regime_at_entry", label: "Regime", render: (row) => words(row.regime_at_entry) },
+                  { key: "total", label: "Trades" },
+                  { key: "win_rate", label: "Win rate", render: (row) => `${number(row.win_rate, 1)}%` },
+                  { key: "pnl", label: "Net P&L", render: (row) => number(row.pnl, 4) },
+                ]}
+                empty="No closed trades have a recorded market regime"
+              />
+            </Resource>
+          </Panel>
+        </div>
+        <Panel title="Factor observations">
+          <Resource resource={context}>
+            <p className="panel-note">{context.data?.factor_note || "Descriptive averages from stored factor scores."}</p>
+            <DataTable
+              rows={context.data?.factors || []}
+              columns={[
+                { key: "factor", label: "Factor" },
+                { key: "observations", label: "Observations" },
+                { key: "mean_score_wins", label: "Mean score · wins", render: (row) => row.mean_score_wins == null ? "—" : number(row.mean_score_wins, 3) },
+                { key: "mean_score_losses", label: "Mean score · losses", render: (row) => row.mean_score_losses == null ? "—" : number(row.mean_score_losses, 3) },
+                { key: "score_difference", label: "Difference", render: (row) => row.score_difference == null ? "—" : number(row.score_difference, 3) },
+              ]}
+              empty="No numeric factor scores are stored with closed signal outcomes"
+            />
+          </Resource>
+        </Panel>
+        <Panel title="Recent closed trades">
+          <Resource resource={history}>
+            <DataTable
+              rows={historyRows}
+              columns={[
+                { key: "coin", label: "Instrument" },
+                { key: "direction", label: "Side" },
+                { key: "grade", label: "Grade" },
+                { key: "outcome", label: "Outcome" },
+                { key: "pnl", label: "Net P&L", render: (r) => number(r.pnl, 4) },
+                { key: "timestamp", label: "Opened", render: (r) => time(r.timestamp) },
+              ]}
+            />
+          </Resource>
+        </Panel>
+        <Panel title="Recent signal history" aside={<Link className="panel-link" to="/signals">Open signal ledger</Link>}>
+          <Resource resource={signals}>
+            <DataTable
+              rows={Array.isArray(signals.data) ? signals.data : []}
+              columns={[
+                { key: "timestamp", label: "Time", render: (row) => time(row.timestamp) },
+                { key: "coin", label: "Instrument", render: (row) => <strong>{row.coin}</strong> },
+                { key: "direction", label: "Side" },
+                { key: "grade", label: "Grade" },
+                { key: "score", label: "Score", render: (row) => number(row.score, 1) },
+                { key: "outcome", label: "Outcome", render: (row) => words(row.outcome) },
+                { key: "pnl", label: "Recorded P&L", render: (row) => row.pnl == null ? "—" : number(row.pnl, 4) },
+              ]}
+              empty="No signals have been recorded"
+            />
+          </Resource>
+        </Panel>
+        <Panel title="Cached-data backtests">
+          <p className="panel-note">Run and review research backtests from the Research page. Backtests use stored market data and do not place orders.</p>
+          <Button asChild variant="outline"><Link to="/research">Open Research</Link></Button>
+        </Panel>
+      </Resource>
+    </>
+  );
+}
+function JourneyChart({ points }: { points: any[] }) {
+  const valid = points.filter((p) => Number.isFinite(Number(p.price)));
+  if (!valid.length)
+    return <Empty title="No journey points recorded">The monitor stores price snapshots while the trade is open. This trade has no journey points yet.</Empty>;
+  const first = valid[0],
+    levels = [
+      { key: "entry", value: Number(first.entry_price) },
+      { key: "stop", value: Number(first.sl_price) },
+      { key: "target", value: Number(first.tp_price) },
+    ].filter((level) => Number.isFinite(level.value) && level.value > 0);
+  const width = 680,
+    height = 240,
+    pad = 20,
+    values = [...valid.map((p) => Number(p.price)), ...levels.map((level) => level.value)],
+    min = Math.min(...values),
+    max = Math.max(...values),
+    span = Math.max(max - min, Math.abs(max) * 0.0001, 0.000001),
+    coords = valid.map((p, i) => ({
+      x: pad + (i / Math.max(valid.length - 1, 1)) * (width - 2 * pad),
+      y: height - pad - ((Number(p.price) - min) / span) * (height - 2 * pad),
+      point: p,
+    })),
+    path = coords.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
+  return (
+    <div className="journey-chart-wrap">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Trade price journey chart">
+        <line x1={pad} x2={width - pad} y1={height - pad} y2={height - pad} className="chart-zero" />
+        {levels.map((level) => {
+          const y = height - pad - ((level.value - min) / span) * (height - 2 * pad);
+          return <line key={level.key} x1={pad} x2={width - pad} y1={y} y2={y} className={`journey-level journey-level-${level.key}`} />;
+        })}
+        <path d={path} className="chart-line" />
+        {coords.filter((p) => p.point.is_entry || p.point.is_exit).map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r="5" className={p.point.is_exit ? "journey-exit" : "journey-entry"} />
+        ))}
+      </svg>
+      <div className="chart-caption">
+        <span>{time(valid[0]?.timestamp)}</span>
+        <span>{time(valid[valid.length - 1]?.timestamp)}</span>
+      </div>
+      <div className="journey-stats">
+        <span>Entry {price(valid[0]?.entry_price)}</span>
+        <span>Stop {price(valid[0]?.sl_price)}</span>
+        <span>Target {price(valid[0]?.tp_price)}</span>
+        <span>Latest {price(valid[valid.length - 1]?.price)}</span>
+      </div>
+    </div>
+  );
+}
 function PublicStatus() {
   const r = useResource("/api/v1/public/status");
   return (
@@ -936,9 +1191,28 @@ function PaperTrades() {
   const r = useResource(base + "/trades/open"),
     history = useResource(base + "/trades/history?limit=30&offset=0");
   const [selected, setSelected] = useState<any>(null),
+    [journeyTrade, setJourneyTrade] = useState<any>(null),
+    [journeyPoints, setJourneyPoints] = useState<any[]>([]),
+    [journeyLoading, setJourneyLoading] = useState(false),
+    [journeyError, setJourneyError] = useState(""),
     [totp, setTotp] = useState(""),
     [error, setError] = useState(""),
     [pending, setPending] = useState(false);
+  async function inspectJourney(trade: any) {
+    const tradeId = trade.trade_id ?? trade.id;
+    setJourneyTrade(trade);
+    setJourneyPoints([]);
+    setJourneyError("");
+    setJourneyLoading(true);
+    try {
+      const data = await request(`${base}/trades/${encodeURIComponent(tradeId)}/journey`);
+      setJourneyPoints(Array.isArray(data.journey) ? data.journey : []);
+    } catch (e) {
+      setJourneyError((e as Error).message);
+    } finally {
+      setJourneyLoading(false);
+    }
+  }
   async function close(e: FormEvent) {
     e.preventDefault();
     setPending(true);
@@ -988,6 +1262,11 @@ function PaperTrades() {
       key: "profit_abs",
       label: "Unrealized P&L",
       render: (t: any) => number(t.profit_abs ?? t.unrealized_pnl),
+    },
+    {
+      key: "journey",
+      label: "History",
+      render: (t: any) => <Button variant="outline" size="sm" onClick={() => void inspectJourney(t)}>Trade journey</Button>,
     },
     {
       key: "action",
@@ -1053,6 +1332,11 @@ function PaperTrades() {
                 label: "Closed",
                 render: (t) => time(t.closed_at),
               },
+              {
+                key: "journey",
+                label: "Details",
+                render: (t) => <Button variant="outline" size="sm" onClick={() => void inspectJourney(t)}>Trade journey</Button>,
+              },
             ]}
           />
         </Resource>
@@ -1091,12 +1375,28 @@ function PaperTrades() {
           </Button>
         </form>
       </Dialog>
+      <Dialog
+        open={!!journeyTrade}
+        onOpenChange={(open) => {
+          if (!open) setJourneyTrade(null);
+        }}
+        title={`${journeyTrade?.coin || "Trade"} · trade journey`}
+        description="Recorded price snapshots for this paper trade, with the stored entry, stop, and target levels."
+      >
+        {journeyLoading ? <div className="loading" role="status">Loading trade journey…</div> : null}
+        {journeyError ? <div className="error-state" role="alert">{journeyError}</div> : null}
+        {!journeyLoading && !journeyError ? <JourneyChart points={journeyPoints} /> : null}
+      </Dialog>
     </>
   );
 }
 function System() {
   const r = useResource(base + "/health"),
-    reject = useResource(base + "/engine/rejections");
+    reject = useResource(base + "/engine/rejections"),
+    engine = useResource(base + "/engine/health"),
+    traces = useResource(base + "/engine/traces?limit=50"),
+    filters = useResource(base + "/engine/filter-analysis"),
+    strength = useResource(base + "/engine/relative-strength");
   return (
     <>
       <PageHead
@@ -1108,6 +1408,10 @@ function System() {
             onClick={() => {
               r.refresh();
               reject.refresh();
+              engine.refresh();
+              traces.refresh();
+              filters.refresh();
+              strength.refresh();
             }}
           />
         }
@@ -1170,6 +1474,76 @@ function System() {
               },
             ]}
             empty="No rejection summary available"
+          />
+        </Resource>
+      </Panel>
+      <div className="two-column">
+        <Panel title="Engine diagnostics">
+          <Resource resource={engine}>
+            <dl className="facts">
+              {Object.entries(engine.data || {})
+                .filter(([, value]) => value === null || ["string", "number", "boolean"].includes(typeof value))
+                .map(([key, value]) => <Fact key={key} label={words(key)} value={String(value ?? "—")} />)}
+              {engine.data?.scan_stats && <Fact label="Scan statistics" value={<code>{JSON.stringify(engine.data.scan_stats)}</code>} />}
+            </dl>
+          </Resource>
+        </Panel>
+        <Panel title="Relative strength ranking">
+          <Resource resource={strength}>
+            <dl className="facts">
+              <Fact label="Ranked instruments" value={number(strength.data?.total, 0)} />
+              <Fact label="High tier" value={number(strength.data?.high_tier, 0)} />
+              <Fact label="Medium tier" value={number(strength.data?.medium_tier, 0)} />
+              <Fact label="Low tier" value={number(strength.data?.low_tier, 0)} />
+            </dl>
+            <DataTable
+              rows={strength.data?.top_5 || []}
+              columns={[
+                { key: "rank", label: "Rank" },
+                { key: "coin", label: "Instrument" },
+                { key: "total_score", label: "Score", render: (row) => number(row.total_score, 2) },
+                { key: "rs", label: "Relative strength", render: (row) => number(row.rs, 2) + "%" },
+                { key: "tier", label: "Tier", render: (row) => words(row.tier) },
+              ]}
+              empty="Relative strength data is not available yet"
+            />
+          </Resource>
+        </Panel>
+      </div>
+      <Panel title="Decision traces">
+        <Resource resource={traces}>
+          <DataTable
+            rows={traces.data?.traces || []}
+            columns={[
+              { key: "datetime", label: "Time", render: (row) => time(row.datetime || row.timestamp) },
+              { key: "coin", label: "Instrument", render: (row) => <strong>{row.coin}</strong> },
+              { key: "direction", label: "Direction" },
+              { key: "final_decision", label: "Decision", render: (row) => words(row.final_decision) },
+              { key: "final_grade", label: "Grade" },
+              { key: "final_score", label: "Score", render: (row) => number(row.final_score, 1) },
+              { key: "stopped_at", label: "Stopped at", render: (row) => words(row.stopped_at || "Completed") },
+              { key: "steps", label: "Filter steps", render: (row) => Array.isArray(row.steps) ? row.steps.map((step: any) => `${step.name}: ${step.result}`).join(" · ") : "—" },
+            ]}
+            empty="No decision traces have been recorded in the active trace window"
+          />
+        </Resource>
+      </Panel>
+      <Panel title="Filter analysis">
+        <Resource resource={filters}>
+          <div className="metric-grid">
+            <Metric label="Scans evaluated" value={number(filters.data?.total_scans, 0)} note="Recent filter telemetry" />
+            <Metric label="Signals produced" value={number(filters.data?.total_signals, 0)} note="Signals recorded by the scanner" />
+            <Metric label="Signal rate" value={number(filters.data?.signal_rate, 0) + "%"} note="Recorded signals per scan" />
+          </div>
+          <DataTable
+            rows={filters.data?.filter_analysis || []}
+            columns={[
+              { key: "filter", label: "Filter" },
+              { key: "total_count", label: "Rejections", render: (row) => number(row.total_count, 0) },
+              { key: "pct_of_scans", label: "Share", render: (row) => number(row.pct_of_scans, 1) + "%" },
+              { key: "impact", label: "Impact", render: (row) => words(row.impact) },
+            ]}
+            empty="No filter analysis is available yet"
           />
         </Resource>
       </Panel>
@@ -1544,12 +1918,14 @@ function Research() {
 function Telegram() {
   const r = useResource(base + "/integrations"),
     [pending, setPending] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [registration, setRegistration] = useState<any>(null);
   async function register() {
     setPending(true);
     setError("");
     try {
-      await request(base + "/telegram/register", { method: "POST" });
+      const result = await request(base + "/telegram/register", { method: "POST" });
+      setRegistration(result?.telegram?.registration || null);
       r.refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -1591,8 +1967,32 @@ function Telegram() {
               value={r.data?.telegram?.webhook?.url || "Not registered"}
             />
             <Fact
+              label="Webhook destination check"
+              value={
+                r.data?.telegram?.status === "registered"
+                  ? "Matches the configured admin domain"
+                  : words(r.data?.telegram?.status || "not_configured")
+              }
+            />
+            <Fact
               label="Pending updates"
               value={number(r.data?.telegram?.webhook?.pending_update_count, 0)}
+            />
+            <Fact
+              label="Latest Telegram delivery error"
+              value={r.data?.telegram?.webhook?.last_error_message || "None reported"}
+            />
+            <Fact
+              label="Allowed sender IDs"
+              value={r.data?.telegram?.allowed_users_configured ? "Configured" : "Empty · private chat only"}
+            />
+            <Fact
+              label="Last registration"
+              value={
+              registration || r.data?.telegram?.registration
+                ? `Webhook ${(registration || r.data.telegram.registration).webhook ? "registered" : "failed"} · commands ${(registration || r.data.telegram.registration).commands ? "registered" : "failed"}`
+                  : "No registration attempt this session"
+              }
             />
           </dl>
         </Panel>
@@ -1606,6 +2006,7 @@ function Telegram() {
             ["/coin ETH", "Inspect one configured instrument"],
             ["/trades", "Open paper positions"],
             ["/position ETH", "Inspect a paper position"],
+            ["/journey 42", "Inspect the recorded price path for trade 42"],
             ["/performance", "Recorded performance breakdown"],
             ["/candles", "Stored candle availability"],
             ["/backtest ETH", "Cached-data research replay"],
@@ -1618,6 +2019,91 @@ function Telegram() {
             </div>
           ))}
         </div>
+      </Panel>
+    </>
+  );
+}
+function StoredData() {
+  const catalog = useResource(base + "/data/catalog"),
+    [table, setTable] = useState(""),
+    [offset, setOffset] = useState(0),
+    [query, setQuery] = useState(""),
+    [appliedQuery, setAppliedQuery] = useState("");
+  useEffect(() => {
+    if (!table && catalog.data?.tables?.length) setTable(catalog.data.tables[0].name);
+  }, [table, catalog.data]);
+  const params = new URLSearchParams({ limit: "50", offset: String(offset) });
+  if (appliedQuery) params.set("q", appliedQuery);
+  const rows = useResource(table ? `${base}/data/${encodeURIComponent(table)}?${params}` : null);
+  const tables = catalog.data?.tables || [],
+    active = tables.find((item: any) => item.name === table),
+    columns = (rows.data?.columns || []).map((column: any) => ({
+      key: column.name,
+      label: `${column.name}${column.redacted ? " · redacted" : ""}`,
+      render: (row: any) => {
+        const value = row[column.name];
+        if (value === null || value === undefined || value === "") return "—";
+        const display = typeof value === "object" ? JSON.stringify(value) : String(value);
+        return display.length > 240 ? display.slice(0, 237) + "…" : display;
+      },
+    }));
+  function exportCurrentPage() {
+    const data = rows.data;
+    if (!data?.rows?.length) return;
+    const fields = data.columns.map((column: any) => column.name);
+    const escape = (value: any) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const csv = [fields.map(escape).join(","), ...data.rows.map((row: any) => fields.map((field: string) => escape(typeof row[field] === "object" ? JSON.stringify(row[field]) : row[field])).join(","))].join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${table}-${offset + 1}-${offset + data.rows.length}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  return (
+    <>
+      <PageHead
+        eyebrow="PERSISTED RECORDS"
+        title="Inspect what this installation stores."
+        description="Read-only, paginated access to the application tables. Sensitive credentials and session material are redacted."
+        action={<Refresh onClick={() => { catalog.refresh(); rows.refresh(); }} />}
+      />
+      <Panel title="Database inventory">
+        <Resource resource={catalog}>
+          <div className="metric-grid">
+            <Metric label="Application tables" value={number(catalog.data?.total_tables, 0)} note="SQLite application tables, excluding SQLite internals" />
+            <Metric label="Selected records" value={number(active?.rows, 0)} note={active?.name || "Choose a table"} />
+            <Metric label="Table purpose" value={active?.purpose || "—"} note={active?.sensitive ? "Contains redacted fields" : "No credential fields detected"} />
+          </div>
+          <form className="filters data-filters" onSubmit={(event) => { event.preventDefault(); setOffset(0); setAppliedQuery(query.trim()); }}>
+            <label>
+              Stored table
+              <select value={table} onChange={(event) => { setOffset(0); setTable(event.target.value); }}>
+                {tables.map((item: any) => <option key={item.name} value={item.name}>{item.name} · {number(item.rows ?? 0, 0)}</option>)}
+              </select>
+            </label>
+            <label>
+              Search records
+              <input value={query} onChange={(event) => setQuery(event.target.value)} maxLength={100} placeholder="Instrument, outcome, status…" />
+            </label>
+            <Button type="submit">Apply search</Button>
+            <Button type="button" variant="outline" disabled={!rows.data?.rows?.length} onClick={exportCurrentPage}>Export page CSV</Button>
+          </form>
+          {active && <p className="panel-note">{active.purpose}. {active.sensitive ? "Credential-like values are redacted in the table and exports." : "Rows are read-only; no database writes are available from this view."}</p>}
+        </Resource>
+      </Panel>
+      <Panel title={table ? `Records · ${table}` : "Records"} aside={<span className="panel-note">{number(rows.data?.total ?? active?.rows, 0)} total</span>}>
+        <Resource resource={rows}>
+          <DataTable rows={rows.data?.rows || []} columns={columns} empty="No rows match this view" />
+          <div className="data-pagination">
+            <Button variant="outline" size="sm" disabled={offset <= 0} onClick={() => setOffset(Math.max(0, offset - 50))}>Previous 50</Button>
+            <span>Rows {rows.data?.total ? offset + 1 : 0}–{Math.min(offset + 50, rows.data?.total || 0)} of {number(rows.data?.total, 0)}</span>
+            <Button variant="outline" size="sm" disabled={offset + 50 >= (rows.data?.total || 0)} onClick={() => setOffset(offset + 50)}>Next 50</Button>
+          </div>
+        </Resource>
+      </Panel>
+      <Panel title="Legacy account and plan records">
+        <p className="panel-note">Customer signup, subscriptions, API-key access, and billing workflows are disabled. Historical rows remain in the database for review or export. Credential and session secrets are always redacted.</p>
       </Panel>
     </>
   );
@@ -1796,9 +2282,11 @@ const adminNav = [
   { path: "/", name: "Overview", icon: Layers3 },
   { path: "/signals", name: "Signals", icon: Radio },
   { path: "/trades", name: "Paper trades", icon: Wallet },
+  { path: "/performance", name: "Performance", icon: Activity },
   { path: "/markets", name: "Crypto universe", icon: Globe2 },
   { path: "/india", name: "Indian markets", icon: Activity },
   { path: "/research", name: "Research", icon: FlaskConical },
+  { path: "/data", name: "Stored data", icon: Database },
   { path: "/system", name: "System health", icon: Activity },
   { path: "/telegram", name: "Telegram", icon: Send },
   { path: "/audit", name: "Audit trail", icon: ScrollText },
@@ -1901,9 +2389,11 @@ function AdminShell({ email }: { email: string }) {
             <Route path="/signals" element={<SignalList />} />
             <Route path="/signals/:id" element={<SignalDetail />} />
             <Route path="/trades" element={<PaperTrades />} />
+            <Route path="/performance" element={<AdminPerformance />} />
             <Route path="/markets" element={<Markets />} />
             <Route path="/india" element={<India />} />
             <Route path="/research" element={<Research />} />
+            <Route path="/data" element={<StoredData />} />
             <Route path="/system" element={<System />} />
             <Route path="/telegram" element={<Telegram />} />
             <Route path="/audit" element={<Audit />} />

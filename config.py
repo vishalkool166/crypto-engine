@@ -167,24 +167,20 @@ class Config:
 
     BINANCE_DEMO_API_KEY  = os.getenv("BINANCE_DEMO_API_KEY")
     BINANCE_DEMO_SECRET   = os.getenv("BINANCE_DEMO_SECRET")
-    BINANCE_DEMO_BASE_URL = os.getenv("BINANCE_DEMO_BASE_URL", "https://testnet.binancefuture.com")
+    BINANCE_DEMO_BASE_URL = os.getenv("BINANCE_DEMO_BASE_URL", "https://demo-fapi.binance.com")
 
     TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
     FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    DOMAIN       = os.getenv("ADMIN_APP_ORIGIN", "https://admin-app.vishalkool.top")
+    DOMAIN       = os.getenv("ADMIN_APP_ORIGIN", "http://localhost:5174")
 
     PORT = int(os.getenv("PORT", 8000))
     ENV  = os.getenv("ENV", "development")
 
     TOTP_SECRET             = os.getenv("TOTP_SECRET", "")
-    DASHBOARD_PASSWORD_HASH = os.getenv("DASHBOARD_PASSWORD_HASH", "")
-    DASHBOARD_API_KEY       = os.getenv("DASHBOARD_API_KEY", "")
-    DASHBOARD_USERNAME      = os.getenv("DASHBOARD_USERNAME", "admin")
     WEBHOOK_SECRET          = os.getenv("WEBHOOK_SECRET", "")
-    JWT_SECRET              = os.getenv("JWT_SECRET", "")
 
     REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
     ML_MIN_TRADES = 50
@@ -253,19 +249,11 @@ class Config:
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
     GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 
-    GITHUB_CLIENT_ID     = os.getenv("GITHUB_CLIENT_ID", "")
-    GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
-
-    FRONTEND_URL = os.getenv("PUBLIC_APP_ORIGIN", "https://app.vishalkool.top")
-
     ADMIN_EMAILS: list = [
         e.strip()
-        for e in os.getenv("ADMIN_EMAILS", "vishalkool166@gmail.com").split(",")
+        for e in os.getenv("ADMIN_EMAILS", "operator@example.com").split(",")
         if e.strip()
     ]
-
-    OAUTH_JWT_SECRET = os.getenv("OAUTH_JWT_SECRET", "")
-    OAUTH_JWT_EXPIRY = int(os.getenv("OAUTH_JWT_EXPIRY_HOURS", "168"))
 
     ANGELONE_CLIENT_ID   = os.getenv("ANGELONE_CLIENT_ID",   "")
     ANGELONE_API_KEY     = os.getenv("ANGELONE_API_KEY",     "")
@@ -274,10 +262,6 @@ class Config:
 
     INDIAN_INSTRUMENTS: list = ["BANKNIFTY", "FINNIFTY"]
 
-    SESSION_COOKIE_NAME     = "se_user_token"
-    SESSION_COOKIE_HTTPONLY = True
-    SESSION_COOKIE_SECURE   = True
-    SESSION_COOKIE_SAMESITE = "lax"
     SESSION_COOKIE_MAX_AGE  = 60 * 60 * 24 * 7
 
 

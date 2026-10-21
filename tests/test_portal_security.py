@@ -9,7 +9,7 @@ from sqlalchemy import text
 import main
 import operator_auth as auth
 from portal_settings import settings
-from database import engine, SessionLocal, Signal
+from database import engine, SessionLocal, Signal, Trade
 
 
 @pytest.fixture(autouse=True)
@@ -19,6 +19,7 @@ def isolated():
         db.execute(text("DELETE FROM operator_sessions"))
         db.execute(text("DELETE FROM operator_identities"))
         db.execute(text("DELETE FROM signals"))
+        db.execute(text("DELETE FROM trades"))
     main._buckets.clear()
     from api.portal import _snapshot
 
@@ -117,6 +118,48 @@ def test_admin_api_requires_session_and_csrf(client):
         ).status_code
         == 409
     )
+
+
+def test_data_catalog_is_private_and_redacts_operator_session_secrets(client):
+    assert client.get("/api/v1/admin/data/catalog").status_code == 401
+    login(client)
+
+    catalog = client.get("/api/v1/admin/data/catalog")
+    assert catalog.status_code == 200
+    names = {table["name"] for table in catalog.json()["tables"]}
+    assert {"signals", "trades", "trade_journey", "portfolio_snapshots"} <= names
+    assert "operator_sessions" in names
+
+    sessions = client.get("/api/v1/admin/data/operator_sessions?limit=5")
+    assert sessions.status_code == 200
+    result = sessions.json()
+    assert result["total"] >= 1
+    assert all(row["token_hash"] == "[REDACTED]" for row in result["rows"])
+    assert all(row["csrf"] == "[REDACTED]" for row in result["rows"])
+
+
+def test_performance_context_uses_persisted_trades_and_factor_scores(client):
+    assert client.get("/api/v1/admin/performance/context").status_code == 401
+    login(client)
+    with SessionLocal() as db:
+        db.add_all([
+            Trade(coin="ETH", direction="LONG", grade="A", outcome="win", system_version="2.0.0", regime_at_entry="trend", net_pnl=5.0),
+            Trade(coin="SOL", direction="SHORT", grade="B", outcome="loss", system_version="2.0.0", regime_at_entry="range", net_pnl=-2.0),
+            Signal(coin="ETH", market="crypto", direction="LONG", grade="A", score=70, outcome="win", factor_scores=json.dumps({"score_breakdown": {"momentum": 8}})),
+            Signal(coin="SOL", market="crypto", direction="SHORT", grade="B", score=55, outcome="loss", factor_scores=json.dumps({"score_breakdown": {"momentum": 4}})),
+        ])
+        db.commit()
+
+    response = client.get("/api/v1/admin/performance/context")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["by_version"][0]["system_version"] == "2.0.0"
+    assert data["by_version"][0]["total"] == 2
+    assert {row["regime_at_entry"] for row in data["by_regime"]} == {"trend", "range"}
+    factor = next(row for row in data["factors"] if row["factor"] == "momentum")
+    assert factor["observations"] == 2
+    assert factor["mean_score_wins"] == 8
+    assert factor["mean_score_losses"] == 4
 
 
 def test_public_hostname_cannot_address_admin(client):

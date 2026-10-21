@@ -20,8 +20,14 @@ async def _post(endpoint: str, payload: dict) -> None:
                 json    = payload,
                 timeout = 10,
             )
-            if r.status_code != 200:
-                log.error("Telegram %s failed: HTTP %s", endpoint, r.status_code)
+            result = r.json()
+            if r.status_code != 200 or not result.get("ok"):
+                log.error(
+                    "Telegram %s failed: HTTP %s; %s",
+                    endpoint,
+                    r.status_code,
+                    result.get("description", "provider returned an unsuccessful response"),
+                )
     except Exception as e:
         log.error("Telegram transport failure: %s", type(e).__name__)
 
@@ -43,8 +49,9 @@ def _split_message(text: str, limit: int = 4000) -> list:
 
 
 def render_message(message: str) -> str:
-    # Escape dynamic content before converting the retained command markup.
-    clean = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", message)
+    # Keep the command's emoji and line breaks. Remove only control characters
+    # Telegram cannot use safely, then escape text before restoring our markup.
+    clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", message)
     clean = re.sub(r"[━─═]{3,}", "—", clean)
     clean = "\n".join(line.strip() for line in clean.splitlines())
     escaped = html.escape(clean)
@@ -85,7 +92,7 @@ async def send_photo(chat_id: str, photo_path: str, caption: str = "") -> None:
         log.error("Photo transport failure: %s", type(e).__name__)
 
 
-async def register_webhook() -> None:
+async def register_webhook() -> bool:
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(
@@ -94,30 +101,39 @@ async def register_webhook() -> None:
                     "url":          f"{cfg.DOMAIN}/webhook/telegram",
                     "secret_token": cfg.WEBHOOK_SECRET,
                     "drop_pending_updates": False,
+                    "allowed_updates": ["message"],
                 },
                 timeout = 10,
             )
             data = r.json()
             if data.get("ok"):
                 log.info("Webhook registered: %s/webhook/telegram", cfg.DOMAIN)
+                return True
             else:
-                log.error("Webhook failed: %s", data)
+                log.error("Webhook registration failed: %s", data.get("description", "Telegram rejected the request"))
+                return False
     except Exception as e:
         log.error("Webhook registration transport failure: %s", type(e).__name__)
+        return False
 
 
-async def register_commands() -> None:
+async def register_commands() -> bool:
     commands = [
+        {"command": "help", "description": "Show every available operator command"},
         {"command": "health", "description": "Dependency health and data freshness"},
         {"command": "queue", "description": "Current signal queue"},
         {"command": "grade", "description": "Recorded performance by grade"},
         {"command": "status",       "description": "Bot status overview"},
         {"command": "scan",         "description": "Trigger manual scan"},
-        {"command": "trades",       "description": "Open trades with live PnL"},
+        {"command": "trades",       "description": "Paper positions with observed P&L"},
         {"command": "position",     "description": "Deep dive on trade — /position ETH"},
+        {"command": "journey",      "description": "Recorded price path — /journey 42"},
+        {"command": "pending",      "description": "Review pending content drafts"},
+        {"command": "discard",      "description": "Discard a draft — /discard 5"},
         {"command": "balance",      "description": "Account balance"},
         {"command": "profit",       "description": "Profit summary"},
         {"command": "coin",         "description": "Any coin analysis — /coin ETH"},
+        {"command": "btc",          "description": "Bitcoin market overview"},
         {"command": "funding",      "description": "Funding rates"},
         {"command": "fear",         "description": "Fear and greed index"},
         {"command": "brief",        "description": "Full market report"},
@@ -133,7 +149,6 @@ async def register_commands() -> None:
         {"command": "india",        "description": "Indian market status and signals"},
         {"command": "orb",          "description": "BANKNIFTY opening range levels"},
         {"command": "indianstats",  "description": "Indian strategy performance"},
-        {"command": "help",         "description": "Full command list"},
     ]
     try:
         async with httpx.AsyncClient() as client:
@@ -142,7 +157,12 @@ async def register_commands() -> None:
                 json    = {"commands": commands},
                 timeout = 10,
             )
-            if r.json().get("ok"):
+            result = r.json()
+            if result.get("ok"):
                 log.info("Telegram commands registered")
+                return True
+            log.error("Telegram command registration failed: %s", result.get("description", "Telegram rejected the request"))
+            return False
     except Exception as e:
         log.error("Command registration transport failure: %s", type(e).__name__)
+        return False

@@ -1,60 +1,180 @@
-# Release deployment
+# Self-host and Cloudflare deployment
 
-This release has one frontend source tree at `dashboard/`, two Cloudflare Pages builds, and the existing FastAPI service on AWS behind Cloudflare Tunnel. Keep the current `database/` volume and its existing SQLite data when replacing source.
+This guide deploys the FastAPI service, Redis and Cloudflare Tunnel on one Linux Docker host, then creates two Cloudflare Pages projects from the same repository. Keep the application database on persistent host storage. Pages is the browser edge; the FastAPI service and Redis stay private behind the Tunnel.
 
-## 1. Configure the AWS service
+## Deployment map
 
-1. Copy `.env.example` to `.env`. Generate distinct secrets with `openssl rand -hex 48` for `SESSION_SECRET` and `ORIGIN_PROXY_SECRET`; create a separate random `WEBHOOK_SECRET`. Keep `.env` private and do not commit it.
-2. Set the Google OAuth client ID and secret. Add `https://admin-app.vishalkool.top/auth/callback/google` as an authorized redirect URI and configure the OAuth consent screen for the admin account.
-3. Add the Cloudflare Tunnel token, Telegram bot settings, and any provider credentials you will use. For the engine to reconcile and start its paper scheduler, configure the Binance demo credentials. Set `ENGINE_ENABLED=true` and `TRADING_MODE=paper`.
-4. Confirm the host directory mounted at `./database` is writable by container UID/GID 10001. Preserve the existing database. Do not use `chmod 777`.
-5. Build and start the stack with `docker compose up -d --build`. Check `docker compose ps`, `docker compose logs signal-engine`, and `curl http://127.0.0.1:8000/health/live` on the host. The FastAPI service is exposed only to the Compose network; Cloudflare Tunnel provides the public route.
-6. In the Cloudflare Tunnel, route `api.vishalkool.top` to `http://signal-engine:8000` on the Compose network. Do not create a public EC2 port mapping for the API.
+| Component | Example hostname / location | Exposure |
+| --- | --- | --- |
+| Public Pages | `app.example.com` | Public, read-only browser app |
+| Admin Pages | `admin.example.com` | Private operator browser app; Google sign-in required |
+| API Tunnel | `api.example.com` | Publicly routed through Cloudflare Tunnel; app-level origin proxy secret required |
+| FastAPI | `signal-engine:8000` | Docker network only; no host port published |
+| Redis | `redis:6379` | Docker network only |
+| SQLite | `./database/signals.db` | Persistent host directory mounted into the app container |
 
-## 2. Create the two Cloudflare Pages projects
+Replace `example.com` with domains in your Cloudflare zone. The public and admin hostnames must be different. The API hostname is a Tunnel route, not a Pages project.
 
-Connect the Git repository to **two separate Pages projects**. For both projects set the root directory to `dashboard/`, Node.js version to `22`, and production branch to the intended release branch.
+## 1. Prepare the host and preserve existing data
+
+Use a Linux host with Docker Engine and the Compose plugin. Copy the release source to a durable directory, then inspect the Compose file before startup.
+
+If migrating an existing installation, stop the old application before copying its database. Copy the entire `database/` directory and preserve a second backup outside the deployment directory. Never copy a live SQLite database while writes are in progress.
+
+```bash
+docker compose down
+mkdir -p database
+cp -a /path/to/backup/database/. ./database/
+```
+
+Check that `database/` is writable by the image's application user (UID/GID 10001). Fix the directory owner for that UID/GID on the host; do not use world-writable permissions.
+
+## 2. Configure the backend environment
+
+Create a private `.env` file:
+
+```bash
+cp .env.example .env
+chmod 600 .env
+openssl rand -hex 48
+```
+
+Set these required production values:
+
+| Variable | Value |
+| --- | --- |
+| `ENV` | `production` |
+| `PUBLIC_APP_ORIGIN` | Exact public Pages origin, e.g. `https://app.example.com` |
+| `ADMIN_APP_ORIGIN` | Exact admin Pages origin, e.g. `https://admin.example.com` |
+| `ADMIN_EMAILS` | Comma-separated Google email allowlist for this private console |
+| `SESSION_SECRET` | Unique random value; do not reuse another secret |
+| `ORIGIN_PROXY_SECRET` | Unique random value, at least 32 characters; copied to both Pages projects as a secret |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth web client credentials |
+| `TUNNEL_TOKEN` | Remotely managed Cloudflare Tunnel token |
+| `WEBHOOK_SECRET` | Separate random Telegram webhook secret (only if using Telegram) |
+| `SIGNAL_ENGINE_DB_PATH` | Keep `database/signals.db` unless intentionally migrating the database |
+
+The `.env.example` file documents optional provider and integration settings. Leave `ENGINE_ENABLED=false` for the first boot. Leave `TRADING_MODE=paper`. Do not configure live Binance keys: this source build deliberately restricts trading to paper/demo behavior.
+
+### Google OAuth setup
+
+1. In Google Cloud Console, create or select a project and configure the OAuth consent screen for the private operator use case.
+2. Create an OAuth client of type **Web application**.
+3. Add the admin site origin (for example, `https://admin.example.com`) to authorized JavaScript origins.
+4. Add the exact callback `https://admin.example.com/auth/callback/google` to authorized redirect URIs.
+5. Put that client ID and secret in the backend `.env`.
+6. Put only the intended operator email(s) in `ADMIN_EMAILS`. Google sign-in is limited to verified accounts on this list.
+
+## 3. Create and route the Cloudflare Tunnel
+
+1. In Cloudflare Zero Trust, open **Networks → Tunnels** and create a remotely managed Cloudflared tunnel.
+2. Choose the Docker connector instructions and copy the tunnel token into the backend host `.env` as `TUNNEL_TOKEN`.
+3. Add a public hostname route with hostname `api.example.com` and service `http://signal-engine:8000`. The tunnel container joins the Compose network and resolves the `signal-engine` service name.
+4. Do not open port 8000 on the host firewall or create a public EC2/security-group port mapping for it. The included Compose file only exposes it to the Docker network.
+5. Wait for the tunnel to report healthy/connected before testing the API hostname.
+
+The hostname route can create/manage the DNS record in the Cloudflare zone. Verify that `api.example.com` points at the tunnel rather than at the host's public IP. Keep Cloudflare proxying enabled.
+
+## 4. Start the private backend services
+
+From the release directory:
+
+```bash
+docker compose config
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 signal-engine
+```
+
+Verify the local container health endpoint from the host using an ephemeral diagnostic container on the Compose network if port 8000 is not published, or use the admin/public browser status after Pages is connected. Check `docker compose ps` for healthy Redis and FastAPI containers. The Tunnel starts after FastAPI becomes healthy.
+
+If initialization fails, keep the engine disabled and inspect logs. Do not delete or recreate `database/` to clear an application error.
+
+## 5. Create the two Pages projects
+
+Cloudflare Pages Functions are required for the same-origin API, OAuth, WebSocket and Telegram webhook routes. Use Git integration so the `dashboard/functions/` source is deployed with the site. The Pages project root must be `dashboard/` so `functions/` is at the project root; do not deploy only `dist/` as a static Direct Upload.
+
+Create two Pages projects connected to the same repository and production branch. For both, set:
+
+| Build setting | Value |
+| --- | --- |
+| Root directory | `dashboard` |
+| Build command | Project-specific value in the table below |
+| Build output directory | Project-specific value in the table below |
+| Node.js version | `22` |
+
+Then configure each project:
 
 | Setting | Public project | Admin project |
 | --- | --- | --- |
 | Build command | `npm run build:public` | `npm run build:admin` |
-| Build output directory | `dist/public` | `dist/admin` |
-| Pages Functions source | `dashboard/functions/` | `dashboard/functions/` |
-| `APP_TARGET` variable | `public` | `admin` |
-| Custom domain | `app.vishalkool.top` | `admin-app.vishalkool.top` |
+| Output directory | `dist/public` | `dist/admin` |
+| Custom domain | `app.example.com` | `admin.example.com` |
+| Runtime variable `APP_TARGET` | `public` | `admin` |
+| Runtime variable `BACKEND_ORIGIN` | `https://api.example.com` | `https://api.example.com` |
+| Runtime secret `ORIGIN_PROXY_SECRET` | Same value as backend `.env` | Same value as backend `.env` |
 
-Set these **server-side Pages variables/secrets** in each project’s Production environment:
+Set `APP_TARGET`, `BACKEND_ORIGIN`, and `ORIGIN_PROXY_SECRET` under each Pages project's **Settings → Variables and Secrets → Production**. `ORIGIN_PROXY_SECRET` must be a secret, not a `VITE_*` build variable. Pages Functions read these values at runtime. Do not set the production proxy secret in Preview unless preview builds are deliberately authorized to reach the production backend.
 
-- `APP_TARGET`: as shown above.
-- `BACKEND_ORIGIN`: `https://api.vishalkool.top`.
-- `ORIGIN_PROXY_SECRET`: the same random value as the backend `.env`.
+After the first successful deployment, add the custom domain in that Pages project and follow the DNS validation shown by Cloudflare. Use separate Pages projects; the admin project must have `APP_TARGET=admin` or private API and webhook routes will reject traffic.
 
-Keep these variables out of `VITE_*`; they are used only by the Pages Functions runtime. Set the same three values in Preview only if preview deployments are intentionally allowed to reach the production API. Prefer leaving previews without the proxy secret.
+Cloudflare references: [Pages Git integration](https://developers.cloudflare.com/pages/configuration/git-integration/), [build configuration](https://developers.cloudflare.com/pages/configuration/build-configuration/), [Functions setup](https://developers.cloudflare.com/pages/functions/get-started/), [Functions routing](https://developers.cloudflare.com/pages/functions/routing/), and [Tunnel published applications](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/).
 
-The `functions/` directory belongs at the Pages project root, not in `dashboard/public/` or `dist/`. `dashboard/public/_routes.json` is copied into each Vite output and scopes Functions to the API, auth, WebSocket, and webhook prefixes. Pages Git integration or Wrangler deployment is required for Functions; dashboard Direct Upload does not deploy Functions.
+## 6. Verify domain routing, proxy and sign-in
 
-For a local Wrangler run, copy `dashboard/.dev.vars.example` to `dashboard/.dev.vars`, fill in the shared secret privately, and change `APP_TARGET` to the build you are testing. `.dev.vars` is ignored by Git.
+Run these checks after the three hostnames resolve:
 
-## 3. Verify routing and login
+1. Open `https://app.example.com/` and a client-side route such as `/signals`.
+2. Open `https://admin.example.com/`; it should show the sign-in flow while unauthenticated.
+3. Request `https://app.example.com/api/v1/public/status`; it should return public status JSON through Pages Functions.
+4. Request `https://admin.example.com/auth/session`; an unauthenticated response is expected before sign-in.
+5. Sign in with an allowlisted Google account and confirm the admin dashboard loads.
+6. Confirm the admin status page reports the backend and Redis health correctly.
+7. Open **Performance**, **Trades**, **Trade journey**, and **Stored data**. Empty tables are valid on a new database; existing records should be visible after migration.
+8. Open **Telegram** and follow [docs/TELEGRAM.md](docs/TELEGRAM.md) to register and test inbound commands.
 
-After both projects deploy:
+If a public API request returns 403, check the Pages runtime secret matches the backend `ORIGIN_PROXY_SECRET`. If admin API calls return 404, check the admin hostname is bound to the admin Pages project and `APP_TARGET=admin`.
 
-1. Verify the public root and a client-side route such as `/signals` load the SPA.
-2. Verify `https://app.vishalkool.top/api/v1/public/status` returns JSON from FastAPI.
-3. Verify `https://admin-app.vishalkool.top/auth/session` returns an unauthenticated response, then visit `/auth/google` and complete Google sign-in with `vishalkool166@gmail.com`.
-4. From the admin console, check service status and Redis health. If the engine is not running, inspect the reported startup state and `docker compose logs signal-engine`.
-5. Confirm Telegram webhook registration and send `/health` from an allowed Telegram user.
+## 7. First paper-engine start
 
-## Domain changes
+Only after backups and health checks pass:
 
-Frontend API and WebSocket URLs are relative to the active Pages hostname, so there is no `VITE_API_URL` or `VITE_WS_URL` to update. For a new hostname, change `PUBLIC_APP_ORIGIN` / `ADMIN_APP_ORIGIN` in the backend `.env`, configure that hostname on the corresponding Pages project, and update the Google OAuth callback if the admin hostname changes. The API origin remains the Tunnel hostname unless you deliberately change the tunnel route and `BACKEND_ORIGIN` Pages variable.
+1. Create the API key in the Binance Futures Demo environment and configure that demo key pair. Binance's current USDⓈ-M Futures documentation lists `https://demo-fapi.binance.com` as the testnet REST base URL and `wss://demo-fstream.binance.com` as the testnet WebSocket base. The REST value is configurable through `BINANCE_DEMO_BASE_URL` in case Binance changes it or your integration uses another compatible demo endpoint. When upgrading, update an existing `.env` value if it still contains `https://testnet.binancefuture.com`. See [Binance USDⓈ-M Futures General Info](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info).
+2. Verify `TRADING_MODE=paper` and that no live exchange credentials are present.
+3. Set `ENGINE_ENABLED=true`, then recreate the service with `docker compose up -d --build signal-engine`.
+4. Watch `docker compose logs -f signal-engine` through market connection and reconciliation.
+5. Confirm the admin status screen reports a healthy engine and inspect the first paper events.
 
-## WebSocket path
+If reconciliation fails, set `ENGINE_ENABLED=false` and restart the service. Review [docs/OPERATIONS.md](docs/OPERATIONS.md) before trying again.
 
-The `/ws/*` Pages Function performs an authenticated same-origin WebSocket bridge to FastAPI. It forwards the browser’s `Origin`, session cookie, and Cloudflare client IP and returns a browser-side WebSocket through a `WebSocketPair`. The browser does not connect directly to the backend hostname.
+## 8. Upgrade, backup, restore and rollback
 
-Cloudflare’s documentation confirms that Pages Functions live at the Pages project root and that Workers can open upstream WebSockets with `fetch`: [Pages Functions setup](https://developers.cloudflare.com/pages/functions/get-started/) · [Workers WebSockets](https://developers.cloudflare.com/workers/examples/websockets/).
+Before every source upgrade, stop writes and back up the database:
 
-## Source safety
+```bash
+docker compose stop signal-engine
+python scripts/backup.py ./backups/pre-upgrade-YYYYMMDD-HHMMSS.db
+```
 
-Never place `.env`, SQLite databases, API tokens, Google secrets, tunnel tokens, or Pages secrets in the repository or ZIP. Keep a verified backup of `database/` before deploying a schema change. This source package does not deploy DNS, Pages settings, tunnel routes, or OAuth configuration for you.
+Keep the backup outside the source ZIP and deployment directory. Deploy the new source while preserving `database/` and `.env`, then:
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=200 signal-engine
+```
+
+If startup or data checks fail, stop the application, restore the verified database backup using [docs/OPERATIONS.md](docs/OPERATIONS.md), then restore the previous source version. Do not restore an old database over a running service. Preserve both the pre-upgrade and failed-upgrade database copies until the rollback is verified.
+
+## Troubleshooting map
+
+| Symptom | First check |
+| --- | --- |
+| Public data API is 403 | Pages `ORIGIN_PROXY_SECRET`, `APP_TARGET=public`, `BACKEND_ORIGIN`, backend origin settings |
+| Admin API is 404 | Admin project custom domain and `APP_TARGET=admin` |
+| Google callback error | Exact redirect URI, admin host, client ID/secret, `ADMIN_EMAILS` |
+| Admin login loops or disappears | Session secret, HTTPS custom domain, Redis health, backend logs |
+| Telegram alerts arrive but commands do not | Admin Pages webhook Function, `ADMIN_APP_ORIGIN`, allowed sender ID, Redis; see Telegram guide |
+| Engine is stopped | `ENGINE_ENABLED`, demo credentials, startup/reconciliation error in backend logs |
+| Missing historical records | Correct `database/` mount and `SIGNAL_ENGINE_DB_PATH`; never initialize over the old database |
+

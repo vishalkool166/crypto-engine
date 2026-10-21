@@ -11,10 +11,10 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Settings:
     public_origin: str = os.getenv(
-        "PUBLIC_APP_ORIGIN", "https://app.vishalkool.top"
+        "PUBLIC_APP_ORIGIN", "http://localhost:5173"
     ).rstrip("/")
     admin_origin: str = os.getenv(
-        "ADMIN_APP_ORIGIN", "https://admin-app.vishalkool.top"
+        "ADMIN_APP_ORIGIN", "http://localhost:5174"
     ).rstrip("/")
     production: bool = os.getenv("ENV", "development") == "production"
     session_secret: str = os.getenv("SESSION_SECRET", "")
@@ -22,7 +22,7 @@ class Settings:
     session_hours: int = int(os.getenv("ADMIN_SESSION_HOURS", "12"))
     admin_emails: tuple = tuple(
         e.strip().lower()
-        for e in os.getenv("ADMIN_EMAILS", "vishalkool166@gmail.com").split(",")
+        for e in os.getenv("ADMIN_EMAILS", "operator@example.com").split(",")
         if e.strip()
     )
 

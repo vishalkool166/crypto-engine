@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import os
 import time
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -11,6 +12,52 @@ from portal_settings import settings
 
 router = APIRouter()
 _snapshot = {"at": 0, "data": None}
+
+DATA_TABLES = {
+    "signals": "Recorded signals and outcomes",
+    "signal_snapshots": "Signal state snapshots",
+    "trade_outcomes": "Signal and trade outcome reconciliation",
+    "trades": "Paper trade lifecycle and execution records",
+    "trade_journey": "Recorded price path for each trade",
+    "candles": "Stored market candles",
+    "backtest_results": "Cached research replay results",
+    "coin_config": "Crypto instrument configuration",
+    "instrument_config": "Market instrument configuration",
+    "binance_trade_records": "Exchange trade and fill reconciliation",
+    "binance_account_snapshots": "Recorded demo account snapshots",
+    "binance_funding_records": "Funding payments and settlements",
+    "portfolio_snapshots": "Portfolio state snapshots",
+    "coin_last_outcomes": "Latest recorded outcome per instrument",
+    "system_versions": "Engine version history",
+    "pillar_weight_history": "Signal scoring weight history",
+    "adaptation_recommendations": "Engine adaptation proposals",
+    "adaptation_log": "Recorded adaptation decisions",
+    "rollback_checkpoints": "Engine rollback checkpoints",
+    "thesis_snapshots": "Research thesis snapshots",
+    "audit_log": "Operator and security audit events",
+    "signal_deliveries": "Signal notification delivery history",
+    "content_posts": "Stored content drafts and publication state",
+    "users": "Retained legacy account records; customer access is disabled",
+    "subscriptions": "Retained legacy plan records; billing is disabled",
+    "api_keys": "Retained legacy API key metadata; hashes are redacted",
+    "user_sessions": "Retained legacy session metadata; secrets are redacted",
+    "demo_visits": "Retained legacy demo analytics",
+    "operator_identities": "Google-verified operator identities",
+    "operator_sessions": "Operator session metadata; secrets are redacted",
+}
+REDACTED_COLUMNS = {
+    "password_hash", "password", "token", "token_hash", "csrf", "secret",
+    "secret_hash", "api_key", "key_hash", "totp_secret", "recovery_codes",
+    "google_subject", "authorization", "refresh_token", "session_token",
+}
+
+
+def _is_redacted_column(name):
+    key = str(name).lower()
+    return key in REDACTED_COLUMNS or any(
+        marker in key
+        for marker in ("password", "secret", "token", "credential", "api_key", "key_hash", "csrf")
+    )
 PUBLIC_FIELDS = (
     "id",
     "timestamp",
@@ -298,6 +345,8 @@ async def integrations(request: Request):
         "telegram": {
             "configured": bool(cfg.TELEGRAM_TOKEN and cfg.TELEGRAM_CHAT_ID),
             "webhook": None,
+            "expected_webhook_url": cfg.DOMAIN.rstrip("/") + "/webhook/telegram",
+            "allowed_users_configured": bool(os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").strip()),
         }
     }
     if result["telegram"]["configured"]:
@@ -314,12 +363,19 @@ async def integrations(request: Request):
                 data = info.get("result", {})
                 result["telegram"]["webhook"] = {
                     k: data.get(k)
-                    for k in ("url", "pending_update_count", "last_error_date")
+                    for k in (
+                        "url",
+                        "pending_update_count",
+                        "last_error_date",
+                        "last_error_message",
+                    )
                 }
                 result["telegram"]["status"] = (
                     "error"
                     if data.get("last_error_date")
                     else "registered"
+                    if data.get("url") == result["telegram"]["expected_webhook_url"]
+                    else "url_mismatch"
                     if data.get("url")
                     else "not_registered"
                 )
@@ -336,9 +392,14 @@ async def register_telegram(request: Request):
         raise HTTPException(409, "Telegram credentials and webhook secret are required")
     from alerts.telegram.client import register_webhook, register_commands
 
-    await register_webhook()
-    await register_commands()
-    return await integrations(request)
+    webhook_registered = await register_webhook()
+    commands_registered = await register_commands()
+    state = await integrations(request)
+    state["telegram"]["registration"] = {
+        "webhook": webhook_registered,
+        "commands": commands_registered,
+    }
+    return state
 
 
 @router.get("/admin/settings")
@@ -364,6 +425,206 @@ def admin_settings():
             "rag": "admin_only",
             "ml": "research_only",
         },
+    }
+
+
+@router.get("/admin/data/catalog")
+def data_catalog():
+    """Read-only, operator-only inventory of persisted tables."""
+    from database import engine
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    available = set(inspector.get_table_names())
+    catalog = []
+    for table in sorted(available):
+        if table.startswith("sqlite_"):
+            continue
+        purpose = DATA_TABLES.get(table, "Unclassified retained table; review its purpose before changing its schema")
+        try:
+            quoted = engine.dialect.identifier_preparer.quote(table)
+            with engine.connect() as connection:
+                count = connection.execute(text(f"SELECT COUNT(*) FROM {quoted}")).scalar_one()
+            columns = inspector.get_columns(table)
+            catalog.append({
+                "name": table,
+                "purpose": purpose,
+                "rows": int(count),
+                "columns": len(columns),
+                "sensitive": any(_is_redacted_column(column["name"]) for column in columns),
+            })
+        except Exception:
+            # Preserve catalog visibility even when one legacy table needs review.
+            catalog.append({"name": table, "purpose": purpose, "rows": None, "columns": None, "sensitive": True})
+    return {"tables": catalog, "total_tables": len(catalog)}
+
+
+@router.get("/admin/performance/context")
+def performance_context():
+    """Return descriptive breakdowns from closed trades and recorded factor scores."""
+    from collections import defaultdict
+    from database import SessionLocal, Trade as TradeModel, Signal as SignalModel
+
+    def group_trades(rows, key_name):
+        groups = defaultdict(lambda: {"total": 0, "wins": 0, "losses": 0, "pnl": 0.0})
+        for row in rows:
+            label = getattr(row, key_name, None) or "Unspecified"
+            item = groups[str(label)]
+            pnl = float(row.net_pnl or row.pnl or 0)
+            item["total"] += 1
+            item["wins"] += row.outcome == "win"
+            item["losses"] += row.outcome == "loss"
+            item["pnl"] += pnl
+        result = []
+        for label, item in groups.items():
+            result.append({
+                key_name: label,
+                **item,
+                "win_rate": round(item["wins"] / item["total"] * 100, 1) if item["total"] else 0,
+                "pnl": round(item["pnl"], 4),
+            })
+        return sorted(result, key=lambda item: item["total"], reverse=True)
+
+    def numeric_factors(raw):
+        try:
+            value = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return {}
+        factors = {}
+        breakdown = value.get("score_breakdown", {}) if isinstance(value, dict) else {}
+        if isinstance(breakdown, dict):
+            for name, score in breakdown.items():
+                if isinstance(score, (int, float)) and math.isfinite(float(score)):
+                    factors[str(name)] = float(score)
+        components = value.get("components", []) if isinstance(value, dict) else []
+        if isinstance(components, list):
+            for component in components:
+                if not isinstance(component, dict):
+                    continue
+                name = component.get("name") or component.get("factor")
+                score = component.get("score")
+                if name and isinstance(score, (int, float)) and math.isfinite(float(score)):
+                    factors[str(name)] = float(score)
+        steps = value.get("steps", []) if isinstance(value, dict) else []
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                name = step.get("name") or step.get("node") or step.get("factor")
+                score = step.get("score")
+                if name and isinstance(score, (int, float)) and math.isfinite(float(score)):
+                    factors[str(name)] = float(score)
+        return factors
+
+    with SessionLocal() as db:
+        trades = db.query(TradeModel).filter(TradeModel.outcome.in_(["win", "loss"])).all()
+        signals = db.query(SignalModel).filter(
+            SignalModel.outcome.in_(["win", "loss"]),
+            SignalModel.factor_scores.is_not(None),
+        ).all()
+
+    factor_groups = defaultdict(lambda: {"observations": 0, "win_score": 0.0, "loss_score": 0.0, "wins": 0, "losses": 0})
+    for signal in signals:
+        for name, score in numeric_factors(signal.factor_scores).items():
+            item = factor_groups[name]
+            item["observations"] += 1
+            if signal.outcome == "win":
+                item["wins"] += 1
+                item["win_score"] += score
+            else:
+                item["losses"] += 1
+                item["loss_score"] += score
+
+    factors = []
+    for name, item in factor_groups.items():
+        avg_wins = item["win_score"] / item["wins"] if item["wins"] else None
+        avg_losses = item["loss_score"] / item["losses"] if item["losses"] else None
+        factors.append({
+            "factor": name,
+            "observations": item["observations"],
+            "mean_score_wins": round(avg_wins, 3) if avg_wins is not None else None,
+            "mean_score_losses": round(avg_losses, 3) if avg_losses is not None else None,
+            "score_difference": round(avg_wins - avg_losses, 3) if avg_wins is not None and avg_losses is not None else None,
+        })
+    factors.sort(key=lambda item: item["observations"], reverse=True)
+
+    return {
+        "by_version": group_trades(trades, "system_version"),
+        "by_regime": group_trades(trades, "regime_at_entry"),
+        "factors": factors,
+        "factor_note": "Descriptive averages from stored factor scores; small samples and associations do not establish causation.",
+    }
+
+
+@router.get("/admin/data/{table}")
+def data_table(
+    table: str,
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=10000000),
+    q: str = Query("", max_length=100),
+):
+    """Paginated, read-only view of a whitelisted table with secrets redacted."""
+    from database import engine
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    if table not in set(inspector.get_table_names()):
+        raise HTTPException(404, "Data table is not present in this database")
+    if table.startswith("sqlite_"):
+        raise HTTPException(404, "SQLite internal tables are not part of the application data view")
+
+    columns = inspector.get_columns(table)
+    names = [str(column["name"]) for column in columns]
+    if not names:
+        return {"table": table, "columns": [], "rows": [], "total": 0, "limit": limit, "offset": offset}
+    preparer = engine.dialect.identifier_preparer
+    quoted_table = preparer.quote(table)
+    quoted_columns = [preparer.quote(name) for name in names]
+    searchable = [
+        name for name in names
+        if any(token in name.lower() for token in ("coin", "symbol", "outcome", "status", "direction", "market", "email", "action", "entity", "type", "state", "title", "reason"))
+    ]
+    where = ""
+    params = {"limit": limit, "offset": offset}
+    if q.strip() and searchable:
+        where = " WHERE " + " OR ".join(
+            f"CAST({preparer.quote(name)} AS TEXT) LIKE :term" for name in searchable
+        )
+        params["term"] = f"%{q.strip()}%"
+    primary = inspector.get_pk_constraint(table).get("constrained_columns") or []
+    sort_column = next((name for name in ("timestamp", "created_at", "opened_at", "snapshot_at", "id") if name in names), None)
+    if not sort_column and primary:
+        sort_column = primary[0]
+    order = f" ORDER BY {preparer.quote(sort_column)} DESC" if sort_column else ""
+    select_columns = ", ".join(quoted_columns)
+    with engine.connect() as connection:
+        total = connection.execute(text(f"SELECT COUNT(*) FROM {quoted_table}{where}"), params).scalar_one()
+        raw_rows = connection.execute(
+            text(f"SELECT {select_columns} FROM {quoted_table}{where}{order} LIMIT :limit OFFSET :offset"),
+            params,
+        ).mappings().all()
+    rows = []
+    for row in raw_rows:
+        safe = {}
+        for name, value in row.items():
+            if _is_redacted_column(name):
+                safe[name] = "[REDACTED]"
+            elif isinstance(value, bytes):
+                safe[name] = f"[binary data: {len(value)} bytes]"
+            else:
+                safe[name] = stamp(value)
+        rows.append(safe)
+    return {
+        "table": table,
+        "purpose": DATA_TABLES.get(table, "Unclassified retained table; review its purpose before changing its schema"),
+        "columns": [
+            {"name": str(column["name"]), "type": str(column["type"]), "redacted": _is_redacted_column(column["name"])}
+            for column in columns
+        ],
+        "rows": rows,
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
     }
 
 
