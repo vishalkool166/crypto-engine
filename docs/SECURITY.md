@@ -6,7 +6,7 @@ Exchange keys, Google client secret, Telegram token, Tunnel token, session secre
 
 scripts/setup_env.py creates random application secrets in a private .env without printing them. It leaves provider credentials empty; it does not simulate provider connectivity. Production startup rejects missing Google credentials or weak application secrets. Existing .env files are never overwritten by that script.
 
-Use restricted Binance demo credentials for this release. Do not configure withdrawal permission. Restrict keys by IP where the exchange supports it. Rotate any key that was committed to a repository, log, or released archive. Git history is not present in the supplied ZIP and must be reviewed in the actual GitHub clone.
+Default to Binance demo credentials. Optional live credentials require the explicit opt-in and transition controls in [EXECUTION_MODES.md](EXECUTION_MODES.md). Do not configure withdrawal permission. Restrict keys by IP where the exchange supports it. Rotate any key that was committed to a repository, log, or released archive. Git history is not present in the supplied ZIP and must be reviewed in the actual GitHub clone.
 
 ## Operator sign-in
 
@@ -18,7 +18,7 @@ Google account recovery is the operator’s primary recovery mechanism. If Googl
 
 ## Step-up verification
 
-Paper-position closes and retained sensitive actions require TOTP. Set TOTP_SECRET privately on AWS and enroll it in your authenticator locally; do not place its QR code in the public app. Verification uses Redis to reject reuse for 90 seconds and fails closed if Redis is unavailable. Never print this secret in logs.
+Position closes and both execution-mode switch directions require TOTP. Set TOTP_SECRET privately on AWS and enroll it in your authenticator locally; do not place its QR code in the public app. Verification uses Redis to reject reuse for 90 seconds and fails closed if Redis is unavailable. Never print this secret in logs.
 
 ## Network and abuse controls
 

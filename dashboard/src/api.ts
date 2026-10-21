@@ -33,9 +33,10 @@ export async function request(path: string, options: RequestInit = {}) {
           : "The service could not complete this request.",
     );
   if (data === null || typeof data !== "object")
-    throw new ApiError(response.status || 502, "The API returned an invalid response. Check the Pages proxy and backend health.");
-  if (data === null || typeof data !== "object")
-    throw new ApiError(response.status || 502, "The API returned an invalid response. Check the Pages proxy and backend health.");
+    throw new ApiError(
+      response.status || 502,
+      "The API returned an invalid response. Check the Pages proxy and backend health.",
+    );
   if (path === "/auth/session" && data?.csrf) csrf = data.csrf;
   if (data?.success === false)
     throw new ApiError(409, data.reason || "Operation declined");

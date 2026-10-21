@@ -1,4 +1,4 @@
-"""Single-instance engine lifecycle; the web application never enables live mode."""
+"""Single-instance engine lifecycle; mode changes restart the entire process."""
 
 import asyncio
 import logging
@@ -21,6 +21,10 @@ async def lifespan(app: FastAPI):
     from database import initialize_universe
 
     initialize_universe()
+    import runtime_state as rs
+    from trade.mode import restore_mode
+    rs.load()
+    restore_mode()
     app.state.engine_status = (
         "disabled"
         if os.getenv("ENGINE_ENABLED", "true").lower() != "true"
@@ -42,11 +46,8 @@ async def lifespan(app: FastAPI):
                 )
             from config import cfg
 
-            cfg.PAPER_TRADING = True
-            cfg.TRADING_MODE = "paper"
             import runtime_state as rs
 
-            rs.load()
             rs.mark_crash()
             from trade.ws import start_ws
             from alerts.scanner import register_kline_handler
@@ -54,7 +55,7 @@ async def lifespan(app: FastAPI):
             register_kline_handler()
             await start_ws()
             ws_started = True
-            if cfg.is_demo_configured():
+            if cfg.is_demo_configured() if cfg.PAPER_TRADING else bool(cfg.BINANCE_API_KEY and cfg.BINANCE_SECRET):
                 try:
                     from trade.exchange import get_positions
 
@@ -76,7 +77,7 @@ async def lifespan(app: FastAPI):
                 except Exception:
                     app.state.engine_status = "reconciliation_failed"
                     log.exception(
-                        "Paper exchange initialization failed; scheduler remains stopped"
+                        "Exchange initialization failed; scheduler remains stopped"
                     )
             else:
                 app.state.engine_status = "credentials_required"
@@ -87,22 +88,13 @@ async def lifespan(app: FastAPI):
                     await asyncio.wait_for(init_indian_session(), timeout=30)
                 except Exception:
                     log.warning("Indian-market integration unavailable")
-            if cfg.TELEGRAM_TOKEN and cfg.TELEGRAM_CHAT_ID and cfg.WEBHOOK_SECRET:
-                from alerts.telegram.client import (
-                    register_webhook,
-                    register_commands,
-                    send,
-                )
-
-                await register_webhook()
-                await register_commands()
-                await send(
-                    "*Signal Engine · Service started*\nMode: PAPER\nRuntime: "
-                    + app.state.engine_status
-                    + "\nUse /health to verify dependencies."
-                )
+        # Commands stay available even when execution is disabled or not ready.
+        from alerts.telegram.service import start as start_telegram
+        await start_telegram()
         yield
     finally:
+        from alerts.telegram.service import stop as stop_telegram
+        await stop_telegram()
         if scheduler_started:
             from scheduler import stop_scheduler
 

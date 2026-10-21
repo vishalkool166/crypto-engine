@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
+    tailwindcss(),
     ...(mode === "public"
       ? [
           VitePWA({
@@ -60,6 +62,17 @@ export default defineConfig(({ mode }) => ({
     outDir: mode === "admin" ? "dist/admin" : "dist/public",
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (/recharts|d3-|victory/.test(id)) return "charts";
+            if (/gsap/.test(id)) return "motion";
+            return "vendor";
+          }
+        },
+      },
+    },
   },
   server: {
     host: "127.0.0.1",

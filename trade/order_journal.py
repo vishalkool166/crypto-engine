@@ -30,7 +30,7 @@ def _path() -> Path:
     # Production journal MUST share the durable trade DB, not Redis or a
     # separate non-backed-up file. Override is only for isolated pytest runs.
     override = os.environ.get('SIGNAL_ENGINE_DB_PATH')
-    if override and not os.environ.get('PYTEST_CURRENT_TEST'):
+    if override and Path(override).resolve() != DEFAULT_DB.resolve() and not os.environ.get('PYTEST_CURRENT_TEST'):
         raise RuntimeError('SIGNAL_ENGINE_DB_PATH override is restricted to tests')
     return Path(override) if override else DEFAULT_DB
 

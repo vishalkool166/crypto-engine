@@ -26,9 +26,9 @@ Never use `docker compose down -v` during an application update. It removes the 
 
 ## Engine startup
 
-Keep one application container and one Uvicorn worker. `ENGINE_ENABLED=false` is for API diagnostics and intentionally prevents the engine from starting. With the engine enabled, the service first connects to the market stream, authenticates to the configured demo exchange, reconciles positions and outstanding order intents, then starts scheduled scans. A reconciliation failure keeps the scheduler stopped and reports a failed state.
+Keep one application container and one Uvicorn worker. `ENGINE_ENABLED=false` is for API diagnostics and intentionally prevents the engine from starting. With the engine enabled, the service first connects to the market stream, authenticates to the configured exchange, reconciles positions and outstanding order intents, then starts scheduled scans. A reconciliation failure keeps the scheduler stopped and reports a failed state.
 
-The engine runs in paper mode only. Do not use production exchange credentials. Review service logs and actual dependency health after every restart.
+Paper is the default. Live activation and switching require the controls in [EXECUTION_MODES.md](EXECUTION_MODES.md). Review service logs and actual dependency health after every restart.
 
 ## Source release and rollback
 

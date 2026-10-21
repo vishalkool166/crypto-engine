@@ -20,6 +20,7 @@ def _get_open_trades_from_db() -> list:
             trades = db.query(TradeModel).filter(TradeModel.is_active == True).all()
             return [{
                 "id":                 t.id,
+                "execution_mode":     t.execution_mode,
                 "coin":               t.coin,
                 "direction":          t.direction,
                 "grade":              t.grade,
@@ -620,11 +621,13 @@ def get_trade_history(limit: int = 20, offset: int = 0) -> list:
     try:
         with get_session() as db:
             trades = db.query(TradeModel).filter(
-                TradeModel.outcome != "cancelled"
+                TradeModel.is_active.is_(False),
+                TradeModel.outcome.in_(["win", "loss", "breakeven"])
             ).order_by(
                 TradeModel.opened_at.desc()
             ).offset(offset).limit(limit).all()
         return [{
+            "execution_mode": t.execution_mode,
             "trade_id":               t.id,
             "coin":                   t.coin,
             "pair":                   f"{t.coin}/USDT:USDT",

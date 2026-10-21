@@ -2,6 +2,7 @@
 
 The system has one FastAPI service and one React source tree.
 
+- `dashboard/src/features/` separates public, trading, performance, research, data, telemetry and Telegram views; shared controls live under `components/`.
 - `dashboard/` builds the public and admin SPAs in Vite modes `public` and `admin`.
 - Each SPA is a separate Cloudflare Pages project with its own custom domain and `APP_TARGET` setting.
 - Path-scoped Pages Functions forward only `/api/*`, `/auth/*`, `/ws/*`, and `/webhook/*` to the FastAPI service.
@@ -14,7 +15,7 @@ The browser uses same-origin relative URLs. Admin sessions are host-only secure 
 
 `api/portal.py` builds explicit public response projections. Public routes expose research records, methodology, outcomes, and limited service status. They do not serialize private trading accounts, credential values, private position sizing, or internal logs. Admin routes require an operator session.
 
-The service runs paper mode only. The scheduler starts after demo-exchange authentication and startup reconciliation succeed. Redis supports coordination, step-up verification, rate controls, and Telegram deduplication. The application does not start a customer billing or subscription system.
+The service defaults to paper. A TOTP-protected transition saves an authoritative environment selection and restarts the engine. The scheduler starts after the selected exchange account authenticates and startup reconciliation succeeds. Redis supports coordination, step-up verification, rate controls, and Telegram deduplication. The application does not start a customer billing or subscription system. Telegram polling is a separate lifecycle task and remains available when execution is disabled.
 
 ## Domain configuration
 

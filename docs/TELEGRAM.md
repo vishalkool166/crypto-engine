@@ -1,69 +1,107 @@
-# Telegram operator bot
+# Telegram setup and commands
 
-The Telegram bot sends scheduled signal notices and accepts private operator commands through a Cloudflare Pages Function. Outgoing messages and incoming commands use separate paths: a bot that can send scan alerts may still have a broken or misrouted webhook.
+Outgoing scan messages and incoming commands are separate paths. Release 2.1
+uses **outbound polling** by default. The server asks Telegram for updates over
+HTTPS, so incoming commands no longer depend on a Cloudflare inbound webhook.
+The Telegram service starts even when `ENGINE_ENABLED=false`.
 
-## What you need
+## Configure polling
 
-- A Telegram bot token from [@BotFather](https://t.me/BotFather).
-- The destination chat ID. Use your private chat with the bot for the simplest setup, or a private group if needed.
-- The numeric Telegram user ID allowed to issue commands. For a private chat, the chat ID and user ID are often the same; set both values explicitly anyway.
-- Redis running and healthy. The webhook uses Redis to deduplicate updates and enforce command budgets.
-- The admin Pages project deployed with `APP_TARGET=admin` and the `/webhook/*` Function route enabled.
+1. Create or select your bot with [BotFather](https://t.me/BotFather).
+2. Open a private chat with the bot, press Start, and send `/start`.
+3. In the server `.env`, set:
 
-## Configure it
+   ```dotenv
+   TELEGRAM_TRANSPORT=polling
+   TELEGRAM_TOKEN=your_bot_token
+   TELEGRAM_CHAT_ID=your_numeric_chat_id
+   TELEGRAM_ALLOWED_USER_IDS=your_numeric_sender_id
+   ```
 
-1. In Telegram, create the bot with `@BotFather` and copy the token into `TELEGRAM_TOKEN` on the server.
-2. Open a private chat with the bot and press **Start**. Send a message so Telegram has an update to report.
-3. Find the numeric sender ID from the `from.id` field in Telegram's `getUpdates` response, or use a trusted ID lookup bot. Do not paste the bot token, `getUpdates` URL, or response into a public chat.
-4. Set `TELEGRAM_CHAT_ID` to the exact destination chat ID. For a group, it is usually a negative number.
-5. Set `TELEGRAM_ALLOWED_USER_IDS` to one or more numeric sender IDs, comma-separated. Group chats require this setting; the handler ignores group commands when the list is empty. Restrict it to the people who should control the private engine.
-6. Generate a separate webhook secret, for example with `openssl rand -hex 32`, and set it as `WEBHOOK_SECRET` on the server. Keep it distinct from `SESSION_SECRET` and `ORIGIN_PROXY_SECRET`.
-7. Set `ADMIN_APP_ORIGIN` to the admin Pages custom domain. The bot registers `https://admin.example.com/webhook/telegram`; the public Pages project intentionally refuses webhook requests.
-8. Confirm Redis is healthy, restart the backend after changing `.env`, sign in to the admin console, and open **Telegram**.
-9. Select **Register webhook**. This calls Telegram's `setWebhook` and `setMyCommands`. The screen reports the registered URL, pending updates, latest provider error, allowed-sender configuration, and whether command registration succeeded.
-10. Send `/health` in the configured chat. Then send `/help` and `/trades`. A scan notification alone only proves that outbound Telegram delivery works.
+4. Use the exact destination chat ID. A group ID is usually negative; the allowed
+   sender ID is the person's positive numeric `from.id`, not that group ID.
+5. Recreate the engine container with `docker compose up -d --build --force-recreate
+   signal-engine`. A plain container restart does not apply changed env values.
+6. In admin, open Telegram operations. Confirm polling and Connected. Startup
+   removes a stale webhook without dropping pending updates, registers the command
+   menu, and starts getUpdates. Do not run another bot client or call getUpdates
+   manually while this service is polling; Telegram permits only one consumer.
+7. Send `/ping`. Its reply confirms that a command reached this server and that
+   the server could send a reply. Then try `/help` and `/health`.
 
-## Commands
+To discover IDs before setup, use the private chat's `from.id` / `chat.id` in a
+getUpdates response from Telegram's Bot API, or a trusted ID lookup bot. Never
+share a token-bearing URL or full raw response publicly. Stop other polling
+consumers before inspecting getUpdates, then recreate the engine afterwards.
 
-| Command | What it does |
+## Group commands
+
+Add the bot to your private group. With BotFather privacy mode enabled, send an
+explicitly addressed command such as `/help@YourBotUsername`. Configure the
+negative group chat ID and allowlist the real sender's numeric user ID. Messages
+sent as an anonymous group administrator have no ordinary sender identity and
+are intentionally not accepted as authenticated operator commands.
+
+## Diagnostics
+
+Admin → Telegram operations shows transport, connection, last transport error,
+last received update, and last command result:
+
+| Result | Meaning / next action |
 | --- | --- |
-| `/help` | Lists the operator commands. |
-| `/status` | Shows engine status and paper mode. |
-| `/health` | Checks service dependencies and data freshness. |
-| `/scan` | Starts a guarded manual scan. |
-| `/queue` | Shows the current signal queue. |
-| `/coin ETH` | Shows analysis for a configured coin. |
-| `/btc` | Shows the Bitcoin market overview. |
-| `/funding` | Shows funding rates. |
-| `/fear` | Shows the fear and greed reading. |
-| `/trades` | Lists open paper positions and their trade IDs. |
-| `/position ETH` | Shows a position's current details. |
-| `/journey 42` | Summarizes stored price snapshots for trade ID 42. Use the ID shown by `/trades` or the admin Trades page. |
-| `/balance`, `/profit` | Shows demo account balance and recorded profit summary. |
-| `/pnl`, `/daily`, `/stats`, `/grade`, `/history`, `/performance` | Shows recorded performance summaries. |
-| `/backtest ETH` | Runs the supported cached-data research replay. |
-| `/backfill ETH`, `/candles` | Checks or backfills research candle data. |
-| `/mode` | Reports configured mode. This command cannot switch to live trading. |
-| `/india`, `/orb`, `/indianstats` | Shows Indian-market status, opening-range levels, and recorded statistics when that integration is configured. |
-| `/brief` | Sends the market briefing. |
-| `/pending`, `/discard 5`, `#5` | Reviews or discards a content draft when content storage is enabled. |
+| `completed` | The handler returned; check the reply in the configured chat. |
+| `chat_mismatch` | Update reached the server from a different chat. Correct TELEGRAM_CHAT_ID. |
+| `sender_not_allowed` | Update reached the server from a sender outside TELEGRAM_ALLOWED_USER_IDS. |
+| `rate_limited` | The command budget was exceeded. Wait a minute. |
+| `handler_failed` | Inspect engine logs for the failing command. |
+| No received update | Verify the bot/token, polling connection, Redis, and any competing bot consumer. |
 
-Commands that trigger expensive work are rate-limited. The release remains paper-only.
+There is a 12-command-per-minute chat budget and a separate one-minute budget for
+expensive scan/backfill/backtest tasks. Long-running work can delay later commands
+until it completes. Commands are claimed before effects to prevent duplicate
+execution. A process interruption during a claimed operation may require operator
+inspection; automatic replay of an uncertain operation is deliberately avoided.
 
-## If commands receive no response
+A connected transport is not proof that the exchange or strategy is healthy.
+`/health` checks dependencies and scan freshness. `/scan` is unavailable when
+execution is disabled or transitioning. Mode switching is available only in the
+Google-authenticated admin app with TOTP; `/mode` remains read-only.
 
-1. In Admin → Telegram, confirm **Webhook destination check** says the registered URL matches the expected admin URL. If it reports `url_mismatch`, fix `ADMIN_APP_ORIGIN` and register again.
-2. Confirm the Pages **admin** project's `APP_TARGET` is `admin`. The public project's `APP_TARGET=public` and rejects webhook traffic by design.
-3. Confirm Pages Functions are deployed from `dashboard/functions/`, with `/webhook/*` included in `dashboard/public/_routes.json`. Direct Upload without Functions will not proxy commands.
-4. Check that `TELEGRAM_CHAT_ID` matches the chat receiving commands. For groups, set `TELEGRAM_ALLOWED_USER_IDS` to the sender's numeric `from.id` value, not the negative group chat ID.
-5. Check Redis health. If Redis is unavailable, the handler returns HTTP 503 rather than executing a command without deduplication and rate limiting.
-6. Inspect the Telegram page's pending update count and latest delivery error, then inspect backend logs for the rejected chat/sender or command failure. Never log or share the bot token or webhook secret.
-7. After correcting configuration, register the webhook again and retest `/health`, then `/trades`, then `/journey <id>`.
+## Optional webhook mode
 
-## Operational notes
+Set `TELEGRAM_TRANSPORT=webhook` and configure a separate `WEBHOOK_SECRET`.
+`ADMIN_APP_ORIGIN` must point to your admin Pages hostname. Deploy its
+`dashboard/functions/webhook/[[path]].js` with `APP_TARGET=admin`.
+The registered URL is `https://admin.example.com/webhook/telegram`.
 
-- The webhook verifies Telegram's `X-Telegram-Bot-Api-Secret-Token` header.
-- The bot accepts text messages in the configured chat only. It checks sender IDs before dispatch.
-- A global per-chat command budget and a separate expensive-command budget limit abusive repeats.
-- Outbound formatting preserves emoji and escapes dynamic text before applying Telegram's supported bold, italic, and code markup.
-- Telegram delivery cannot prove a trade was executable or profitable. All trade summaries are marked as paper records.
+Use Reconnect commands after deployment. Confirm that the registered URL matches
+and Telegram reports no recent delivery failure. The backend checks Telegram's
+secret header, the configured chat, and the sender allowlist. Redis must be healthy.
+Do not place an interactive Google/Cloudflare Access login challenge in front of
+this webhook path: Telegram cannot complete it. Using polling avoids that inbound
+dependency entirely. A public Pages project deliberately rejects webhooks.
+
+## Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `/start`, `/help` | Show the operator menu. |
+| `/ping` | Confirm inbound command and outbound reply delivery. |
+| `/health` | Database, Redis, streams, and scan freshness. |
+| `/status`, `/mode` | Engine summary and active environment; no mode mutation. |
+| `/scan`, `/queue` | Guarded manual scan and current signal queue. |
+| `/trades`, `/position ETH` | Active-account positions and detailed position context. |
+| `/journey 42` | Recorded path for trade 42; use the trade ID from `/trades`. |
+| `/balance`, `/profit` | Active exchange balance and recorded profit summary. |
+| `/coin ETH`, `/btc`, `/funding`, `/fear`, `/brief` | Market research. |
+| `/pnl`, `/daily`, `/stats`, `/grade`, `/history`, `/performance` | Stored performance summaries. |
+| `/backtest ETH`, `/backfill ETH`, `/candles` | Cached-data research and candle coverage. |
+| `/india`, `/orb`, `/indianstats` | Indian-market integration when configured. |
+| `/pending`, `/discard 5`, `#5` | Stored content drafts. |
+
+Messages preserve directional/status emoji, concise sections, and a timestamped
+active-mode footer. Dynamic content is escaped before Telegram HTML formatting.
+Historical trade summaries may include legacy or other-environment records; the
+footer names the active service environment, not a certification of old records.
+
+Bot API reference: [Telegram Bot API](https://core.telegram.org/bots/api).

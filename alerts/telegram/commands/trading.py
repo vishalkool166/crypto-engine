@@ -28,14 +28,14 @@ async def cmd_trades() -> None:
 
         if not trades:
             await send(
-                f"📊 *Open Paper Trades*\n"
+                f"📊 *Open {cfg.TRADING_MODE.title()} Trades*\n"
                 f"🕐 `{_now_ist()}`\n\n"
                 f"😴 No open trades"
             )
             return
 
         lines = [
-            f"📊 *Open Paper Trades — {len(trades)}*\n"
+            f"📊 *Open {cfg.TRADING_MODE.title()} Trades — {len(trades)}*\n"
             f"🕐 `{_now_ist()}`\n"
         ]
 
@@ -109,7 +109,7 @@ async def cmd_journey(trade_id: int) -> None:
             lines.append(f"🛑 Stop: `{float(first['sl_price']):.6f}`")
         if first.get("tp_price") is not None:
             lines.append(f"🎯 Target: `{float(first['tp_price']):.6f}`")
-        lines.append(f"🕒 `{_now_ist()}` · paper record")
+        lines.append(f"🕒 `{_now_ist()}` · stored trade record")
         await send("\n".join(lines))
     except Exception as e:
         log.error("cmd_journey %s error: %s", trade_id, e)
@@ -189,7 +189,7 @@ async def cmd_position(coin: str) -> None:
         elif warnings:
             msg += f"\n⚠️ _{warnings[0]}_"
 
-        msg += "\n\n_Use the admin paper-trade close action to close this position._"
+        msg += "\n\n_Use the admin trade-close action to close this position._"
 
         await send(msg)
 
@@ -199,6 +199,11 @@ async def cmd_position(coin: str) -> None:
 
 
 async def cmd_scan() -> None:
+    import os
+    from trade.mode import transitioning
+    if os.getenv("ENGINE_ENABLED", "true").lower() != "true" or transitioning():
+        await send("*Scan unavailable*\nThe engine is disabled or changing mode. Check System health in admin.")
+        return
     await send(
         f"🔍 *Manual Scan Started*\n\n"
         f"Scanning `{len(cfg.COINS)}` coins...\n"

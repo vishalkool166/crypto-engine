@@ -6,18 +6,18 @@ The admin site is a private workspace. Sign-in requires Google and a verified em
 
 | Page | Use |
 | --- | --- |
-| Overview | Service snapshot, recent signals, trade summary, and current paper-mode context. |
+| Overview | Service snapshot, recent signals, trade summary, and current execution environment. |
 | Signals | Browse stored signal decisions, grades, factors and outcomes. Open a signal to inspect the persisted decision trace. |
-| Paper trades | View open and closed paper positions, inspect current trade context, view Trade Journey snapshots, and close a paper position through the guarded operator flow. |
+| Trades & journey | View active-account positions and stored closed trades, inspect the execution environment, open Trade Journey snapshots, and close a position with TOTP. |
 | Performance | Review the recorded equity curve, total P&L, win rate, signal-grade and instrument outcomes, results by system version and regime, numeric factor-score observations, recent signal history and closed trades. Use the Research link for cached-data backtests. Results describe stored history, not a promise about future trades. |
 | Crypto universe | Inspect configured crypto instruments and pause or resume an existing instrument without changing its strategy parameters. |
 | Indian markets | Inspect the existing operator-only market status, opening-range research, signals, and readiness when Angel One credentials and data are available. |
 | Research | Run the supported cached-data replay, inspect the research evidence gate and stored replays, and access the private research assistant when configured. |
 | Stored data | Inspect all SQLite application tables, including historical and otherwise unclassified tables. Search and export the displayed page as CSV. This view is read-only and masks secret-like columns. |
 | System health | Inspect dependency readiness, scan telemetry, rejection stats, engine diagnostics, relative strength, recent decision traces, and filter analysis. |
-| Telegram | Inspect webhook delivery/registration state and sender configuration, register the webhook and BotFather command list, and follow the command reference. |
+| Telegram | Inspect polling/webhook connection state, command results and sender configuration, reconnect commands, and follow the command reference. |
 | Audit trail | Review recorded operator and security actions. |
-| Settings | Confirm origins, allowlisted admin email, session lifetime, paper mode, strategy version and whether credentials are configured. Secret values are not returned. |
+| Settings | Confirm origins, allowlisted admin email, session lifetime, execution mode, strategy version and whether credentials are configured. Secret values are not returned. |
 
 ## Performance and trade journey
 
@@ -32,3 +32,7 @@ Use the Stored data page to identify which records exist before changing or migr
 ## Theme
 
 The light/dark control saves the choice in the browser. If a page appears to keep the prior theme after an upgrade, hard-refresh the site once so the current stylesheet replaces cached assets. Both color schemes use shared semantic tokens so panels, fields, borders, menus, tables and text change together.
+
+## Execution environment
+
+Use the mode control in the header or Overview. Both switch directions require TOTP, explicit confirmation, flat local/exchange accounts, and a managed restart. See [EXECUTION_MODES.md](EXECUTION_MODES.md).

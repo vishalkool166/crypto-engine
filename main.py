@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 settings.validate()
 app = FastAPI(
     title="Signal Engine",
-    version="1.0.0",
+    version="2.1.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
@@ -244,6 +244,8 @@ async def telegram_webhook(request: Request):
 
 
 app.include_router(portal_router, prefix="/api/v1")
+from api.execution import router as execution_router
+app.include_router(execution_router, prefix="/api/v1/admin")
 
 # Existing operational functions remain available only within the operator boundary.
 # Dangerous system administration and live mode switches are deliberately unmounted.

@@ -1,39 +1,36 @@
-# Release verification
+# Release verification — 2.1.0
 
-## Checks run for this source package
+## Executed checks
 
 | Check | Result |
 | --- | --- |
-| Python backend, safety, security, exchange endpoint, and Telegram tests | 163 passed |
-| TypeScript check | Passed as part of the dashboard build |
-| Public Pages build | Passed |
-| Admin Pages build | Passed |
-| Pages proxy unit tests | Passed (5 tests) |
-| Playwright browser tests | Not completed: this environment has no installed Chromium, and the browser download returned a truncated archive |
-| Live Cloudflare, OAuth, Tunnel, Redis, exchange demo and Telegram integration | Requires the operator's infrastructure and credentials; not run here |
+| Backend suite | 176 passed |
+| TypeScript check | Passed |
+| Public and admin production builds | Passed |
+| Pages proxy unit tests | 5 passed |
+| Playwright browser tests | 16 passed |
+| Light/dark public and admin layouts | Passed at 320, 390, 768, 1440 px; desktop and phone screenshots visually inspected |
+| Trade Journey and performance navigation | Passed against isolated API fixtures |
+| Mode dialog prerequisites and TOTP form | Passed; browser tests do not submit a real switch |
+| Mode transition guards, persistence, stale selection, account-check rejection | Passed with mocked exchange clients |
+| Telegram actual help/start/ping dispatch, sender rejection, dedup, stale-webhook-to-polling flow | Passed with mocked Telegram transport |
 
-The source is prepared for a production deployment, but it has not been deployed to the Cloudflare account or AWS host. Follow [DEPLOY.md](../DEPLOY.md), and complete the production checks there before enabling the paper engine.
+The browser runner used Chromium 153 because the standard Playwright browser
+archive was truncated by the environment. Screenshots contain isolated test
+fixtures, not a user's account or fabricated runtime data.
 
-## Functional areas retained or restored
+## External acceptance still required
 
-- Public read-only research site and private Google-only operator console.
-- Paper trades, open and closed trade history, authenticated close workflow, and recorded Trade Journey charts.
-- Private admin Performance view with equity curve, grade breakdown, instrument results, and recent closed trades.
-- System dependency checks, scan telemetry, rejection reasons, decision traces, filter analysis, and relative-strength ranking.
-- Stored-data inventory and paginated read-only browsing for all SQLite application tables, including legacy records, with secret-like values masked.
-- Telegram inbound command setup, command registration status, sender allowlist diagnostics, emoji formatting, and `/journey` support.
-- Existing SQLite schema and data preservation. Signup, customer access, plans, and billing remain out of scope and are not exposed as application workflows.
+The package has not been deployed on the user's Docker host or Cloudflare account.
+A Docker daemon was not available for starting this Compose stack here. Verify
+image pulls, container creation, tunnel connection, host reboot recovery, Google
+OAuth, real Redis, Telegram delivery, and exchange credentials on that deployment.
+Actual real-money execution and a live-account mode switch were not performed.
 
-## Remaining production acceptance
+Follow [UPGRADE_2_1.md](UPGRADE_2_1.md). Back up the database and runtime state first.
+Preserve the existing completed .env. Verify `/ping`, `/help`, and `/health` on the
+actual bot after recreation. Verify a database restore separately.
 
-- Confirm both Pages projects build and run with Git integration, correct custom domains, and the correct runtime variables/secrets.
-- Confirm the Tunnel route reaches the backend without opening public host ports.
-- Complete Google OAuth with an allowlisted account; verify a non-allowlisted account is denied.
-- Verify backend and Redis readiness, then confirm valid demo credentials reconcile with the paper account.
-- Register the Telegram webhook from Admin → Telegram and test `/health`, `/trades`, and `/journey <id>` from an allowlisted user.
-- Verify a backup restore against a separate test database before relying on the release.
-- Review the actual production security rules, logs, TLS, and data retention.
-
-## Strategy status
-
-The release is paper-only. Profitability has not been established or represented as a guaranteed outcome. A historical result or rule-based signal grade is not proof of future performance.
+Historical results and test success do not certify strategy profitability.
+Paper is the initial default; live requires explicit server opt-in and the
+TOTP-confirmed transition in [EXECUTION_MODES.md](EXECUTION_MODES.md).

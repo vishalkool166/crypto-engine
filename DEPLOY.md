@@ -2,6 +2,8 @@
 
 This guide deploys the FastAPI service, Redis and Cloudflare Tunnel on one Linux Docker host, then creates two Cloudflare Pages projects from the same repository. Keep the application database on persistent host storage. Pages is the browser edge; the FastAPI service and Redis stay private behind the Tunnel.
 
+For an existing installation, read [docs/UPGRADE_2_1.md](docs/UPGRADE_2_1.md) first. Container reboot behavior is detailed in [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md); execution activation is covered in [docs/EXECUTION_MODES.md](docs/EXECUTION_MODES.md).
+
 ## Deployment map
 
 | Component | Example hostname / location | Exposure |
@@ -51,10 +53,10 @@ Set these required production values:
 | `ORIGIN_PROXY_SECRET` | Unique random value, at least 32 characters; copied to both Pages projects as a secret |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | OAuth web client credentials |
 | `TUNNEL_TOKEN` | Remotely managed Cloudflare Tunnel token |
-| `WEBHOOK_SECRET` | Separate random Telegram webhook secret (only if using Telegram) |
+| `WEBHOOK_SECRET` | Separate random secret for optional Telegram webhook mode |
 | `SIGNAL_ENGINE_DB_PATH` | Keep `database/signals.db` unless intentionally migrating the database |
 
-The `.env.example` file documents optional provider and integration settings. Leave `ENGINE_ENABLED=false` for the first boot. Leave `TRADING_MODE=paper`. Do not configure live Binance keys: this source build deliberately restricts trading to paper/demo behavior.
+The `.env.example` file documents optional provider and integration settings. Leave `ENGINE_ENABLED=false` for the first boot. Leave `TRADING_MODE=paper`. Live keys are optional. Do not enable live until you complete the explicit setup and TOTP transition described in docs/EXECUTION_MODES.md.
 
 ### Google OAuth setup
 

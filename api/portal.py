@@ -17,7 +17,7 @@ DATA_TABLES = {
     "signals": "Recorded signals and outcomes",
     "signal_snapshots": "Signal state snapshots",
     "trade_outcomes": "Signal and trade outcome reconciliation",
-    "trades": "Paper trade lifecycle and execution records",
+    "trades": "Trade lifecycle and execution environment records",
     "trade_journey": "Recorded price path for each trade",
     "candles": "Stored market candles",
     "backtest_results": "Cached research replay results",
@@ -119,6 +119,9 @@ def public_snapshot():
     last = scan.get("last_scan_at") or None
     age = time.time() - last if last else None
     feed = read_signals(8)
+    from datetime import timedelta
+    today = datetime.now(timezone.utc).date()
+    start_day = today - timedelta(days=13)
     with SessionLocal() as db:
         counts = dict(
             db.query(Signal.outcome, func.count(Signal.id))
@@ -126,9 +129,15 @@ def public_snapshot():
             .group_by(Signal.outcome)
             .all()
         )
+        activity_rows = db.query(func.date(Signal.timestamp), func.count(Signal.id)).filter(
+            Signal.market == "crypto", Signal.timestamp >= str(start_day)
+        ).group_by(func.date(Signal.timestamp)).all()
+    activity_counts = dict(activity_rows)
+    activity = [{"date": str(start_day + timedelta(days=i)), "count": activity_counts.get(str(start_day + timedelta(days=i)), 0)} for i in range(14)]
     data = {
+        "activity": activity,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "mode": "paper",
+        "mode": cfg.TRADING_MODE,
         "strategy_status": "not_evaluated",
         "status": "operational"
         if age is not None and age < 1800
@@ -251,7 +260,7 @@ def private_health(request):
         checks["redis"] = "disconnected"
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "mode": "paper",
+        "mode": cfg.TRADING_MODE,
         "checks": checks,
         "runtime": getattr(request.app.state, "engine_status", "not_started"),
         "scan": get_scan_stats(),
@@ -292,7 +301,7 @@ async def run_scan(request: Request):
     if getattr(request.app.state, "scan_running", False):
         raise HTTPException(409, "A manual scan is already running")
     if getattr(request.app.state, "engine_status", "") != "running":
-        raise HTTPException(409, "The paper engine is not ready; inspect System health")
+        raise HTTPException(409, "The engine is not ready; inspect System health")
     from alerts.scanner import scan_all_coins
 
     request.app.state.scan_running = True
@@ -310,6 +319,7 @@ async def run_scan(request: Request):
 
 @router.get("/admin/research")
 def research():
+    from config import cfg
     from pathlib import Path
 
     try:
@@ -318,7 +328,7 @@ def research():
         gate = {"status": "not_evaluated"}
     return {
         "strategy_status": "not_evaluated",
-        "mode": "paper",
+        "mode": cfg.TRADING_MODE,
         "gate": gate,
         "methodology": {
             "timeframes": ["4h", "1h"],
@@ -345,10 +355,13 @@ async def integrations(request: Request):
         "telegram": {
             "configured": bool(cfg.TELEGRAM_TOKEN and cfg.TELEGRAM_CHAT_ID),
             "webhook": None,
+            "transport": os.getenv("TELEGRAM_TRANSPORT", "polling"),
             "expected_webhook_url": cfg.DOMAIN.rstrip("/") + "/webhook/telegram",
             "allowed_users_configured": bool(os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").strip()),
         }
     }
+    from alerts.telegram.service import status as command_status
+    result["telegram"]["command_service"] = command_status()
     if result["telegram"]["configured"]:
         try:
             async with httpx.AsyncClient(timeout=8) as client:
@@ -381,6 +394,9 @@ async def integrations(request: Request):
                 )
         except Exception:
             result["telegram"]["status"] = "unavailable"
+    if result["telegram"]["transport"] == "polling":
+        result["telegram"]["status"] = "polling_connected" if result["telegram"]["command_service"]["connected"] else "polling_reconnecting"
+    result["telegram"]["configured_chat_id"] = str(cfg.TELEGRAM_CHAT_ID or "")
     return result
 
 
@@ -388,10 +404,17 @@ async def integrations(request: Request):
 async def register_telegram(request: Request):
     from config import cfg
 
-    if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID or not cfg.WEBHOOK_SECRET:
+    if not cfg.TELEGRAM_TOKEN or not cfg.TELEGRAM_CHAT_ID or (os.getenv("TELEGRAM_TRANSPORT", "polling") == "webhook" and not cfg.WEBHOOK_SECRET):
         raise HTTPException(409, "Telegram credentials and webhook secret are required")
     from alerts.telegram.client import register_webhook, register_commands
 
+    if os.getenv("TELEGRAM_TRANSPORT", "polling") == "polling":
+        from alerts.telegram.service import start
+        await start()
+        commands_registered = await register_commands()
+        state = await integrations(request)
+        state["telegram"]["registration"] = {"webhook": False, "commands": commands_registered, "transport": "polling"}
+        return state
     webhook_registered = await register_webhook()
     commands_registered = await register_commands()
     state = await integrations(request)
@@ -410,10 +433,10 @@ def admin_settings():
         "public_origin": settings.public_origin,
         "admin_origin": settings.admin_origin,
         "admin_emails": list(settings.admin_emails),
-        "mode": "paper",
+        "mode": cfg.TRADING_MODE,
         "strategy_version": cfg.SYSTEM_VERSION,
         "session_hours": settings.session_hours,
-        "exchange": "Binance USDⓈ-M Demo",
+        "exchange": "Binance USDⓈ-M Live" if cfg.TRADING_MODE == "live" else "Binance USDⓈ-M Demo",
         "credentials": {
             "google": bool(cfg.GOOGLE_CLIENT_SECRET),
             "telegram": bool(cfg.TELEGRAM_TOKEN),

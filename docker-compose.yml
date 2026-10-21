@@ -5,7 +5,7 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
-    restart: unless-stopped
+    restart: always
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 15s
@@ -23,10 +23,11 @@ services:
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      MODE_SWITCH_RESTART: "true"
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
+    restart: always
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     logging:
@@ -39,17 +40,20 @@ services:
       retries: 3
       start_period: 45s
 
+  # Tunnel starts independently. An origin boot failure must not prevent its creation.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.0@sha256:9b49eed8f62806d5d45ddf59ecefb5710429598ea6d3fcccd2af938f621b2b07
-    command: tunnel --no-autoupdate run
+    image: ${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:2026.10.2}
+    container_name: signal-engine-tunnel
+    command: ["tunnel", "--no-autoupdate", "--protocol", "${TUNNEL_PROTOCOL:-http2}", "--metrics", "0.0.0.0:2000", "run"]
     environment:
-      TUNNEL_TOKEN: $TUNNEL_TOKEN
-    restart: unless-stopped
-    depends_on:
-      signal-engine:
-        condition: service_healthy
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in the server .env}
+    restart: always
+    stop_grace_period: 20s
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
 
 volumes:
   redis_data:

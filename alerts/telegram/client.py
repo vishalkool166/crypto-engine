@@ -59,7 +59,7 @@ def render_message(message: str) -> str:
     escaped = re.sub(r"\*([^*\n]+)\*", r"<b>\1</b>", escaped)
     escaped = re.sub(r"(?<!\w)_([^_\n]+)_(?!\w)", r"<i>\1</i>", escaped)
     when = datetime.now(timezone(timedelta(hours=5,minutes=30))).strftime("%d %b %Y · %H:%M IST")
-    return escaped + "\n\n<i>Signal Engine · PAPER · " + when + "</i>"
+    return escaped + "\n\n<i>Signal Engine · " + cfg.TRADING_MODE.upper() + " · " + when + "</i>"
 
 async def send(message: str) -> None:
     for chunk in _split_message(message, limit=3000):
@@ -119,13 +119,15 @@ async def register_webhook() -> bool:
 
 async def register_commands() -> bool:
     commands = [
+        {"command": "start", "description": "Start here and view the command menu"},
+        {"command": "ping", "description": "Test inbound command and reply delivery"},
         {"command": "help", "description": "Show every available operator command"},
         {"command": "health", "description": "Dependency health and data freshness"},
         {"command": "queue", "description": "Current signal queue"},
         {"command": "grade", "description": "Recorded performance by grade"},
         {"command": "status",       "description": "Bot status overview"},
         {"command": "scan",         "description": "Trigger manual scan"},
-        {"command": "trades",       "description": "Paper positions with observed P&L"},
+        {"command": "trades",       "description": "Active-account positions with observed P&L"},
         {"command": "position",     "description": "Deep dive on trade — /position ETH"},
         {"command": "journey",      "description": "Recorded price path — /journey 42"},
         {"command": "pending",      "description": "Review pending content drafts"},

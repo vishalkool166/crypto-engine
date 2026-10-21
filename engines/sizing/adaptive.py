@@ -319,7 +319,7 @@ def _get_today_pnl() -> float:
         now_utc = datetime.now(timezone.utc)
         today_start = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
         with SessionLocal() as db:
-            trades = db.query(TradeModel).filter(
+            trades = db.query(TradeModel).filter(TradeModel.execution_mode == cfg.TRADING_MODE, 
                 TradeModel.closed_at >= today_start,
                 TradeModel.outcome.in_(["win", "loss"]),
             ).all()
@@ -333,7 +333,7 @@ def _get_open_counts() -> dict:
     try:
         from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            trades = db.query(TradeModel).filter(TradeModel.is_active == True).all()
+            trades = db.query(TradeModel).filter(TradeModel.execution_mode == cfg.TRADING_MODE, TradeModel.is_active == True).all()
         return {
             "total": len(trades),
             "long":  sum(1 for t in trades if t.direction == "LONG"),
@@ -348,7 +348,7 @@ def _get_total_trades() -> int:
     try:
         from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            return db.query(TradeModel).filter(
+            return db.query(TradeModel).filter(TradeModel.execution_mode == cfg.TRADING_MODE, 
                 TradeModel.outcome.in_(["win", "loss"])
             ).count()
     except Exception as e:
@@ -360,7 +360,7 @@ def _get_performance() -> dict:
     try:
         from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            closed = db.query(TradeModel).filter(
+            closed = db.query(TradeModel).filter(TradeModel.execution_mode == cfg.TRADING_MODE, 
                 TradeModel.outcome.in_(["win", "loss"])
             ).order_by(TradeModel.opened_at.desc()).limit(20).all()
 
@@ -396,7 +396,7 @@ def _get_drawdown(balance: float) -> float:
     try:
         from database import SessionLocal, Trade as TradeModel
         with SessionLocal() as db:
-            closed = db.query(TradeModel).filter(
+            closed = db.query(TradeModel).filter(TradeModel.execution_mode == cfg.TRADING_MODE, 
                 TradeModel.outcome.in_(["win", "loss"]),
                 TradeModel.net_pnl.isnot(None),
             ).order_by(TradeModel.opened_at.asc()).all()

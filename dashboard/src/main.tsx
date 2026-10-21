@@ -3,10 +3,6 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import "./styles.css";
 import App from "./App";
-document.documentElement.classList.toggle(
-  "dark",
-  localStorage.getItem("signal-engine-theme") !== "light",
-);
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>

@@ -232,6 +232,7 @@ def _get_daily_sl_count() -> int | None:
             return db.query(TradeModel).filter(
                 TradeModel.closed_at >= start,
                 TradeModel.close_reason == "sl_hit",
+                TradeModel.execution_mode == cfg.TRADING_MODE,
             ).count()
     except Exception as error:
         log.error("Daily stop-loss count unavailable: %s", error)

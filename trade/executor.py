@@ -16,6 +16,8 @@ from trade.exchange import (
 )
 from database import get_session, Trade as TradeModel, Signal as SignalModel
 
+from trade.mode import guard_operation
+
 log = logging.getLogger(__name__)
 
 HE = cfg.HYBRID_ENGINE
@@ -217,7 +219,7 @@ def _get_field(trade_id: int, field: str) -> float:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
             return float(getattr(trade, field, 0) or 0) if trade else 0.0
     except Exception as exc:
-        raise RuntimeError("Cannot establish open trade count safely") from exc0
+        raise RuntimeError("Cannot establish open trade count safely") from exc
 
 
 def _create_pending_trade(
@@ -248,6 +250,7 @@ def _create_pending_trade(
                 return 0
             trade = TradeModel(
                 signal_id        = signal_id,
+                execution_mode   = cfg.TRADING_MODE,
                 coin             = coin,
                 direction        = direction,
                 grade            = grade,
@@ -413,6 +416,7 @@ def _cancel_pending_trade(trade_id: int) -> bool:
     return False
 
 
+@guard_operation
 async def open_position(
     coin:      str,
     direction: str,
@@ -788,6 +792,7 @@ async def _place_tp(
     return None
 
 
+@guard_operation
 async def close_position(
     coin:      str,
     direction: str,
@@ -798,6 +803,12 @@ async def close_position(
     is_short = direction == "SHORT"
 
     try:
+        with get_session() as db:
+            stored = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
+            if not stored or stored.coin != coin or stored.direction != direction:
+                raise ValueError("Position details do not match the stored trade")
+            if stored.execution_mode not in (cfg.TRADING_MODE, "legacy"):
+                raise ValueError("Stored trade belongs to a different execution environment")
         positions = await get_positions()
         position  = next(
             (p for p in positions

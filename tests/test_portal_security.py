@@ -298,9 +298,9 @@ def test_unknown_redis_is_not_falsely_connected(client, monkeypatch):
     assert health["checks"]["database"] == "connected"
 
 
-def test_live_configuration_is_refused(monkeypatch):
+def test_live_configuration_requires_explicit_opt_in(monkeypatch):
     monkeypatch.setenv("TRADING_MODE", "live")
-    with pytest.raises(RuntimeError, match="paper"):
+    with pytest.raises(RuntimeError, match="opt-in"):
         settings.validate()
 
 

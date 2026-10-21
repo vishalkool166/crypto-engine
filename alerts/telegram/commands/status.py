@@ -102,59 +102,38 @@ async def cmd_mode() -> None:
 
 
 async def cmd_health() -> None:
-    from trade.monitor import get_open_positions_enriched
-    from trade.ws import get_mark_price
-
+    from alerts.scanner import get_scan_stats
+    from alerts.telegram.service import status
+    from trade.ws import get_ws_status
+    from redis_client import get_redis
+    from database import engine
+    from sqlalchemy import text
+    import time
+    import os
+    redis = get_redis()
     try:
-        trades = await get_open_positions_enriched()
+        redis_ok = bool(redis and redis.ping())
     except Exception:
-        trades = []
-
-    if not trades:
-        await send(
-            f"💚 *Trade Health*\n"
-            f"🕐 `{_now_ist()}`\n\n"
-            f"😴 No open trades"
-        )
-        return
-
-    lines = [
-        f"💚 *Trade Health — {len(trades)} Open*\n"
-        f"🕐 `{_now_ist()}`\n"
-    ]
-
-    for t in trades:
-        coin      = t.get("coin", "--")
-        direction = t.get("direction", "--")
-        entry     = float(t.get("entry_price") or 0)
-        leverage  = int(t.get("leverage") or 1)
-        margin    = float(t.get("margin_used") or 0)
-        is_short  = direction == "SHORT"
-        live      = get_mark_price(coin) or float(t.get("current_price") or entry)
-        pnl_abs   = round(
-            ((entry - live) if is_short else (live - entry)) / entry * margin * leverage
-            - margin * leverage * 0.001, 4
-        ) if entry > 0 else 0.0
-        pnl_str   = f"+${pnl_abs:.4f}" if pnl_abs >= 0 else f"-${abs(pnl_abs):.4f}"
-        pnl_emoji = "💚" if pnl_abs >= 0 else "🔴"
-        side      = "📈" if direction == "LONG" else "📉"
-        health    = t.get("health", {})
-        h_state   = health.get("state", "UNKNOWN") if health else "Checking..."
-        h_emoji   = {"HEALTHY": "✅", "WARNING": "⚠️", "INVALIDATED": "🚨"}.get(h_state, "⏳")
-        failures  = health.get("failures", []) if health else []
-        warnings  = health.get("warnings", []) if health else []
-
-        lines.append(
-            f"\n{side} *{coin}* `{direction}`\n"
-            f"{h_emoji} Health:  `{h_state}`\n"
-            f"{pnl_emoji} PnL:     `{pnl_str}`"
-        )
-        if failures:
-            lines.append(f"❌ _{failures[0]}_")
-        elif warnings:
-            lines.append(f"⚠️ _{warnings[0]}_")
-
-    await send("\n".join(lines))
+        redis_ok = False
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+    scan = get_scan_stats()
+    age = round((time.time() - scan["last_scan_at"]) / 60) if scan.get("last_scan_at") else None
+    ws = get_ws_status()
+    transport = status()
+    await send(
+        "💚 *Service health*\n\n"
+        + ("✅" if db_ok else "❌") + " Database: " + ("connected" if db_ok else "unavailable") + "\n"
+        + ("✅" if redis_ok else "❌") + " Redis: " + ("connected" if redis_ok else "unavailable") + "\n"
+        + "📡 Commands: " + transport["transport"] + "\n"
+        + "⚙️ Engine: " + ("enabled" if os.getenv("ENGINE_ENABLED", "true").lower() == "true" else "disabled") + "\n"
+        + "🕒 Last scan: " + (str(age) + " minutes ago" if age is not None else "not recorded") + "\n"
+        + "📈 Price stream: " + ("connected" if ws.get("mark_price_connected") else "reconnecting")
+    )
 
 
 async def cmd_balance() -> None:

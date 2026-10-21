@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from config import cfg
 from datetime import datetime, timezone, timedelta
 from database import get_session, BinanceTradeRecord, BinanceFundingRecord, BinanceAccountSnapshot, Trade as TradeModel
 
@@ -234,7 +235,7 @@ async def _fetch_and_store_income(trade_id: int, coin: str) -> None:
 
         with SessionLocal() as db:
             trade = db.query(TradeModel).filter(TradeModel.id == trade_id).first()
-            if not trade or not trade.opened_at:
+            if not trade or not trade.opened_at or trade.execution_mode != cfg.TRADING_MODE:
                 return
             opened_at = trade.opened_at
             closed_at = trade.closed_at or datetime.now(timezone.utc)
@@ -536,6 +537,7 @@ async def sync_unsynced_trades() -> int:
             unsynced = db.query(TradeModel).filter(
                 TradeModel.outcome.in_(["win", "loss"]),
                 TradeModel.binance_synced == False,
+                TradeModel.execution_mode == cfg.TRADING_MODE,
             ).all()
 
         count = 0

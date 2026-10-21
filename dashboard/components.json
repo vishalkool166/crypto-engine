@@ -13,6 +13,6 @@
     "components": "./src/components",
     "ui": "./src/components/ui",
     "lib": "./src",
-    "utils": "./src/api"
+    "utils": "./src/lib/utils"
   }
 }

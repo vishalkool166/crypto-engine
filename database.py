@@ -103,6 +103,7 @@ class Trade(Base):
 
     id                     = Column(Integer, primary_key=True)
     signal_id              = Column(Integer, nullable=True)
+    execution_mode         = Column(String, default="legacy", nullable=False)
     coin                   = Column(String)
     direction              = Column(String)
     grade                  = Column(String)
@@ -778,6 +779,7 @@ def init_db():
 
     migrations = {
         "trades": [
+            "execution_mode TEXT NOT NULL DEFAULT 'legacy'",
             "thesis_strength_at_close FLOAT",
             "thesis_pillars_at_close TEXT",
             "thesis_exit_reason TEXT",

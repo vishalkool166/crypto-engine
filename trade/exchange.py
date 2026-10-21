@@ -100,6 +100,8 @@ async def _get(path: str, params: dict | None = None, signed: bool = False) -> d
 
 
 async def _post(path: str, params: dict | None = None, signed: bool = False) -> dict:
+    from trade.mode import assert_writes_allowed
+    assert_writes_allowed(path)
     client = await _http()
     p      = _signed(dict(params or {})) if signed else dict(params or {})
     try:
@@ -112,6 +114,8 @@ async def _post(path: str, params: dict | None = None, signed: bool = False) -> 
 
 
 async def _put(path: str, params: dict | None = None, signed: bool = False) -> dict:
+    from trade.mode import assert_writes_allowed
+    assert_writes_allowed(path)
     client = await _http()
     p      = _signed(dict(params or {})) if signed else dict(params or {})
     try:
@@ -124,6 +128,8 @@ async def _put(path: str, params: dict | None = None, signed: bool = False) -> d
 
 
 async def _delete(path: str, params: dict | None = None, signed: bool = False) -> dict:
+    from trade.mode import assert_writes_allowed
+    assert_writes_allowed(path)
     client = await _http()
     p      = _signed(dict(params or {})) if signed else dict(params or {})
     try:

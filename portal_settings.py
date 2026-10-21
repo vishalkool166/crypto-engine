@@ -66,8 +66,12 @@ class Settings:
             for key in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"):
                 if not os.getenv(key):
                     raise RuntimeError(key + " must be configured")
-        if os.getenv("TRADING_MODE", "paper") != "paper":
-            raise RuntimeError("This release supports paper trading only")
+        if os.getenv("TRADING_MODE", "paper") not in ("paper", "live"):
+            raise RuntimeError("TRADING_MODE must be paper or live")
+        if os.getenv("TRADING_MODE", "paper") == "live":
+            from trade.mode import live_configured
+            if not live_configured():
+                raise RuntimeError("Live mode requires server opt-in, live credentials, and TOTP")
 
 
 settings = Settings()

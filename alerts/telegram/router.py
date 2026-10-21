@@ -12,9 +12,18 @@ async def handle_webhook(request: Request) -> None:
     if not cfg.WEBHOOK_SECRET or not hmac.compare_digest(secret,cfg.WEBHOOK_SECRET):
         raise HTTPException(403,"Forbidden")
     data=await request.json()
+    await handle_update(data)
+
+
+async def handle_update(data: dict) -> None:
+    import os
+    from alerts.telegram.service import record
+    if not isinstance(data, dict):
+        return
     msg=data.get("message",{})
     chat_id=str(msg.get("chat",{}).get("id",""))
     if chat_id!=str(cfg.TELEGRAM_CHAT_ID):
+        record("chat_mismatch")
         log.warning("Telegram update ignored: chat does not match the configured operator chat")
         return
     text=msg.get("text","")
@@ -25,6 +34,7 @@ async def handle_webhook(request: Request) -> None:
         # In a private chat Telegram uses the operator's user ID as chat ID.
         allowed={chat_id}
     if sender_id not in allowed:
+        record("sender_not_allowed")
         log.warning("Telegram update ignored: sender is not in TELEGRAM_ALLOWED_USER_IDS")
         return
     from redis_client import get_redis
@@ -36,7 +46,9 @@ async def handle_webhook(request: Request) -> None:
     key="telegram:update:"+str(update_id)
     if not redis.set(key,"claimed",ex=86400,nx=True): return
     budget="telegram:budget:"+chat_id
-    if redis.incr(budget)>12: return
+    if redis.incr(budget)>12:
+        record("rate_limited")
+        return
     redis.expire(budget,60,nx=True)
     command=text.split()[0].split("@")[0].lower() if text.split() else ""
     if command in ("/scan","/backfill","/backtest"):
@@ -49,9 +61,12 @@ async def handle_webhook(request: Request) -> None:
             parts=text.strip().split()
             parts[0]=parts[0].split("@")[0]
             text=" ".join(parts)
+        record("running", text)
         await _handle_command(text,chat_id)
+        record("completed", text)
     except Exception:
         # Keep the claim after failure: partial command effects must not replay.
+        record("handler_failed", text)
         log.exception("Telegram command failed")
         from alerts.telegram.client import send
         await send("*Operation failed*\nThe command could not complete. Inspect operator logs for the recorded failure.")
@@ -153,7 +168,12 @@ async def _handle_command(text: str, chat_id: str = "") -> None:
             pass
         return
 
+    async def cmd_ping():
+        await send("📡 *Connected*\nYour command reached Signal Engine and this reply came from the server.\nUse /help for the operator menu.")
+
     handlers = {
+        "/ping":        cmd_ping,
+        "/start":       cmd_help,
         "/status":      cmd_status,
         "/pnl":         cmd_pnl,
         "/queue":       cmd_queue,
