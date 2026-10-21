@@ -64,7 +64,7 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "127.0.0.1",
     proxy: Object.fromEntries(
-      ["/api", "/auth", "/ws"].map((path) => [
+      ["/api", "/auth", "/ws", "/webhook"].map((path) => [
         path,
         { target: "http://127.0.0.1:8000", ws: true, changeOrigin: false },
       ]),

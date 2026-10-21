@@ -19,7 +19,10 @@ export async function request(path: string, options: RequestInit = {}) {
       ...options.headers,
     },
   });
-  const data = await response.json().catch(() => null);
+  const contentType = response.headers.get("content-type") || "";
+  const data = contentType.includes("application/json")
+    ? await response.json().catch(() => null)
+    : null;
   if (!response.ok)
     throw new ApiError(
       response.status,
@@ -29,6 +32,10 @@ export async function request(path: string, options: RequestInit = {}) {
           ? data.reason
           : "The service could not complete this request.",
     );
+  if (data === null || typeof data !== "object")
+    throw new ApiError(response.status || 502, "The API returned an invalid response. Check the Pages proxy and backend health.");
+  if (data === null || typeof data !== "object")
+    throw new ApiError(response.status || 502, "The API returned an invalid response. Check the Pages proxy and backend health.");
   if (path === "/auth/session" && data?.csrf) csrf = data.csrf;
   if (data?.success === false)
     throw new ApiError(409, data.reason || "Operation declined");

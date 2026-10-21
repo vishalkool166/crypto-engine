@@ -22,7 +22,7 @@ Paper-position closes and retained sensitive actions require TOTP. Set TOTP_SECR
 
 ## Network and abuse controls
 
-Docker publishes neither Redis nor API ports. Cloudflare Tunnel is the only application ingress. The Worker injects a separate origin-verification secret, so requests that bypass the gateway cannot use the APIs. Uvicorn does not trust arbitrary forwarded headers.
+Docker publishes neither Redis nor API ports. Cloudflare Tunnel is the only application ingress. The scoped Pages Functions inject a separate origin-verification secret, so direct requests to the backend cannot use the APIs. Uvicorn does not trust arbitrary forwarded headers.
 
 Backend request budgets, payload limits, WebSocket connection caps, exact-origin checks, and per-session CSRF tokens add application controls. Configure Cloudflare WAF/rate-limiting rules for the public API, admin authentication, and expensive operations. Do not apply interactive challenges to the Telegram webhook or OAuth callback. Webhook secret validation and administrator chat/user allowlists remain mandatory.
 
@@ -32,7 +32,7 @@ A private Telegram chat defaults to its own sender ID. Group chats require TELEG
 
 Secure .env and database backups. On AWS, restrict SSH to operator addresses. Run one engine instance. Do not mount the Docker socket or grant the application Docker-administration privileges.
 
-CSP, frame denial, MIME sniff prevention, referrer policy, and permissions policy are emitted at the edge. API/auth responses are not cached. Public data remains publicly copyable; the application does not promise scrape-proof content or immunity from attacks.
+Static Pages assets emit CSP, frame denial, MIME sniff prevention, referrer policy, and permissions policy. API responses are marked no-store and receive MIME-sniff and referrer protections. API/auth responses are not cached. Public data remains publicly copyable; the application does not promise scrape-proof content or immunity from attacks.
 
 ## Reporting a problem
 

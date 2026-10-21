@@ -1,13 +1,10 @@
-# Rebuild decisions
+# Design decisions
 
-- Two browser-facing applications: public and Google-authenticated operator.
-- One dashboard source, two build targets. No backend-served frontend bundle.
-- Public outputs include model levels, scores, timestamps, and sanitized traces. Account records and sizing remain private.
-- Customer signup, pricing, subscription, and billing functionality removed.
-- Google account allowlist plus subject pinning; opaque revocable sessions.
-- Paper-only startup and no live-switch or Docker-purge HTTP routes.
-- Existing Indian-market engine retained privately. Existing ML/vector research source retained without automatic model promotion.
-- Public PWA retained. Admin PWA deferred; authenticated responses never cached.
-- SQLite preserved; new operator tables added without deleting historical customer records.
-- Two Pages upstream projects, one Worker Route gateway, one AWS Tunnel origin. No third custom app/API hostname.
-- License remains the owner’s decision. No license inferred or added.
+- Keep `dashboard/` as the only frontend source. Build it in public and admin modes for two Cloudflare Pages projects.
+- Keep FastAPI, SQLite history, Redis, and cloudflared on the existing AWS deployment.
+- Use Pages Functions scoped to API, auth, WebSocket, and webhook paths; static assets and SPA routes remain Pages assets.
+- Keep browser requests same-origin so admin cookies and CSRF checks remain effective.
+- Keep Google sign-in limited to `ADMIN_EMAILS`; do not add customer accounts, billing, or public login.
+- Keep paper-only exchange safeguards; require demo credentials and reconciliation before scheduled operation.
+- Keep public API response fields explicitly allowlisted.
+- Do not include secrets, database data, dependencies, built assets, or Git history in release archives.

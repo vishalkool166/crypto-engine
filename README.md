@@ -1,67 +1,50 @@
 # Signal Engine
 
-Market research and paper-trading operations with two distinct applications:
+Signal Engine has a public market research site and a private operator console. The browser source lives in `dashboard/`; both Cloudflare Pages projects build from that directory.
 
-| Application | Purpose |
+| Site | Purpose |
 | --- | --- |
-| https://app.vishalkool.top | Public signal ledger, methodology, recorded outcomes, and service status |
-| https://admin-app.vishalkool.top | Google-authenticated operator console, private paper trades, system health, markets, research, Telegram, audit, and settings |
+| `app.vishalkool.top` | Public signal records, performance history, methodology, and service status |
+| `admin-app.vishalkool.top` | Google-authenticated operator access to paper trading, engine health, markets, research, Telegram, audit, and settings |
 
-The frontend source is entirely in **dashboard/**. The Python backend stays on AWS. Cloudflare Pages hosts the two static builds; a small Worker routes each hostname to the appropriate Pages build or to the AWS service through Cloudflare Tunnel.
+FastAPI runs in Docker on AWS and is reached through Cloudflare Tunnel. Redis and SQLite remain private to the Docker network. The application is paper-only. It has no customer signup, subscriptions, or payment flow.
 
-**Operating mode: paper only. Strategy profitability: not evaluated.** Grades are rule-based scores, not calibrated win probabilities. No customer accounts, subscriptions, billing, or live-mode switches are exposed.
+## Start here
 
-## Release status
+- [Deployment guide](DEPLOY.md): Pages, Tunnel, OAuth, environment, and release checks.
+- [Security model](docs/SECURITY.md)
+- [Research methodology](docs/RESEARCH.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Verification record](docs/STATUS.md)
 
-See **docs/STATUS.md** for exact verification evidence and remaining deployment checks. The downloadable archive contains source and separate prebuilt public/admin assets. It does not contain production credentials, a database, or a trained model.
+## Local development
 
-Start with **docs/OPERATIONS.md** to replace the current repository and configure Pages, Google, AWS, Tunnel, and the gateway. Source replacement alone does not deploy the external configuration.
+Use Python 3.12 and Node 22. From the repository root:
 
-## Development
-
-Requires Python 3.12 and Node 22.12+. Local verification used Python 3.12 and Node 24.19; Pages is configured for Node 22.
-
-~~~bash
+```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 npm --prefix dashboard ci
 ENV=development ENGINE_ENABLED=false uvicorn main:app --host 127.0.0.1 --port 8000
-npm --prefix dashboard run dev
-npm --prefix dashboard run dev:admin
-~~~
+```
 
-The public dev server uses port 5173; admin uses 5174. API/WebSocket requests are proxied to the local backend. Google OAuth requires an exact registered callback and configured credentials; there is no development login bypass.
+In separate terminals run `npm --prefix dashboard run dev` and `npm --prefix dashboard run dev:admin`. The Vite servers proxy API, auth, WebSocket, and webhook requests to the local FastAPI service.
 
-~~~bash
-python -m pytest -q tests
+Build and verify both Pages outputs with:
+
+```bash
 npm --prefix dashboard run build
-npx --prefix dashboard playwright install chromium
+python -m pytest -q tests
 npm --prefix dashboard test
-npm --prefix deploy/cloudflare ci
-npm --prefix deploy/cloudflare test
-~~~
+```
 
-## Source map
+The public and admin builds are written to `dashboard/dist/public` and `dashboard/dist/admin`. The repository archive contains source only; Pages creates these build outputs.
 
-- **main.py, operator_auth.py, portal_settings.py:** HTTP boundaries, Google operator identity, revocable hashed sessions, and canonical domain configuration.
-- **api/portal.py:** Explicit public signal projection and private operational endpoints.
-- **agents/, engines/, trade/:** Existing strategy, sizing, execution safeguards, and order journal.
-- **alerts/telegram/:** Operator-only commands, reporting, webhook validation, deduplication, and rate limits.
-- **backtest/:** Historical research and fail-closed evidence assessment.
-- **dashboard/:** Public/admin React builds, local shadcn-style UI primitives, and the public PWA.
-- **deploy/cloudflare/:** Gateway Worker and its tests.
-- **scripts/:** Private environment setup, deployment-config generation, and online SQLite backup.
+## Important operating limits
 
-Historical customer tables remain in existing databases to avoid destructive migration. They have no customer-facing routes or billing workflow. Vector-retrieval and ML research source is preserved but is not part of the active strategy. The private assistant uses bounded SQL retrieval and requires explicit Groq configuration.
-
-## Technical references
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Deployment, migration, and rollback](docs/OPERATIONS.md)
-- [Security](docs/SECURITY.md)
-- [Research methodology](docs/RESEARCH.md)
-- [Blueprint and scope](docs/BLUEPRINT.md)
-- [Verification status](docs/STATUS.md)
-
-No license has been selected by the repository owner. This release does not add a license or change ownership rights.
+- `TRADING_MODE` must remain `paper`.
+- A paper scheduler starts only after demo credentials load and existing exchange state reconciles cleanly.
+- Redis health in the console reflects the actual backend probe.
+- Profitability has not been established. Signal grades are rule-based scores, not calibrated probabilities.
+- No license is included. Choose one before presenting the project as licensed open source.

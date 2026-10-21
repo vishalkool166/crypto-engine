@@ -38,6 +38,8 @@ import {
   BookOpen,
   Wallet,
   ScrollText,
+  Moon,
+  Sun,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Dialog } from "./components/ui/dialog";
@@ -69,6 +71,20 @@ function Brand({ admin = false }: { admin?: boolean }) {
         <small>{admin ? "OPERATOR CONSOLE" : "MARKET RESEARCH"}</small>
       </span>
     </Link>
+  );
+}
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains("dark"));
+  function toggle() {
+    const next = !dark;
+    document.documentElement.classList.toggle("dark", next);
+    localStorage.setItem("signal-engine-theme", next ? "dark" : "light");
+    setDark(next);
+  }
+  return (
+    <Button variant="ghost" size="icon" aria-label={dark ? "Use light theme" : "Use dark theme"} onClick={toggle}>
+      {dark ? <Sun size={16} /> : <Moon size={16} />}
+    </Button>
   );
 }
 function Badge({
@@ -240,15 +256,20 @@ function OutcomeBars({ outcomes }: { outcomes: Record<string, number> }) {
     max = Math.max(1, ...pairs.map((p) => p[1]));
   return pairs.length ? (
     <div className="outcome-bars">
-      {pairs.map(([key, count]) => (
-        <div key={key}>
+      {pairs.map(([key, count]) => {
+        const tone = /target|profit|win|tp/i.test(key)
+          ? "positive"
+          : /stop|loss|sl/i.test(key)
+            ? "negative"
+            : "neutral";
+        return <div key={key} className={tone}>
           <span>{words(key)}</span>
           <div className="bar-track">
             <span style={{ width: Math.max(2, (count / max) * 100) + "%" }} />
           </div>
           <strong>{number(count, 0)}</strong>
-        </div>
-      ))}
+        </div>;
+      })}
     </div>
   ) : (
     <Empty title="No recorded outcomes">
@@ -1698,32 +1719,13 @@ function Login() {
   const reason = new URLSearchParams(location.search).get("error");
   return (
     <main className="login-layout">
-      <section className="login-story">
-        <Brand admin />
-        <div>
-          <p className="eyebrow">PRIVATE OPERATOR ACCESS</p>
-          <h1>
-            The engine.
-            <br />
-            The evidence.
-            <br />
-            Your oversight.
-          </h1>
-          <p>
-            Operational controls and account data belong behind an explicit
-            identity boundary.
-          </p>
-        </div>
-        <span className="login-caption">SIGNAL ENGINE / OPERATOR CONSOLE</span>
-      </section>
       <section className="login-form">
         <div className="login-card">
-          <ShieldCheck size={28} />
-          <p className="eyebrow">VERIFIED ACCESS</p>
-          <h2>Sign in to the console.</h2>
+          <Brand admin />
+          <p className="eyebrow">OPERATOR ACCESS</p>
+          <h1>Sign in to Signal Engine</h1>
           <p>
-            Use the Google account configured as this installation’s
-            administrator.
+            Continue with the Google account on the administrator allowlist.
           </p>
           {reason && (
             <div className="notice" role="alert">
@@ -1750,8 +1752,8 @@ function Login() {
             </a>
           </Button>
           <div className="login-security">
-            <Check size={14} /> Google identity verification
-            <Check size={14} /> Server-side administrator allowlist
+            <ShieldCheck size={14} /> Google verifies your identity
+            <Check size={14} /> Access is checked by the server
           </div>
           <p className="login-fineprint">
             This application has no customer registration. Access is limited to
@@ -1877,6 +1879,7 @@ function AdminShell({ email }: { email: string }) {
             </strong>
           </span>
           <div>
+            <ThemeToggle />
             <Badge tone="amber">PAPER</Badge>
             <span
               className={"connection " + (conn === "connected" ? "online" : "")}
@@ -1946,6 +1949,7 @@ function PublicShell() {
           ))}
         </nav>
         <div className="header-status">
+          <ThemeToggle />
           <span
             className={"connection " + (conn === "connected" ? "online" : "")}
           >

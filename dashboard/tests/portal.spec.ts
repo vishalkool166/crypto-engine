@@ -98,3 +98,13 @@ test("mobile public menu navigates without page overflow", async ({ page }) => {
     ),
   ).toBe(true);
 });
+
+test("theme control preserves the selected shadcn color scheme", async ({ page }) => {
+  await publicApi(page);
+  await page.goto("http://127.0.0.1:5173");
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.getByRole("button", { name: "Use light theme" }).click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.reload();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+});

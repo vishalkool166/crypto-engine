@@ -1,0 +1,4 @@
+# Local Pages Functions bindings. Copy to .dev.vars and enter the backend secret privately.
+APP_TARGET=public
+BACKEND_ORIGIN=https://api.vishalkool.top
+ORIGIN_PROXY_SECRET=
