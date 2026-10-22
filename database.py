@@ -772,6 +772,8 @@ class CoinLastOutcome(Base):
     pnl         = Column(Float, nullable=True)
 
 def init_db():
+    # Import research ledger models before metadata creation.
+    import research.ledger  # noqa: F401
     Base.metadata.create_all(engine)
 
     from sqlalchemy import inspect, text

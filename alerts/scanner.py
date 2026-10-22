@@ -170,52 +170,63 @@ def _resolve_circuit_level(current: int, requested: int | None) -> int:
     return max(current, requested)
 
 
-def _save_portfolio_snapshot(circuit_level: int | None = None, notes: str = "") -> None:
+def _save_portfolio_snapshot(circuit_level: int | None = None, notes: str = "", *, equity: float | None = None) -> None:
+    """Record verified futures account equity, never static configured capital.
+
+    Routine scans require a freshly fetched account balance. When an event only
+    asks to raise the risk circuit without fresh equity, retain the last value
+    but HALT further entries (level 4) until a fresh snapshot is obtained.
+    """
     try:
-        from database import SessionLocal, PortfolioSnapshot
-        from trade.exchange import get_balance as _get_bal
-        import asyncio
-
-        db = SessionLocal()
-        try:
-            from database import SessionLocal as SL2, PortfolioSnapshot as PS2
-            with SL2() as db2:
-                snapshots_30d = db2.query(PS2).order_by(
-                    PS2.snapshot_at.desc()
-                ).limit(720).all()
-
-                peak_30d = max(
-                    (s.total_value for s in snapshots_30d),
-                    default=cfg.CAPITAL
-                )
-
-            total_value = cfg.CAPITAL
-            dd_pct      = round((total_value - peak_30d) / peak_30d * 100, 2) if peak_30d > 0 else 0.0
-
-            from database import SessionLocal as SL3, Trade as TradeModel
-            with SL3() as db3:
-                open_pos = db3.query(TradeModel).filter(TradeModel.is_active == True).count()
-
-            # A routine scan is not an explicit reset of a risk halt.
-            latest_level = db.query(PortfolioSnapshot).order_by(
-                PortfolioSnapshot.snapshot_at.desc()).first()
-            current_level = int(latest_level.circuit_level or 0) if latest_level else 0
-            safe_level = _resolve_circuit_level(current_level, circuit_level)
-
-            snap = PortfolioSnapshot(
-                total_value    = total_value,
-                peak_30d       = peak_30d,
-                drawdown_pct   = dd_pct,
-                open_positions = open_pos,
-                circuit_level  = safe_level,
-                notes          = notes,
-            )
-            db.add(snap)
+        import math
+        from datetime import datetime, timezone, timedelta
+        from database import SessionLocal, PortfolioSnapshot, Trade as TradeModel
+        with SessionLocal() as db:
+            latest = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.id.desc()).first()
+            valid = (equity is not None and math.isfinite(equity) and equity > 0)
+            if not valid and latest is None:
+                log.error("Portfolio snapshot unavailable: no verified equity; refusing placeholder")
+                return
+            total_value = float(equity if valid else latest.total_value)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+            recent = db.query(PortfolioSnapshot).filter(PortfolioSnapshot.snapshot_at >= cutoff).order_by(PortfolioSnapshot.id.desc()).limit(2000).all()
+            peak_30d = max([total_value] + [float(s.total_value) for s in recent if s.total_value > 0])
+            dd_pct = round((total_value/peak_30d - 1)*100, 2)
+            requested = int(circuit_level or 0)
+            # Missing equity must never clear a previous circuit or authorize entries.
+            if not valid:
+                requested = max(requested, 4)
+                notes = (notes + " stale_equity_halt").strip()
+            if dd_pct <= -CIRCUIT_BREAKER_CONFIG["portfolio_dd_level4_pct"]:
+                requested = max(requested, 4)
+            elif dd_pct <= -CIRCUIT_BREAKER_CONFIG["portfolio_dd_level3_pct"]:
+                requested = max(requested, 3)
+            elif dd_pct <= -CIRCUIT_BREAKER_CONFIG["portfolio_dd_level2_pct"]:
+                requested = max(requested, 2)
+            elif dd_pct <= -CIRCUIT_BREAKER_CONFIG["portfolio_dd_level1_pct"]:
+                requested = max(requested, 1)
+            current_level = int(latest.circuit_level or 0) if latest else 0
+            active = db.query(TradeModel).filter(TradeModel.is_active.is_(True)).count()
+            db.add(PortfolioSnapshot(total_value=total_value,peak_30d=peak_30d,drawdown_pct=dd_pct,open_positions=active,circuit_level=max(current_level,requested),notes=notes))
             db.commit()
-        finally:
-            db.close()
-    except Exception as e:
-        log.error("_save_portfolio_snapshot: %s", e)
+    except Exception as exc:
+        log.error("_save_portfolio_snapshot failed closed: %s", type(exc).__name__)
+
+
+async def _refresh_portfolio_equity() -> bool:
+    """Read fresh same-mode Binance futures balance for drawdown governor."""
+    try:
+        import math
+        from trade.exchange import get_account_equity
+        equity = await get_account_equity()
+        if not math.isfinite(equity) or equity <= 0:
+            raise ValueError("Exchange equity not positive")
+        _save_portfolio_snapshot(equity=equity,notes="exchange_futures_equity")
+        return True
+    except Exception as exc:
+        log.error("Current Binance equity unavailable; blocking entries: %s",type(exc).__name__)
+        _save_portfolio_snapshot(circuit_level=4,notes="exchange_equity_unavailable")
+        return False
 
 
 def _get_daily_sl_count() -> int | None:
@@ -237,6 +248,20 @@ def _get_daily_sl_count() -> int | None:
     except Exception as error:
         log.error("Daily stop-loss count unavailable: %s", error)
         return None
+
+
+def _verified_equity_is_fresh() -> bool:
+    """Risk gate independent of the legacy size-multiplier calculation."""
+    try:
+        from datetime import datetime, timezone, timedelta
+        with __import__("database", fromlist=["SessionLocal"]).SessionLocal() as db:
+            latest = db.query(PortfolioSnapshot).order_by(PortfolioSnapshot.id.desc()).first()
+            if latest is None or latest.snapshot_at is None or "exchange_futures_equity" not in (latest.notes or ""):
+                return False
+            stamp = latest.snapshot_at.replace(tzinfo=timezone.utc) if latest.snapshot_at.tzinfo is None else latest.snapshot_at
+            return latest.total_value > 0 and timedelta(0) <= datetime.now(timezone.utc) - stamp < timedelta(minutes=5)
+    except Exception:
+        return False
 
 
 def _get_portfolio_size_multiplier() -> float:
@@ -404,6 +429,11 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
         try:
             from engines.state import get as get_coin_state, set_watching, set_idle
 
+            # The 1h websocket path can call _analyze_coin outside the scheduler.
+            # Neither path may rely on stale or unverifiable equity.
+            if not _verified_equity_is_fresh():
+                log.warning("_analyze_coin: fresh Binance equity required for %s",coin)
+                return None
             portfolio_mult = _get_portfolio_size_multiplier()
             if portfolio_mult == 0.0:
                 log.info("_analyze_coin: portfolio circuit breaker active — skipping %s", coin)
@@ -419,6 +449,14 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
             if not _check_coin_circuit_breaker(coin, df_4h):
                 log.warning("_analyze_coin: invalid, stale or volatile 4h data for %s", coin)
                 return None
+
+            # Shadow research never changes the existing production decisions.
+            try:
+                from strategies.registry import scan as scan_candidates
+                from research.ledger import record_shadow
+                await asyncio.to_thread(record_shadow, coin, scan_candidates(df_4h))
+            except Exception as shadow_exc:
+                log.warning("Shadow research unavailable for %s: %s", coin, shadow_exc)
 
             from agents.signal_agent import run as agent_run
             result = await agent_run(
@@ -499,6 +537,8 @@ async def scan_all_coins() -> list:
         log.info("Scan started — %s coins", len(coins))
 
         balance = await _get_cached_balance()
+        if not await _refresh_portfolio_equity():
+            return []
         if balance <= 0:
             log.warning("Scan aborted — zero balance")
             return []
@@ -523,7 +563,7 @@ async def scan_all_coins() -> list:
         _scan_stats["total_signals"]  += sum(1 for r in valid if r.get("grade") in ("A+", "A"))
 
         _write_engine_health(valid, scan_ms)
-        _save_portfolio_snapshot()
+        # Fresh equity was recorded before the scan; do not rewrite it with a constant.
 
         await send_scan_summary(valid)
 
@@ -536,6 +576,8 @@ async def scan_all_coins() -> list:
 
 async def scan_single_coin(coin: str) -> dict | None:
     try:
+        if not await _refresh_portfolio_equity():
+            return None
         balance = await _get_cached_balance()
         if balance <= 0:
             return None
@@ -655,6 +697,8 @@ async def _on_kline_closed(coin: str, kline: dict) -> None:
         from engines.state import get as get_coin_state
         current = get_coin_state(coin)
         if current["status"] not in ("watching", "idle"):
+            return
+        if not await _refresh_portfolio_equity():
             return
         balance = await _get_cached_balance()
         if balance <= 0:

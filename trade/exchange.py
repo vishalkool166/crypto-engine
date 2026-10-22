@@ -160,6 +160,23 @@ async def get_balance() -> dict:
         return {"total": 0.0, "free": 0.0, "used": 0.0, "unrealized": 0.0}
 
 
+async def get_account_equity() -> float:
+    """Current total USDⓈ-M futures margin balance, including unrealized P&L.
+
+    Uses the configured account/mode signed client and Binance v3 schema.
+    Raises on errors: a missing exchange response must never be replaced with
+    configured capital or assumed equity.
+    """
+    import math
+    data = await _get("/fapi/v3/account", signed=True)
+    if not isinstance(data, dict) or "totalMarginBalance" not in data:
+        raise ValueError("Binance v3 account equity missing")
+    equity = float(data["totalMarginBalance"])
+    if not math.isfinite(equity) or equity <= 0:
+        raise ValueError("Binance v3 account equity invalid")
+    return equity
+
+
 async def get_positions() -> list:
     data = await _get("/fapi/v2/positionRisk", signed=True)
     return [p for p in data if float(p.get("positionAmt", 0)) != 0]

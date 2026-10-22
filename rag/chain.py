@@ -17,7 +17,7 @@ def get_llm() -> ChatGroq:
         return _llm
     _llm = ChatGroq(
         api_key      = cfg.GROQ_API_KEY,
-        model        = cfg.GROQ_MODEL,
+        model        = __import__("research.groq_provider", fromlist=["candidates"]).candidates()[0],
         temperature  = 0.3,
         max_tokens   = 500,
     )
@@ -25,12 +25,12 @@ def get_llm() -> ChatGroq:
     return _llm
 
 
-SYSTEM_PROMPT = """You are a trading assistant for Signal Engine v5, an automated crypto futures trading system.
+SYSTEM_PROMPT = """You are a trading assistant for Signal Engine 3.0, an automated crypto futures trading system.
 
-You have access to the user's actual trading data including closed trades, signals, daily summaries, and coin performance.
+You have access to only the retrieved stored records, which may be incomplete.
 
 RULES:
-- ONLY answer questions about Signal Engine v5 and its trading data
+- ONLY answer questions about Signal Engine 3.0 and its trading data
 - ALWAYS use the provided trading data to give specific answers
 - ALWAYS mention actual numbers, dates, coins from the data
 - If the data does not contain enough information say so clearly

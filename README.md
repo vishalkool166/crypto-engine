@@ -1,6 +1,20 @@
-# Signal Engine 2.2.0
+# Signal Engine 3.0
 
 Signal Engine is a self-hosted market research and trading workspace. It has a public market view and an optional private operator console. It has no customer accounts, SaaS plans, or billing.
+
+## Version 3.0 additions
+
+- **Private Strategy Lab:** four independently versioned research-only candidate
+  strategies, simulated replay and shadow evaluations of Binance closed 4h candles.
+- **Binance futures context:** public funding, open interest, global and top-account
+  positioning ratios. No Hyperliquid connection or wallet-copying assumptions.
+- **Groq:** supported GPT-OSS free-tier model configuration with permission-aware
+  fallback (`GROQ_API_KEY` required). No new AI vendor subscription.
+- **Risk accounting:** signed current Binance Futures equity, stale-equity halt.
+
+See **[Version 3.0 deployment and limitations](docs/UPGRADE_V3.md)** before
+upgrading. The original live strategy and exchange safety gates are retained;
+new candidate strategies are *not* enabled for actual trading.
 
 ## Included
 

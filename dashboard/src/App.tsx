@@ -15,6 +15,7 @@ import {
   Radio,
   ShieldCheck,
   FlaskConical,
+  ChartNoAxesCombined,
   Globe2,
   Settings2,
   Menu,
@@ -51,6 +52,7 @@ import { AdminPerformance } from "./features/performance";
 import { System } from "./features/system";
 import { Markets, India } from "./features/markets";
 import { Research } from "./features/research";
+import { StrategyLab } from "./features/strategy-lab";
 import { Audit, Settings } from "./features/data";
 
 function Login() {
@@ -164,6 +166,7 @@ const adminNav = [
   { path: "/markets", name: "Crypto universe", icon: Globe2 },
   { path: "/india", name: "Indian markets", icon: Activity },
   { path: "/research", name: "Research", icon: FlaskConical },
+  { path: "/strategy-lab", name: "Strategy Lab 3.0", icon: ChartNoAxesCombined },
   { path: "/system", name: "System health", icon: Activity },
   { path: "/audit", name: "Audit trail", icon: ScrollText },
   { path: "/settings", name: "Settings", icon: Settings2 },
@@ -373,6 +376,7 @@ function AdminShell({ email }: { email: string }) {
             <Route path="/markets" element={<Markets />} />
             <Route path="/india" element={<India />} />
             <Route path="/research" element={<Research />} />
+                <Route path="/strategy-lab" element={<StrategyLab />} />
             <Route path="/system" element={<System />} />
             <Route path="/audit" element={<Audit />} />
             <Route path="/settings" element={<Settings />} />

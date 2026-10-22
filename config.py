@@ -176,7 +176,7 @@ class Config:
 
     FINNHUB_KEY  = os.getenv("FINNHUB_KEY")
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-    GROQ_MODEL   = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MODEL   = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     DOMAIN       = os.getenv("ADMIN_APP_ORIGIN", "http://localhost:5174")
 
     PORT = int(os.getenv("PORT", 8000))
@@ -240,7 +240,7 @@ class Config:
         "funding_extreme_threshold":   0.0005,
     }
 
-    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "2.0.0")
+    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "3.0.0")
     ADAPTATION_FROZEN = os.getenv("ADAPTATION_FROZEN", "False").lower() == "true"
 
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
