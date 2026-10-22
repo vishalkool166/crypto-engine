@@ -18,15 +18,8 @@ import { Card, CardHeader, CardTitle } from "./ui/card";
 export function Brand({ admin = false }: { admin?: boolean }) {
   return (
     <Link to="/" className="brand" aria-label="Signal Engine home">
-      <span className="brand-symbol">
-        <span />
-        <span />
-        <span />
-      </span>
-      <span>
-        Signal Engine
-        <small>{admin ? "OPERATOR CONSOLE" : "MARKET RESEARCH"}</small>
-      </span>
+      <span className="brand-symbol" aria-hidden="true"><span/><span/><span/></span>
+      <span>Signal Engine<small>{admin ? "OPERATOR WORKSPACE" : "INDEPENDENT MARKET RESEARCH"}</small></span>
     </Link>
   );
 }

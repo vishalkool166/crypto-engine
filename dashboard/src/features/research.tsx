@@ -15,7 +15,7 @@ import {
   DataTable,
 } from "../components/workspace";
 
-export function Research() {
+export function Research({embedded=false}:{embedded?:boolean}) {
   const r = useResource(base + "/research"),
     universe = useResource(base + "/coins"),
     history = useResource(base + "/backtest/history/all"),
@@ -78,11 +78,11 @@ export function Research() {
   }
   return (
     <>
-      <PageHead
+      {!embedded && <PageHead
         eyebrow="RESEARCH & EVIDENCE"
         title="Test the assumptions."
         description="Historical replay and a visible evidence gate. A replay run does not certify a strategy or enable real-money execution."
-      />
+      />}
       <Resource resource={r}>
         <Panel
           title="Evidence gate"
@@ -113,6 +113,7 @@ export function Research() {
           </div>
         </Panel>
       </Resource>
+      {!embedded && <>
       <Panel title="Run a cached-data replay">
         <form className="filters" onSubmit={replay}>
           <label>
@@ -187,6 +188,7 @@ export function Research() {
           />
         </Resource>
       </Panel>
+      </>}
       <Panel
         title="Private research assistant"
         aside={

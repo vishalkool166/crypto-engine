@@ -17,6 +17,7 @@ import {
 } from "../components/workspace";
 import { TrendChart } from "../components/Analytics";
 import { ExecutionMode, useExecution } from "../components/ExecutionMode";
+import { StrategyBoard } from "../components/StrategyBoard";
 
 export function AdminOverview() {
   const r = useResource(base + "/overview"),
@@ -45,25 +46,20 @@ export function AdminOverview() {
   const p = d?.performance;
   return (
     <>
-      <PageHead
-        eyebrow="PRIVATE WORKSPACE"
-        title="Trading overview"
-        description="Account activity, execution state, and the decisions behind each trade."
-        action={
-          <Button
-            disabled={pending || d?.health?.runtime !== "running"}
-            onClick={scan}
-          >
-            <Radio size={14} />
-            {pending ? "Scanning…" : "Run scan"}
-          </Button>
-        }
-      />
+      <section className="atelier-command-hero" aria-label="Private operator command header">
+        <div className="atelier-command-noise" aria-hidden="true"/>
+        <div className="atelier-command-topline"><span><span className="atelier-mini-led"/> THE OPERATOR WORKSPACE</span><span>SIGNAL ENGINE / PRIVATE</span></div>
+        <div className="atelier-command-main"><div><p className="atelier-command-eyebrow">ONE PIPELINE / FOUR APPROACHES</p><h1>Decisions, <em>in view.</em></h1><p>One continuous view of strategy decisions, execution permissions, account risk and the full evidence trail.</p></div>
+        <div className="atelier-command-action"><div><span>ENGINE STATE</span><strong>{words(d?.health?.runtime)}</strong><small>Account mode / {mode || "unavailable"}</small></div>
+          <Button disabled={pending || d?.health?.runtime !== "running"} onClick={scan}><Radio size={14}/>{pending ? "Scanning…" : "Run market scan"} <ArrowUpRight size={15}/></Button></div></div>
+        <div className="atelier-command-bottom"><span>DECISIONS WITH A RECORD.</span><span>PRIVATE / ACCOUNT-SCOPED</span></div>
+      </section>
       {message && (
         <div role="status" className="notice">
           {message}
         </div>
       )}
+      <StrategyBoard />
       <Resource resource={r}>
         <div className="finance-metrics">
           <Metric
@@ -192,7 +188,7 @@ export function AdminOverview() {
               icon: Wallet,
             },
             {
-              path: "/research",
+              path: "/strategy-lab",
               title: "Research & evidence",
               note: "Backtests and strategy diagnostics",
               icon: FlaskConical,

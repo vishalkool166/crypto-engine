@@ -298,7 +298,7 @@ export function AdminPerformance() {
             use stored market data and do not place orders.
           </p>
           <Button asChild variant="outline">
-            <Link to="/research">Open Research</Link>
+            <Link to="/strategy-lab">Open Strategy Laboratory</Link>
           </Button>
         </Panel>
       </Resource>

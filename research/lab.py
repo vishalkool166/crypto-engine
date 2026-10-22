@@ -2,7 +2,7 @@
 
 Candle-close signal -> next candle open entry. Stops before profit targets on
 ambiguous OHLC bars. Ignores unclosed trades. Funding is not modeled, so runs
-are NOT execution-quality certification and NEVER authorize real orders.
+are NOT execution-quality certification and do not themselves authorize real orders.
 """
 from __future__ import annotations
 from dataclasses import dataclass, asdict
@@ -109,7 +109,7 @@ def run_replay(frame: pd.DataFrame, strategy: str, params: dict | None = None, *
     holdout = [t for t in trades if t["segment"]=="holdout"]
     clean_data = frame.loc[:,["open","high","low","close","volume"]].astype(float)
     fingerprint = hashlib.sha256(pd.util.hash_pandas_object(clean_data,index=True).values.tobytes()).hexdigest()
-    result={"strategy":strategy,"version":STRATEGY_RELEASE,"parameters":params,"data_sha256":fingerprint,"bars":len(d),"first_bar":str(d.index[0]),"last_bar":str(d.index[-1]),"holdout_from":str(d.index[split]),"development":metric(development),"holdout":metric(holdout),"all_trades":len(trades),"ending_equity":round(value,4),"simulated":True,"funding_modeled":False,"status":"RESEARCH_ONLY_UNCERTIFIED","limitations":["Cached candles are capped by the main application; not a multi-year study","The split is descriptive and does not tune parameters; this is not walk-forward certification","Funding, liquidity and exchange-specific liquidation are not modeled","Ambiguous OHLC stop/target bars are counted as stops","No model or strategy is authorized for automatic live execution"],"rejection_counts":rejections,"trades":trades}
+    result={"strategy":strategy,"version":STRATEGY_RELEASE,"parameters":params,"data_sha256":fingerprint,"bars":len(d),"first_bar":str(d.index[0]),"last_bar":str(d.index[-1]),"holdout_from":str(d.index[split]),"development":metric(development),"holdout":metric(holdout),"all_trades":len(trades),"ending_equity":round(value,4),"simulated":True,"funding_modeled":False,"status":"RESEARCH_ONLY_UNCERTIFIED","limitations":["Cached candles are capped by the main application; not a multi-year study","The split is descriptive and does not tune parameters; this is not walk-forward certification","Funding, liquidity and exchange-specific liquidation are not modeled","Ambiguous OHLC stop/target bars are counted as stops","Live orders require the shared risk/execution safeguards and explicit account-level live authorization"],"rejection_counts":rejections,"trades":trades}
     return result
 
 

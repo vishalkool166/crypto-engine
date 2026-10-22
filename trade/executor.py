@@ -234,6 +234,7 @@ def _create_pending_trade(
     regime:    str = "",
     session:   str = "",
     score:     float = 0.0,
+    strategy_id: str | None = None,
 ) -> int:
     try:
         from datetime import date as _date
@@ -250,6 +251,7 @@ def _create_pending_trade(
                 return 0
             trade = TradeModel(
                 signal_id        = signal_id,
+                strategy_id      = strategy_id,
                 execution_mode   = cfg.TRADING_MODE,
                 coin             = coin,
                 direction        = direction,
@@ -433,6 +435,7 @@ async def open_position(
     tp2:       float | None = None,
     atr_15m:   float        = 0.0,
     sizing_result: dict     = None,
+    strategy_id: str | None = None,
 ) -> dict:
     symbol   = f"{coin}USDT"
     is_short = direction == "SHORT"
@@ -479,6 +482,7 @@ async def open_position(
             regime    = regime,
             session   = session,
             score     = score,
+            strategy_id = strategy_id,
         )
 
         if not trade_id:

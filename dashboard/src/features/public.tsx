@@ -1,14 +1,13 @@
+import { SignalField } from "../components/SignalField";
+import { ArrowDown, ArrowRight, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import { ArrowUpRight, ArrowRight, BookOpen } from "lucide-react";
-import { useResource, number, price, time, words } from "../api";
+import { useResource, number, time, words } from "../api";
 
-import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 
 import {
   Panel,
   PageHead,
-  Metric,
   Resource,
   Refresh,
   Fact,
@@ -18,146 +17,56 @@ import {
 } from "../components/workspace";
 import { TrendChart, OutcomeDonut } from "../components/Analytics";
 
+/** The public home is an editorial explanation layered over real, stored research data.
+ * The kinetic field is labeled abstract; no invented trading results appear in it. */
 export function PublicOverview() {
-  const r = useResource("/api/v1/public/overview"),
-    d = r.data;
+  const r = useResource("/api/v1/public/overview");
+  const d = r.data;
   const outcomes = d?.recorded_outcomes || {};
-  return (
-    <>
-      <PageHead
-        eyebrow="MARKET RESEARCH"
-        title="Research overview"
-        description="Signals, recorded outcomes, and the market behind them."
-        action={<Refresh onClick={r.refresh} />}
-      />
+  return <div className="studio-home">
+    <section className="studio-hero" aria-labelledby="studio-title">
+      <div className="studio-hero-meta"><span>Independent research / system-led decisions</span><span>EST. IN EVIDENCE, NOT CERTAINTY</span></div>
+      <h1 id="studio-title">Every move<br/><em>has a reason.</em></h1>
+      <p className="studio-hero-lede">Four perspectives on an unpredictable market. One accountable decision process. A clearer way to see why a signal exists, and why another doesn't.</p>
+      <div className="studio-hero-actions"><Link className="studio-button-dark" to="/signals">Explore the signal ledger <ArrowUpRight size={17}/></Link><Link className="studio-button-quiet" to="/methodology">Read the methodology <ArrowRight size={16}/></Link></div>
+      <div className="studio-hero-art"><SignalField/></div>
+      <div className="studio-hero-bottom"><span>MARKET RESEARCH, MADE LEGIBLE.</span><span>SCROLL TO FOLLOW THE REASONING <ArrowDown size={14}/></span></div>
+    </section>
+
+    <section className="studio-thesis" aria-labelledby="studio-thesis-title">
+      <span className="studio-small-heading">The discipline</span>
+      <div><h2 id="studio-thesis-title">A signal deserves<br/><em>a second look.</em></h2><p>Markets create endless opportunities to act. Our system is designed to examine them first. Every proposed entry moves through independent strategy rules, conflict resolution, and account-level risk checks.</p></div>
+      <div className="studio-large-bars" aria-hidden="true"><span/><span/><span/></div>
+    </section>
+
+    <section className="studio-narrative" aria-labelledby="studio-narrative-title">
+      <div className="studio-narrative-sticky"><div className="studio-narrative-copy"><span className="studio-small-heading">How an idea becomes a decision</span><h2 id="studio-narrative-title">The engine<br/><em>shows its work.</em></h2><p>From raw market context to a recorded outcome, the decision is built in distinct stages. Explore each one as you move through the page.</p><Link to="/methodology" className="studio-button-quiet">Inspect the rules <ArrowUpRight size={16}/></Link></div>
+        <div className="studio-narrative-stage" aria-hidden="true"><div className="studio-stage-grid"/><div className="studio-stage-lines"><i/><i/><i/><i/></div><div className="studio-stage-gate"><span className="brand-symbol"><span/><span/><span/></span><small>RISK GATE</small></div></div>
+      </div>
+      <div className="studio-narrative-steps">
+        <article className="studio-narrative-step" data-story-step="0"><span>01 / INPUT</span><h3>Observe the market.</h3><p>Binance price structure, closed candles, volatility and funding feed one timestamped view of conditions.</p></article>
+        <article className="studio-narrative-step" data-story-step="1"><span>02 / STRATEGIES</span><h3>Let four ideas disagree.</h3><p>Continuation, breakout, reversion and reversal independently evaluate the same snapshot.</p></article>
+        <article className="studio-narrative-step" data-story-step="2"><span>03 / RISK</span><h3>Respect the limits.</h3><p>Conflicts, order permissions and account exposure are resolved before any eligible order reaches execution.</p></article>
+        <article className="studio-narrative-step" data-story-step="3"><span>04 / RECORD</span><h3>Keep the evidence.</h3><p>Signals and rejections remain available for inspection. Historical outcomes aren't forecasts.</p></article>
+      </div>
+    </section>
+
+    <section className="studio-evidence" aria-labelledby="studio-evidence-heading">
+      <div className="studio-evidence-intro"><span className="studio-small-heading">The public record</span><div><h2 id="studio-evidence-heading">Make the work<br/><em>visible.</em></h2><p>Numbers below come from stored engine records, not marketing simulations. Missing observations stay missing.</p></div><Refresh onClick={r.refresh}/></div>
       <Resource resource={r}>
-        <div className="finance-metrics">
-          <Metric
-            label="Signal records"
-            value={number(d?.signal_count, 0)}
-            note="Persisted by this installation"
-          />
-          <Metric
-            label="Tracked instruments"
-            value={number(d?.universe?.length, 0)}
-            note="USDⓈ-M perpetual futures"
-          />
-          <Metric
-            label="Latest scan"
-            value={
-              d?.data_age_seconds != null
-                ? number(d.data_age_seconds / 60, 0) + " min ago"
-                : "Awaiting data"
-            }
-            note={time(d?.last_scan_at)}
-          />
-          <Metric
-            label="Research status"
-            value={words(d?.status)}
-            note="Based on completed scan freshness"
-          />
+        <div className="studio-evidence-stats">
+          <div><span>Signals recorded</span><strong>{number(d?.signal_count,0)}</strong><small>Persisted observations</small></div>
+          <div><span>Market coverage</span><strong>{number(d?.universe?.length,0)}</strong><small>Configured instruments</small></div>
+          <div><span>Most recent scan</span><strong>{d?.data_age_seconds != null ? number(d.data_age_seconds / 60,0)+"m" : "—"}</strong><small>{time(d?.last_scan_at)}</small></div>
+          <div><span>Current status</span><strong className="studio-stat-text">{words(d?.status)}</strong><small>Derived from service freshness</small></div>
         </div>
-        <div className="finance-grid">
-          <Panel title="Signal outcomes" aside={<Badge>Recorded data</Badge>}>
-            <OutcomeDonut outcomes={outcomes} />
-          </Panel>
-          <Panel
-            title="Signal activity"
-            aside={
-              <span className="muted chart-period">Last 14 days · UTC</span>
-            }
-          >
-            <TrendChart
-              data={d?.activity || []}
-              valueKey="count"
-              label="Signals"
-              bars
-            />
-            <p className="panel-note">
-              Daily signal counts from the stored ledger.
-            </p>
-          </Panel>
-          <Panel title="Research workspace">
-            <div className="execution-card">
-              <BookOpen size={22} />
-              <h3>A setup you can inspect.</h3>
-              <p>
-                Open a signal to review its entry, stop, targets, and the
-                decision trace recorded when it was generated.
-              </p>
-              <Button asChild>
-                <Link to="/signals">
-                  Explore signals <ArrowUpRight size={14} />
-                </Link>
-              </Button>
-              <div className="research-divider" />
-              <p>
-                Research outputs are experimental. Strategy performance has not
-                been independently validated.
-              </p>
-              <Link className="text-link" to="/methodology">
-                Read the methodology <ArrowRight size={14} />
-              </Link>
-            </div>
-          </Panel>
-        </div>
-        <Panel
-          title="Latest signals"
-          aside={
-            <Link className="text-link" to="/signals">
-              View ledger <ArrowUpRight size={14} />
-            </Link>
-          }
-        >
-          <DataTable rows={d?.signals || []} columns={signalColumns} />
-        </Panel>
-        <div className="two-column">
-          <Panel title="Instrument coverage">
-            <div className="universe-list">
-              {d?.universe?.map((coin: string) => (
-                <Link key={coin} to={"/signals?coin=" + coin}>
-                  <span className="coin-icon">{coin.slice(0, 1)}</span>
-                  <strong>{coin}</strong>
-                  <span>USDT perpetual</span>
-                  <ArrowUpRight size={14} />
-                </Link>
-              ))}
-            </div>
-          </Panel>
-          <Panel title="How a setup is formed">
-            <ol className="method-list">
-              <li>
-                <span>01</span>
-                <div>
-                  <strong>Establish market direction</strong>
-                  <p>
-                    Closed candles, volatility, and higher-timeframe alignment.
-                  </p>
-                </div>
-              </li>
-              <li>
-                <span>02</span>
-                <div>
-                  <strong>Evaluate confluence</strong>
-                  <p>A defined score combines ADX, RSI, and relative volume.</p>
-                </div>
-              </li>
-              <li>
-                <span>03</span>
-                <div>
-                  <strong>Record risk and outcome</strong>
-                  <p>
-                    Entry, stop, and target levels remain linked to each
-                    decision.
-                  </p>
-                </div>
-              </li>
-            </ol>
-          </Panel>
-        </div>
+        <div className="studio-evidence-charts"><Panel title="Recorded outcomes" aside={<Badge>Ledger labels</Badge>}><OutcomeDonut outcomes={outcomes}/></Panel><Panel title="Recent activity" aside={<span className="muted chart-period">14 days · UTC</span>}><TrendChart data={d?.activity || []} valueKey="count" label="Signals" bars/><p className="panel-note">Actual stored signal counts.</p></Panel></div>
+        <div className="studio-ledger-heading"><h3>Every thesis leaves a record.</h3><Link to="/signals">View all signals <ArrowUpRight size={16}/></Link></div>
+        <Panel><DataTable rows={d?.signals || []} columns={signalColumns}/></Panel>
       </Resource>
-    </>
-  );
+    </section>
+    <section className="studio-finale"><span className="studio-small-heading">Research with restraint</span><h2>Knowing when to<br/><em>stay out</em> matters.</h2><Link to="/methodology" className="studio-button-dark">Understand the method <ArrowUpRight size={17}/></Link><p>No independently verified profitable edge is claimed. Research remains experimental.</p></section>
+  </div>;
 }
 
 export function Methodology() {
@@ -178,17 +87,17 @@ export function Methodology() {
           {
             n: "02",
             title: "Direction",
-            body: "Price relative to EMA200 establishes long or short bias. EMA20/EMA50 alignment and the configured per-coin ADX threshold must agree.",
+            body: "Four independent 4-hour setups assess trend continuation, breakout/retest, range reversion and momentum reversal. Any can reject the market independently.",
           },
           {
             n: "03",
             title: "Score",
-            body: "ADX contributes up to 40 points, directional RSI up to 30, and relative volume up to 30. A+ starts at 80; A at 65; B at 50.",
+            body: "Each candidate receives a heuristic grade from ADX, volume and regime conditions. An arbiter rejects opposing signals, and the risk governor independently validates eligibility. Grades are not win probabilities.",
           },
           {
             n: "04",
             title: "Risk",
-            body: "The stop is placed beyond the recent swing with a 0.5 ATR buffer. Targets are configured R multiples. Position sizing is private and subject to portfolio limits.",
+            body: "Each strategy proposes a structural stop and reward target. The shared sizing and order governor applies the configured coin limits; live results can differ from candle-close proposals.",
           },
         ].map((m) => (
           <Panel key={m.n} className="method-card">
@@ -295,7 +204,7 @@ export function PublicStatus() {
                   : number(r.data.data_age_seconds, 0) + " seconds"
               }
             />
-            <Fact label="Mode" value="Paper" />
+            <Fact label="Mode" value={words(r.data?.mode || "unavailable")} />
             <Fact label="Observed at" value={time(r.data?.timestamp)} />
           </dl>
         </Panel>

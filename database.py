@@ -59,6 +59,7 @@ class Signal(Base):
     grade          = Column(String)
     score          = Column(Float)
     signal_type    = Column(String)
+    strategy_id    = Column(String(50), nullable=True)
     entry          = Column(Float)
     sl             = Column(Float)
     tp1            = Column(Float)
@@ -103,6 +104,7 @@ class Trade(Base):
 
     id                     = Column(Integer, primary_key=True)
     signal_id              = Column(Integer, nullable=True)
+    strategy_id            = Column(String(50), nullable=True)
     execution_mode         = Column(String, default="legacy", nullable=False)
     coin                   = Column(String)
     direction              = Column(String)
@@ -774,6 +776,7 @@ class CoinLastOutcome(Base):
 def init_db():
     # Import research ledger models before metadata creation.
     import research.ledger  # noqa: F401
+    import strategies.control  # noqa: F401
     Base.metadata.create_all(engine)
 
     from sqlalchemy import inspect, text
@@ -782,6 +785,7 @@ def init_db():
     migrations = {
         "trades": [
             "execution_mode TEXT NOT NULL DEFAULT 'legacy'",
+            "strategy_id TEXT",
             "thesis_strength_at_close FLOAT",
             "thesis_pillars_at_close TEXT",
             "thesis_exit_reason TEXT",
@@ -828,6 +832,7 @@ def init_db():
             "final_pnl FLOAT",
         ],
         "signals": [
+            "strategy_id TEXT",
             "market TEXT DEFAULT 'crypto'",
             "instrument TEXT",
             "orb_high FLOAT",
@@ -862,6 +867,8 @@ def init_db():
                         )
 
     import logging
+    from strategies.control import ensure_controls
+    ensure_controls()
     logging.getLogger(__name__).info("Database initialized")
 
 

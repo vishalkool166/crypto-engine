@@ -1,3 +1,21 @@
+# Signal Engine 3.3 — Studio edition
+
+A design-led frontend update for the existing Binance-based, four-strategy Signal Engine. The public website now has a warm editorial experience, a working interactive strategy illustration, and scroll-driven storytelling. The operator console retains the same controls, data and authentication in a calmer presentation. The original **three-bar identity** is restored throughout the web apps and PWA.
+
+**No new environment variables, APIs, services, deployment accounts or changes to trading permissions.** Use the existing upgrade procedure. Read [`docs/STUDIO_3_3.md`](docs/STUDIO_3_3.md) and [`VALIDATION_3_3.md`](VALIDATION_3_3.md) before deployment.
+
+## Previous versions
+
+# Signal Engine 3.2 — Atelier frontend redesign
+
+This release preserves the 3.1 unified-strategy backend and adds a new studio-directed public site and operator console. See [`docs/ATELIER_DESIGN_3_2.md`](docs/ATELIER_DESIGN_3_2.md) and [`VALIDATION_3_2.md`](VALIDATION_3_2.md). No new environment variables are required.
+
+# Signal Engine 3.1 — Unified Strategy Release
+
+Four deterministic Binance-futures strategy evaluators participate in one scanner, one arbitration/risk path, and the existing protected exchange executor. The private UI includes strategy controls, annotated closed-candle charts and one research laboratory; the public site explains the signal evidence process.
+
+**Existing `.env` and database are preserved. No new keys, subscriptions, or environment variables are introduced.** See `docs/UPGRADE_V3_1.md` for detailed compatibility and verification requirements.
+
 # Signal Engine 3.0
 
 Signal Engine is a self-hosted market research and trading workspace. It has a public market view and an optional private operator console. It has no customer accounts, SaaS plans, or billing.

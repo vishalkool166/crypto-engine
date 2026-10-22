@@ -1,7 +1,8 @@
-"""Signal Engine 3.0: deterministic, research-only strategy candidates.
+"""Signal Engine: deterministic strategy candidates shared by live and replay.
 
-All inputs MUST be closed OHLCV candles. No strategy in this file can submit an
-order or be promoted into production automatically. Configs are immutable per run.
+All inputs MUST be closed OHLCV candles. Strategy modules emit proposals only.
+The unified pipeline applies central risk sizing; only the existing exchange
+executor can submit an order. Configs are immutable per scan.
 """
 from __future__ import annotations
 
@@ -17,7 +18,7 @@ STRATEGIES = {
     "range_reversion": "Range mean reversion",
     "momentum_reversal": "Momentum reversal",
 }
-STRATEGY_RELEASE = "3.0.0-research.1"
+STRATEGY_RELEASE = "3.1.0-unified"
 MIN_BARS = 220
 
 
@@ -111,6 +112,7 @@ def evaluate(d: pd.DataFrame, strategy: str, params: Mapping | None = None) -> d
         direction = "LONG" if x.ema20 > x.ema50 > x.ema200 and x.close > x.ema20 else "SHORT" if x.ema20 < x.ema50 < x.ema200 and x.close < x.ema20 else None
         if status != "trending" or x.vol_ratio < volume_floor or direction is None or abs(x.close - x.ema20) > 1.3*x.atr:
             return rejected("no_trend_pullback_confirmation")
+        why = "trend_pullback_confirmed"
     elif strategy == "breakout_retest":
         # A completed breakout candle FOLLOWED by a separate retest candle.
         # The breakout boundary excludes both the breakout and retest bars.
@@ -125,15 +127,18 @@ def evaluate(d: pd.DataFrame, strategy: str, params: Mapping | None = None) -> d
         )
         if direction is None:
             return rejected("breakout_without_confirmed_retest")
+        why = "breakout_retest_confirmed"
     elif strategy == "range_reversion":
         direction = "LONG" if x.low < x.lower and x.close > x.lower and x.rsi < 40 else "SHORT" if x.high > x.upper and x.close < x.upper and x.rsi > 60 else None
         if status != "ranging" or direction is None or x.vol_ratio < .5:
             return rejected("no_range_rejection")
+        why = "range_rejection_confirmed"
     else:
         # Sweep and reclaim 20-bar liquidity, with momentum rollover evidence.
         direction = "LONG" if x.low < x.prior_low and x.close > x.prior_low and x.close > x.open and x.rsi < 48 else "SHORT" if x.high > x.prior_high and x.close < x.prior_high and x.close < x.open and x.rsi > 52 else None
         if direction is None or x.vol_ratio < volume_floor or status == "trending" and x.adx > 38:
             return rejected("no_reversal_structure")
+        why = "liquidity_reversal_confirmed"
     entry = float(x.close)
     stop = float(min(x.low - .3*x.atr, entry - 1.3*x.atr) if direction == "LONG" else max(x.high + .3*x.atr, entry + 1.3*x.atr))
     distance = abs(entry-stop)

@@ -1,4 +1,4 @@
-"""Durable evidence log for shadow observations and replay experiments."""
+"""Shared decision-observation ledger and research replay experiments."""
 from __future__ import annotations
 from datetime import datetime, timezone
 from sqlalchemy import Column, DateTime, Integer, String, Text, Boolean, Float
@@ -50,11 +50,23 @@ def list_experiments(limit:int=30) -> list[dict]:
 def list_shadow(limit:int=60) -> list[dict]:
     with get_session() as db:
         rows=db.query(ShadowObservation).order_by(ShadowObservation.id.desc()).limit(min(max(limit,1),150)).all()
-        return [{"id":r.id,"observed_at":r.observed_at.isoformat(),"coin":r.coin,"strategy":r.strategy,"direction":r.direction,"score":r.score,"reason":r.reason,"regime":r.regime,"candle_at":r.candle_at} for r in rows]
+        result = []
+        for r in rows:
+            payload = json.loads(r.payload_json or '{}')
+            candidate = payload.get('candidate') or {}
+            result.append({'id':r.id,'observed_at':r.observed_at.isoformat(),
+                           'coin':r.coin,'strategy':r.strategy,
+                           'direction':r.direction,'score':r.score,
+                           'reason':r.reason,'regime':r.regime,
+                           'candle_at':r.candle_at,
+                           'entry':candidate.get('entry'),
+                           'stop':candidate.get('stop'),
+                           'target':candidate.get('target')})
+        return result
 
 
 def record_shadow(coin:str, events: list[dict]) -> None:
-    """Research observation only; no orders. Avoid duplicate same candle/strategy."""
+    """Persist main-scanner strategy decisions; avoid duplicates per candle."""
     with get_session() as db:
         for event in events:
             cand=event.get("candidate") or {}

@@ -329,7 +329,8 @@ def _save_signal(signal: dict) -> int | None:
                 direction      = signal["direction"],
                 grade          = signal["grade"],
                 score          = signal["score"],
-                signal_type    = "MOMENTUM",
+                signal_type    = signal.get("strategy_id", "trend_continuation"),
+                strategy_id   = signal.get("strategy_id", "trend_continuation"),
                 entry          = signal["entry"],
                 sl             = signal["sl"],
                 tp1            = signal["tp1"],
@@ -387,6 +388,15 @@ def _write_redis(coin: str, signal: dict, db_id: int) -> None:
 
 async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
     try:
+        # Re-read persisted permissions immediately before routing. A revoked
+        # strategy must not place a new entry on the next eligible scan.
+        from strategies.control import get_controls
+        from strategies.registry import STRATEGIES
+        strategy_id = signal.get("strategy_id")
+        permissions = get_controls().get(strategy_id, {})
+        if strategy_id not in STRATEGIES or not permissions.get("scan_enabled") or not permissions.get("execution_enabled"):
+            log.warning("Order route blocked by strategy permission: %s/%s", coin, strategy_id)
+            return
         from trade.executor import open_position, has_open_trade_or_position
         if await has_open_trade_or_position(coin):
             return
@@ -419,6 +429,7 @@ async def _execute_trade(coin: str, signal: dict, db_id: int) -> None:
             session   = session,
             score     = float(signal["score"]),
             tp2       = float(signal["tp2"]) if signal.get("tp2") else None,
+            strategy_id = signal.get("strategy_id"),
         )
     except Exception as e:
         log.error("_execute_trade %s: %s", coin, e)
@@ -450,15 +461,9 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 log.warning("_analyze_coin: invalid, stale or volatile 4h data for %s", coin)
                 return None
 
-            # Shadow research never changes the existing production decisions.
-            try:
-                from strategies.registry import scan as scan_candidates
-                from research.ledger import record_shadow
-                await asyncio.to_thread(record_shadow, coin, scan_candidates(df_4h))
-            except Exception as shadow_exc:
-                log.warning("Shadow research unavailable for %s: %s", coin, shadow_exc)
-
-            from agents.signal_agent import run as agent_run
+            # Every strategy now participates in the SAME production decision
+            # path; each candidate passes through shared risk + execution.
+            from strategies.pipeline import run as agent_run
             result = await agent_run(
                 coin    = coin,
                 df_4h   = df_4h,
@@ -497,6 +502,15 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "signal":    result if result.get("signal") else {},
                 "regime":    result.get("regime", ""),
                 "reason":    result.get("reason", ""),
+                "strategy_id":result.get("strategy_id"),
+                "strategy_decisions": [ {"strategy":e["strategy"],
+                    "direction":(e.get("candidate") or {}).get("direction"),
+                    "score":(e.get("candidate") or {}).get("score"),
+                    "entry":(e.get("candidate") or {}).get("entry"),
+                    "stop":(e.get("candidate") or {}).get("stop"),
+                    "target":(e.get("candidate") or {}).get("target"),
+                    "regime":e.get("regime"),"reason":e.get("rejection") or "candidate_detected"}
+                    for e in result.get("decisions",[]) ],
                 "market": {
                     "price":      price,
                     "change24":   ticker["change24"],

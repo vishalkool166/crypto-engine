@@ -51,7 +51,6 @@ import { PaperTrades } from "./features/trades";
 import { AdminPerformance } from "./features/performance";
 import { System } from "./features/system";
 import { Markets, India } from "./features/markets";
-import { Research } from "./features/research";
 import { StrategyLab } from "./features/strategy-lab";
 import { Audit, Settings } from "./features/data";
 
@@ -64,25 +63,24 @@ function Login() {
       </div>
       <aside className="login-art">
         <Brand admin />
-        <div className="login-art-grid" />
+        <div className="login-art-grid" /><div className="login-art-glyph" aria-hidden="true"><span/><span/><span/></div>
         <div>
-          <p className="eyebrow">YOUR PRIVATE WORKSPACE</p>
+          <p className="eyebrow">A PRIVATE WORKSPACE</p>
           <h2>
-            Every decision.
-            <br />A clearer view.
+            Clarity is
+            <br /><em>a practice.</em>
           </h2>
           <p>
-            Research, execution, and the complete trade journey in one operator
-            workspace.
+            Four independent strategies. One disciplined engine. A space built to make every consequential decision visible.
           </p>
         </div>
-        <small>Signal Engine / Private access</small>
+        <small>SIGNAL ENGINE / OPERATOR SYSTEM</small>
       </aside>
       <section className="login-form">
         <div className="login-card">
           <Brand admin />
           <p className="eyebrow">OPERATOR ACCESS</p>
-          <h1>Sign in to Signal Engine</h1>
+          <h1>Welcome back.</h1>
           <p>
             Continue with the Google account on the administrator allowlist.
           </p>
@@ -165,8 +163,7 @@ const adminNav = [
   { path: "/performance", name: "Performance", icon: Activity },
   { path: "/markets", name: "Crypto universe", icon: Globe2 },
   { path: "/india", name: "Indian markets", icon: Activity },
-  { path: "/research", name: "Research", icon: FlaskConical },
-  { path: "/strategy-lab", name: "Strategy Lab 3.0", icon: ChartNoAxesCombined },
+  { path: "/strategy-lab", name: "Strategy Laboratory", icon: FlaskConical },
   { path: "/system", name: "System health", icon: Activity },
   { path: "/audit", name: "Audit trail", icon: ScrollText },
   { path: "/settings", name: "Settings", icon: Settings2 },
@@ -289,6 +286,7 @@ function AdminShell({ email }: { email: string }) {
   }
   return (
     <div className="admin-shell">
+      <a href="#main-content" className="atelier-skip">Skip to content</a>
       <MobileNavigation open={open} setOpen={setOpen} />
       <aside className={"sidebar " + (open ? "is-open" : "")}>
         <Brand admin />
@@ -300,14 +298,14 @@ function AdminShell({ email }: { email: string }) {
           <X />
         </button>
         <NavigationSearch />
-        <div className="sidebar-section">Workspace</div>
+        <div className="sidebar-section">THE INSTRUMENT / 01</div>
         <nav aria-label="Operator navigation">
           {adminNav.map(({ path, name, icon: Icon }, index) => (
             <div key={path}>
               {index === 4 && (
                 <div className="nav-group-label">Markets & research</div>
               )}
-              {index === 8 && <div className="nav-group-label">Operations</div>}
+              {index === 7 && <div className="nav-group-label">Operations</div>}
               <NavLink to={path} end={path === "/"}>
                 <Icon size={17} />
                 {name}
@@ -360,7 +358,7 @@ function AdminShell({ email }: { email: string }) {
             </span>
           </div>
         </header>
-        <main className="workspace">
+        <main className="workspace" id="main-content">
           {logoutError && (
             <div className="notice" role="alert">
               {logoutError}
@@ -375,7 +373,7 @@ function AdminShell({ email }: { email: string }) {
             <Route path="/performance" element={<AdminPerformance />} />
             <Route path="/markets" element={<Markets />} />
             <Route path="/india" element={<India />} />
-            <Route path="/research" element={<Research />} />
+            <Route path="/research" element={<Navigate to="/strategy-lab" replace />} />
                 <Route path="/strategy-lab" element={<StrategyLab />} />
             <Route path="/system" element={<System />} />
             <Route path="/audit" element={<Audit />} />
@@ -414,6 +412,7 @@ function PublicShell() {
   useEffect(() => setOpen(false), [location.pathname]);
   return (
     <div className="public-shell">
+      <a href="#main-content" className="atelier-skip">Skip to content</a>
       <WorkspaceMotion />
       <header className="public-header">
         <Brand />
@@ -442,7 +441,7 @@ function PublicShell() {
           </button>
         </div>
       </header>
-      <main className="public-main">
+      <main className="public-main" id="main-content">
         <Routes>
           <Route path="/" element={<PublicOverview />} />
           <Route path="/signals" element={<SignalList />} />

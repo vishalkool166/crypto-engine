@@ -2,6 +2,6 @@
 (function () {
   var preference = null;
   try { preference = localStorage.getItem('signal-engine-theme'); } catch (_) {}
-  var dark = preference === 'dark' || (preference !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+  var dark = preference === 'dark';
   document.documentElement.classList.toggle('dark', dark);
 })();

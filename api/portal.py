@@ -138,7 +138,7 @@ def public_snapshot():
         "activity": activity,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": cfg.TRADING_MODE,
-        "strategy_status": "not_evaluated",
+        "strategy_status": "multi_strategy_uncertified",
         "status": "operational"
         if age is not None and age < 1800
         else "awaiting_data"
