@@ -105,7 +105,6 @@ export function PaperTrades() {
   };
   const liveOpenRows = openRows.map(liveTrade);
   const focusedTrade = journeyTrade ? liveTrade(journeyTrade) : null;
-  const largestMove = Math.max(5, ...liveOpenRows.map((t: any) => Math.abs(Number(t.profit_ratio || 0) * 100)));
   const columns = [
     {
       key: "coin",
@@ -135,31 +134,12 @@ export function PaperTrades() {
       render: (t: any) => {
         const value = Number(t.profit_abs ?? t.unrealized_pnl ?? 0);
         const ratio = Number(t.profit_ratio || 0) * 100;
-        const width = Math.min(50, Math.abs(ratio) / largestMove * 50);
-        return (
-          <div className="trade-pnl-meter" data-live-coin={String(t.coin || t.symbol || "").toUpperCase().replace(/USDT.*$/, "").replace(/[^A-Z0-9]/g, "")} aria-label={`${value >= 0 ? "Profit" : "Loss"}: ${number(value)} USDT, ${number(Math.abs(ratio))}% on margin`}>
-            <strong className={value >= 0 ? "positive-value" : "negative-value"}>{value > 0 ? "+" : ""}{number(value)}</strong>
-            <div className={`trade-pnl-track ${value < 0 ? "is-negative" : "is-positive"}`} aria-hidden="true">
-              <span className="trade-pnl-center" />
-              <span className="trade-pnl-fill" style={{ width: `${width}%` }} />
-            </div>
-            <small>{ratio > 0 ? "+" : "−"}{number(Math.abs(ratio))}% on margin</small>
-          </div>
-        );
+        return <div className="trade-pnl-meter" data-live-coin={String(t.coin || t.symbol || '').toUpperCase().replace(/USDT.*$/, '').replace(/[^A-Z0-9]/g, '')}>
+          <strong className={value>=0?'positive-value':'negative-value'}>{value>0?'+':''}{number(value)} USDT</strong>
+          <PriceRoute trade={t} compact/>
+          <small>{ratio>=0?'+':''}{number(ratio)}% on margin</small>
+        </div>;
       },
-    },
-    {
-      key: "journey",
-      label: "Trade details",
-      render: (t: any) => (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void inspectJourney(t)}
-        >
-          Open details
-        </Button>
-      ),
     },
     {
       key: "action",
@@ -168,7 +148,8 @@ export function PaperTrades() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             setSelected(t);
             setError("");
           }}
@@ -197,6 +178,7 @@ export function PaperTrades() {
         <Resource resource={r}>
           <DataTable
             rows={liveOpenRows}
+            onRowClick={(trade) => void inspectJourney(trade)}
             columns={columns}
             empty="No open positions"
           />
@@ -206,6 +188,7 @@ export function PaperTrades() {
         <Resource resource={history}>
           <DataTable
             rows={history.data?.trades || []}
+            onRowClick={(trade) => void inspectJourney(trade)}
             columns={[
               { key: "coin", label: "Instrument" },
               { key: "direction", label: "Direction" },
@@ -224,19 +207,6 @@ export function PaperTrades() {
                 key: "closed_at",
                 label: "Closed",
                 render: (t) => time(t.closed_at),
-              },
-              {
-                key: "journey",
-                label: "Details",
-                render: (t) => (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void inspectJourney(t)}
-                  >
-                    Open details
-                  </Button>
-                ),
               },
             ]}
           />
@@ -308,6 +278,7 @@ export function PaperTrades() {
                 </strong>
                 <span>{focusedTrade?.profit_ratio != null ? `${number(Number(focusedTrade.profit_ratio) * 100)}% on margin` : focusedTrade?.duration || "P&L shown in account currency"}</span>
               </section>
+              <section className="trade-detail-section"><h3>Distance to stop & target</h3><PriceRoute trade={focusedTrade}/></section>
               <section className="trade-detail-section">
                 <h3>Position</h3>
                 <div className="trade-detail-grid">
@@ -359,4 +330,30 @@ export function PaperTrades() {
 
 function Detail({ label, value }: { label: string; value: string | number }) {
   return <div className="trade-detail-fact"><small>{label}</small><strong>{value || "—"}</strong></div>;
+}
+
+/** Price-based geometry; direction-aware and independent of other positions. */
+export function PriceRoute({trade,compact=false}:{trade:any,compact?:boolean}) {
+  const entry=Number(trade?.actual_fill_entry ?? trade?.entry_price ?? trade?.open_rate);
+  const stop=Number(trade?.sl_price ?? trade?.sl_signal ?? trade?.sl);
+  const target=Number(trade?.tp1_price ?? trade?.tp1);
+  const current=Number(trade?.current_price ?? trade?.current_rate ?? trade?.actual_fill_exit ?? trade?.exit_price);
+  const short=trade?.is_short ?? String(trade?.direction||'').toUpperCase()==='SHORT';
+  const ok=[entry,stop,target,current].every(v=>Number.isFinite(v)&&v>0) && (short?target<entry&&entry<stop:stop<entry&&entry<target);
+  if(!ok) return <div className="journey-no-levels">Price-to-target ruler unavailable: verified entry, mark, stop and target are required.</div>;
+  const toProgress=(p:number)=>short?(stop-p)/(stop-target):(p-stop)/(target-stop);
+  const progress=toProgress(current),entryProgress=toProgress(entry),display=Math.max(0,Math.min(1,progress));
+  const risk=Math.abs(entry-stop),r=(short?entry-current:current-entry)/risk;
+  const distanceStop=Math.abs(current-stop),distanceTarget=Math.abs(target-current);
+  return <div className={'price-route '+(compact?'is-compact':'')} aria-label={`Price progress: ${number(progress*100,1)}% from stop toward target; ${number(r,2)} risk multiples`}>
+    <div className="price-route-labels"><span>STOP</span><span>ENTRY</span><span>TARGET</span></div>
+    <div className="price-route-track" role="img" aria-label={`Stop ${price(stop)}, entry ${price(entry)}, mark ${price(current)}, target ${price(target)}`}>
+      <span className="price-route-gain" style={{width:`${display*100}%`}}/>
+      <span className="price-route-entry" style={{left:`${entryProgress*100}%`}}/>
+      <span className="price-route-marker" style={{left:`${display*100}%`}}/>
+    </div>
+    {!compact&&<><div className="price-route-levels"><span>{price(stop)}</span><span>{price(entry)}</span><span>{price(target)}</span></div>
+      <div className="price-route-facts"><div><small>Current mark</small><strong>{price(current)}</strong></div><div><small>To stop</small><strong>{price(distanceStop)} ({number(100*distanceStop/current,2)}%)</strong></div><div><small>To target</small><strong>{price(distanceTarget)} ({number(100*distanceTarget/current,2)}%)</strong></div><div><small>Unrealized price R</small><strong>{r>=0?'+':''}{number(r,2)}R</strong></div></div>
+      <p className="journey-caveat">Distance measures price geometry, not the probability of reaching either level. Values beyond the stop/target are capped visually.</p></>}
+  </div>;
 }

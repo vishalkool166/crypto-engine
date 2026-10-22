@@ -1,6 +1,6 @@
 # Operations and safety
 
-Keep the application in paper mode until credentials, reconciliation, alerts, and backups are verified. The engine should run as one container and one Uvicorn worker.
+Keep the application in paper mode until credentials, reconciliation, alerts, and backups are verified. Existing Cloudflare Tunnel deployments should continue using both Compose files (`docker-compose.yml` and `docker-compose.cloudflare.yml`); the base file alone intentionally excludes the optional tunnel. The engine should run as one container and one Uvicorn worker.
 
 ## Routine health checks
 

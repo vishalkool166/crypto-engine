@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 settings.validate()
 app = FastAPI(
     title="Signal Engine",
-    version="3.0.0",
+    version="3.4.0",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,

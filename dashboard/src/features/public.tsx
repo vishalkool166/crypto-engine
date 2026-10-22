@@ -97,7 +97,7 @@ export function Methodology() {
           {
             n: "04",
             title: "Risk",
-            body: "Each strategy proposes a structural stop and reward target. The shared sizing and order governor applies the configured coin limits; live results can differ from candle-close proposals.",
+            body: "Each strategy uses strategy-specific structural invalidation and a market-observed exit zone (or a measured breakout range where appropriate). Insufficient available reward vetoes a setup. The shared sizing and order governor applies the configured coin limits; live results can differ from candle-close proposals.",
           },
         ].map((m) => (
           <Panel key={m.n} className="method-card">
@@ -107,6 +107,15 @@ export function Methodology() {
           </Panel>
         ))}
       </div>
+      <section className="methodology-strategies" aria-label="Four independently evaluated strategies">
+        <div className="methodology-intro"><p className="eyebrow">ONE ENGINE · FOUR INDEPENDENT IDEAS</p><h2>Every strategy needs its own evidence.</h2><p>All four use validated closed Binance candles. Each one can reject a market independently; qualifying proposals then meet at one conflict manager and risk governor.</p></div>
+        {[
+          {number:'01',title:'Trend continuation',condition:'Trending markets',entry:'Aligned EMA20 / EMA50 / EMA200, confirmed volume and a pullback near the fast average.',stop:'Beyond the prior completed swing invalidation with a modest volatility buffer.',exit:'Nearest observed opposing structure; reject where reward is insufficient.'},
+          {number:'02',title:'Breakout and retest',condition:'Range expansion',entry:'Completed breakout on volume followed by a separate confirmed retest candle.',stop:'Beyond the retest rejection point and failed breakout boundary.',exit:'Observed opposing levels; measured prior range only when the breakout enters uncharted price territory.'},
+          {number:'03',title:'Range mean reversion',condition:'Established sideways range',entry:'A Bollinger-band excursion and reclaim with RSI confirmation and range regime.',stop:'Beyond the range extreme that invalidates the rejection.',exit:'Range midpoint capped by earlier opposing structure.'},
+          {number:'04',title:'Momentum reversal',condition:'Failed sweep and reclaim',entry:'A sweep of the previous range, price reclaim and momentum validation.',stop:'Beyond the sweep extreme that invalidates the reversal.',exit:'Nearest observable swing support or resistance.'}
+        ].map(s=><article className="methodology-strategy" key={s.number}><span>{s.number}</span><div><p className="eyebrow">{s.condition}</p><h3>{s.title}</h3></div><dl><div><dt>Entry</dt><dd>{s.entry}</dd></div><div><dt>Invalidation</dt><dd>{s.stop}</dd></div><div><dt>Exit hypothesis</dt><dd>{s.exit}</dd></div></dl></article>)}
+      </section>
       <Panel title="What the record can establish">
         <div className="reading">
           <h3>Research status</h3>

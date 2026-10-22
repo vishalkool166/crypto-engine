@@ -104,7 +104,8 @@ async def run(coin, df_4h, df_1h, balance, controls=None):
         chosen, reason = arbitrate(events,controls)
         trace = [{'node':'strategy_evaluation','strategy':e['strategy'],
                   'passed':e.get('candidate') is not None,
-                  'reason':e.get('rejection') or 'candidate_detected'} for e in events]
+                  'reason':e.get('rejection') or 'candidate_detected',
+                  'checks':e.get('checks',[])} for e in events]
         if chosen is None:
             return {'signal':False,'coin':coin,'direction':'NEUTRAL','grade':'F',
                     'score':0,'reason':reason,'regime':events[0]['regime'] if events else 'unknown',

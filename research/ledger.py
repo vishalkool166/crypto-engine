@@ -61,7 +61,10 @@ def list_shadow(limit:int=60) -> list[dict]:
                            'candle_at':r.candle_at,
                            'entry':candidate.get('entry'),
                            'stop':candidate.get('stop'),
-                           'target':candidate.get('target')})
+                           'target':candidate.get('target'),
+                           'target_source':candidate.get('target_source'),
+                           'available_rr':candidate.get('available_rr'),
+                           'checks':payload.get('checks',[])})
         return result
 
 

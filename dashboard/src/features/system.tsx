@@ -15,6 +15,7 @@ import {
 
 export function System() {
   const r = useResource(base + "/health"),
+    host = useResource(base + "/system/telemetry", 30000),
     reject = useResource(base + "/engine/rejections"),
     engine = useResource(base + "/engine/health"),
     traces = useResource(base + "/engine/traces?limit=50"),
@@ -35,6 +36,7 @@ export function System() {
               traces.refresh();
               filters.refresh();
               strength.refresh();
+              host.refresh();
             }}
           />
         }
@@ -80,6 +82,30 @@ export function System() {
           </Panel>
         </div>
       </Resource>
+      <div className="two-column system-infrastructure">
+        <Panel title="Host and AWS environment">
+          <Resource resource={host}>
+            <dl className="facts">
+              <Fact label="CPU" value={host.data?.host?.cpu_pct != null ? number(host.data.host.cpu_pct,1)+"%" : "Unavailable"}/>
+              <Fact label="Memory" value={host.data?.host?.ram_pct != null ? `${number(host.data.host.ram_used_mb,0)} / ${number(host.data.host.ram_total_mb,0)} MB (${number(host.data.host.ram_pct,1)}%)` : "Unavailable"}/>
+              <Fact label="Disk usage" value={host.data?.host?.disk_pct != null ? `${number(host.data.host.disk_used_gb,1)} / ${number(host.data.host.disk_total_gb,1)} GB` : "Unavailable"}/>
+              <Fact label="Host uptime" value={host.data?.host?.uptime_str || "Unavailable"}/>
+              <Fact label="AWS region" value={host.data?.aws?.region || "Not reported"}/>
+              <Fact label="AWS environment" value={host.data?.aws?.environment || "Not reported"}/>
+              <Fact label="EC2 instance" value={host.data?.aws?.instance_id || "Not reported"}/>
+              <Fact label="Instance type" value={host.data?.aws?.instance_type || "Not reported"}/>
+              <Fact label="Availability zone" value={host.data?.aws?.availability_zone || "Not reported"}/>
+            </dl>
+          </Resource>
+        </Panel>
+        <Panel title="Docker containers">
+          <Resource resource={host}>
+            <div className="system-container-list">
+              {(host.data?.host?.containers || []).length ? (host.data.host.containers as any[]).map((c:any)=><div key={c.name} className="system-container"><div><strong>{c.name}</strong><small>{c.status}</small></div><span>{c.cpu_pct == null ? "CPU unavailable" : number(c.cpu_pct,1)+"% CPU"} · {c.mem_mb == null ? "Memory unavailable" : number(c.mem_mb,0)+" MB RAM"}</span></div>) : <p className="muted-copy">Container telemetry is unavailable from this process. Docker socket permissions may be restricted.</p>}
+            </div>
+          </Resource>
+        </Panel>
+      </div>
       <Panel title="Rejection reasons">
         <Resource resource={reject}>
           <DataTable
@@ -209,9 +235,12 @@ export function System() {
                 label: "Filter steps",
                 render: (row) =>
                   Array.isArray(row.steps)
-                    ? row.steps
-                        .map((step: any) => `${step.name}: ${step.result}`)
-                        .join(" · ")
+                    ? row.steps.map((step: any) => {
+                        const name = words(step.node || step.name || "filter");
+                        const status = step.passed === true ? "PASS" : step.passed === false ? "BLOCK" : words(step.result || "evaluated");
+                        const detail = step.checks?.filter((c:any)=>!c.passed).map((c:any)=>`${c.name}: ${String(c.actual)} (needs ${c.required})`).join("; ") || step.reason || "";
+                        return `${name}: ${status}${detail ? " — "+detail : ""}`;
+                      }).join(" · ")
                     : "—",
               },
             ]}

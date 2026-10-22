@@ -185,10 +185,12 @@ export function DataTable({
   rows,
   columns,
   empty = "No records yet",
+  onRowClick,
 }: {
   rows: any[];
   columns: { label: string; key: string; render?: (r: any) => ReactNode }[];
   empty?: string;
+  onRowClick?: (r: any) => void;
 }) {
   if (!rows?.length)
     return (
@@ -213,7 +215,12 @@ export function DataTable({
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={row.id ?? row.coin ?? i}>
+            <tr key={row.id ?? row.coin ?? i}
+              className={onRowClick ? "interactive-tr" : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+              aria-label={onRowClick ? `Inspect ${row.coin || row.symbol || "trade"} details` : undefined}
+              onClick={onRowClick ? (ev) => { if (!(ev.target as HTMLElement).closest("button,a,input,select,textarea")) onRowClick(row); } : undefined}
+              onKeyDown={onRowClick ? (ev) => { if ((ev.key === "Enter" || ev.key === " ") && ev.target === ev.currentTarget) {ev.preventDefault();onRowClick(row);} } : undefined}>
               {columns.map((c) => (
                 <td key={c.key}>
                   {c.render ? c.render(row) : words(row[c.key] ?? "—")}
@@ -361,87 +368,33 @@ export function EquityCurve({ points }: { points: any[] }) {
 }
 
 export function JourneyChart({ points }: { points: any[] }) {
-  const valid = points.filter((p) => Number.isFinite(Number(p.price)));
-  if (!valid.length)
-    return (
-      <Empty title="No journey points recorded">
-        The monitor stores price snapshots while the trade is open. This trade
-        has no journey points yet.
-      </Empty>
-    );
-  const first = valid[0],
-    levels = [
-      { key: "entry", value: Number(first.entry_price) },
-      { key: "stop", value: Number(first.sl_price) },
-      { key: "target", value: Number(first.tp_price) },
-    ].filter((level) => Number.isFinite(level.value) && level.value > 0);
-  const width = 680,
-    height = 240,
-    pad = 20,
-    values = [
-      ...valid.map((p) => Number(p.price)),
-      ...levels.map((level) => level.value),
-    ],
-    min = Math.min(...values),
-    max = Math.max(...values),
-    span = Math.max(max - min, Math.abs(max) * 0.0001, 0.000001),
-    coords = valid.map((p, i) => ({
-      x: pad + (i / Math.max(valid.length - 1, 1)) * (width - 2 * pad),
-      y: height - pad - ((Number(p.price) - min) / span) * (height - 2 * pad),
-      point: p,
-    })),
-    path = coords.map((p, i) => `${i ? "L" : "M"}${p.x},${p.y}`).join(" ");
-  return (
-    <div className="journey-chart-wrap">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label="Trade price journey chart"
-      >
-        <line
-          x1={pad}
-          x2={width - pad}
-          y1={height - pad}
-          y2={height - pad}
-          className="chart-zero"
-        />
-        {levels.map((level) => {
-          const y =
-            height - pad - ((level.value - min) / span) * (height - 2 * pad);
-          return (
-            <line
-              key={level.key}
-              x1={pad}
-              x2={width - pad}
-              y1={y}
-              y2={y}
-              className={`journey-level journey-level-${level.key}`}
-            />
-          );
-        })}
-        <path d={path} className="chart-line" />
-        {coords
-          .filter((p) => p.point.is_entry || p.point.is_exit)
-          .map((p, i) => (
-            <circle
-              key={i}
-              cx={p.x}
-              cy={p.y}
-              r="5"
-              className={p.point.is_exit ? "journey-exit" : "journey-entry"}
-            />
-          ))}
-      </svg>
-      <div className="chart-caption">
-        <span>{time(valid[0]?.timestamp)}</span>
-        <span>{time(valid[valid.length - 1]?.timestamp)}</span>
-      </div>
-      <div className="journey-stats">
-        <span>Entry {price(valid[0]?.entry_price)}</span>
-        <span>Stop {price(valid[0]?.sl_price)}</span>
-        <span>Target {price(valid[0]?.tp_price)}</span>
-        <span>Latest {price(valid[valid.length - 1]?.price)}</span>
-      </div>
-    </div>
-  );
+  const [hover,setHover] = useState<number | null>(null);
+  const [windowSize,setWindowSize] = useState<'all'|'50'|'20'>('all');
+  const valid = points.filter((p) => Number.isFinite(Number(p.price)) && Number(p.price) > 0);
+  const sliced = windowSize === 'all' ? valid : valid.slice(-Number(windowSize));
+  if (!valid.length) return <Empty title="No journey points recorded">The monitor records price snapshots while the trade is open. Historical price-path evidence is not yet available for this position.</Empty>;
+  const first=valid[0], last=sliced[sliced.length-1];
+  const levels=[{key:'entry',value:Number(first.entry_price)},{key:'stop',value:Number(first.sl_price)},{key:'target',value:Number(first.tp_price)}].filter(l=>Number.isFinite(l.value)&&l.value>0);
+  const width=680,height=278,padX=44,padY=27;
+  const values=[...sliced.map(p=>Number(p.price)),...levels.map(l=>l.value)];
+  const min=Math.min(...values),max=Math.max(...values),span=Math.max(max-min,Math.abs(max)*0.0001,0.000001);
+  const yOf=(v:number)=>height-padY-(v-min)/span*(height-2*padY);
+  const coords=sliced.map((p,i)=>({x:padX+i/Math.max(sliced.length-1,1)*(width-2*padX),y:yOf(Number(p.price)),point:p}));
+  const path=coords.map((c,i)=>`${i?'L':'M'}${c.x},${c.y}`).join(' ');
+  const current=hover==null?null:coords[Math.max(0,Math.min(hover,coords.length-1))];
+  return <div className="journey-chart-wrap" aria-label="Interactive stored price journey">
+    <div className="journey-chart-toolbar"><span>Recorded mark path · {valid.length} observations</span><div role="group" aria-label="Price path window">{(['all','50','20'] as const).map(w=><button key={w} type="button" aria-pressed={windowSize===w} className={windowSize===w?'selected':''} onClick={()=>{setWindowSize(w);setHover(null)}}>{w==='all'?'All':`Last ${w}`}</button>)}</div></div>
+    <svg viewBox={`0 0 ${width} ${height}`} className="journey-interactive-svg" role="img" aria-label="Price path with stop, entry, target and pointer inspection"
+       onPointerMove={e=>{const r=e.currentTarget.getBoundingClientRect();const x=(e.clientX-r.left)/r.width*width;setHover(Math.round((x-padX)/((width-2*padX)/Math.max(coords.length-1,1))));}}
+       onPointerLeave={()=>setHover(null)}>
+      {[0,.25,.5,.75,1].map(t=><g key={t}><line x1={padX} x2={width-padX} y1={padY+t*(height-2*padY)} y2={padY+t*(height-2*padY)} className="journey-grid"/><text x="2" y={padY+t*(height-2*padY)+4} className="journey-axis">{price(max-t*span)}</text></g>)}
+      {levels.map(l=><g key={l.key}><line x1={padX} x2={width-padX} y1={yOf(l.value)} y2={yOf(l.value)} className={`journey-level journey-level-${l.key}`}/><text x={width-padX-4} y={yOf(l.value)-5} textAnchor="end" className={`journey-level-label ${l.key}`}>{l.key.toUpperCase()} {price(l.value)}</text></g>)}
+      <path d={path} className="journey-animated-path"/>
+      {coords.filter(c=>c.point.is_entry||c.point.is_exit).map((c,i)=><circle key={i} cx={c.x} cy={c.y} r="5" className={c.point.is_exit?'journey-exit':'journey-entry'}/>)}
+      {current&&<g><line x1={current.x} x2={current.x} y1={padY} y2={height-padY} className="journey-crosshair"/><circle cx={current.x} cy={current.y} r="5" className="journey-hover-dot"/></g>}
+    </svg>
+    <div className="journey-chart-inspector" aria-live="off"><span>{current?time(current.point.timestamp):`${time(sliced[0].timestamp)} → ${time(last.timestamp)}`}</span><strong>{current?price(current.point.price):`Last ${price(last.price)}`}</strong></div>
+    <div className="journey-stats">{levels.map(l=><span key={l.key}>{l.key} {price(l.value)}</span>)}<span>Current {price(last.price)}</span></div>
+    <p className="journey-caveat">Each point is a stored price observation, not a reconstructed tick-by-tick execution path. Hover to inspect; choose a time window above.</p>
+  </div>;
 }

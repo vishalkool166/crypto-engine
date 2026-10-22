@@ -240,7 +240,7 @@ class Config:
         "funding_extreme_threshold":   0.0005,
     }
 
-    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "3.1.0")
+    SYSTEM_VERSION    = os.getenv("SYSTEM_VERSION",    "3.4.0")
     ADAPTATION_FROZEN = os.getenv("ADAPTATION_FROZEN", "False").lower() == "true"
 
     GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")

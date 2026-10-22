@@ -1,6 +1,6 @@
 # Self-host Signal Engine
 
-Choose a public site, a private admin site, or both. You may host the interfaces on any static host and run FastAPI/Redis on any supported server. Cloudflare is an optional example in [Cloudflare setup](CLOUDFLARE.md).
+Choose a public site, a private admin site, or both. You may host the interfaces on any static host and run FastAPI/Redis on any supported server. Cloudflare is an optional example in [Cloudflare setup](CLOUDFLARE.md). The default `docker-compose.yml` starts only Redis and the API; the optional tunnel requires `docker-compose.cloudflare.yml` and a valid token.
 
 ## 1. Choose the interfaces
 
@@ -17,9 +17,8 @@ Set the enabled interface origins exactly, including `https://` in production. P
 Requirements: Docker Engine with Compose, persistent storage, and outbound access to Redis/exchange/Telegram endpoints as configured. Do not expose the FastAPI or Redis ports directly to the Internet. Keep SQLite, the RAG index, and `.env` on protected persistent storage.
 
 ```bash
-cp .env.example .env
-chmod 600 .env
 python scripts/setup_env.py
+chmod 600 .env
 mkdir -p database
 docker compose config --quiet
 docker compose up -d --build
@@ -27,7 +26,7 @@ docker compose ps
 docker compose logs --tail=100 signal-engine
 ```
 
-Before first boot, review `.env`: choose enabled interfaces, set their origins, configure `ORIGIN_PROXY_SECRET`, and leave `ENGINE_ENABLED=false` with `TRADING_MODE=paper`. `setup_env.py` creates missing application secrets without printing them or replacing an existing `.env`.
+For a new installation, run `python scripts/setup_env.py` *instead of* copying `.env.example` manually; it refuses to overwrite an existing file and generates application secrets. Before first boot, review `.env`: choose enabled interfaces, set their origins, configure `ORIGIN_PROXY_SECRET`, and leave `ENGINE_ENABLED=false` with `TRADING_MODE=paper`. `setup_env.py` creates missing application secrets without printing them or replacing an existing `.env`.
 
 ## 3. Build and host the interface(s)
 

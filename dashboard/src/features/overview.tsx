@@ -50,7 +50,7 @@ export function AdminOverview() {
         <div className="atelier-command-noise" aria-hidden="true"/>
         <div className="atelier-command-topline"><span><span className="atelier-mini-led"/> THE OPERATOR WORKSPACE</span><span>SIGNAL ENGINE / PRIVATE</span></div>
         <div className="atelier-command-main"><div><p className="atelier-command-eyebrow">ONE PIPELINE / FOUR APPROACHES</p><h1>Decisions, <em>in view.</em></h1><p>One continuous view of strategy decisions, execution permissions, account risk and the full evidence trail.</p></div>
-        <div className="atelier-command-action"><div><span>ENGINE STATE</span><strong>{words(d?.health?.runtime)}</strong><small>Account mode / {mode || "unavailable"}</small></div>
+        <div className="atelier-command-action"><div className="engine-status-inline" role="status" aria-live="polite"><span className={d?.health?.runtime==='running'?'engine-status-indicator active':'engine-status-indicator'}/><div><span>Engine status</span><strong>{words(d?.health?.runtime || 'unknown')}</strong><small>{mode ? `Account mode · ${mode}` : 'Account mode unavailable'}</small></div></div>
           <Button disabled={pending || d?.health?.runtime !== "running"} onClick={scan}><Radio size={14}/>{pending ? "Scanning…" : "Run market scan"} <ArrowUpRight size={15}/></Button></div></div>
         <div className="atelier-command-bottom"><span>DECISIONS WITH A RECORD.</span><span>PRIVATE / ACCOUNT-SCOPED</span></div>
       </section>

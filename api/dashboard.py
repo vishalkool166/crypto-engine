@@ -334,6 +334,12 @@ def get_universe() -> list:
             c      = cache.get_raw(f"signal_{r.coin}")
             market = c.get("market", {}) if c else {}
             status = get_coin_state(r.coin)["status"] if r.enabled else "disabled"
+            if r.enabled and status == "idle":
+                status = c.get('state','awaiting_scan') if c else 'awaiting_scan'
+            if r.enabled and c and c.get('cached_at'):
+                from time import time as now_timestamp
+                if now_timestamp() - float(c['cached_at']) > 1800 and status not in ('in_trade','cooldown'):
+                    status = 'stale_scan'
 
             result.append({
                 "coin":       r.coin,
@@ -346,7 +352,9 @@ def get_universe() -> list:
                 "score":      c.get("score",     0)    if c else 0,
                 "direction":  c.get("direction", "--") if c else "--",
                 "state":      status,
-                "has_signal": c is not None,
+                "has_signal": bool(c and c.get('signal')),
+                "scan_reason": c.get('reason') if c else 'No recent scan',
+                "last_evaluated": c.get('cached_at') if c else None,
                 "price":      market.get("price",    0),
                 "change":     market.get("change24", 0),
                 "funding":    round(market.get("funding", 0) * 100, 4) if market else 0,

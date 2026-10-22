@@ -14,7 +14,7 @@ const descriptions:Record<string,string>={
 };
 const shortName=(s:string)=>s.replaceAll("_"," ");
 
-type Candidate={strategy:string;direction?:string;score?:number;entry?:number;stop?:number;target?:number;reason:string;regime?:string;coin?:string;observed_at?:string};
+type Candidate={strategy:string;direction?:string;score?:number;entry?:number;stop?:number;target?:number;reason:string;regime?:string;coin?:string;observed_at?:string;checks?:{name:string;actual:string|number;required:string;passed:boolean}[];target_source?:string;available_rr?:number};
 
 /** Single operator board shows real shared-pipeline decisions; no mocked P&L. */
 export function StrategyBoard({controlsEditable=false}:{controlsEditable?:boolean}) {
@@ -66,6 +66,8 @@ export function StrategyBoard({controlsEditable=false}:{controlsEditable?:boolea
       </div>
       <aside className="se-decision-inspector"><p className="se-micro-label">LATEST STORED DECISION</p>
         {observed ? <><h3 className="se-decision-title">{observed.direction?observed.direction+" candidate":"No entry"}</h3><p className="se-rejection">{observed.reason.replaceAll("_"," ")}</p><dl><div><dt>Market</dt><dd>{coin}/USDT</dd></div><div><dt>Regime</dt><dd>{observed.regime||"Unknown"}</dd></div><div><dt>Heuristic score</dt><dd>{observed.score==null?"—":number(observed.score,1)}</dd></div><div><dt>Observed</dt><dd>{time(observed.observed_at)}</dd></div>{observed.entry&&<><div><dt>Proposed entry</dt><dd>{number(observed.entry,3)}</dd></div><div><dt>Protective stop</dt><dd>{number(observed.stop,3)}</dd></div><div><dt>Target</dt><dd>{number(observed.target,3)}</dd></div></>}</dl></>:<div className="se-inspector-empty"><Eye size={22}/><h3>Awaiting evaluation</h3><p>Stored decisions will appear after the next scanner cycle.</p></div>}
+        {observed?.checks?.length ? <div className="strategy-checklist" aria-label="Individual strategy filter conditions"><h4>Condition-by-condition evidence</h4>{observed.checks.map((step,i)=><div className="strategy-check" key={i}><span className={step.passed?'passed':'failed'}>{step.passed?'PASS':'BLOCK'}</span><div><strong>{step.name}</strong><small>Observed: {String(step.actual)} · Needed: {step.required}</small></div></div>)}</div>:<p className="muted-copy">Detailed condition values will appear after the next completed scan on this version.</p>}
+        {observed?.target_source && <p className="se-inspector-foot">Target basis: {observed.target_source.replaceAll('_',' ')} · Available reward: {observed.available_rr??'—'}R</p>}
         <p className="se-inspector-foot"><CircleHelp size={14}/> An eligible setup is not an exchange fill. All positions require risk approval.</p>
       </aside>
     </div>

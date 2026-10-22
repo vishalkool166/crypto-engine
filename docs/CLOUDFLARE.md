@@ -28,7 +28,7 @@ Trust and copy its token into the server `.env` as `TUNNEL_TOKEN`.
 
 Create a public hostname route such as `api.example.com` to
 `http://signal-engine:8000`. Do not publish container port 8000 or open it on the
-server firewall. Then start the backend with the tunnel overlay:
+server firewall. The tunnel is an optional Compose overlay; the base stack runs without a Cloudflare token. Set `TUNNEL_TOKEN` in the server `.env`, then start both files:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.cloudflare.yml config --quiet

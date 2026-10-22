@@ -1,26 +1,27 @@
-# Quantitative research and acceptance methodology
+# Research methodology and evidence standard
 
-## Current evidence
+## Current status
 
-**No configuration is certified profitable. No 50–60% winning-trade rate is demonstrated.** Exchange metadata and limited candle samples were retrieved through read-only Binance APIs, but the complete 18-coin, 1h/4h/funding archives were not materialized in this runtime. The runtime dependencies now include `ta`; the full historical experiment has not been rerun in this rebuild. Offline code tests do not measure trading edge.
+**None of the four strategies has a certified profitable edge.** The 18-symbol rolling research gate is incomplete: [`RESEARCH_GATE.json`](RESEARCH_GATE.json) records zero of 18 symbols evaluated against the required data and evidence criteria. Passing code tests or generating simulated trades is not a profitability demonstration.
 
-## Strategy under examination
+## Shared strategy rules
 
-The engine follows trends using higher-timeframe EMA and ADX, lower-timeframe momentum, volume confirmation, regime checks, and coin-specific targets. The current `COIN_CONFIG` contains 18 symbols with ADX, TP, session, `skip_after_loss`, `sl`, and `tier` values. `sl` is **not** consumed by live risk calculation; numeric `tier` has no identified trading effect. Do not silently repurpose these legacy parameters or claim they were validated.
+Four strategy evaluators are implemented in `strategies/registry.py`: trend continuation, breakout/retest, range reversion and momentum reversal. The live scanner and historical replay call the same deterministic evaluator functions, but they do **not** share all execution conditions. Exchange latency, actual fill quality, partial fills, funding, leverage, portfolio interactions and liquidation behavior require separate demo validation.
 
-`engines/crypto/strategy.py` contains alternative, apparently unused rules; only the actual production entrypoint may define the benchmark. Preserve the exact original per-coin dictionary as a frozen reference.
+The engine proposes targets from observable closed-candle structure (or a qualifying measured breakout range) rather than automatically applying a fixed profit multiplier. This does not establish a target-hit probability. Rejections include indicator evidence. No parameter may be promoted on an AI recommendation alone.
 
-## Reproducible experiment
+## Required experiment workflow
 
-1. Fetch **contiguous**, closed 1h and 4h USDⓈ-M perpetual candles and actual funding settlements for every configured coin. Use a common start on or after the latest contract listing (or report symbol-specific window differences). Archive the provider response, dates, hashes and metadata locally; do not fabricate missing data.
-2. Run `python -m backtest.per_coin_audit` to compare the untouched live configuration, a shared reference, and *one-knob* ablations. Compare opportunity rates and rejected signals as well as P&L.
-3. Run `python -m backtest.walkforward --rolling` with predeclared training/test boundaries. Parameters are picked using training data **only**. Do not repeatedly tune against the same final holdout.
-4. Report OOS net expectancy, win rate, profit factor, max drawdown, fill and signal frequencies, sample counts, cost assumptions and the range of results across folds. Include error bars and account for correlated assets and multiple comparisons.
-5. Run robustness sensitivity (fees, slippage, funding, intra-bar fill order, missing bars, latency, parameter perturbations). Compare price-regime cohorts and check that performance does not depend on a few outlier trades.
-6. Keep any range/mean-reversion candidate **research-only** until it independently improves OOS net expectancy and drawdown and does not introduce unsafe churn. `no_trade` is a legitimate decision.
-7. Paper-forward test strategy/execution agreement with an authorized account before any live proposal.
+1. Gather contiguous, timestamped **closed** 1-hour and 4-hour USDⓈ-M candles and actual funding settlements for each configured symbol. Record listing dates, provider, observation times, hashes, missing bars and data range; do not synthesize missing candles.
+2. Freeze strategy versions, scan timeframes, indicators, fees, target/stop order assumptions and rejection gates **before** evaluating the final holdout.
+3. Evaluate each strategy separately and the combined arbitration/portfolio rules. Aggregate P&L across strategies only after simulating shared capital, conflicts and correlation. Never sum independent backtest profits and label them portfolio performance.
+4. Run walk-forward splits with no leakage across folds and the required post-entry horizon embargo. Record out-of-sample net expectancy, win rate, drawdown, exposure, number of trades, signal frequency, profit factor and uncertainty.
+5. Stress-test fees, slippage, funding, delayed fills, position sizing, lost candles, stop/target order within one candle, and model/threshold sensitivity.
+6. Forward-test in shadow and Binance demo. Reconcile orders after uncertain network results and compare intended to actual fills before considering any separate live-readiness review.
 
-## Data commands (machine with Binance connectivity)
+## CLI examples
+
+These commands require real historical data and are not claimed to have completed in the distributed package:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -32,22 +33,15 @@ python -m backtest.walkforward --rolling \
   --train-start 2024-01-01 --end 2026-10-01 \
   --train-months 12 --test-months 3 --data-dir research_data \
   --output research_data/walkforward_results.json
-python -m backtest.evidence --input research_data/walkforward_results.json \
+python -m backtest.evidence \
+  --input research_data/walkforward_results.json \
   --output research_data/evidence_assessment.json
 ```
 
-**Caution:** the start date must be after *every* contract's listing, and sufficient future holding-period candles must exist inside each test fold. Download rejects missing observations. The replay now embargos the final horizon both at fold boundaries **and dataset end**. Frequency is measured over the eligible calendar window, not the entire downloaded dataset.
+Dataset start dates must respect each contract's actual listing date and enough future holding-period candles for every test interval. Any `NOT_EVALUATED` or incomplete output blocks a review decision.
 
-The evidence gate is a **completeness filter**, not a statistical hypothesis test or broker certification. Even all-positive holdouts remain research-only.
+## Limitations and promotion gate
 
-## Research limitations
+Replay cannot know tick-by-tick order of an intrabar stop and target without appropriate data. Research-level size and execution models are not fully equivalent to live portfolio accounting. No tested win rate, profitable expectancy or reliable TP-hit likelihood is asserted here.
 
-- Current replay uses 4h OHLC entry/exit and conservative same-candle stop priority; it does not know tick sequence or actual resting-limit fill probability.
-- Funding uses available settlement timestamps but cannot reconstruct exact intra-candle fill time; record this assumption in any performance report.
-- Live adaptive sizing includes portfolio state and liquidity; the research sizing is simplified. Operational parity is not yet proven.
-- Closed bars, timezone-aware timestamps, full lookback, unmodified holdouts, and independent paper trading are required for credible claims.
-- Win rate alone is insufficient: a 60% win rate can still lose money when average losses exceed average wins after costs.
-
-## Acceptance gate
-
-No automatic parameter promotion. A changed config needs positive **net** out-of-sample expectancy across multiple folds and market regimes, acceptable drawdown, robust signal frequency, statistical uncertainty, signed-off execution constraints, and a frozen holdout report. If evidence is inadequate, retain the original settings or disable the coin.
+A candidate for live review needs sufficient sample size, positive *net* holdout expectancy across distinct regimes, acceptable drawdown, stable results under realistic costs, documented data lineage, independent demo fills, and explicit operator approval. The research gate is a completeness/evidence record, not an automatic trading authorization. If evidence is insufficient, **no trade** is the correct outcome.

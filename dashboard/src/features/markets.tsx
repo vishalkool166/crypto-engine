@@ -56,7 +56,8 @@ export function Markets() {
                 label: "Instrument",
                 render: (r) => <strong>{r.coin} / USDT</strong>,
               },
-              { key: "state", label: "Engine state" },
+              { key: "state", label: "Engine state", render: (r) => <span title={r.scan_reason || ""}>{String(r.state || "awaiting_scan").replaceAll("_"," ")}</span> },
+              { key: "last_evaluated", label: "Last evaluated", render:(r) => r.last_evaluated ? time(r.last_evaluated) : "Not yet scanned" },
               {
                 key: "price",
                 label: "Last observed price",

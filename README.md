@@ -1,93 +1,78 @@
-# Signal Engine 3.3 — Studio edition
+# Signal Engine
 
-A design-led frontend update for the existing Binance-based, four-strategy Signal Engine. The public website now has a warm editorial experience, a working interactive strategy illustration, and scroll-driven storytelling. The operator console retains the same controls, data and authentication in a calmer presentation. The original **three-bar identity** is restored throughout the web apps and PWA.
+Self-hosted market intelligence, strategy research, and risk-governed Binance USDⓈ-M trading. Signal Engine combines four independent crypto strategy evaluators, one portfolio-level execution pipeline, a public research website, and a private operator console.
 
-**No new environment variables, APIs, services, deployment accounts or changes to trading permissions.** Use the existing upgrade procedure. Read [`docs/STUDIO_3_3.md`](docs/STUDIO_3_3.md) and [`VALIDATION_3_3.md`](VALIDATION_3_3.md) before deployment.
+> **Release 3.4 · Source distribution.** This release has passed focused automated checks, but has **not** passed a complete production frontend build or authenticated exchange demonstration in the packaging environment. No strategy has a certified profitable edge. See [Verification](docs/VALIDATION.md) before deployment.
 
-## Previous versions
+## Capabilities
 
-# Signal Engine 3.2 — Atelier frontend redesign
+| Area | Included |
+| --- | --- |
+| Strategy engine | Trend continuation, breakout/retest, range reversion, momentum reversal; shared closed-candle features and per-strategy evidence |
+| Execution | Binance demo and explicitly gated live mode, order-intent journal, portfolio risk checks, stop/target proposals, reconciliation |
+| Research | Reproducible strategy experiments, walk-forward tools, comparison and decision history; historical results are not certified |
+| Operations | Coin-scan status, signal expiry, system health, infrastructure telemetry when accessible, Telegram alerts |
+| Interfaces | Public methodology and signal outcomes; Google-authenticated admin, interactive Trade Journey and strategy controls |
+| AI | Optional Groq-assisted research with retrieval; no autonomous LLM order placement |
 
-This release preserves the 3.1 unified-strategy backend and adds a new studio-directed public site and operator console. See [`docs/ATELIER_DESIGN_3_2.md`](docs/ATELIER_DESIGN_3_2.md) and [`VALIDATION_3_2.md`](VALIDATION_3_2.md). No new environment variables are required.
+The four strategies evaluate independently within the same scan. The shared arbitrator selects at most one eligible proposal per symbol and rejects opposing directions. A proposal does **not** bypass risk limits, account mode, or the exchange executor. [Architecture](docs/ARCHITECTURE.md) · [Strategy mechanics](docs/STRATEGIES.md)
 
-# Signal Engine 3.1 — Unified Strategy Release
+## Requirements
 
-Four deterministic Binance-futures strategy evaluators participate in one scanner, one arbitration/risk path, and the existing protected exchange executor. The private UI includes strategy controls, annotated closed-candle charts and one research laboratory; the public site explains the signal evidence process.
+- Docker Engine with the Compose plugin and writable persistent application storage.
+- Node.js 22 and npm to build the React/Vite public and admin interfaces.
+- Python 3.12 for local backend development and verification (the Docker image includes Python).
+- Your **existing** Binance credentials for authenticated demo operation; Google OAuth only when hosting admin. Redis runs through Compose. Groq and Telegram are optional for their respective features.
 
-**Existing `.env` and database are preserved. No new keys, subscriptions, or environment variables are introduced.** See `docs/UPGRADE_V3_1.md` for detailed compatibility and verification requirements.
-
-# Signal Engine 3.0
-
-Signal Engine is a self-hosted market research and trading workspace. It has a public market view and an optional private operator console. It has no customer accounts, SaaS plans, or billing.
-
-## Version 3.0 additions
-
-- **Private Strategy Lab:** four independently versioned research-only candidate
-  strategies, simulated replay and shadow evaluations of Binance closed 4h candles.
-- **Binance futures context:** public funding, open interest, global and top-account
-  positioning ratios. No Hyperliquid connection or wallet-copying assumptions.
-- **Groq:** supported GPT-OSS free-tier model configuration with permission-aware
-  fallback (`GROQ_API_KEY` required). No new AI vendor subscription.
-- **Risk accounting:** signed current Binance Futures equity, stale-equity halt.
-
-See **[Version 3.0 deployment and limitations](docs/UPGRADE_V3.md)** before
-upgrading. The original live strategy and exchange safety gates are retained;
-new candidate strategies are *not* enabled for actual trading.
-
-## Included
-
-- **Public site:** market context, published signals, outcomes, and methodology.
-- **Private console:** Google allowlisted sign-in, live positions, trade journeys, performance, Indian-market monitoring, research assistant, system health, audit, and settings. Responsive visuals use brief motion and respect reduced-motion preferences.
-- **Trading service:** Binance USDⓈ-M demo trading by default, with guarded live-mode support that requires server opt-in and TOTP.
-- **Telegram:** webhook alerts and focused operator commands, including `/ping`, `/trades`, `/journey`, `/performance`, `/india`, and `/help`.
-- **Persistent records:** SQLite trade and signal history, journeys, runtime state, plus the local RAG index. Preserve these during upgrades.
-
-The public and admin interfaces can be hosted separately, together, or individually. Cloudflare is optional. See [Self-hosting](docs/SELF_HOSTING.md) for the complete setup, [Operations and safety](docs/OPERATIONS.md) for backups and trading controls, [Telegram setup](docs/TELEGRAM.md) for bot instructions, and [Research methodology](docs/RESEARCH.md) for strategy and evidence limits.
+No new mandatory environment variables or provider accounts were added in 3.4. Existing deployments should **retain** `.env`, `database/`, state files, and persistent volumes.
 
 ## Quick start
 
-Use Python 3.12 and Node.js 22. First prepare the environment and leave execution disabled:
+Start with the engine disabled and paper mode selected. Never commit `.env`.
 
 ```bash
-cp .env.example .env
-chmod 600 .env
 python scripts/setup_env.py
-```
-
-Review `.env`, set at least one interface enabled, set its exact origin, and keep `ENGINE_ENABLED=false` and `TRADING_MODE=paper` for initial setup. Then start the backend:
-
-```bash
+chmod 600 .env
+# Configure production origins and provider credentials in the generated .env.
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
-docker compose logs --tail=100 signal-engine
 ```
 
-Build the interface(s) you plan to host from `dashboard/`:
+`scripts/setup_env.py` creates fresh application secrets and refuses to overwrite an existing `.env`. If Python is unavailable on the host, copy `.env.example` to `.env` and create unique strong secrets manually. Configure production origins and authentication before exposing the service.
+
+Build the frontend from `dashboard/` on a host with npm registry access:
 
 ```bash
+cd dashboard
 npm ci
-npm run build:public
-npm run build:admin
+npm run check
+npm run build
 ```
 
-The public build is `dashboard/dist/public`; the installable operator PWA is `dashboard/dist/admin`. Build only the site(s) you enable. Your static host must provide SPA fallback and proxy `/api/`, `/auth/`, `/ws/`, and `/webhook/` to the backend. See [Self-hosting](docs/SELF_HOSTING.md); Cloudflare Pages and Tunnel instructions are in [Cloudflare hosting](docs/CLOUDFLARE.md).
+Build outputs are `dashboard/dist/public` and `dashboard/dist/admin`; both require the reverse proxy/API routing described in [Deployment](docs/SELF_HOSTING.md). Running Docker alone **does not** publish the interfaces. `docker-compose.cloudflare.yml` is an optional overlay; base Compose does not require a tunnel token. Cloudflare is optional; see [Cloudflare setup](docs/CLOUDFLARE.md).
 
-## Development and checks
+## Operating and development guides
 
-```bash
-python -m pip install -r requirements-dev.txt
-npm --prefix dashboard ci
-npm --prefix dashboard run check
-npm --prefix dashboard run build
-python -m pytest -q tests
-npm --prefix dashboard test
-```
+| Need | Documentation |
+| --- | --- |
+| Install, update, host the interfaces | [Deployment](docs/SELF_HOSTING.md) |
+| Backups, restart, modes, risk controls | [Operator runbook](docs/OPERATIONS.md) |
+| Architecture, ownership and data flow | [Architecture](docs/ARCHITECTURE.md) |
+| Strategy decisions, invalidation, exit hypotheses | [Strategies](docs/STRATEGIES.md) |
+| Environment variables and configuration | [Configuration](docs/CONFIGURATION.md) and [`.env.example`](.env.example) |
+| API boundaries and authentication | [HTTP API](docs/API.md) |
+| Research methodology and evidence limitations | [Research](docs/RESEARCH.md) |
+| Tests, known verification gaps | [Testing](docs/TESTING.md) and [Validation](docs/VALIDATION.md) |
+| Telegram commands | [Telegram](docs/TELEGRAM.md) |
+| Changes in this release | [Changelog](CHANGELOG.md) |
 
-For local development, run FastAPI on `127.0.0.1:8000`, then use `npm --prefix dashboard run dev` for public or `npm --prefix dashboard run dev:admin` for admin. Configure a local Google OAuth client to test the admin login. Playwright tests use mocked services.
+## Contributing and security
 
-## Operating limits
+Source contributions are welcome: consult [Contributing](CONTRIBUTING.md) for development conventions and review expectations. Report vulnerabilities privately using the guidance in [Security](SECURITY.md); do not put secrets or exploit details in a public issue. [Code of conduct](CODE_OF_CONDUCT.md).
 
-Paper mode uses Binance's USDⓈ-M demo environment. Live mode can submit real orders and stays unavailable until explicitly enabled on the server. Review [Operations and safety](docs/OPERATIONS.md) before starting the engine or switching modes. Historical performance and research outputs do not guarantee future results.
+**Risk notice.** Trading futures can cause substantial losses. Structural price targets and risk/reward checks are estimates, not price forecasts or guarantees. A clean source checkout does not authorize live trading; the separately guarded live switch can submit real orders if explicitly configured and enabled. Read [Operations](docs/OPERATIONS.md) before enabling the scanner or switching modes.
 
-Licensed under Apache-2.0; see [LICENSE](LICENSE). Service providers, market data, models, and dependencies retain their own terms.
+Source integrity: after extracting a release archive, run `python scripts/verify_manifest.py` to check included files against [SHA256SUMS](SHA256SUMS). The manifest detects accidental changes to the distributed archive; it is **not** a signature or proof of publisher identity.
+
+Licensed under [Apache License 2.0](LICENSE). Exchange, AI, infrastructure and package providers apply their own terms.

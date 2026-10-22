@@ -592,6 +592,26 @@ async def proxy_binance_price(request: Request, symbol: str):
 
 
 
+@router.get("/system/telemetry")
+async def system_telemetry(request: Request):
+    """Authenticated host/container telemetry, no AWS API or extra credentials."""
+    from access.security import require_admin_access
+    require_admin_access(request)
+    from alerts.scanner import get_scan_stats
+    from ops.host_telemetry import aws_environment, docker_containers
+    host = _system_stats()
+    # Existing psutil/Docker SDK integration is optional. The read-only
+    # Docker Engine API fallback does not add a pip dependency.
+    if not host.get('containers'):
+        host['containers'] = docker_containers()
+    return JSONResponse(content=make_serializable({
+        'host': host,
+        'aws': aws_environment(),
+        'scans': get_scan_stats(),
+        'note':'Container and EC2 metadata appear only when runtime permissions allow; no secrets are read.'
+    }))
+
+
 @router.get("/system/disk")
 async def system_disk(request: Request):
     from access.security import require_admin_access

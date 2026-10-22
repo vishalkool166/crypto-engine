@@ -485,12 +485,12 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
 
             coin_status = "watching" if result.get("signal") else "idle"
 
-            if result.get("signal"):
-                set_watching(coin, {
-                    "direction": result["direction"],
-                })
-            else:
-                set_idle(coin)
+            current_state = get_coin_state(coin).get('status')
+            if current_state != 'in_trade':
+                if result.get('signal'):
+                    set_watching(coin, {'direction':result['direction']})
+                elif current_state not in ('cooldown',):
+                    set_idle(coin)
 
             cache_entry = {
                 "coin":      coin,
@@ -498,7 +498,7 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                 "direction": result.get("direction", "--"),
                 "score":     result.get("score", 0),
                 "adx"   :    result.get("adx", 0),
-                "state":     coin_status,
+                "state":     "evaluated_no_setup" if coin_status == "idle" else coin_status,
                 "signal":    result if result.get("signal") else {},
                 "regime":    result.get("regime", ""),
                 "reason":    result.get("reason", ""),
@@ -509,7 +509,8 @@ async def _analyze_coin(coin: str, balance: float) -> dict | None:
                     "entry":(e.get("candidate") or {}).get("entry"),
                     "stop":(e.get("candidate") or {}).get("stop"),
                     "target":(e.get("candidate") or {}).get("target"),
-                    "regime":e.get("regime"),"reason":e.get("rejection") or "candidate_detected"}
+                    "regime":e.get("regime"),"reason":e.get("rejection") or "candidate_detected",
+                    "checks":e.get("checks",[])}
                     for e in result.get("decisions",[]) ],
                 "market": {
                     "price":      price,
@@ -548,13 +549,23 @@ async def scan_all_coins() -> list:
     async with _scan_lock:
         scan_start = time.time()
         coins      = cfg.COINS
+        _scan_stats['scan_in_progress'] = True
+        _scan_stats['scan_requested_at'] = scan_start
+        _scan_stats['scan_expected'] = len(coins)
         log.info("Scan started — %s coins", len(coins))
 
+        # Database lifecycle is independent of Binance account readiness.
+        from data.signal_lifecycle import expire_actionable_signals
+        await asyncio.to_thread(expire_actionable_signals)
         balance = await _get_cached_balance()
         if not await _refresh_portfolio_equity():
+            _scan_stats['scan_in_progress'] = False
+            _scan_stats['scan_aborted_reason'] = 'unverified_equity'
             return []
         if balance <= 0:
             log.warning("Scan aborted — zero balance")
+            _scan_stats['scan_in_progress'] = False
+            _scan_stats['scan_aborted_reason'] = 'zero_balance'
             return []
 
         from engines.state import tick_cooldowns
@@ -565,13 +576,29 @@ async def scan_all_coins() -> list:
             return_exceptions=True,
         )
 
-        valid = [r for r in results if r and not isinstance(r, Exception)]
+        # Each scheduled coin gets an explicit result: errors are not silently
+        # reported as inactive markets. Concurrency remains exchange-safe.
+        valid = []
+        for coin, item in zip(coins, results):
+            if isinstance(item, dict) and item:
+                valid.append(item)
+            else:
+                reason = type(item).__name__ if isinstance(item, Exception) else 'unavailable_or_skipped'
+                valid.append({'coin':coin,'state':'scan_error','reason':reason,'signal':{},
+                              'grade':'--','score':0,'cached_at':time.time()})
+        _scan_stats['last_scan_expected'] = len(coins)
+        _scan_stats['last_scan_failed'] = sum(r['state']=='scan_error' for r in valid)
+        for record in valid:
+            if record['state'] == 'scan_error':
+                cache.set(f"signal_{record['coin']}", record, ttl=1800)
         valid.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         scan_ms = round((time.time() - scan_start) * 1000, 1)
 
+        _scan_stats['scan_in_progress'] = False
+        _scan_stats['scan_aborted_reason'] = None
         _scan_stats["last_scan_at"]    = time.time()
-        _scan_stats["last_scan_count"] = len(valid)
+        _scan_stats["last_scan_count"] = sum(r['state'] != 'scan_error' for r in valid)
         _scan_stats["last_scan_ms"]    = scan_ms
         _scan_stats["total_scans"]    += 1
         _scan_stats["total_signals"]  += sum(1 for r in valid if r.get("grade") in ("A+", "A"))
